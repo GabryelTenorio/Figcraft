@@ -384,3 +384,35 @@ fn bidi_runs_lay_out_right_to_left() {
     assert_eq!(r.len(), 1);
     assert!(r[0].x0 >= glyph_x(&l, 2) - 1e-6 && r[0].x1 <= right + 1e-6 && r[0].x0 > glyph_x(&l, 6));
 }
+
+#[test]
+fn arrows_move_visually_through_right_to_left_runs() {
+    if !have_fonts() {
+        eprintln!("no fonts; skipping");
+        return;
+    }
+    for text in ["abc \u{5D0}\u{5D1}\u{5D2} def", "\u{5D0}\u{5D1}\u{5D2} abc \u{5D3}\u{5D4}"] {
+        let l = layout(&TextData::new(text), None, None);
+        let n = text.chars().count();
+        // Start at the visual left edge and step right until the caret stops moving right.
+        let mut i = (0..=n).min_by(|a, b| l.caret(*a).0.total_cmp(&l.caret(*b).0)).unwrap();
+        let mut xs = vec![l.caret(i).0];
+        let mut seen = vec![i];
+        for _ in 0..(2 * n) {
+            let Some(j) = l.visual_step(i, true) else { panic!("bidi line steps visually") };
+            if j > n || l.caret(j.min(n)).0 <= *xs.last().unwrap() {
+                break;
+            }
+            i = j;
+            xs.push(l.caret(i).0);
+            seen.push(i);
+        }
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "{text}: {xs:?}");
+        assert!(seen.len() >= n - 1, "{text}: visited {seen:?}");
+        // And back.
+        let back = l.visual_step(i, false).unwrap();
+        assert!(l.caret(back).0 < l.caret(i).0);
+    }
+    // Plain left-to-right lines step by char (the caller's default).
+    assert!(layout(&TextData::new("plain"), None, None).visual_step(1, true).is_none());
+}
