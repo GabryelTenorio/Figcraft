@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use figcraft_engine::Preedit;
-use figcraft_engine::tools::{Cursor, PointerEvent, PointerKind, ToolId, selection_box};
+use figcraft_engine::tools::{Cursor, PointerEvent, PointerKind, ToolId, selection_box, selection_frame};
 use figcraft_geom::Point;
 use serde_json::json;
 
@@ -608,13 +608,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             }
             // Size label under the box.
             if app.session.prefs.show_dimensions
-                && let Some(bb) = doc.bounds_of(&sel)
+                && let Some((_, w, h)) = selection_frame(&doc, &sel)
             {
-                let (w, h) = if sel.len() == 1 {
-                    sel.first().and_then(|i| doc.node(*i)).map(|n| (n.width, n.height)).unwrap_or((bb.width(), bb.height()))
-                } else {
-                    (bb.width(), bb.height())
-                };
                 let label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
                 let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
                 let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;

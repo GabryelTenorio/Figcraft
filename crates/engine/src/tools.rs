@@ -233,9 +233,10 @@ pub struct Overlay {
 pub(crate) struct ResizeStart {
     /// Node id → (world transform, w, h) at the start.
     nodes: Vec<(NodeId, Affine, f64, f64)>,
-    /// Single node: its world transform and size; else the AABB.
-    single: Option<(Affine, f64, f64)>,
-    bounds: Rect,
+    /// The handle box: page transform of its top-left corner (axes along the box) and its size.
+    frame: (Affine, f64, f64),
+    /// One layer (resized in place) rather than several (mapped from the old box to the new).
+    single: bool,
     handle: Handle,
 }
 
@@ -327,16 +328,48 @@ const SNAP_PX: f64 = 5.0;
 
 /// Corners of the selection's handle box in page coordinates (tl, tr, br, bl).
 pub fn selection_box(doc: &Document, sel: &[NodeId]) -> Option<[Point; 4]> {
+    let (f, w, h) = selection_frame(doc, sel)?;
+    Some([f * Point::ZERO, f * Point::new(w, 0.0), f * Point::new(w, h), f * Point::new(0.0, h)])
+}
+
+/// The selection's handle box: the page transform of its top-left corner (axes along the box) and
+/// its size. One layer: its own box; several sharing a rotation: a box turned with them;
+/// otherwise the page-aligned bounds.
+pub fn selection_frame(doc: &Document, sel: &[NodeId]) -> Option<(Affine, f64, f64)> {
     let ids = roots(doc, sel);
-    if ids.len() == 1 {
-        let id = ids.first().copied()?;
-        let n = doc.node(id)?;
-        let w = doc.world_transform(id);
-        let (x0, y0, x1, y1) = (0.0, 0.0, n.width, n.height);
-        return Some([w * Point::new(x0, y0), w * Point::new(x1, y0), w * Point::new(x1, y1), w * Point::new(x0, y1)]);
+    if let [id] = ids.as_slice() {
+        let n = doc.node(*id)?;
+        return Some((doc.world_transform(*id), n.width, n.height));
     }
-    let b = doc.bounds_of(&ids)?;
-    Some([Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)])
+    let Some(angle) = shared_rotation(doc, &ids) else {
+        let b = doc.bounds_of(&ids)?;
+        return Some((Affine::translate((b.x0, b.y0)), b.width(), b.height()));
+    };
+    let rot = Affine::rotate(angle);
+    let inv = rot.inverse();
+    let b = ids
+        .iter()
+        .filter_map(|i| Some(figcraft_geom::transform_rect_bbox(inv * doc.world_transform(*i), doc.node(*i)?.local_rect())))
+        .reduce(|a, b| a.union(b))?;
+    Some((rot * Affine::translate((b.x0, b.y0)), b.width(), b.height()))
+}
+
+/// The rotation (radians) every layer in `ids` shares, unless it's a multiple of 90 degrees (the
+/// page-aligned box is then the same box). Flipped layers count by their axis, not its direction.
+fn shared_rotation(doc: &Document, ids: &[NodeId]) -> Option<f64> {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    const EPS: f64 = 1e-4;
+    let mut angles = ids.iter().map(|i| {
+        let c = doc.world_transform(*i).as_coeffs();
+        c[1].atan2(c[0])
+    });
+    let a = angles.next()?;
+    let same = |b: f64| {
+        let d = (b - a).rem_euclid(PI);
+        d.min(PI - d) < EPS
+    };
+    let axis_aligned = (a - (a / FRAC_PI_2).round() * FRAC_PI_2).abs() < EPS;
+    (a.is_finite() && !axis_aligned && angles.all(same)).then_some(a)
 }
 
 /// Which handle (if any) is under `p`.
@@ -530,12 +563,12 @@ impl Session {
             }
             let nodes: Vec<(NodeId, Affine, f64, f64)> =
                 ids.iter().filter_map(|i| doc.node(*i).map(|n| (*i, doc.world_transform(*i), n.width, n.height))).collect();
-            let single = if ids.len() == 1 { nodes.first().map(|(_, w, a, b)| (*w, *a, *b)) } else { None };
-            let bounds = doc.bounds_of(&ids).unwrap_or_default();
+            let Some(frame) = selection_frame(&doc, &ids) else { return Ok(()) };
+            let single = ids.len() == 1;
             self.begin_interaction(if self.tool.tool == ToolId::Scale { "Scale" } else { "Resize" })?;
             self.tool.gesture = Gesture::Resize {
                 start: ev.p(),
-                r: Box::new(ResizeStart { nodes, single, bounds, handle: h }),
+                r: Box::new(ResizeStart { nodes, frame, single, handle: h }),
                 scale_tool: self.tool.tool == ToolId::Scale,
             };
             return Ok(());
@@ -784,11 +817,8 @@ impl Session {
             guides = g;
         }
         let _ = start;
-        // In the reference frame: single node → its local space; several → page space AABB.
-        let (frame, w0, h0) = match r.single {
-            Some((w, a, b)) => (w, a, b),
-            None => (Affine::translate((r.bounds.x0, r.bounds.y0)), r.bounds.width(), r.bounds.height()),
-        };
+        // In the handle box's own axes (one layer: its local space).
+        let (frame, w0, h0) = r.frame;
         let q = frame.inverse() * p;
         let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, w0, h0);
         match r.handle {
@@ -814,8 +844,7 @@ impl Session {
             Handle::Edge(_) => x0 = q.x,
             Handle::Rotate(_) => {}
         }
-        let is_line =
-            r.single.is_some() && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| matches!(n.kind, NodeKind::Line))).unwrap_or(false);
+        let is_line = r.single && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| matches!(n.kind, NodeKind::Line))).unwrap_or(false);
         if is_line {
             // Line end handles: move the end point freely (length + angle).
             let (a, b) = match r.handle {
@@ -840,7 +869,7 @@ impl Session {
         }
         // Constrain proportions (Shift, or the node's lock).
         let keep = ev.shift
-            || r.single.is_some() && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| n.constrain_proportions)).unwrap_or(false)
+            || r.single && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| n.constrain_proportions)).unwrap_or(false)
             || scale_tool;
         if keep && w0 > 1e-9 && h0 > 1e-9 {
             let (sx, sy) = ((x1 - x0) / w0, (y1 - y0) / h0);
@@ -922,7 +951,7 @@ impl Session {
         let (nx0, ny0) = (x0.min(x1), y0.min(y1));
         let (nw, nh) = ((x1 - x0).abs(), (y1 - y0).abs());
         let nodes = r.nodes.clone();
-        let single = r.single.is_some();
+        let single = r.single;
         let handle = r.handle;
         self.preview(|doc, _| {
             if single {
@@ -957,15 +986,14 @@ impl Session {
                 }
                 return Ok(());
             }
-            // Several layers: map the old AABB onto the new one.
+            // Several layers: map the old box onto the new one, in the box's axes.
             let (sx, sy) = (if w0 > 1e-9 { nw / w0 } else { 1.0 }, if h0 > 1e-9 { nh / h0 } else { 1.0 });
-            let origin = Point::new(r.bounds.x0, r.bounds.y0);
-            let new_origin = Point::new(r.bounds.x0 + nx0, r.bounds.y0 + ny0);
+            let inv = frame.inverse();
             for (id, world, w, h) in &nodes {
-                let o = *world * Point::ZERO;
-                let no = new_origin + Vec2::new((o.x - origin.x) * sx, (o.y - origin.y) * sy);
-                let c = world.as_coeffs();
-                doc.set_world_transform(*id, Affine::new([c[0], c[1], c[2], c[3], no.x, no.y]))?;
+                let local = inv * *world;
+                let o = local * Point::ZERO;
+                let c = local.as_coeffs();
+                doc.set_world_transform(*id, frame * Affine::new([c[0], c[1], c[2], c[3], nx0 + o.x * sx, ny0 + o.y * sy]))?;
                 if scale_tool {
                     crate::cmd::arrange::scale_node(doc, *id, sx.min(sy))?;
                 } else {
