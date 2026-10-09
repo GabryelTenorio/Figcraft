@@ -145,6 +145,8 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             return;
         }
         match app.ui.right_tab {
+            // The Frame tool shows the frame presets.
+            RightTab::Design if app.session.tool.tool == figcraft_engine::ToolId::Frame => crate::frame_presets::panel(app, ui),
             RightTab::Design => design(app, ui),
             RightTab::Prototype => crate::proto_panel::prototype(app, ui),
             RightTab::Inspect => inspect(app, ui),
@@ -319,6 +321,15 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             Icon::Chevron,
             t.icon_secondary,
         );
+        let sr = Rect::from_min_size(pos2(lr.max.x + 4.0, r.center().y - 12.0), vec2(24.0, 24.0));
+        let sresp = ui.interact(sr, ui.id().with("swap_orient"), Sense::click()).on_hover_text("Swap orientation");
+        if sresp.hovered() {
+            ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
+        }
+        icons::paint(ui.painter(), sr.shrink(5.0), Icon::Rotate, t.icon);
+        if sresp.clicked() {
+            app.run("frame.swapOrientation", json!({"ids": sel}));
+        }
         let ids: Vec<NodeId> = sel.to_vec();
         egui::Popup::menu(&resp).width(260.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {

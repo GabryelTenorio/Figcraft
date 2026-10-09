@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "frame.create",
             "Create frame",
-            "{preset? (name from FRAME_PRESETS), x?, y?, width?, height?, parent?, name?, props?}",
+            "{preset? (name from FRAME_PRESETS), x?, y?, width?, height?, parent?, name?, props?} (a preset without x/y lands to the right of the page's frames)",
             true,
             frame_create
         ),
@@ -83,6 +83,15 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             place_image
         ),
+        spec!("frame.swapOrientation", "Swap orientation", "{ids?} (portrait ⇄ landscape: width and height trade places)", true, |s, p| {
+            let ids = req_targets("frame.swapOrientation", s, p)?;
+            let doc = s.doc()?;
+            let sizes: Vec<(NodeId, f64, f64)> = ids.iter().filter_map(|i| doc.node(*i).map(|n| (*i, n.width, n.height))).collect();
+            for (i, w, h) in sizes {
+                super::arrange::resize_cmd(s, &json!({"ids": [i], "width": h, "height": w}))?;
+            }
+            ok()
+        }),
         spec!("frame.presets", "List frame presets", "{}", false, |_, _| {
             Ok(Value::Array(FRAME_PRESETS.iter().map(|(c, n, w, h)| json!({"category": c, "name": n, "width": w, "height": h})).collect()))
         }),
@@ -263,11 +272,37 @@ fn frame_create(s: &mut Session, p: &Value) -> Result<Value> {
             o.entry("height").or_insert(json!(h));
             o.entry("name").or_insert(json!(pname));
         }
+        // No position on the page: beside the right-most top-level layer, else in the view.
+        if num(p, "x").is_none() && num(p, "y").is_none() && id(p, "parent").is_none() {
+            let (x, y) = free_spot(s, *w, *h)?;
+            if let Some(o) = q.as_object_mut() {
+                o.insert("x".into(), json!(x));
+                o.insert("y".into(), json!(y));
+            }
+        }
     }
     if let Some(o) = q.as_object_mut() {
         o.insert("type".into(), json!("frame"));
     }
     create(s, &q)
+}
+
+/// Where a new top-level frame of `w`×`h` goes: 100 to the right of the right-most top-level
+/// layer (top-aligned with it), or centred in the view on an empty page.
+fn free_spot(s: &Session, w: f64, h: f64) -> Result<(f64, f64)> {
+    let ds = s.ds()?;
+    let doc = &ds.doc;
+    let right_most = doc
+        .node(ds.page)
+        .map(|pg| pg.children.iter().filter_map(|c| doc.world_bounds(*c)).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| b.x1.is_finite() && b.y0.is_finite())
+        .max_by(|a, b| a.x1.total_cmp(&b.x1));
+    Ok(match right_most {
+        Some(b) => ((b.x1 + 100.0).round(), b.y0.round()),
+        None => ((ds.view.cx - w / 2.0).round(), (ds.view.cy - h / 2.0).round()),
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
