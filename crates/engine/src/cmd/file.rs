@@ -95,7 +95,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "version.list",
             "List versions",
-            "{}  the version history, oldest first: [{id, index, name, description, time (Unix seconds)}]",
+            "{}  the version history, oldest first: [{id, index, name, description, time (Unix seconds), previewing?}]",
             false,
             |s, _| Ok(version_list(s.ds()?))
         ),
@@ -125,8 +125,29 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("version.delete", "Delete version", "{id | index}", false, |s, p| {
             let ds = s.ds_mut()?;
             let i = version_index("version.delete", ds, p)?;
-            ds.versions_mut().remove(i);
+            let v = ds.versions_mut().remove(i);
+            if ds.preview.as_ref().is_some_and(|pv| pv.id == v.id) {
+                ds.end_preview();
+            }
             ok()
+        }),
+        spec!(
+            "version.preview",
+            "View version",
+            "{id | index}  show the version on the canvas in place of the document (read-only; `version.restore` keeps it, `version.exitPreview` goes back)",
+            false,
+            |s, p| {
+                let ds = s.ds_mut()?;
+                let i = version_index("version.preview", ds, p)?;
+                let v = ds.versions.get(i).ok_or_else(|| bad("version.preview", "no such version"))?;
+                let (id, name, time, out) = (v.id.clone(), v.name.clone(), v.time, version_json(i, v));
+                let doc = read_version(v)?;
+                ds.start_preview(&id, &name, time, doc);
+                Ok(out)
+            }
+        ),
+        spec!("version.exitPreview", "Back to current version", "{}  end a version preview", false, |s, _| {
+            Ok(json!({"ended": s.ds_mut()?.end_preview()}))
         }),
         spec!(
             "version.duplicate",
@@ -173,7 +194,20 @@ fn version_json(index: usize, v: &Version) -> Value {
 }
 
 fn version_list(ds: &DocState) -> Value {
-    Value::Array(ds.versions.iter().enumerate().map(|(i, v)| version_json(i, v)).collect())
+    let previewing = ds.preview.as_ref().map(|p| p.id.as_str());
+    Value::Array(
+        ds.versions
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut j = version_json(i, v);
+                if previewing == Some(v.id.as_str()) {
+                    j["previewing"] = json!(true);
+                }
+                j
+            })
+            .collect(),
+    )
 }
 
 /// The version named by `id`, else by `index` (validated: never negative, never past the end).

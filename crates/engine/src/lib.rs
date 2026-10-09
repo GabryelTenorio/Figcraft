@@ -226,7 +226,28 @@ pub struct DocState {
     pub versions: Vec<figcraft_format::Version>,
     /// The version history changed since the last save.
     versions_changed: bool,
+    /// A version shown in place of the document (read-only).
+    pub preview: Option<VersionPreview>,
 }
+
+/// A version shown on the canvas in place of the document: read-only until it's restored or the
+/// preview ends, which puts the document back as it was.
+#[derive(Clone, Debug)]
+pub struct VersionPreview {
+    pub id: String,
+    pub name: String,
+    /// When the version was saved (Unix seconds).
+    pub time: u64,
+    doc: Arc<Document>,
+    selection: Vec<NodeId>,
+    page: NodeId,
+}
+
+/// Why edits are refused while a version is shown.
+pub const PREVIEW_READ_ONLY: &str = "you're viewing an earlier version: restore it or go back to the current version to edit";
+
+/// Commands that first end a version preview: they act on the document itself.
+const ENDS_PREVIEW: &[&str] = &["file.save", "file.saveAs", "file.close", "file.revert", "file.saveVersion", "file.duplicate", "version.restore"];
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -253,6 +274,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             versions: Vec::new(),
             versions_changed: false,
+            preview: None,
         };
         st.zoom_to_fit();
         st
@@ -271,7 +293,44 @@ impl DocState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        !Arc::ptr_eq(&self.doc, &self.saved_doc) || self.versions_changed
+        let doc = self.preview.as_ref().map_or(&self.doc, |p| &p.doc);
+        !Arc::ptr_eq(doc, &self.saved_doc) || self.versions_changed
+    }
+
+    /// Show `version` in place of the document (or switch to it from another preview).
+    pub fn start_preview(&mut self, id: &str, name: &str, time: u64, doc: Arc<Document>) {
+        self.end_preview();
+        self.preview = Some(VersionPreview {
+            id: id.to_string(),
+            name: name.to_string(),
+            time,
+            doc: std::mem::replace(&mut self.doc, doc),
+            selection: std::mem::take(&mut self.selection),
+            page: self.page,
+        });
+        self.page = Some(self.page)
+            .filter(|pg| self.doc.pages.contains(pg))
+            .or_else(|| self.doc.current_page.filter(|pg| self.doc.pages.contains(pg)))
+            .or_else(|| self.doc.first_page())
+            .unwrap_or(self.page);
+        self.text_edit = None;
+        self.vector_edit = None;
+        self.interaction = None;
+        self.revision += 1;
+    }
+
+    /// End a version preview, putting the document, selection and page back. False when none.
+    pub fn end_preview(&mut self) -> bool {
+        let Some(p) = self.preview.take() else { return false };
+        self.doc = p.doc;
+        self.selection = p.selection;
+        self.page = p.page;
+        self.text_edit = None;
+        self.vector_edit = None;
+        self.interaction = None;
+        self.clean_selection();
+        self.revision += 1;
+        true
     }
 
     pub fn mark_saved(&mut self) {
@@ -462,8 +521,15 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        if ENDS_PREVIEW.contains(&id)
+            && let Ok(ds) = self.ds_mut()
+        {
+            ds.end_preview();
+        }
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
-        let result = guard::run(id, || (spec.run)(self, params)).and_then(|v| self.check_instance_structure(id, &before).map(|()| v));
+        let result = guard::run(id, || (spec.run)(self, params))
+            .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
+            .and_then(|v| self.check_preview(id, &before).map(|()| v));
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
@@ -488,6 +554,16 @@ impl Session {
             }
         }
         result
+    }
+
+    /// A version shown in place of the document is read-only: refuse an edit (it is rolled back).
+    fn check_preview(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        if ds.preview.is_none() || Arc::ptr_eq(&ds.doc, bdoc) || id == "version.preview" {
+            return Ok(());
+        }
+        Err(EngineError::Disabled(id.to_string(), PREVIEW_READ_ONLY.into()))
     }
 
     /// Instances can't gain, lose or reorder layers, and library copies are read-only: refuse such
@@ -535,6 +611,9 @@ impl Session {
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
         let ds = self.ds_mut()?;
+        if ds.preview.is_some() {
+            return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));
+        }
         if ds.interaction.is_none() {
             ds.interaction = Some(Interaction { label: label.to_string(), doc: ds.doc.clone(), selection: ds.selection.clone() });
         }
@@ -585,6 +664,9 @@ impl Session {
 
     pub fn undo(&mut self) -> Result<bool> {
         let ds = self.ds_mut()?;
+        if ds.preview.is_some() {
+            return Err(EngineError::Disabled("edit.undo".into(), PREVIEW_READ_ONLY.into()));
+        }
         ds.interaction = None;
         ds.text_edit = None;
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
@@ -602,6 +684,9 @@ impl Session {
 
     pub fn redo(&mut self) -> Result<bool> {
         let ds = self.ds_mut()?;
+        if ds.preview.is_some() {
+            return Err(EngineError::Disabled("edit.redo".into(), PREVIEW_READ_ONLY.into()));
+        }
         ds.interaction = None;
         ds.text_edit = None;
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
@@ -786,5 +871,7 @@ mod text_fill_tests;
 mod variable_tests;
 #[cfg(test)]
 mod variables_editor_tests;
+#[cfg(test)]
+mod version_preview_tests;
 #[cfg(test)]
 mod version_tests;

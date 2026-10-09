@@ -1,6 +1,7 @@
 //! The Version history panel, shown in the left sidebar in place of Pages and Layers: save a
 //! version (title and description), the history newest first under the current version, and per
-//! version Restore, Rename, Duplicate and Delete.
+//! version Restore, Rename, Duplicate and Delete. Clicking a version shows it on the canvas
+//! (read-only, with a banner to restore it or go back); clicking Current version goes back.
 
 use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
@@ -58,6 +59,8 @@ struct Row {
 
 enum Action {
     Close,
+    Preview(String),
+    ExitPreview,
     New,
     Submit,
     CancelForm,
@@ -112,11 +115,14 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
                 .collect()
         })
         .unwrap_or_default();
+    let previewing = app.session.ds().ok().and_then(|ds| ds.preview.as_ref().map(|p| p.id.clone()));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         // Rows touch so the timeline is continuous.
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(4.0);
-        current_row(ui, !rows.is_empty());
+        if current_row(ui, !rows.is_empty(), previewing.is_none()) {
+            action = Some(Action::ExitPreview);
+        }
         let last = rows.len().saturating_sub(1);
         for (i, row) in rows.iter().enumerate() {
             let a = if app.ui.versions.confirm_delete.as_deref() == Some(row.id.as_str()) {
@@ -124,7 +130,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             } else if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.as_deref() == Some(row.id.as_str())) {
                 inline_row(ui, i == last, |ui| form(ui, f, "Save", TEXT_X))
             } else {
-                version_row(ui, row, i == last)
+                version_row(ui, row, i == last, previewing.as_deref() == Some(row.id.as_str()))
             };
             if a.is_some() {
                 action = a;
@@ -155,7 +161,16 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
     let st = &mut app.ui.versions;
     let name_of = |id: &str| rows.iter().find(|r| r.id == id).map(|r| r.name.clone()).unwrap_or_default();
     match a {
-        Action::Close => *st = VersionUi::default(),
+        Action::Close => {
+            *st = VersionUi::default();
+            app.run("version.exitPreview", json!({}));
+        }
+        Action::Preview(id) => {
+            app.run("version.preview", json!({"id": id}));
+        }
+        Action::ExitPreview => {
+            app.run("version.exitPreview", json!({}));
+        }
         Action::New => {
             st.confirm_delete = None;
             st.form = if st.form.as_ref().is_some_and(|f| f.id.is_none()) { None } else { Some(Form::new(None, "", "")) };
@@ -266,14 +281,21 @@ fn timeline(ui: &Ui, r: Rect, dot_y: f32, top: bool, bottom: bool, current: bool
     }
 }
 
-fn current_row(ui: &mut Ui, more: bool) {
+/// The current version's row (`active` when it's what the canvas shows); true when clicked.
+fn current_row(ui: &mut Ui, more: bool, active: bool) -> bool {
     let t = Tokens::get(ui.ctx());
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+    if active {
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.selected_row);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
+    }
     timeline(ui, r, r.center().y, false, more, true);
     ui.painter().text(pos2(r.min.x + TEXT_X, r.center().y), Align2::LEFT_CENTER, "Current version", semibold(11.0), t.text);
+    !active && resp.on_hover_text("Back to the current version").clicked()
 }
 
-fn version_row(ui: &mut Ui, row: &Row, last: bool) -> Option<Action> {
+fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<Action> {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let text_w = (w - TEXT_X - 36.0).max(40.0);
@@ -286,7 +308,9 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool) -> Option<Action> {
     let desc_h = desc.as_ref().map(|g| g.size().y + 4.0).unwrap_or(0.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 50.0 + desc_h), Sense::click());
     let hovered = ui.rect_contains_pointer(r);
-    if hovered {
+    if previewing {
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.selected_row);
+    } else if hovered {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
     }
     let name_y = r.min.y + 17.0;
@@ -327,8 +351,63 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool) -> Option<Action> {
     egui::Popup::context_menu(&resp).show(&mut menu);
     if resp.double_clicked() {
         out = Some(Action::Edit(row.id.clone()));
+    } else if resp.clicked() && !previewing && out.is_none() {
+        out = Some(Action::Preview(row.id.clone()));
     }
     out
+}
+
+/// While a version is shown: a banner over the canvas naming it, with Restore and Back.
+pub fn preview_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
+    let Some((id, name, time)) = app.session.ds().ok().and_then(|ds| ds.preview.as_ref().map(|p| (p.id.clone(), p.name.clone(), p.time))) else {
+        return;
+    };
+    let t = Tokens::get(ctx);
+    let mut action = None;
+    egui::Area::new(Id::new("version_preview_banner"))
+        .order(egui::Order::Foreground)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(pos2(canvas.center().x, canvas.min.y + 12.0))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(t.panel)
+                .stroke(Stroke::new(1.0, t.border))
+                .corner_radius(CornerRadius::same(8))
+                .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 12, spread: 0, color: t.shadow })
+                .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        icons::paint(
+                            ui.painter(),
+                            Rect::from_center_size(ui.cursor().min + vec2(7.0, 12.0), vec2(14.0, 14.0)),
+                            Icon::Clock,
+                            t.icon_secondary,
+                        );
+                        ui.add_space(20.0);
+                        ui.label(egui::RichText::new(format!("Viewing “{name}”")).font(semibold(11.0)).color(t.text));
+                        ui.label(egui::RichText::new(crate::comments::ago_long(time)).font(regular(11.0)).color(t.text_secondary));
+                        ui.add_space(4.0);
+                        if widgets::button(ui, "Back to current", false, true).clicked() {
+                            action = Some(false);
+                        }
+                        if widgets::button(ui, "Restore this version", true, true).clicked() {
+                            action = Some(true);
+                        }
+                    });
+                });
+        });
+    match action {
+        Some(true) => {
+            if app.run("version.restore", json!({"id": id})).is_some() {
+                app.toast(format!("Restored “{name}”"));
+            }
+        }
+        Some(false) => {
+            app.run("version.exitPreview", json!({}));
+        }
+        None => {}
+    }
 }
 
 /// A row holding a form (rename, delete confirmation), with the timeline running past it.

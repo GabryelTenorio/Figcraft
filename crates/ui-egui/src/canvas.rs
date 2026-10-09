@@ -172,6 +172,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::handles::draw(app, &painter);
     crate::comments::draw(app, &painter);
     crate::comments::popovers(app, &ctx);
+    crate::versions::preview_banner(app, &ctx, rect);
     // Cursor.
     if resp.hovered() {
         let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {

@@ -177,7 +177,11 @@ a new, renamed or deleted version marks the file as changed). Driven with `run_c
 versions are named "Version N"), `version.list` (oldest first; `time` is Unix seconds),
 `version.restore {id | index}` (replaces the document with the version as one undo step; the file
 name stays), `version.rename {id | index, name, description?}`, `version.delete {id | index}` and
-`version.duplicate {id | index}` (opens the version as a new document tab). Indexes are validated
+`version.duplicate {id | index}` (opens the version as a new document tab).
+`version.preview {id | index}` shows a version in place of the document, read-only: edits, undo and
+gestures are refused until `version.restore` keeps it or `version.exitPreview` goes back. Saving,
+closing or saving a version ends the preview first, and `version.list` marks the shown version
+`previewing`. Indexes are validated
 (a negative or out-of-range index is an error). A file keeps at most 100 versions; there are no
 automatic versions. `file.versionHistory` returns the same list and opens the panel in the app.
 

@@ -114,6 +114,7 @@ pub enum Icon {
     Reset,
     Detach,
     Variable,
+    Clock,
     Eraser,
     Swap,
     Link,
@@ -644,6 +645,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Reset => {
             p.arc(8.0, 8.0, 5.0, -2.2, 2.6);
             p.poly(&[(2.8, 2.8), (3.3, 5.8), (6.3, 5.3)], false);
+        }
+        Clock => {
+            // A dial with hands at ten past two-ish (version history).
+            p.circle(8.0, 8.0, 6.0);
+            p.line(8.0, 8.0, 8.0, 4.5);
+            p.line(8.0, 8.0, 10.5, 9.5);
         }
         Eraser => {
             // A tilted block with a band near its tip, over a short trace line.
