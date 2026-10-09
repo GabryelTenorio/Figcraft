@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (vector edit mode tools, auto layout depth)._
+_Last updated: 2026-10-10 (vector edit mode tools, auto layout depth, layers panel depth)._
 
 ## Where we are
 
@@ -118,7 +118,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 |---|---|---|---|---|
 | Canvas & navigation | 6 | 60% | rulers/guides dragging, pixel preview, minimap-free perf at scale | 8–12 |
 | Selection & transform | 8 | 55% | rotated multi-select handles, scale tool polish, measure hover polish, nudge-resize | 12–18 |
-| Layers panel | 5 | 55% | search/filter, multi-select ranges, collapse all, thumbnails, drag polish | 8–12 |
+| Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
 | Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
 | Paint | 7 | 55% | gradient handles on canvas, image crop mode, document colours, colour models | 12–18 |
 | Strokes | 3 | 55% | arrowhead set, dash/gap UI, per-side UI, stroke styles | 5–8 |
@@ -133,7 +133,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **47%**.
+Weighted feature depth ≈ **48%**.
 
 ## Milestones
 

@@ -253,28 +253,114 @@ fn collect(doc: &Document, id: NodeId, depth: usize, expanded: &std::collections
     }
 }
 
+/// Layers whose name contains `q` (lowercase), top of the stack first, as a flat list.
+fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
+    let Some(n) = doc.node(id) else { return };
+    for c in n.children.iter().rev() {
+        let Some(cn) = doc.node(*c) else { continue };
+        let name = if cn.name.is_empty() { cn.kind.label() } else { cn.name.as_str() };
+        if name.to_lowercase().contains(q) {
+            out.push(Row { id: *c, depth: 0, has_kids: false });
+        }
+        if out.len() < 5000 {
+            matching(doc, *c, q, out);
+        }
+    }
+}
+
+/// Expand or collapse `id` and everything inside it (Alt-click on a disclosure triangle).
+fn set_expanded_deep(doc: &Document, id: NodeId, open: bool, expanded: &mut std::collections::BTreeSet<NodeId>) {
+    let mut stack = vec![id];
+    while let Some(n) = stack.pop() {
+        if open {
+            expanded.insert(n);
+        } else {
+            expanded.remove(&n);
+        }
+        if let Some(node) = doc.node(n) {
+            stack.extend(node.children.iter().copied());
+        }
+    }
+}
+
+/// The search row under the Layers header (live filter; Escape closes it).
+fn search_field(app: &mut FigApp, ui: &mut Ui, t: &Tokens, w: f32, id: Id) {
+    let (fr, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
+    let field = Rect::from_min_max(pos2(fr.min.x + 12.0, fr.min.y + 2.0), pos2(fr.max.x - 12.0, fr.max.y - 6.0));
+    ui.painter().rect_filled(field, CornerRadius::same(5), t.field);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(field.min.x + 12.0, field.center().y), vec2(12.0, 12.0)), Icon::Search, t.icon_secondary);
+    let te_rect = Rect::from_min_max(pos2(field.min.x + 24.0, field.center().y - 7.0), pos2(field.max.x - 6.0, field.center().y + 7.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(te_rect));
+    let r = child.add(
+        egui::TextEdit::singleline(&mut app.ui.layer_filter)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .font(regular(11.0))
+            .hint_text("Find layers")
+            .vertical_align(egui::Align::Center)
+            .desired_width(te_rect.width()),
+    );
+    if r.has_focus() {
+        ui.painter().rect_stroke(field, CornerRadius::same(5), Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
+    if (r.has_focus() || r.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.ui.layer_search = false;
+        app.ui.layer_filter.clear();
+    }
+}
+
 fn layers(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Layers", semibold(11.0), t.text);
+    let sr = Rect::from_center_size(pos2(hr.max.x - 22.0, hr.center().y), vec2(24.0, 24.0));
+    let sresp = ui.interact(sr, ui.id().with("layer_search_btn"), Sense::click()).on_hover_text("Search layers");
+    if sresp.hovered() || app.ui.layer_search {
+        ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(ui.painter(), sr.shrink(5.0), Icon::Search, t.icon);
+    let search_id = Id::new("layer_search_field");
+    if sresp.clicked() {
+        app.ui.layer_search = !app.ui.layer_search;
+        app.ui.layer_filter.clear();
+        if app.ui.layer_search {
+            ui.memory_mut(|m| m.request_focus(search_id));
+        }
+    }
+    if app.ui.layer_search {
+        search_field(app, ui, &t, w, search_id);
+    }
     let Ok(ds) = app.session.ds() else { return };
     let doc = ds.doc.clone();
     let page = ds.page;
     let sel = ds.selection.clone();
     let hover = ds.hover;
-    // Auto-expand ancestors of the selection.
-    for s in &sel {
-        for a in doc.ancestors(*s) {
-            if a != page {
-                app.ui.expanded.insert(a);
+    // Reveal a new selection: expand its ancestors and scroll its row into view, once, so
+    // "Collapse layers" and manual collapsing stick.
+    let reveal = sel != app.ui.layers_seen_sel;
+    if reveal {
+        for s in &sel {
+            for a in doc.ancestors(*s) {
+                if a != page {
+                    app.ui.expanded.insert(a);
+                }
             }
         }
+        app.ui.layers_seen_sel = sel.clone();
     }
+    let filter = app.ui.layer_filter.trim().to_lowercase();
     let mut rows = Vec::new();
-    collect(&doc, page, 0, &app.ui.expanded, &mut rows);
+    if filter.is_empty() {
+        collect(&doc, page, 0, &app.ui.expanded, &mut rows);
+    } else {
+        matching(&doc, page, &filter, &mut rows);
+    }
+    let scroll_to = if reveal { sel.first().copied() } else { None };
     let mut clicked: Option<(NodeId, egui::Modifiers)> = None;
     let mut toggle: Option<NodeId> = None;
+    let mut deep: Option<(NodeId, bool)> = None;
+    let mut rename_next: Option<(usize, bool)> = None;
     let mut vis: Option<NodeId> = None;
     let mut lock: Option<NodeId> = None;
     let mut rename_done: Option<(NodeId, String)> = None;
@@ -286,13 +372,17 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add_space(16.0);
-                crate::widgets::label(ui, "Add a frame (F) or a shape (R) to get started", t.text_secondary);
+                let hint = if filter.is_empty() { "Add a frame (F) or a shape (R) to get started" } else { "No matching layers" };
+                crate::widgets::label(ui, hint, t.text_secondary);
             });
         }
         let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
-        for row in &rows {
+        for (ri, row) in rows.iter().enumerate() {
             let Some(n) = doc.node(row.id) else { continue };
             let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click_and_drag());
+            if scroll_to == Some(row.id) {
+                ui.scroll_to_rect(r, None);
+            }
             let selected = sel.contains(&row.id);
             let in_selected = !selected && doc.ancestors(row.id).iter().any(|a| sel.contains(a));
             let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. });
@@ -320,7 +410,11 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 let open = app.ui.expanded.contains(&row.id);
                 icons::paint(ui.painter(), tri.shrink(1.0), if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
                 if tresp.clicked() {
-                    toggle = Some(row.id);
+                    if ui.input(|i| i.modifiers.alt) {
+                        deep = Some((row.id, !open));
+                    } else {
+                        toggle = Some(row.id);
+                    }
                 }
             }
             let icon_col = if is_comp {
@@ -334,6 +428,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             let name_x = x0 + 36.0;
             let editing = app.ui.rename.as_ref().is_some_and(|(i, _)| *i == row.id);
             if editing {
+                // Tab / Shift+Tab: commit and rename the next / previous layer.
+                if let Some(back) = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift)) {
+                    rename_next = Some((ri, back));
+                }
                 let tr = Rect::from_min_max(pos2(name_x - 4.0, r.min.y + 4.0), pos2(rr.max.x - 4.0, r.max.y - 4.0));
                 if let Some(new) = crate::widgets::text_field_inline(ui, Id::new(("rename", row.id)), &n.name, tr, regular(11.0)) {
                     rename_done = Some((row.id, new));
@@ -468,6 +566,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     {
         app.ui.expanded.insert(id);
     }
+    if let Some((id, open)) = deep {
+        set_expanded_deep(&doc, id, open, &mut app.ui.expanded);
+    }
     if let Some(id) = vis {
         app.run("object.toggleVisible", json!({"ids": [id]}));
     }
@@ -478,18 +579,49 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         app.ui.rename = None;
         app.run("object.rename", json!({"ids": [id], "name": new}));
     }
+    if let Some((i, back)) = rename_next {
+        app.ui.rename = None;
+        let next = if back { i.checked_sub(1) } else { i.checked_add(1) }.and_then(|j| rows.get(j));
+        if let Some(row) = next
+            && let Some(n) = doc.node(row.id)
+        {
+            app.ui.rename = Some((row.id, n.name.clone()));
+            app.run("select.set", json!({"ids": [row.id]}));
+            app.ui.layers_seen_sel = app.session.selection();
+            ui.memory_mut(|m| m.request_focus(Id::new(("rename", row.id)).with("te")));
+        }
+    }
     if let Some((id, m)) = clicked {
-        if m.shift || m.command {
+        let order: Vec<NodeId> = rows.iter().map(|r| r.id).collect();
+        let pos = |x: NodeId| order.iter().position(|o| *o == x);
+        let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).and_then(pos);
+        if m.shift
+            && let (Some(ai), Some(bi)) = (anchor, pos(id))
+        {
+            // Shift: the visible rows from the anchor to here (added to the selection with Cmd).
+            let (lo, hi) = (ai.min(bi), ai.max(bi));
+            let mut s: Vec<NodeId> = if m.command { sel.clone() } else { vec![] };
+            for x in order.get(lo..=hi).unwrap_or_default() {
+                if !s.contains(x) {
+                    s.push(*x);
+                }
+            }
+            app.run("select.set", json!({"ids": s}));
+        } else if m.shift || m.command {
             let mut s = sel.clone();
             if let Some(pos) = s.iter().position(|x| *x == id) {
                 s.remove(pos);
             } else {
                 s.push(id);
             }
+            app.ui.layer_anchor = Some(id);
             app.run("select.set", json!({"ids": s}));
         } else {
+            app.ui.layer_anchor = Some(id);
             app.run("select.set", json!({"ids": [id]}));
         }
+        // A click in the panel needs no reveal scroll.
+        app.ui.layers_seen_sel = app.session.selection();
         if let Ok(ds) = app.session.ds_mut()
             && ds.text_edit.is_some()
         {

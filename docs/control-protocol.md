@@ -88,10 +88,12 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, layerFilter?, collapseLayers?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
-`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool). Returns `ui.inspect`.
+`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `layerFilter` (string:
+open the layers search with that filter; `null` closes it), `collapseLayers` (true: collapse the
+layers tree). Returns `ui.inspect`.
 
 ### `ui.screenshot {path}`
 

@@ -98,7 +98,12 @@ pub struct UiState {
     pub present: Option<present::Presenter>,
     pub picker: Option<colorpicker::PickerTarget>,
     pub context_menu: Option<(egui::Pos2, Vec<NodeId>)>,
+    /// Layers panel search: open, the filter text, the shift-click range anchor and the selection
+    /// the tree last revealed (ancestors expand and the row scrolls into view when it changes).
+    pub layer_search: bool,
     pub layer_filter: String,
+    pub layer_anchor: Option<NodeId>,
+    pub layers_seen_sel: Vec<NodeId>,
     pub dark: bool,
     pub follow_system: bool,
     pub tool_flyout: Option<&'static str>,
@@ -135,7 +140,10 @@ impl Default for UiState {
             present: None,
             picker: None,
             context_menu: None,
+            layer_search: false,
             layer_filter: String::new(),
+            layer_anchor: None,
+            layers_seen_sel: Vec::new(),
             dark: false,
             follow_system: false,
             tool_flyout: None,

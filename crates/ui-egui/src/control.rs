@@ -227,6 +227,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(v) = p.get("showResolvedComments").and_then(Value::as_bool) {
                 app.ui.comments.show_resolved = v;
             }
+            // Layers panel search: a string opens it with that filter, null closes it.
+            if let Some(v) = p.get("layerFilter") {
+                app.ui.layer_search = v.is_string();
+                app.ui.layer_filter = v.as_str().unwrap_or_default().chars().take(200).collect();
+            }
+            if p.get("collapseLayers").and_then(Value::as_bool) == Some(true) {
+                app.ui.expanded.clear();
+            }
             Ok(app.inspect())
         }
         "ui.render" => {
