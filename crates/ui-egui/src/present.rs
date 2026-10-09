@@ -94,6 +94,8 @@ pub struct Presenter {
     pub current: NodeId,
     pub history: Vec<Visit>,
     pub overlays: Vec<OverlayState>,
+    /// Overlays playing their opening transition backwards after being closed (closed at, state).
+    closing: Vec<(f64, OverlayState)>,
     /// Scroll offsets of frames with overflow (page units).
     pub scroll: HashMap<NodeId, (f64, f64)>,
     /// Milliseconds the last smart-animate frame took to build and render.
@@ -118,11 +120,24 @@ pub struct Presenter {
 }
 
 impl Presenter {
+    /// Close the top overlay; it animates out with its opening transition reversed.
+    fn close_overlay(&mut self, now: f64) -> bool {
+        let Some(o) = self.overlays.pop() else { return false };
+        if !matches!(o.transition, Transition::Instant) && o.dur > 0.0 {
+            // An overlay closed mid-opening reverses from where it got to.
+            let shown = ((now - o.opened) / o.dur).clamp(0.0, 1.0);
+            self.closing.push((now - (1.0 - shown) * o.dur, o));
+        }
+        self.hovered.clear();
+        true
+    }
+
     pub fn new(start: NodeId) -> Self {
         Self {
             current: start,
             history: Vec::new(),
             overlays: Vec::new(),
+            closing: Vec::new(),
             scroll: HashMap::new(),
             render_ms: 0.0,
             start,
@@ -255,8 +270,7 @@ impl Presenter {
                 true
             }
             Action::Back => {
-                if !self.overlays.is_empty() {
-                    self.overlays.pop();
+                if self.close_overlay(now) {
                     return true;
                 }
                 match self.history.pop() {
@@ -332,7 +346,7 @@ impl Presenter {
                 self.hovered.clear();
                 true
             }
-            Action::CloseOverlay => self.overlays.pop().is_some(),
+            Action::CloseOverlay => self.close_overlay(now),
             Action::OpenUrl { url } => {
                 if !url.trim().is_empty() {
                     self.urls.push(url.clone());
@@ -780,6 +794,8 @@ struct Layout {
     place: Place,
     target: Rect,
     overlays: Vec<(NodeId, Place, Rect)>,
+    /// Overlays animating out (same order as `Presenter::closing`).
+    closing: Vec<(NodeId, Place, Rect)>,
 }
 
 /// The page's prototype device ("None" when unset).
@@ -802,14 +818,15 @@ fn layout(p: &mut Presenter, area: Rect) -> Option<Layout> {
     let scale = (f64::from(avail.width()) / fb.width().max(1.0)).min(f64::from(avail.height()) / fb.height().max(1.0)).clamp(0.01, 1.0);
     let place = Place::centered(fb, area.center(), scale);
     let target = place.rect(fb);
-    let mut overlays = Vec::new();
-    for o in &p.overlays {
-        let Some(ob) = disp.world_bounds(o.id) else { continue };
+    let place_overlay = |o: &OverlayState| {
+        let ob = disp.world_bounds(o.id)?;
         let size = vec2((ob.width() * scale) as f32, (ob.height() * scale) as f32);
         let r = overlay_rect(o.position, target, size, o.anchor);
-        overlays.push((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r));
-    }
-    Some(Layout { disp, scale, place, target, overlays })
+        Some((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r))
+    };
+    let overlays = p.overlays.iter().filter_map(place_overlay).collect();
+    let closing = p.closing.iter().filter_map(|(_, o)| place_overlay(o)).collect();
+    Some(Layout { disp, scale, place, target, overlays, closing })
 }
 
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
@@ -1124,7 +1141,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
             && !orect.contains(q)
         {
             if o.close_on_outside {
-                p.overlays.pop();
+                p.close_overlay(now);
                 p.press = None;
                 p.hovered.clear();
             }
@@ -1315,10 +1332,19 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
     if !drawn && let Some(to) = &to_tex {
         painter.image(to.tex.id(), l.place.rect(to.bounds), uv, Color32::WHITE);
     }
-    // Overlays (each with its background and opening transition).
-    let ovs = p.overlays.clone();
-    for (o, (id, place, orect)) in ovs.iter().zip(l.overlays.iter()) {
-        let raw = if o.dur > 0.0 { ((now - o.opened) / o.dur).clamp(0.0, 1.0) } else { 1.0 };
+    // Overlays (each with its background and opening transition); closing ones run it backwards.
+    let mut ovs: Vec<(f64, OverlayState)> =
+        p.overlays.iter().map(|o| (if o.dur > 0.0 { ((now - o.opened) / o.dur).clamp(0.0, 1.0) } else { 1.0 }, o.clone())).collect();
+    let mut placed: Vec<(NodeId, Place, Rect)> = l.overlays.clone();
+    for ((at, o), pl) in p.closing.iter().zip(l.closing.iter()) {
+        if now - at >= o.dur {
+            continue;
+        }
+        ovs.insert(0, (1.0 - ((now - at) / o.dur.max(1e-3)).clamp(0.0, 1.0), o.clone()));
+        placed.insert(0, *pl);
+    }
+    for ((raw, o), (id, place, orect)) in ovs.iter().zip(placed.iter()) {
+        let raw = *raw;
         if raw < 1.0 {
             ctx.request_repaint();
         }
@@ -1337,6 +1363,8 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
             painter.with_clip_rect(l.target).image(tex.tex.id(), r, uv, Color32::WHITE.gamma_multiply(f.to_alpha));
         }
     }
+    // Finished closing animations go (after drawing, so they stayed paired with the layout).
+    p.closing.retain(|(at, o)| now - at < o.dur);
     // Hotspot flash after a click on nothing.
     if now < p.flash_until {
         let (root, place) = match l.overlays.last() {
@@ -1363,6 +1391,37 @@ mod tests {
         let a = d.create(page, NodeKind::Frame, "A", 0.0, 0.0, 200.0, 400.0).unwrap();
         let b = d.create(page, NodeKind::Frame, "B", 300.0, 0.0, 200.0, 400.0).unwrap();
         (d, a, b)
+    }
+
+    #[test]
+    fn closed_overlays_animate_out_unless_instant() {
+        let (_, a, b) = doc_with_two_frames();
+        let mut p = Presenter::new(a);
+        let ov = |transition, opened| OverlayState {
+            id: b,
+            position: OverlayPosition::Center,
+            close_on_outside: true,
+            background: None,
+            anchor: None,
+            opened,
+            transition,
+            dur: 0.3,
+            easing: Easing::EaseOut,
+        };
+        p.overlays.push(ov(Transition::Dissolve, 0.0));
+        assert!(p.close_overlay(10.0));
+        assert!(p.overlays.is_empty());
+        assert_eq!(p.closing.len(), 1);
+        assert_eq!(p.closing[0].0, 10.0, "fully open: the reverse starts now");
+        // Closed half way through opening: it reverses from there.
+        p.overlays.push(ov(Transition::Dissolve, 20.0));
+        p.close_overlay(20.15);
+        assert!((p.closing[1].0 - 20.0).abs() < 1e-9);
+        // Instant overlays just go.
+        p.overlays.push(ov(Transition::Instant, 30.0));
+        p.close_overlay(31.0);
+        assert_eq!(p.closing.len(), 2);
+        assert!(!p.close_overlay(32.0), "nothing left to close");
     }
 
     #[test]
