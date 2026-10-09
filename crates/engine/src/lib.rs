@@ -10,6 +10,7 @@
 pub mod catalog;
 pub mod cmd;
 pub mod components;
+pub mod drop;
 pub mod guard;
 pub mod inspect;
 pub mod measure;

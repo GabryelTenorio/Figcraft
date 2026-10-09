@@ -139,7 +139,7 @@ pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
             pages(app, ui);
             layers(app, ui);
         }
-        LeftTab::Assets => assets(app, ui),
+        LeftTab::Assets => crate::assets_panel::show(app, ui),
     }
 }
 
@@ -497,69 +497,4 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         }
     }
     let _ = Color32::TRANSPARENT;
-}
-
-fn assets(app: &mut FigApp, ui: &mut Ui) {
-    let t = Tokens::get(ui.ctx());
-    let w = ui.available_width();
-    let Ok(doc) = app.session.doc() else { return };
-    let comps: Vec<(NodeId, String, bool)> = doc
-        .nodes()
-        .filter(|n| {
-            matches!(n.kind, NodeKind::Component { .. })
-                && !doc.node(n.parent.unwrap_or(NodeId(0))).is_some_and(|p| matches!(p.kind, NodeKind::ComponentSet { .. }))
-                || matches!(n.kind, NodeKind::ComponentSet { .. })
-        })
-        .map(|n| (n.id, n.name.clone(), matches!(n.kind, NodeKind::ComponentSet { .. })))
-        .collect();
-    let styles: Vec<(String, String, String)> = doc.styles.iter().map(|s| (s.id.clone(), s.name.clone(), s.kind.type_name().to_string())).collect();
-    let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
-    ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Local components", semibold(11.0), t.text);
-    let mut place = None;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        if comps.is_empty() {
-            ui.horizontal(|ui| {
-                ui.add_space(16.0);
-                crate::widgets::label(ui, "No components yet. Select layers and press ⌥⌘K.", t.text_secondary);
-            });
-        }
-        for (id, name, set) in &comps {
-            let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click());
-            let rr = r.shrink2(vec2(8.0, 0.0));
-            if resp.hovered() {
-                ui.painter().rect_filled(rr, CornerRadius::same(5), t.hover);
-            }
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(rr.min.x + 14.0, r.center().y), vec2(14.0, 14.0)),
-                if *set { Icon::ComponentSet } else { Icon::Component },
-                COMPONENT,
-            );
-            ui.painter().text(pos2(rr.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.0), t.text);
-            let resp = resp.on_hover_text("Click to place an instance at the centre of the view");
-            if resp.clicked() {
-                place = Some((*id, *set));
-            }
-        }
-        ui.add_space(8.0);
-        crate::widgets::separator(ui);
-        let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
-        ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Local styles", semibold(11.0), t.text);
-        for (_, name, ty) in &styles {
-            let (r, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
-            let icon = match ty.as_str() {
-                "text" => Icon::Text,
-                "effect" => Icon::Effects,
-                "grid" => Icon::Grid,
-                _ => Icon::Fill,
-            };
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 22.0, r.center().y), vec2(14.0, 14.0)), icon, t.icon_secondary);
-            ui.painter().text(pos2(r.min.x + 40.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.0), t.text);
-        }
-    });
-    if let Some((id, set)) = place {
-        let comp = if set { app.session.doc().ok().and_then(|d| d.node(id)).and_then(|n| n.children.first().copied()).unwrap_or(id) } else { id };
-        let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
-        app.run("instance.create", json!({"component": comp, "x": cx, "y": cy}));
-    }
 }

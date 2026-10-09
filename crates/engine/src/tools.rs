@@ -658,31 +658,9 @@ impl Session {
                         let pb = doc.world_bounds(pp).unwrap_or_default();
                         let still_inside = pb.inflate(8.0, 8.0).contains(ev.p());
                         if still_inside {
-                            let vertical = doc.node(pp).and_then(|n| n.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Vertical);
-                            let kids: Vec<NodeId> = doc.get(pp)?.children.iter().copied().filter(|c| !moving.contains(c)).collect();
-                            let mut idx = kids.len();
-                            for (k, c) in kids.iter().enumerate() {
-                                if let Some(b) = doc.world_bounds(*c) {
-                                    let mid = if vertical { b.center().y } else { b.center().x };
-                                    let pos = if vertical { ev.y } else { ev.x };
-                                    if pos < mid {
-                                        idx = k;
-                                        break;
-                                    }
-                                }
-                            }
-                            // Indicator line before the target slot.
-                            let line_at = kids
-                                .get(idx)
-                                .and_then(|c| doc.world_bounds(*c))
-                                .map(|b| if vertical { [b.x0, b.y0 - 2.0, b.x1, b.y0 - 2.0] } else { [b.x0 - 2.0, b.y0, b.x0 - 2.0, b.y1] });
-                            let line_at = line_at.or_else(|| {
-                                kids.last()
-                                    .and_then(|c| doc.world_bounds(*c))
-                                    .map(|b| if vertical { [b.x0, b.y1 + 2.0, b.x1, b.y1 + 2.0] } else { [b.x1 + 2.0, b.y0, b.x1 + 2.0, b.y1] })
-                            });
+                            let (idx, line_at) = crate::drop::auto_layout_slot(doc, pp, ev.p(), &moving).unwrap_or((0, None));
                             insert_line = line_at;
-                            let mut new_kids = kids.clone();
+                            let mut new_kids: Vec<NodeId> = doc.get(pp)?.children.iter().copied().filter(|c| !moving.contains(c)).collect();
                             for (k, m) in moving.iter().enumerate() {
                                 new_kids.insert((idx + k).min(new_kids.len()), *m);
                             }

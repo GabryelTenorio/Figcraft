@@ -5,6 +5,7 @@
 //! below this crate knows about egui, so the frontend can be replaced.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod assets_panel;
 pub mod canvas;
 pub mod colorpicker;
 pub mod comments;

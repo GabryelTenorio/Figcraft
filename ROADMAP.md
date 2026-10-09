@@ -52,9 +52,11 @@ dimension measured side by side.
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
    alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI. *Left:*
    grid/wrap-aware drag-reorder and drag-to-cell, nested hug/fill edge cases. 6–10 h.
-4. **Components depth**: *landed (engine):* component properties (edit/delete/bind), add variant,
-   reset override, restore main, instance structure protection. *Left:* properties panel UI, instance
-   swap UI, nested overrides, slots, local libraries, Assets drag-to-canvas. 14–20 h.
+4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
+   panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
+   structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
+   the frame or auto layout slot under the pointer). *Left:* nested instance overrides depth, slots,
+   local libraries (publish/use across files), component descriptions UI. 10–14 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    *Left:* overlay close animation, springs, device frames, multi-selection editing. 6–10 h.
@@ -126,7 +128,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Frames, groups, sections, masks | 5 | 55% | section tooling, mask types (luminance/outline), frame presets UI | 6–10 |
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
 | Text | 8 | 35% | in-text mouse selection, styled ranges UI, lists, OpenType, variable fonts | 20–30 |
-| Components & variants | 9 | 40% | properties UI, swap UI, nested overrides, libraries, slots | 20–30 |
+| Components & variants | 9 | 55% | nested overrides depth, libraries, slots, descriptions | 12–18 |
 | Styles & variables | 5 | 45% | style picker everywhere, variable binding UI, aliasing UI, scoping | 10–16 |
 | Prototyping | 6 | 30% | noodle editing, overlays, scrolling, smart animate | 20–30 |
 | Import/export | 6 | 45% | PDF (in progress), .fig import, export panel polish | 20–35 |

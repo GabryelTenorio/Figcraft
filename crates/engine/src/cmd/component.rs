@@ -53,6 +53,30 @@ pub fn specs() -> Vec<CommandSpec> {
             s.set_selection(vec![i]);
             Ok(json!({"id": i}))
         }),
+        spec!(
+            "instance.place",
+            "Place instance",
+            "{component, x, y (page point: the instance is centred there, inside the frame under it; auto layout frames insert by position)}",
+            true,
+            |s, p| {
+                let cmd = "instance.place";
+                let c = req_id(cmd, p, "component")?;
+                let pt = figcraft_geom::Point::new(req_num(cmd, p, "x")?, req_num(cmd, p, "y")?);
+                let page = s.page()?;
+                let doc = s.doc_mut()?;
+                let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
+                let mut slot = crate::drop::slot(doc, page, pt);
+                // Never inside its own main component (or a copy of it).
+                if doc.is_ancestor(c, slot.parent) || slot.parent == c {
+                    slot = crate::drop::DropSlot { parent: page, index: None, line: None };
+                }
+                let (w, h) = doc.node(c).map(|n| (n.width, n.height)).unwrap_or((0.0, 0.0));
+                let local = doc.world_transform(slot.parent).inverse() * figcraft_geom::Point::new(pt.x - w / 2.0, pt.y - h / 2.0);
+                let i = crate::components::create_instance_at(doc, c, slot.parent, local.x, local.y, slot.index)?;
+                s.set_selection(vec![i]);
+                Ok(json!({"id": i, "parent": slot.parent}))
+            }
+        ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
         spec!("component.resetInstance", "Reset all changes", "{ids?}", true, reset_instance),
         spec!(
@@ -157,7 +181,8 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let target = if ids.len() == 1 && ids.first().and_then(|i| doc.node(*i)).is_some_and(|n| matches!(n.kind, NodeKind::Frame | NodeKind::Group)) {
         ids.first().copied().ok_or_else(|| bad(cmd, "nothing selected"))?
     } else {
-        // Wrap the layers in a frame first (like Figma).
+        // Wrap the layers in a frame first (like Figma); a single layer lends it its name.
+        let single_name = if let [only] = ids.as_slice() { doc.node(*only).map(|n| n.name.clone()).filter(|n| !n.is_empty()) } else { None };
         let r = super::structure::specs()
             .into_iter()
             .find(|x| x.id == "object.frameSelection")
@@ -167,6 +192,9 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         let doc = s.doc_mut()?;
         let n = doc.get_mut(fid)?;
         n.fills.clear();
+        if let Some(name) = single_name {
+            n.name = name;
+        }
         fid
     };
     let doc = s.doc_mut()?;

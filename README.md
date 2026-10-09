@@ -82,7 +82,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>Components that scale</h3>
-      Main components, instances with overrides that survive edits, component sets with variants, properties, swap instance, detach, reset overrides and go to main component. Local styles and variables (colour, number, string, boolean) with modes.
+      Main components, instances with overrides that survive edits, component sets with variants, properties, swap instance, detach, reset overrides and go to main component, and an Assets panel with live thumbnails, search and drag-to-canvas into frames and auto layout. Local styles and variables (colour, number, string, boolean) with modes.
     </td>
   </tr>
   <tr>

@@ -544,3 +544,47 @@ fn random_edit_sequences_keep_instances_consistent() {
         }
     }
 }
+
+#[test]
+fn place_instances_into_frames_and_auto_layout_slots() {
+    let mut s = Session::new();
+    let c = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 0, "width": 40, "height": 20, "name": "Chip"})));
+    let c = idv(&ex(&mut s, "component.create", json!({"ids": [c]})));
+    // A component made from one shape is named after it.
+    let star = idv(&ex(&mut s, "shape.star", json!({"x": 0, "y": 200, "width": 24, "height": 24, "name": "Icon / Star"})));
+    let sc = idv(&ex(&mut s, "component.create", json!({"ids": [star]})));
+    assert_eq!(node(&s, sc).name, "Icon / Star");
+    // On empty canvas: on the page, centred on the point.
+    let a = idv(&ex(&mut s, "instance.place", json!({"component": c, "x": 500, "y": 500})));
+    let b = s.doc().unwrap().world_bounds(a).unwrap();
+    assert_eq!((b.x0, b.y0), (480.0, 490.0));
+    assert_eq!(node(&s, a).parent, s.ds().unwrap().doc.first_page());
+    // Into a plain frame under the point (frame-relative position).
+    let f = idv(&ex(&mut s, "frame.create", json!({"x": 1000, "y": 0, "width": 300, "height": 300})));
+    let r = ex(&mut s, "instance.place", json!({"component": c, "x": 1100, "y": 100}));
+    let i = idv(&r);
+    assert_eq!(node(&s, i).parent, Some(f));
+    assert_eq!(s.doc().unwrap().world_bounds(i).unwrap().x0, 1080.0);
+    // Into a horizontal auto layout row between its two children.
+    let row = idv(&ex(&mut s, "frame.create", json!({"x": 0, "y": 400, "width": 300, "height": 40})));
+    let k1 = idv(&ex(&mut s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 50, "height": 20, "parent": row})));
+    let k2 = idv(&ex(&mut s, "shape.rectangle", json!({"x": 100, "y": 0, "width": 50, "height": 20, "parent": row})));
+    ex(&mut s, "layout.add", json!({"ids": [row]}));
+    let b1 = s.doc().unwrap().world_bounds(k1).unwrap();
+    let b2 = s.doc().unwrap().world_bounds(k2).unwrap();
+    let mid = (b1.x1 + b2.x0) / 2.0;
+    let j = idv(&ex(&mut s, "instance.place", json!({"component": c, "x": mid, "y": b1.center().y})));
+    assert_eq!(kids(&s, row), vec![k1, j, k2], "inserted between");
+    // One undo step.
+    s.undo().unwrap();
+    assert_eq!(kids(&s, row), vec![k1, k2]);
+    // Never inside its own main component: lands on the page instead.
+    let own = s.doc().unwrap().world_bounds(c).unwrap().center();
+    let k = idv(&ex(&mut s, "instance.place", json!({"component": c, "x": own.x, "y": own.y})));
+    assert_eq!(node(&s, k).parent, s.ds().unwrap().doc.first_page());
+    // Junk.
+    for j in [json!({}), json!({"component": c}), json!({"component": 99999, "x": 0, "y": 0}), json!({"component": c, "x": "NaN", "y": 1e308})] {
+        assert!(s.execute("instance.place", &j).is_err(), "{j}");
+    }
+    healthy(&s);
+}

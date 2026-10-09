@@ -96,6 +96,11 @@ pub fn prop_default_value(d: &PropDef) -> Value {
 
 /// Create an instance of `component` under `parent` at `(x, y)` (parent space).
 pub fn create_instance(doc: &mut Document, component: NodeId, parent: NodeId, x: f64, y: f64) -> Result<NodeId, DocError> {
+    create_instance_at(doc, component, parent, x, y, None)
+}
+
+/// [`create_instance`] at child `index` of `parent` (None: on top).
+pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId, x: f64, y: f64, index: Option<usize>) -> Result<NodeId, DocError> {
     let comp = doc.get(component)?.clone();
     if !matches!(comp.kind, NodeKind::Component { .. }) {
         return Err(DocError::Invalid(format!("{component} is not a component")));
@@ -114,7 +119,7 @@ pub fn create_instance(doc: &mut Document, component: NodeId, parent: NodeId, x:
     root.overrides.clear();
     root.transform = Affine::translate((x, y));
     root.prop_refs.clear();
-    doc.insert(root, parent, None)?;
+    doc.insert(root, parent, index)?;
     sync_instance(doc, id);
     Ok(id)
 }
