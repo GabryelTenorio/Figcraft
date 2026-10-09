@@ -1,0 +1,59 @@
+//! Code for whole frames: nested HTML with a stylesheet (flexbox for auto layout, absolute
+//! positions elsewhere), unique class names, escaped text.
+
+use serde_json::{Value, json};
+
+use crate::Session;
+use crate::codegen::{CodeLang, code_for};
+use crate::params::id_of;
+
+fn id(v: Value) -> figcraft_doc::NodeId {
+    id_of(&v["id"]).unwrap()
+}
+
+#[test]
+fn frames_become_nested_html_with_flexbox_and_absolute_children() {
+    let mut s = Session::new();
+    let card = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 120})).unwrap());
+    s.execute("node.set", &json!({"id": card, "props": {"name": "Card"}})).unwrap();
+    let a = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 50, "height": 20, "parent": card})).unwrap());
+    let b = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 30, "width": 50, "height": 20, "parent": card})).unwrap());
+    for r in [a, b] {
+        s.execute("node.set", &json!({"id": r, "props": {"name": "Row", "fill": "#0D99FF"}})).unwrap();
+    }
+    let t = id(s.execute("text.create", &json!({"text": "Hi & <bye>", "x": 0, "y": 60})).unwrap());
+    s.execute("node.reparent", &json!({"ids": [t], "parent": card})).unwrap();
+    s.execute("layout.add", &json!({"ids": [card]})).unwrap();
+    s.execute("node.set", &json!({"id": card, "props": {"layoutMode": "vertical", "gap": 8}})).unwrap();
+
+    let code = code_for(s.doc().unwrap(), card, CodeLang::Html);
+    assert!(code.starts_with("<div class=\"card\">"), "{code}");
+    assert!(code.contains("<div class=\"row\"></div>") && code.contains("<div class=\"row-2\"></div>"), "unique classes: {code}");
+    assert!(code.contains("&amp; &lt;bye&gt;</p>"), "escaped text: {code}");
+    assert!(code.contains(".card {\n  position: relative;\n") && code.contains("display: flex;") && code.contains("flex-direction: column;"));
+    assert!(!code.contains(".row {\n  position: absolute"), "flex items flow");
+    assert!(code.trim_end().ends_with("</style>"));
+
+    // Without auto layout, children sit at their positions.
+    s.execute("layout.remove", &json!({"ids": [card]})).unwrap();
+    let code = code_for(s.doc().unwrap(), card, CodeLang::Html);
+    assert!(code.contains(".row-2 {\n  position: absolute;\n  left: "), "{code}");
+    // The command takes the language by id.
+    let out = s.execute("inspect.code", &json!({"id": card, "language": "html"})).unwrap();
+    assert!(out["code"].as_str().unwrap().contains("<style>"));
+}
+
+#[test]
+fn class_names_are_valid_and_deep_trees_are_bounded() {
+    let mut s = Session::new();
+    let mut parent = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap());
+    s.execute("node.set", &json!({"id": parent, "props": {"name": "1 Ünïcode / Name!!"}})).unwrap();
+    let root = parent;
+    for _ in 0..30 {
+        parent = id(s.execute("frame.create", &json!({"x": 1, "y": 1, "width": 90, "height": 90, "parent": parent})).unwrap());
+    }
+    let code = code_for(s.doc().unwrap(), root, CodeLang::Html);
+    assert!(code.starts_with("<div class=\"layer-1-n-code-name\">"), "{}", code.lines().next().unwrap());
+    // Nesting stops at the depth limit instead of running away.
+    assert!(code.matches("<div").count() <= 14, "{}", code.matches("<div").count());
+}

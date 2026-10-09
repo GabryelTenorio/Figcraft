@@ -11,18 +11,24 @@ use crate::params::*;
 use crate::{bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![spec!("inspect.code", "Code for layer", "{id?, language?: css|swiftui|compose (default css)} → {code}", false, |s, p| {
-        let id = targets(s, p).first().copied().ok_or_else(|| bad("inspect.code", "select a layer"))?;
-        let lang = match string(p, "language") {
-            Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad("inspect.code", "language: css|swiftui|compose"))?,
-            None => CodeLang::Css,
-        };
-        let doc = s.doc()?;
-        if !doc.contains(id) {
-            return Err(bad("inspect.code", "no such layer"));
+    vec![spec!(
+        "inspect.code",
+        "Code for layer",
+        "{id?, language?: css|html|swiftui|compose (default css; html is the whole layer tree)} → {code}",
+        false,
+        |s, p| {
+            let id = targets(s, p).first().copied().ok_or_else(|| bad("inspect.code", "select a layer"))?;
+            let lang = match string(p, "language") {
+                Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad("inspect.code", "language: css|swiftui|compose"))?,
+                None => CodeLang::Css,
+            };
+            let doc = s.doc()?;
+            if !doc.contains(id) {
+                return Err(bad("inspect.code", "no such layer"));
+            }
+            Ok(json!({"code": code_for(doc, id, lang), "language": lang.id()}))
         }
-        Ok(json!({"code": code_for(doc, id, lang), "language": lang.id()}))
-    })]
+    )]
 }
 
 /// Languages the Inspect panel offers.
@@ -30,15 +36,18 @@ pub fn specs() -> Vec<CommandSpec> {
 pub enum CodeLang {
     #[default]
     Css,
+    /// The whole layer tree as nested HTML elements with a stylesheet.
+    Html,
     SwiftUi,
     Compose,
 }
 
 impl CodeLang {
-    pub const ALL: [CodeLang; 3] = [CodeLang::Css, CodeLang::SwiftUi, CodeLang::Compose];
+    pub const ALL: [CodeLang; 4] = [CodeLang::Css, CodeLang::Html, CodeLang::SwiftUi, CodeLang::Compose];
     pub fn id(self) -> &'static str {
         match self {
             CodeLang::Css => "css",
+            CodeLang::Html => "html",
             CodeLang::SwiftUi => "swiftui",
             CodeLang::Compose => "compose",
         }
@@ -46,6 +55,7 @@ impl CodeLang {
     pub fn label(self) -> &'static str {
         match self {
             CodeLang::Css => "CSS",
+            CodeLang::Html => "HTML + CSS",
             CodeLang::SwiftUi => "SwiftUI",
             CodeLang::Compose => "Compose",
         }
@@ -71,6 +81,7 @@ fn num(v: f64) -> String {
 pub fn code_for(doc: &Document, id: NodeId, lang: CodeLang) -> String {
     match lang {
         CodeLang::Css => css(doc, id),
+        CodeLang::Html => html(doc, id),
         CodeLang::SwiftUi => {
             let mut out = String::new();
             swift(doc, id, 0, &mut out);
@@ -142,8 +153,12 @@ fn indent(depth: usize) -> String {
 
 fn css(doc: &Document, id: NodeId) -> String {
     let Some(n) = doc.node(id) else { return String::new() };
-    let mut out = format!("/* {} */\n", n.name.replace("*/", "* /"));
-    out.push_str(&format!("width: {}px;\nheight: {}px;\n", num(n.width), num(n.height)));
+    format!("/* {} */\n{}", n.name.replace("*/", "* /"), css_decls(n))
+}
+
+/// The CSS declarations for `n`'s own look and size, one per line.
+fn css_decls(n: &Node) -> String {
+    let mut out = format!("width: {}px;\nheight: {}px;\n", num(n.width), num(n.height));
     if let Some(l) = &n.layout {
         out.push_str("display: flex;\n");
         out.push_str(&format!("flex-direction: {};\n", if l.mode == LayoutMode::Vertical { "column" } else { "row" }));
@@ -240,6 +255,110 @@ fn css(doc: &Document, id: NodeId) -> String {
         }
     }
     out
+}
+
+// ------------------------------------------------------------------ HTML
+
+/// A CSS class name from a layer name ("Card / Title" → "card-title"), unique in `used`.
+fn class_name(name: &str, used: &mut Vec<String>) -> String {
+    let mut base = String::new();
+    for c in name.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            base.push(c);
+        } else if !base.ends_with('-') && !base.is_empty() {
+            base.push('-');
+        }
+    }
+    let base = base.trim_end_matches('-').chars().take(40).collect::<String>();
+    let base = if base.is_empty() || base.starts_with(|c: char| c.is_ascii_digit()) { format!("layer-{base}") } else { base };
+    let name = (1..).map(|k| if k == 1 { base.clone() } else { format!("{base}-{k}") }).find(|n| !used.contains(n)).unwrap_or(base);
+    used.push(name.clone());
+    name
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('\n', "<br>")
+}
+
+/// The whole tree under `id` as nested HTML with a stylesheet: auto layout frames become
+/// flexboxes, other children are placed absolutely in their parent, text becomes paragraphs.
+fn html(doc: &Document, id: NodeId) -> String {
+    let mut out = Html { used: Vec::new(), markup: String::new(), styles: String::new() };
+    out.node(doc, id, None, 0);
+    format!("{}\n<style>\n{}</style>\n", out.markup, out.styles)
+}
+
+/// HTML output being built: the class names taken, the markup and the stylesheet.
+struct Html {
+    used: Vec<String>,
+    markup: String,
+    styles: String,
+}
+
+impl Html {
+    fn node(&mut self, doc: &Document, id: NodeId, parent: Option<&Node>, depth: usize) {
+        let Some(n) = doc.node(id) else { return };
+        let class = class_name(&n.name, &mut self.used);
+        let pad = indent(depth);
+        // How it sits in its parent: in the flex flow, or placed at its position.
+        let mut decls = String::new();
+        let in_flow = parent.is_some_and(|p| p.layout.is_some()) && !n.child_layout.absolute;
+        if depth == 0 {
+            decls.push_str("position: relative;\n");
+        } else if in_flow {
+            let vertical = parent.and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Vertical);
+            let (main, cross) =
+                if vertical { (n.child_layout.sizing_v, n.child_layout.sizing_h) } else { (n.child_layout.sizing_h, n.child_layout.sizing_v) };
+            if main == Sizing::Fill {
+                decls.push_str("flex: 1 1 0;\n");
+            }
+            if cross == Sizing::Fill {
+                decls.push_str("align-self: stretch;\n");
+            }
+        } else {
+            let c = n.transform.as_coeffs();
+            decls.push_str(&format!("position: absolute;\nleft: {}px;\ntop: {}px;\n", num(c[4]), num(c[5])));
+            let rot = figcraft_geom::rotation_degrees(n.transform);
+            if rot.abs() > 0.01 {
+                decls.push_str(&format!("transform: rotate({}deg);\ntransform-origin: 0 0;\n", num(-rot)));
+            }
+        }
+        let mut own = css_decls(n);
+        if n.layout.is_none() && !n.children.is_empty() && depth > 0 && in_flow {
+            own.push_str("position: relative;\n");
+        }
+        // Hugging sides take their content's size.
+        if n.layout.is_some() || matches!(n.kind, NodeKind::Text(_)) {
+            if n.child_layout.sizing_h == Sizing::Hug {
+                own = own.replace(&format!("width: {}px;\n", num(n.width)), "");
+            }
+            if n.child_layout.sizing_v == Sizing::Hug {
+                own = own.replace(&format!("height: {}px;\n", num(n.height)), "");
+            }
+        }
+        decls.push_str(&own);
+        self.styles.push_str(&format!(".{class} {{\n"));
+        for line in decls.lines() {
+            self.styles.push_str(&format!("  {line}\n"));
+        }
+        self.styles.push_str("}\n");
+        match &n.kind {
+            NodeKind::Text(t) => self.markup.push_str(&format!("{pad}<p class=\"{class}\">{}</p>\n", html_escape(&t.characters))),
+            _ => {
+                let kids = kids(doc, n);
+                if kids.is_empty() || depth >= MAX_DEPTH {
+                    self.markup.push_str(&format!("{pad}<div class=\"{class}\"></div>\n"));
+                } else {
+                    self.markup.push_str(&format!("{pad}<div class=\"{class}\">\n"));
+                    // Bottom layer first: later elements paint on top, like the layer order.
+                    for k in kids {
+                        self.node(doc, k, Some(n), depth + 1);
+                    }
+                    self.markup.push_str(&format!("{pad}</div>\n"));
+                }
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------ SwiftUI

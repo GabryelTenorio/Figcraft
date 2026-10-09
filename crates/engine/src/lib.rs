@@ -881,6 +881,8 @@ mod devinspect_tests;
 #[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
+mod html_codegen_tests;
+#[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
 mod mask_tests;
