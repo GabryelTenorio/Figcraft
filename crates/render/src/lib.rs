@@ -53,42 +53,78 @@ fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
     Pixmap::new(w, h)
 }
 
+/// How far (device pixels) background blurs read their backdrop: an upper bound over the document.
+#[cfg(not(target_arch = "wasm32"))]
+fn backdrop_reach(doc: &Document, scale: f64) -> f64 {
+    let radius = doc
+        .nodes()
+        .flat_map(|n| n.effects.iter())
+        .filter(|e| e.visible)
+        .filter_map(|e| match e.kind {
+            figcraft_doc::EffectKind::BackgroundBlur { radius } if radius.is_finite() => Some(radius),
+            _ => None,
+        })
+        .fold(0.0, f64::max);
+    // The three box passes of a blur with sigma = radius / 2 reach at most 3 sigma + 3 pixels.
+    if radius > 0.0 { radius * 1.5 * scale + 3.0 } else { 0.0 }
+}
+
 /// Render a page region, splitting it into horizontal bands rendered in parallel (desktop).
 pub fn render_view(doc: &Document, page: NodeId, view: &View, opts: &Options) -> Option<Pixmap> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let threads = rayon::current_num_threads().clamp(1, 16) as u32;
         let bands = threads.min(view.height / 96).max(1);
-        if bands > 1 && view.width.saturating_mul(view.height) > 300_000 {
-            use rayon::prelude::*;
-            let band_h = view.height.div_ceil(bands);
-            let parts: Vec<(u32, Option<Pixmap>)> = (0..bands)
-                .into_par_iter()
-                .map(|i| {
-                    let y0 = i * band_h;
-                    let h = band_h.min(view.height.saturating_sub(y0));
-                    let s = view.scale.max(1e-9);
-                    let v =
-                        View { origin: (view.origin.0, view.origin.1 + f64::from(y0) / s), scale: view.scale, width: view.width, height: h.max(1) };
-                    (y0, render_view_single(doc, page, &v, opts))
-                })
-                .collect();
-            let mut out = new_pixmap(view.width, view.height)?;
-            for (y0, part) in parts {
-                let Some(part) = part else { continue };
-                out.draw_pixmap(
-                    0,
-                    y0 as i32,
-                    part.as_ref(),
-                    &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() },
-                    tiny_skia::Transform::identity(),
-                    None,
-                );
-            }
-            return Some(out);
+        if bands > 1
+            && view.width.saturating_mul(view.height) > 300_000
+            && let Some(p) = render_bands(doc, page, view, opts, bands)
+        {
+            return Some(p);
         }
     }
     render_view_single(doc, page, view, opts)
+}
+
+/// Render `view` as `bands` horizontal bands in parallel. Bands overlap by what background blurs
+/// read and each keeps only its own rows, so a backdrop never ends at a band's edge. `None` when a
+/// blur reaches past a whole band (every band would render most of the view: render it in one
+/// piece instead).
+#[cfg(not(target_arch = "wasm32"))]
+fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands: u32) -> Option<Pixmap> {
+    use rayon::prelude::*;
+    let band_h = view.height.div_ceil(bands.max(1));
+    let overlap = backdrop_reach(doc, view.scale).ceil();
+    if !overlap.is_finite() || overlap > f64::from(band_h) {
+        return None;
+    }
+    let overlap = overlap as u32;
+    let s = view.scale.max(1e-9);
+    let parts: Vec<(u32, Option<Pixmap>)> = (0..bands)
+        .into_par_iter()
+        .map(|i| {
+            let y0 = i * band_h;
+            let h = band_h.min(view.height.saturating_sub(y0)).max(1);
+            let top = y0.saturating_sub(overlap);
+            let bottom = (y0 + h + overlap).min(view.height).max(y0 + h);
+            let v = View { origin: (view.origin.0, view.origin.1 + f64::from(top) / s), scale: view.scale, width: view.width, height: bottom - top };
+            let part = render_view_single(doc, page, &v, opts);
+            let own = tiny_skia::IntRect::from_xywh(0, (y0 - top) as i32, view.width.clamp(1, 16_384), h);
+            (y0, if overlap == 0 { part } else { part.zip(own).and_then(|(p, r)| p.clone_rect(r)) })
+        })
+        .collect();
+    let mut out = new_pixmap(view.width, view.height)?;
+    for (y0, part) in parts {
+        let Some(part) = part else { continue };
+        out.draw_pixmap(
+            0,
+            y0 as i32,
+            part.as_ref(),
+            &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() },
+            tiny_skia::Transform::identity(),
+            None,
+        );
+    }
+    Some(out)
 }
 
 /// Render a page region on the calling thread.
@@ -202,5 +238,7 @@ pub fn encode_webp(p: &Pixmap) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+#[cfg(test)]
+mod band_tests;
 #[cfg(test)]
 mod tests;

@@ -321,16 +321,19 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         draw_content(ctx, pix, n, xf, depth);
         return;
     }
-    // Isolated layer covering the node's paint bounds (clipped to the visible area + margin).
-    let Some(ir) = int_rect(dev.intersect(view), (pw.saturating_add(blur_margin as u32 * 2), ph.saturating_add(blur_margin as u32 * 2))) else {
+    // Isolated layer covering the node's paint bounds, clipped to the visible area + margin. Its
+    // origin can be negative (inside the margin); the size counts from there, or a layer starting
+    // above or left of the pixmap came out short by the margin (a band missing at its far edge).
+    let vis = dev.intersect(view);
+    let (x0, y0) = (vis.x0.floor(), vis.y0.floor());
+    let (w, h) = (vis.x1.ceil() - x0, vis.y1.ceil() - y0);
+    if !(x0.is_finite() && y0.is_finite() && w >= 1.0 && h >= 1.0) {
         return;
-    };
-    // Allow negative origins: recompute without the 0-clamp for margins.
-    let lx = (dev.intersect(view).x0.floor()) as i32;
-    let ly = (dev.intersect(view).y0.floor()) as i32;
-    let lw = ir.width().min(16_384);
-    let lh = ir.height().min(16_384);
-    let Some(mut layer) = Pixmap::new(lw.max(1), lh.max(1)) else { return };
+    }
+    let (lx, ly) = (x0 as i32, y0 as i32);
+    let lw = w.min(16_384.0) as u32;
+    let lh = h.min(16_384.0) as u32;
+    let Some(mut layer) = Pixmap::new(lw, lh) else { return };
     let lxf = Affine::translate((-f64::from(lx), -f64::from(ly))) * xf;
     let shape = node_outline(ctx.doc, n);
     // Background blur: blurred backdrop clipped to the shape, under the content.
@@ -351,40 +354,32 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         }
     }
     draw_content(ctx, &mut layer, n, lxf, depth);
-    // Shape alpha (for inner shadows / noise).
-    let shape_alpha = || -> Option<Pixmap> {
+    // The shape's alpha in a `w` × `h` pixmap through `xf` (for inner shadows / noise).
+    let shape_alpha_in = |w: u32, h: u32, xf: Affine| -> Option<Pixmap> {
         let (path, rule) = shape.as_ref()?;
         let tp = ts_path(path)?;
-        let mut s = Pixmap::new(lw.max(1), lh.max(1))?;
+        let mut s = Pixmap::new(w, h)?;
         let paint = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::WHITE), anti_alias: true, ..Default::default() };
-        s.fill_path(&tp, &paint, *rule, ts_transform(lxf), None);
+        s.fill_path(&tp, &paint, *rule, ts_transform(xf), None);
         Some(s)
     };
+    let shape_alpha = || shape_alpha_in(lw, lh, lxf);
     let mut inner_shadows: Vec<Pixmap> = Vec::new();
     for e in n.effects.iter().filter(|e| e.visible) {
         match &e.kind {
             EffectKind::InnerShadow(s) => {
                 let Some(sa) = shape_alpha() else { continue };
-                let mut sh = sa.clone();
-                fx::invert_alpha(&mut sh);
-                // Work in a padded buffer: everything beyond the layer is "outside the shape", so
-                // the blur pulls shadow in from every edge, not just the offset side.
+                // Work in a buffer padded by the shadow's reach, with the shape drawn at its offset
+                // over all of it: everything outside the shape casts shadow inwards, from every
+                // edge. The shape itself (not the layer's box) decides what is outside: the layer
+                // can be cropped (to a render band or the view) where the shape carries on, and
+                // treating that crop as an edge drew shadow bands across the layer.
                 let (dx, dy) = (s.offset.0 * ctx.scale, s.offset.1 * ctx.scale);
                 let pad =
                     ((s.radius / 2.0 * ctx.scale * 3.0) + s.spread.abs() * ctx.scale + dx.abs().max(dy.abs())).ceil().clamp(0.0, 2048.0) as u32 + 2;
-                let Some(mut big) = Pixmap::new(lw.max(1) + pad * 2, lh.max(1) + pad * 2) else { continue };
-                big.fill(tiny_skia::Color::WHITE);
-                let ox = pad as f32 + dx as f32;
-                let oy = pad as f32 + dy as f32;
-                if let Some(rect) = tiny_skia::Rect::from_xywh(ox, oy, lw as f32, lh as f32) {
-                    let clear = tiny_skia::Paint {
-                        shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::TRANSPARENT),
-                        blend_mode: tiny_skia::BlendMode::Source,
-                        ..Default::default()
-                    };
-                    big.fill_rect(rect, &clear, Transform::identity(), None);
-                }
-                big.draw_pixmap(ox.round() as i32, oy.round() as i32, sh.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                let at = Affine::translate((f64::from(pad) + dx, f64::from(pad) + dy)) * lxf;
+                let Some(mut big) = shape_alpha_in(lw + pad * 2, lh + pad * 2, at) else { continue };
+                fx::invert_alpha(&mut big);
                 fx::morph(&mut big, (s.spread * ctx.scale).round() as i32);
                 fx::blur(&mut big, s.radius / 2.0 * ctx.scale);
                 let Some(mut cropped) = Pixmap::new(lw.max(1), lh.max(1)) else { continue };
