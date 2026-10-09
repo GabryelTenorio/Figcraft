@@ -228,6 +228,8 @@ pub struct DocState {
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
+    /// The document as of the last version saved (or as opened): autosaves only follow changes.
+    checkpoint: Arc<Document>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -259,6 +261,7 @@ impl DocState {
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
         let mut st = Self {
+            checkpoint: doc.clone(),
             saved_doc: doc.clone(),
             doc,
             selection: Vec::new(),
@@ -290,6 +293,16 @@ impl DocState {
     pub fn versions_mut(&mut self) -> &mut Vec<figcraft_format::Version> {
         self.versions_changed = true;
         &mut self.versions
+    }
+
+    /// The document changed since the last version was saved (or since it was opened).
+    pub fn changed_since_checkpoint(&self) -> bool {
+        !Arc::ptr_eq(self.preview.as_ref().map_or(&self.doc, |p| &p.doc), &self.checkpoint)
+    }
+
+    /// Note that a version of the current document was just saved.
+    pub(crate) fn mark_checkpoint(&mut self) {
+        self.checkpoint = self.doc.clone();
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -851,6 +864,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
 
 #[cfg(test)]
 mod al_drag_tests;
+#[cfg(test)]
+mod autosave_tests;
 #[cfg(test)]
 mod frame_tests;
 #[cfg(test)]

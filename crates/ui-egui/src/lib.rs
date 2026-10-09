@@ -92,6 +92,9 @@ pub enum LeftTab {
     Assets,
 }
 
+/// How often open documents get an autosave checkpoint (seconds).
+pub const AUTOSAVE_SECS: f64 = 30.0 * 60.0;
+
 /// UI-only state (serialisable for `ui.inspect`).
 pub struct UiState {
     pub left_width: f32,
@@ -138,6 +141,8 @@ pub struct UiState {
     /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
     /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
     pub last_copy: Option<String>,
+    /// When (UI clock, seconds) open documents next get an autosave checkpoint.
+    pub next_autosave: f64,
     /// The Assets panel shows the libraries view (publish this file, enabled libraries).
     pub libraries: bool,
 }
@@ -184,6 +189,7 @@ impl Default for UiState {
             versions: versions::VersionUi::default(),
 
             last_copy: None,
+            next_autosave: 0.0,
             libraries: false,
         }
     }
@@ -335,6 +341,23 @@ impl FigApp {
         }
     }
 
+    /// Every [`AUTOSAVE_SECS`], each open document with unsaved changes since its last version
+    /// gets an autosave checkpoint in its version history.
+    fn autosave_tick(&mut self, now: f64) {
+        if now < self.ui.next_autosave {
+            return;
+        }
+        if self.ui.next_autosave > 0.0 {
+            let active = self.session.active;
+            for i in 0..self.session.docs.len() {
+                self.session.active = i;
+                let _ = self.session.execute("version.autosave", &json!({}));
+            }
+            self.session.active = active;
+        }
+        self.ui.next_autosave = now + AUTOSAVE_SECS;
+    }
+
     /// Draw the whole UI.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -342,6 +365,7 @@ impl FigApp {
         let ctx = ui.ctx().clone();
         let first = !self.fonts_installed;
         self.logic(&ctx);
+        self.autosave_tick(ctx.input(|i| i.time));
         if first {
             // New fonts apply from the next frame; draw nothing until then.
             ctx.request_repaint();

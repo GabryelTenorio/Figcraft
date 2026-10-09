@@ -95,7 +95,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "version.list",
             "List versions",
-            "{}  the version history, oldest first: [{id, index, name, description, time (Unix seconds), previewing?}]",
+            "{}  the version history, oldest first: [{id, index, name, description, time (Unix seconds), auto?, previewing?}]",
             false,
             |s, _| Ok(version_list(s.ds()?))
         ),
@@ -146,6 +146,13 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(out)
             }
         ),
+        spec!(
+            "version.autosave",
+            "Autosave version",
+            "{}  save an automatic checkpoint when the document has unsaved changes since the last version (the app does this every 30 minutes); keeps the newest 20 autosaves → {saved, version?}",
+            false,
+            autosave
+        ),
         spec!("version.exitPreview", "Back to current version", "{}  end a version preview", false, |s, _| {
             Ok(json!({"ended": s.ds_mut()?.end_preview()}))
         }),
@@ -190,7 +197,47 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn version_json(index: usize, v: &Version) -> Value {
-    json!({"id": v.id, "index": index, "name": v.name, "description": v.description, "time": v.time})
+    let mut j = json!({"id": v.id, "index": index, "name": v.name, "description": v.description, "time": v.time});
+    if v.auto {
+        j["auto"] = json!(true);
+    }
+    j
+}
+
+/// Autosaves kept per file; older ones make room for new ones.
+pub const MAX_AUTOSAVES: usize = 20;
+
+/// `version.autosave`: a checkpoint of a document with unsaved changes since the last version.
+fn autosave(s: &mut Session, _: &Value) -> Result<Value> {
+    let ds = s.ds_mut()?;
+    if ds.preview.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
+        return Ok(json!({"saved": false}));
+    }
+    // Make room: the oldest autosave goes first; user versions are never dropped.
+    let autos = ds.versions.iter().filter(|v| v.auto).count();
+    if (autos >= MAX_AUTOSAVES || ds.versions.len() >= figcraft_format::MAX_VERSIONS)
+        && let Some(oldest) = ds.versions.iter().position(|v| v.auto)
+    {
+        ds.versions_mut().remove(oldest);
+    }
+    if ds.versions.len() >= figcraft_format::MAX_VERSIONS {
+        return Ok(json!({"saved": false}));
+    }
+    let mut v = snapshot_version(ds, "Autosave", "");
+    v.auto = true;
+    let out = version_json(ds.versions.len(), &v);
+    ds.versions_mut().push(v);
+    ds.mark_checkpoint();
+    Ok(json!({"saved": true, "version": out}))
+}
+
+/// A version of `ds`'s document as it is now, opening on the page shown.
+fn snapshot_version(ds: &DocState, name: &str, description: &str) -> Version {
+    let mut snap = ds.doc.clone();
+    if snap.current_page != Some(ds.page) {
+        Arc::make_mut(&mut snap).current_page = Some(ds.page);
+    }
+    Version::new(new_version_id(&ds.versions), name, description, super::comment::now_secs(), snap)
 }
 
 fn version_list(ds: &DocState) -> Value {
@@ -249,14 +296,11 @@ fn save_version(s: &mut Session, p: &Value) -> Result<Value> {
     let name =
         string(p, "name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| format!("Version {}", ds.versions.len() + 1));
     let description = string(p, "description").unwrap_or_default();
-    let mut snap = ds.doc.clone();
     // The version opens on the page shown when it was saved.
-    if snap.current_page != Some(ds.page) {
-        Arc::make_mut(&mut snap).current_page = Some(ds.page);
-    }
-    let v = Version::new(new_version_id(&ds.versions), &name, description.trim(), super::comment::now_secs(), snap);
+    let v = snapshot_version(ds, &name, description.trim());
     let out = version_json(ds.versions.len(), &v);
     ds.versions_mut().push(v);
+    ds.mark_checkpoint();
     Ok(out)
 }
 

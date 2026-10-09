@@ -182,8 +182,10 @@ name stays), `version.rename {id | index, name, description?}`, `version.delete 
 gestures are refused until `version.restore` keeps it or `version.exitPreview` goes back. Saving,
 closing or saving a version ends the preview first, and `version.list` marks the shown version
 `previewing`. Indexes are validated
-(a negative or out-of-range index is an error). A file keeps at most 100 versions; there are no
-automatic versions. `file.versionHistory` returns the same list and opens the panel in the app.
+(a negative or out-of-range index is an error). A file keeps at most 100 versions.
+`version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
+has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
+and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
 
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.

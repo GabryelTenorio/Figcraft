@@ -19,6 +19,8 @@ pub struct VersionUi {
     pub form: Option<Form>,
     /// The version waiting for delete confirmation.
     pub confirm_delete: Option<String>,
+    /// Runs of autosaves shown unfolded (keyed by their newest version's id).
+    pub open_groups: std::collections::BTreeSet<String>,
 }
 
 /// Title and description being written; `id` is the version being edited (`None` = a new one).
@@ -55,12 +57,14 @@ struct Row {
     name: String,
     description: String,
     time: u64,
+    auto: bool,
 }
 
 enum Action {
     Close,
     Preview(String),
     ExitPreview,
+    ToggleGroup(String),
     New,
     Submit,
     CancelForm,
@@ -111,7 +115,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             ds.versions
                 .iter()
                 .rev()
-                .map(|v| Row { id: v.id.clone(), name: v.name.clone(), description: v.description.clone(), time: v.time })
+                .map(|v| Row { id: v.id.clone(), name: v.name.clone(), description: v.description.clone(), time: v.time, auto: v.auto })
                 .collect()
         })
         .unwrap_or_default();
@@ -124,7 +128,25 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             action = Some(Action::ExitPreview);
         }
         let last = rows.len().saturating_sub(1);
-        for (i, row) in rows.iter().enumerate() {
+        let mut i = 0;
+        let mut group_end = 0;
+        while let Some(row) = rows.get(i) {
+            // Two or more autosaves in a row fold into one line (open while one of them is shown).
+            if i >= group_end {
+                let run = rows.iter().skip(i).take_while(|r| r.auto).count();
+                if run >= 2 {
+                    group_end = i + run;
+                    let open = app.ui.versions.open_groups.contains(&row.id)
+                        || rows.iter().skip(i).take(run).any(|r| previewing.as_deref() == Some(r.id.as_str()));
+                    if autosave_group(ui, run, open, group_end > last && !open) {
+                        action = Some(Action::ToggleGroup(row.id.clone()));
+                    }
+                    if !open {
+                        i = group_end;
+                        continue;
+                    }
+                }
+            }
             let a = if app.ui.versions.confirm_delete.as_deref() == Some(row.id.as_str()) {
                 inline_row(ui, i == last, |ui| confirm_row(ui, row))
             } else if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.as_deref() == Some(row.id.as_str())) {
@@ -135,6 +157,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             if a.is_some() {
                 action = a;
             }
+            i += 1;
         }
         if rows.is_empty() {
             ui.add_space(8.0);
@@ -170,6 +193,11 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
         }
         Action::ExitPreview => {
             app.run("version.exitPreview", json!({}));
+        }
+        Action::ToggleGroup(id) => {
+            if !st.open_groups.remove(&id) {
+                st.open_groups.insert(id);
+            }
         }
         Action::New => {
             st.confirm_delete = None;
@@ -408,6 +436,21 @@ pub fn preview_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
         }
         None => {}
     }
+}
+
+/// The folded line for `n` autosaves in a row; true when clicked (fold / unfold).
+fn autosave_group(ui: &mut Ui, n: usize, open: bool, last: bool) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
+    }
+    timeline(ui, r, r.center().y, true, !last, false);
+    let chevron = Rect::from_center_size(pos2(r.min.x + TEXT_X + 6.0, r.center().y), vec2(12.0, 12.0));
+    icons::paint(ui.painter(), chevron, if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
+    let label = format!("{n} autosave versions");
+    ui.painter().text(pos2(chevron.max.x + 6.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text_secondary);
+    resp.on_hover_text(if open { "Fold autosaves" } else { "Show autosaves" }).clicked()
 }
 
 /// A row holding a form (rename, delete confirmation), with the timeline running past it.

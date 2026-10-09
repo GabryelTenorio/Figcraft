@@ -68,6 +68,8 @@ pub struct Version {
     pub description: String,
     /// When it was saved (Unix seconds).
     pub time: u64,
+    /// Saved automatically (a checkpoint) rather than by the user.
+    pub auto: bool,
     snapshot: Snapshot,
 }
 
@@ -88,6 +90,7 @@ impl Version {
             name: clip(name, MAX_VERSION_NAME),
             description: clip(description, MAX_VERSION_DESCRIPTION),
             time,
+            auto: false,
             snapshot: Snapshot::Doc(doc),
         }
     }
@@ -251,7 +254,11 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
                     Snapshot::Stored { json, .. } => put(&mut z, &name, deflated, json)?,
                 }
                 let images: Vec<&String> = v.images().keys().collect();
-                index.push(json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images}));
+                let mut entry = json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images});
+                if v.auto {
+                    entry["auto"] = json!(true);
+                }
+                index.push(entry);
             }
             put(&mut z, VERSION_INDEX, deflated, &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
         }
@@ -363,6 +370,7 @@ fn read_versions<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<S
             name: text("name", MAX_VERSION_NAME),
             description: text("description", MAX_VERSION_DESCRIPTION),
             time: e.get("time").and_then(Value::as_u64).unwrap_or(0),
+            auto: e.get("auto").and_then(Value::as_bool).unwrap_or(false),
             snapshot: Snapshot::Stored { json: Arc::new(json), images },
         });
     }
