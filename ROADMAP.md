@@ -117,7 +117,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
 | Canvas & navigation | 6 | 60% | rulers/guides dragging, pixel preview, minimap-free perf at scale | 8–12 |
-| Selection & transform | 8 | 55% | rotated multi-select handles, scale tool polish, measure hover polish, nudge-resize | 12–18 |
+| Selection & transform | 8 | 60% | rotated multi-select handles, scale tool polish, measure hover polish | 10–15 |
 | Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
 | Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
 | Paint | 7 | 55% | gradient handles on canvas, image crop mode, document colours, colour models | 12–18 |
@@ -133,7 +133,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **48%**.
+Weighted feature depth ≈ **49%**.
 
 ## Milestones
 

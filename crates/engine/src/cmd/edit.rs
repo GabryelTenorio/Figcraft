@@ -117,7 +117,20 @@ pub fn specs() -> Vec<CommandSpec> {
             select_and_page(s, ids.clone())?;
             Ok(json!({"selection": ids}))
         }),
-        spec!("transform.nudge", "Nudge", "{dx, dy, big? (use the big nudge amount)}", true, nudge),
+        spec!(
+            "transform.nudge",
+            "Nudge",
+            "{dx, dy, big? (use the big nudge amount)} (auto layout children move one place along the flow instead)",
+            true,
+            nudge
+        ),
+        spec!(
+            "transform.nudgeSize",
+            "Resize by nudge",
+            "{dw, dh, big?} (grow or shrink the selection by the nudge amount, top-left fixed)",
+            true,
+            nudge_size
+        ),
         spec!("object.rename", "Rename", "{id?, name}", true, |s, p| {
             let name = req_string("object.rename", p, "name")?;
             let ids = req_targets("object.rename", s, p)?;
@@ -666,13 +679,91 @@ fn select_same(s: &mut Session, same: impl Fn(&Node, &Node) -> bool) -> Result<V
 fn nudge(s: &mut Session, p: &Value) -> Result<Value> {
     let big = boolean(p, "big").unwrap_or(false);
     let k = if big { s.prefs.nudge_big } else { s.prefs.nudge_small };
-    let dx = num_or(p, "dx", 0.0) * k;
-    let dy = num_or(p, "dy", 0.0) * k;
+    let (ux, uy) = (num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
+    let (dx, dy) = (ux * k, uy * k);
     let ids = req_targets("transform.nudge", s, p)?;
     let doc = s.doc_mut()?;
-    for i in roots(doc, &ids) {
-        let n = doc.get_mut(i)?;
-        n.transform = Affine::translate((dx, dy)) * n.transform;
+    let ids = roots(doc, &ids);
+    // Children in an auto layout flow move one place instead (Left/Up earlier, Right/Down later).
+    let flowing = |doc: &Document, i: NodeId| {
+        let n = doc.node(i)?;
+        let parent = n.parent?;
+        let l = doc.node(parent)?.layout.clone()?;
+        (!n.child_layout.absolute).then_some((parent, l))
+    };
+    let mut parents: BTreeMap<NodeId, AutoLayout> = BTreeMap::new();
+    for i in &ids {
+        match flowing(doc, *i) {
+            Some((parent, l)) => {
+                parents.insert(parent, l);
+            }
+            None => {
+                let n = doc.get_mut(*i)?;
+                n.transform = Affine::translate((dx, dy)) * n.transform;
+            }
+        }
+    }
+    for (parent, l) in parents {
+        // (`f64::signum` is 1 for 0.0, so compare explicitly.)
+        let sign = |v: f64| -> isize {
+            if v > 0.0 {
+                1
+            } else if v < 0.0 {
+                -1
+            } else {
+                0
+            }
+        };
+        let step: isize = match l.mode {
+            LayoutMode::Vertical => sign(uy),
+            LayoutMode::Grid => sign(ux) + sign(uy) * l.grid_columns.clamp(1, 1000) as isize,
+            _ => sign(ux),
+        };
+        reorder_in_flow(doc, parent, &ids, step)?;
+    }
+    ok()
+}
+
+/// Move the selected children of `parent` `step` places along its child order (selected
+/// neighbours move together; the block stops at either end).
+fn reorder_in_flow(doc: &mut Document, parent: NodeId, selected: &[NodeId], step: isize) -> Result<()> {
+    if step == 0 {
+        return Ok(());
+    }
+    let mut kids = doc.get(parent)?.children.clone();
+    for _ in 0..step.unsigned_abs().min(kids.len()) {
+        let forward = step > 0;
+        let order: Vec<usize> = if forward { (0..kids.len()).rev().collect() } else { (0..kids.len()).collect() };
+        for i in order {
+            let j = if forward { i + 1 } else { i.wrapping_sub(1) };
+            let (Some(a), Some(b)) = (kids.get(i).copied(), kids.get(j).copied()) else { continue };
+            if selected.contains(&a) && !selected.contains(&b) {
+                kids.swap(i, j);
+            }
+        }
+    }
+    doc.get_mut(parent)?.children = kids;
+    Ok(())
+}
+
+fn nudge_size(s: &mut Session, p: &Value) -> Result<Value> {
+    let big = boolean(p, "big").unwrap_or(false);
+    let k = if big { s.prefs.nudge_big } else { s.prefs.nudge_small };
+    let (dw, dh) = (num_or(p, "dw", 0.0) * k, num_or(p, "dh", 0.0) * k);
+    let ids = req_targets("transform.nudgeSize", s, p)?;
+    let ids = roots(s.doc()?, &ids);
+    for i in ids {
+        let Some((w, h)) = s.doc()?.node(i).map(|n| (n.width, n.height)) else { continue };
+        let mut q = serde_json::Map::new();
+        q.insert("ids".into(), json!([i]));
+        // Only the axis that changes becomes fixed.
+        if dw != 0.0 {
+            q.insert("width".into(), json!((w + dw).max(0.0)));
+        }
+        if dh != 0.0 {
+            q.insert("height".into(), json!((h + dh).max(0.0)));
+        }
+        super::arrange::resize_cmd(s, &Value::Object(q))?;
     }
     ok()
 }

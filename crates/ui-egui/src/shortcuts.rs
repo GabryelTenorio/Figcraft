@@ -144,9 +144,14 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool) -> bool {
         Key::ArrowDown => (0.0, 1.0),
         _ => (0.0, 0.0),
     };
-    if (dx, dy) != (0.0, 0.0) && !m.command && !m.alt {
+    if (dx, dy) != (0.0, 0.0) && !m.alt {
         if !app.session.selection().is_empty() {
-            app.run("transform.nudge", json!({"dx": dx, "dy": dy, "big": m.shift}));
+            if m.command {
+                // Cmd/Ctrl+arrows resize: right/down grow, left/up shrink.
+                app.run("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": m.shift}));
+            } else {
+                app.run("transform.nudge", json!({"dx": dx, "dy": dy, "big": m.shift}));
+            }
         }
         return true;
     }

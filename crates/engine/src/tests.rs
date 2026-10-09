@@ -343,3 +343,42 @@ fn vector_edit_mode() {
     s.execute("vector.edit.end", &json!({})).unwrap();
     assert!(s.ds().unwrap().vector_edit.is_none());
 }
+
+#[test]
+fn arrows_reorder_auto_layout_children_and_cmd_arrows_resize() {
+    let mut s = sess();
+    let row = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 300, "height": 40})).unwrap());
+    let kids: Vec<NodeId> =
+        (0..3).map(|i| id(&s.execute("shape.rectangle", &json!({"x": i * 60, "y": 0, "width": 40, "height": 20, "parent": row})).unwrap())).collect();
+    s.execute("layout.add", &json!({"ids": [row]})).unwrap();
+    let order = |s: &Session| s.doc().unwrap().node(row).unwrap().children.clone();
+    assert_eq!(order(&s), kids);
+    // Right moves the first child one place later; Down does nothing in a horizontal flow.
+    s.execute("transform.nudge", &json!({"ids": [kids[0]], "dx": 1, "dy": 0})).unwrap();
+    assert_eq!(order(&s), vec![kids[1], kids[0], kids[2]]);
+    s.execute("transform.nudge", &json!({"ids": [kids[0]], "dx": 0, "dy": 1})).unwrap();
+    assert_eq!(order(&s), vec![kids[1], kids[0], kids[2]]);
+    // A selected block moves together and stops at the end.
+    s.execute("transform.nudge", &json!({"ids": [kids[1], kids[0]], "dx": 1, "dy": 0, "big": true})).unwrap();
+    assert_eq!(order(&s), vec![kids[2], kids[1], kids[0]]);
+    s.execute("transform.nudge", &json!({"ids": [kids[0]], "dx": -1, "dy": 0})).unwrap();
+    assert_eq!(order(&s), vec![kids[2], kids[0], kids[1]]);
+    s.undo().unwrap();
+    assert_eq!(order(&s), vec![kids[2], kids[1], kids[0]]);
+    // Free layers still nudge.
+    let free = id(&s.execute("shape.rectangle", &json!({"x": 500, "y": 500, "width": 10, "height": 10})).unwrap());
+    s.execute("transform.nudge", &json!({"ids": [free], "dx": 1, "dy": 0, "big": true})).unwrap();
+    assert_eq!(s.doc().unwrap().world_bounds(free).unwrap().x0, 510.0);
+    // Cmd+arrows: resize by the nudge amount, top-left fixed, only the changed axis becomes fixed.
+    s.execute("transform.nudgeSize", &json!({"ids": [free], "dw": 1, "dh": 0})).unwrap();
+    let n = s.doc().unwrap().node(free).unwrap().clone();
+    assert_eq!((n.width, n.height), (11.0, 10.0));
+    assert_eq!(s.doc().unwrap().world_bounds(free).unwrap().x0, 510.0);
+    s.execute("transform.nudgeSize", &json!({"ids": [free], "dw": 0, "dh": -1, "big": true})).unwrap();
+    assert_eq!(s.doc().unwrap().node(free).unwrap().height, 0.0, "never negative");
+    // A hugging auto layout frame keeps hugging vertically when only its width is nudged.
+    s.execute("node.set", &json!({"id": row, "props": {"sizingH": "hug", "sizingV": "hug"}})).unwrap();
+    s.execute("transform.nudgeSize", &json!({"ids": [row], "dw": 1, "dh": 0, "big": true})).unwrap();
+    let r = s.doc().unwrap().node(row).unwrap().clone();
+    assert_eq!(r.child_layout.sizing_v, figcraft_doc::Sizing::Hug);
+}

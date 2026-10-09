@@ -171,7 +171,12 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                                     "ArrowUp" => (0, -1),
                                     _ => (0, 1),
                                 };
-                                app.session.execute("transform.nudge", &json!({"dx": dx, "dy": dy, "big": b(p, "shift")})).map_err(|e| e.to_string())
+                                let (cmd, params) = if b(p, "cmd") {
+                                    ("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": b(p, "shift")}))
+                                } else {
+                                    ("transform.nudge", json!({"dx": dx, "dy": dy, "big": b(p, "shift")}))
+                                };
+                                app.session.execute(cmd, &params).map_err(|e| e.to_string())
                             }
                             _ => Err(format!("no shortcut `{spec}`")),
                         },

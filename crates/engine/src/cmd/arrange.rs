@@ -397,7 +397,7 @@ fn scale_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("transform.resize", s, p)?;
     let anchor = string(p, "anchor").unwrap_or_else(|| "tl".into());
     let (ax, ay) = match anchor.as_str() {
