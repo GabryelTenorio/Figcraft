@@ -128,6 +128,33 @@ from the pen's open end; clicking a point connects or branches), `vector.edit.pe
 `vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
 `vector.edit.state`; local coordinates are the layer's own.
 
+### Local libraries
+
+A `.figcraft` file can be published as a library and used from other files (local files only: no
+accounts, nothing on the network; the browser build has no file system, so there the commands that
+read library files return an error).
+
+- **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
+  the file's components, component sets and styles as a new version (by default everything except
+  names starting with `.` or `_`, or what the last publish offered; `include`/`exclude` take
+  component ids and style ids or names). Components and styles they use come along, unoffered. Each
+  asset keeps the version it last changed in; publishing with no changes is refused. Save the file
+  (`file.save`) so other files see the new version.
+- **Enable**: `library.add {path}` / `library.remove {id}` (id, name or path) / `library.list
+  {assets?}` (versions, pending updates, errors; with `assets: true` each library's components and
+  styles, and what this file can publish). Libraries are read read-only with size limits, and read
+  again when the file changes.
+- **Use**: `library.place {library, component, x?, y?}` (a component, set or variant by id or name;
+  page point, default the view's centre) copies the component, with the components and styles it
+  uses, into the file as a read-only main component and places an instance; `library.import
+  {library, component}` only copies it (then `instance.create`, `instance.swap`…).
+  `library.applyStyle {library, style, ids?, target?}` copies a style in (linked, read-only) and
+  applies it. Instances of library components behave like any instance: overrides, properties,
+  variants, swap, reset, detach. Editing the copies (or library styles) is refused; edit the library
+  file and publish.
+- **Update**: `library.updates` lists the components and styles with a newer published version;
+  `library.acceptUpdates {ids? (library ids)}` pulls them in, keeping instance overrides.
+
 ### Importing REST API file JSON
 
 The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, best with

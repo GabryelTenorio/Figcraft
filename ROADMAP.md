@@ -61,8 +61,10 @@ dimension measured side by side.
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
    the frame or auto layout slot under the pointer); exposed nested instances (their properties
    show on the main's instances); component descriptions (edited on the main, shown on
-   instances). *Left:* nested override edge cases, slots, local libraries (publish/use across
-   files). 10–14 h.
+   instances); local libraries (publish a file's components, sets and styles with per-asset
+   versions, enable library files, place library components and apply library styles as
+   read-only linked copies, "Library updates available" with overrides kept on update).
+   *Left:* nested override edge cases, slots, library variables. 7–11 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -145,7 +147,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
 | Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
-| Components & variants | 9 | 60% | libraries, slots, nested override edge cases | 10–15 |
+| Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |

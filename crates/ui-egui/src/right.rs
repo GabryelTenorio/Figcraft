@@ -272,7 +272,8 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         }
     });
     widgets::separator(ui);
-    let styles: Vec<(String, String, String)> = doc.styles.iter().map(|s| (s.id.clone(), s.name.clone(), s.kind.type_name().to_string())).collect();
+    let styles: Vec<(String, String, String)> =
+        figcraft_engine::library::local_styles(doc).map(|s| (s.id.clone(), s.name.clone(), s.kind.type_name().to_string())).collect();
     widgets::section_header(ui, "Local styles", &[], styles.is_empty());
     for (_, name, ty) in &styles {
         row(ui, 28.0, |ui| {

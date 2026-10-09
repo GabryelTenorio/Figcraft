@@ -58,24 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Place instance",
             "{component, x, y (page point: the instance is centred there, inside the frame under it; auto layout frames insert by position)}",
             true,
-            |s, p| {
-                let cmd = "instance.place";
-                let c = req_id(cmd, p, "component")?;
-                let pt = figcraft_geom::Point::new(req_num(cmd, p, "x")?, req_num(cmd, p, "y")?);
-                let page = s.page()?;
-                let doc = s.doc_mut()?;
-                let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
-                let mut slot = crate::drop::slot(doc, page, pt);
-                // Never inside its own main component (or a copy of it).
-                if doc.is_ancestor(c, slot.parent) || slot.parent == c {
-                    slot = crate::drop::DropSlot { parent: page, index: None, line: None };
-                }
-                let (w, h) = doc.node(c).map(|n| (n.width, n.height)).unwrap_or((0.0, 0.0));
-                let local = doc.world_transform(slot.parent).inverse() * figcraft_geom::Point::new(pt.x - w / 2.0, pt.y - h / 2.0);
-                let i = crate::components::create_instance_at(doc, c, slot.parent, local.x, local.y, slot.index)?;
-                s.set_selection(vec![i]);
-                Ok(json!({"id": i, "parent": slot.parent}))
-            }
+            place
         ),
         spec!(
             "component.exposeInstance",
@@ -129,6 +112,10 @@ pub fn specs() -> Vec<CommandSpec> {
             };
             if !doc.contains(component) {
                 return Err(EngineError::Disabled(cmd.into(), "the main component was deleted (use component.restoreMain)".into()));
+            }
+            if let Some(lib) = crate::library::library_of(doc, component) {
+                let name = crate::library::library_name(doc, lib);
+                return Err(EngineError::Disabled(cmd.into(), format!("the main component is in the library \"{name}\": open that file to edit it")));
             }
             super::edit::select_and_page(s, vec![component])?;
             let ds = s.ds_mut()?;
@@ -184,11 +171,39 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(Value::Array(
                 doc.nodes()
                     .filter(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }))
-                    .map(|n| json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "page": doc.page_of(n.id), "instances": instances_of(doc, n.id).len()}))
+                    .map(|n| {
+                        let mut v = json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "page": doc.page_of(n.id), "instances": instances_of(doc, n.id).len()});
+                        if let Some(lib) = crate::library::library_of(doc, n.id) {
+                            v["library"] = json!(lib);
+                            v["page"] = Value::Null;
+                        }
+                        v
+                    })
                     .collect(),
             ))
         }),
     ]
+}
+
+/// Place an instance of `component` centred on page point (`x`, `y`), in the frame or auto layout
+/// slot under it (`instance.place`).
+pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "instance.place";
+    let c = req_id(cmd, p, "component")?;
+    let pt = figcraft_geom::Point::new(req_num(cmd, p, "x")?, req_num(cmd, p, "y")?);
+    let page = s.page()?;
+    let doc = s.doc_mut()?;
+    let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
+    let mut slot = crate::drop::slot(doc, page, pt);
+    // Never inside its own main component (or a copy of it).
+    if doc.is_ancestor(c, slot.parent) || slot.parent == c {
+        slot = crate::drop::DropSlot { parent: page, index: None, line: None };
+    }
+    let (w, h) = doc.node(c).map(|n| (n.width, n.height)).unwrap_or((0.0, 0.0));
+    let local = doc.world_transform(slot.parent).inverse() * figcraft_geom::Point::new(pt.x - w / 2.0, pt.y - h / 2.0);
+    let i = crate::components::create_instance_at(doc, c, slot.parent, local.x, local.y, slot.index)?;
+    s.set_selection(vec![i]);
+    Ok(json!({"id": i, "parent": slot.parent}))
 }
 
 /// A component to instantiate: the component itself, or a set's default (first) variant.

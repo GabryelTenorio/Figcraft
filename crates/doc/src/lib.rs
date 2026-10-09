@@ -10,6 +10,7 @@
 
 pub mod comments;
 pub mod geometry;
+pub mod library;
 pub mod node;
 pub mod props;
 pub mod proto;
@@ -21,6 +22,7 @@ pub mod vector_faces;
 pub use comments::*;
 pub use figcraft_color as color;
 pub use figcraft_geom as geom;
+pub use library::*;
 pub use node::*;
 pub use props::*;
 pub use styles::*;
@@ -114,6 +116,12 @@ pub struct Document {
     /// Comment threads on any page.
     #[serde(default)]
     pub comments: Vec<Comment>,
+    /// Enabled libraries and the components and styles copied from them.
+    #[serde(default, skip_serializing_if = "Libraries::is_unused")]
+    pub libraries: Arc<Libraries>,
+    /// This file's published library; serialized separately by the format crate.
+    #[serde(skip)]
+    pub published: Option<Arc<PublishedLibrary>>,
 }
 
 impl Default for Document {
@@ -137,6 +145,8 @@ impl Document {
             current_page: None,
             document_colors: Vec::new(),
             comments: Vec::new(),
+            libraries: Arc::default(),
+            published: None,
         };
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);
@@ -649,7 +659,9 @@ impl Document {
             {
                 issues.push(format!("{id} not listed in parent {p}"));
             }
-            if n.is_page() != self.pages.contains(id) {
+            // The library store's root is a page that is never listed.
+            let listed = self.pages.contains(id) || (n.is_page() && self.libraries.store == Some(*id));
+            if n.is_page() != listed {
                 issues.push(format!("page list mismatch for {id}"));
             }
         }
@@ -692,9 +704,13 @@ impl Document {
                 self.nodes.remove(&d);
             }
         }
-        self.pages.retain(|p| self.nodes.get(p).is_some_and(|n| n.is_page()));
+        let store = self.libraries.store.filter(|s| self.nodes.get(s).is_some_and(|n| n.is_page()));
+        if store != self.libraries.store {
+            Arc::make_mut(&mut self.libraries).store = store;
+        }
+        self.pages.retain(|p| self.nodes.get(p).is_some_and(|n| n.is_page()) && Some(*p) != store);
         for (k, n) in self.nodes.iter() {
-            if n.is_page() && !self.pages.contains(k) {
+            if n.is_page() && !self.pages.contains(k) && Some(*k) != store {
                 self.pages.push(*k);
             }
         }

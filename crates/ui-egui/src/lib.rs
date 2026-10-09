@@ -135,6 +135,8 @@ pub struct UiState {
     /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
     /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
     pub last_copy: Option<String>,
+    /// The Assets panel shows the libraries view (publish this file, enabled libraries).
+    pub libraries: bool,
 }
 
 impl Default for UiState {
@@ -179,6 +181,7 @@ impl Default for UiState {
             versions: versions::VersionUi::default(),
 
             last_copy: None,
+            libraries: false,
         }
     }
 }
@@ -244,6 +247,11 @@ impl FigApp {
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
                 "panel.versionHistory" => versions::open(self),
+                "panel.libraries" => {
+                    self.ui.left_tab = LeftTab::Assets;
+                    self.ui.left_collapsed = false;
+                    self.ui.libraries = true;
+                }
                 "home" => self.ui.home = true,
                 "dialog.saveAs" => self.save_as_dialog(),
                 "present" => {

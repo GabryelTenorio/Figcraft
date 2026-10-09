@@ -7,6 +7,7 @@ pub mod create;
 pub mod edit;
 pub mod file;
 pub mod layout;
+pub mod library;
 pub mod page;
 pub mod props;
 pub mod proto;
@@ -74,6 +75,7 @@ fn registry() -> &'static Registry {
         list.extend(styles::specs());
         list.extend(variables::specs());
         list.extend(component::specs());
+        list.extend(library::specs());
         list.extend(proto::specs());
         list.extend(comment::specs());
         list.extend(crate::vectoredit::specs());

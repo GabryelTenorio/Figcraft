@@ -665,7 +665,8 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
 pub fn check_structure_edit(before: &Document, after: &Document) -> Result<(), String> {
     for &id in after.dirty() {
         let (Some(n), Some(b)) = (after.node(id), before.node(id)) else { continue };
-        if n.children == b.children {
+        // Library copies change only through library updates (and are read-only otherwise).
+        if n.children == b.children || after.is_remote(id) {
             continue;
         }
         if owning_instance(before, id).is_some() && owning_instance(after, id).is_some() {

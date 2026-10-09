@@ -302,6 +302,10 @@ pub fn select_and_page(s: &mut Session, ids: Vec<NodeId>) -> Result<()> {
         && let Some(pg) = doc.page_of(*first)
         && pg != s.page()?
     {
+        // Library copies live outside the pages.
+        if !doc.pages.contains(&pg) {
+            return Err(EngineError::Disabled("select".into(), format!("{first} isn't on a page (it is a library component)")));
+        }
         s.ds_mut()?.page = pg;
     }
     s.set_selection(ids);

@@ -4,14 +4,18 @@
 //! header), `images/<sha256>` for every image the document (or a saved version) uses, an optional
 //! `thumbnail.png` and an optional version history: `versions/index.json` (`{"versions": [{id,
 //! name, description, time, images}]}`, oldest first) plus one `versions/<id>.json` snapshot per
-//! version (a `document.json` of its own). Readers that don't know about versions ignore those
-//! entries. Plain JSON (the `document.json` alone) also opens. Reading is lenient: structural
-//! problems are repaired (see [`Document::repair`]) and reported, damaged versions are skipped.
+//! version (a `document.json` of its own). A published file also holds its library (see
+//! [`library`]). Readers that don't know about versions or libraries ignore those entries. Plain
+//! JSON (the `document.json` alone) also opens. Reading is lenient: structural problems are
+//! repaired (see [`Document::repair`]) and reported, damaged versions and libraries are skipped.
 //!
 //! [`rest`] imports the public REST API file JSON.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod library;
 pub mod rest;
+
+pub use library::{is_valid_library_id, read_library};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, Write};
@@ -154,6 +158,13 @@ pub fn add_image(doc: &mut Document, bytes: Vec<u8>) -> Result<(String, u32, u32
     Ok((hash, w, h))
 }
 
+/// Image bytes with their pixel size (0×0 when they can't be decoded).
+pub(crate) fn image_data(data: Vec<u8>) -> ImageData {
+    let (w, h) =
+        image::ImageReader::new(std::io::Cursor::new(&data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok()).unwrap_or((0, 0));
+    ImageData { bytes: Arc::new(data), width: w, height: h }
+}
+
 /// Serialize the document (without images) to the JSON value stored in `document.json`.
 pub fn to_json(doc: &Document) -> Result<Value, FormatError> {
     let mut v = serde_json::to_value(doc).map_err(|e| FormatError::Io(e.to_string()))?;
@@ -244,6 +255,9 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
             }
             put(&mut z, VERSION_INDEX, deflated, &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
         }
+        if let Some(lib) = &doc.published {
+            library::write(&mut z, lib, &written)?;
+        }
         z.finish().map_err(io_err)?;
     }
     Ok(buf.into_inner())
@@ -285,9 +299,11 @@ pub fn load_bytes_with_versions(bytes: &[u8]) -> Result<Loaded, FormatError> {
     for name in names {
         let Ok(data) = read_member(&mut z, &name, MAX_MEMBER) else { continue };
         let hash = name.trim_start_matches("images/").to_string();
-        let (w, h) =
-            image::ImageReader::new(std::io::Cursor::new(&data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok()).unwrap_or((0, 0));
-        images.insert(hash, ImageData { bytes: Arc::new(data), width: w, height: h });
+        images.insert(hash, image_data(data));
+    }
+    match library::read(&mut z, &images) {
+        Ok(lib) => doc.published = lib.map(Arc::new),
+        Err(e) => issues.push(format!("the published library was skipped: {e}")),
     }
     let versions = read_versions(&mut z, &images, &mut issues);
     // Images only the version history uses stay with the versions.

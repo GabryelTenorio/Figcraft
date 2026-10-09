@@ -177,7 +177,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),
         spec!("help.about", "About FigCraft", "{}", false, |s, _| ui(s, "dialog.about")),
         spec!("help.page", "Help page", "{}", false, |s, _| ui(s, "open.help")),
-        spec!("libraries.open", "Libraries", "{}", false, |s, _| ui(s, "dialog.libraries")),
+        spec!("libraries.open", "Libraries", "{}", false, |s, _| ui(s, "panel.libraries")),
         spec!(
             "tool.set",
             "Choose tool",

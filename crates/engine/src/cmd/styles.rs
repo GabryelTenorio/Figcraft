@@ -53,6 +53,9 @@ pub fn specs() -> Vec<CommandSpec> {
             let id = req_string("style.delete", p, "style")?;
             let doc = s.doc_mut()?;
             let sid = doc.style(&id).map(|st| st.id.clone()).ok_or_else(|| bad("style.delete", "no such style"))?;
+            if crate::library::is_remote_style(doc, &sid) {
+                return Err(EngineError::Disabled("style.delete".into(), crate::library::READ_ONLY.into()));
+            }
             doc.styles.retain(|st| st.id != sid);
             // Nodes keep their values but lose the link.
             for nid in doc.ids().collect::<Vec<_>>() {
@@ -291,7 +294,7 @@ pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<
     Ok(())
 }
 
-fn apply(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "style.apply";
     let st = req_string(cmd, p, "style")?;
     let ids = req_targets(cmd, s, p)?;
@@ -315,6 +318,9 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let st = req_string(cmd, p, "style")?;
     let doc = s.doc_mut()?;
     let idx = doc.styles.iter().position(|x| x.id == st || x.name == st).ok_or_else(|| bad(cmd, "no such style"))?;
+    if doc.styles.get(idx).is_some_and(|x| crate::library::is_remote_style(doc, &x.id)) {
+        return Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into()));
+    }
     let from = id(p, "from");
     let new_kind = if let Some(v) = get(p, "value") {
         let cur = doc.styles.get(idx).map(|x| x.kind.type_name()).unwrap_or("paint");

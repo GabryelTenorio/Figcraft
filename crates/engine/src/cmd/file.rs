@@ -234,6 +234,8 @@ fn restore_version(s: &mut Session, p: &Value) -> Result<Value> {
     let out = version_json(i, v);
     let d = Arc::make_mut(&mut doc);
     d.name = ds.doc.name.clone();
+    // What the file published belongs to the file, not to the version.
+    d.published = ds.doc.published.clone();
     // The snapshot is already consistent: nothing to re-normalise.
     d.take_dirty();
     // Stay on the current page when the version has it.
@@ -621,6 +623,7 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             n.source = Some(src);
         }
     }
+    crate::library::merge_store(doc, other, &map)?;
     Ok(new_pages)
 }
 

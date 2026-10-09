@@ -89,6 +89,8 @@ pub enum Icon {
     Eyedropper,
     Code,
     Assets,
+    /// Libraries: an open book.
+    Library,
     Layers,
     Opacity,
     Blend,
@@ -575,6 +577,11 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.fill_poly(&[(8.0, 2.5), (10.5, 5.0), (8.0, 7.5), (5.5, 5.0)]);
             p.poly(&[(3.0, 8.5), (5.5, 11.0), (3.0, 13.5), (0.5, 11.0)], true);
             p.rect(9.5, 9.0, 14.0, 13.5, 0.5);
+        }
+        Library => {
+            p.poly(&[(8.0, 4.0), (5.5, 2.8), (2.0, 2.8), (2.0, 12.5), (5.5, 12.5), (8.0, 13.8)], false);
+            p.poly(&[(8.0, 4.0), (10.5, 2.8), (14.0, 2.8), (14.0, 12.5), (10.5, 12.5), (8.0, 13.8)], false);
+            p.line(8.0, 4.0, 8.0, 13.8);
         }
         Layers => {
             p.poly(&[(8.0, 2.5), (14.0, 5.5), (8.0, 8.5), (2.0, 5.5)], true);

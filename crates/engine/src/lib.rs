@@ -14,6 +14,7 @@ pub mod components;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
+pub mod library;
 pub mod measure;
 pub mod params;
 pub mod snap;
@@ -383,6 +384,8 @@ pub struct Session {
     pub last_command: Option<(String, Value)>,
     /// Status / toast message for the UI.
     pub message: Option<String>,
+    /// Library files read for the open documents.
+    pub libraries: library::Cache,
 }
 
 impl Default for Session {
@@ -412,6 +415,7 @@ impl Session {
             recent_colors: Vec::new(),
             last_command: None,
             message: None,
+            libraries: library::Cache::default(),
         }
     }
 
@@ -485,14 +489,22 @@ impl Session {
         result
     }
 
-    /// Instances can't gain, lose or reorder layers: refuse such an edit (it is rolled back).
+    /// Instances can't gain, lose or reorder layers, and library copies are read-only: refuse such
+    /// an edit (it is rolled back).
     fn check_instance_structure(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
         let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
         let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
         if Arc::ptr_eq(&ds.doc, bdoc) {
             return Ok(());
         }
-        components::check_structure_edit(bdoc, &ds.doc).map_err(|m| EngineError::Disabled(id.to_string(), m))
+        // "Repeat" runs the repeated command.
+        let effective = match (&self.last_command, id) {
+            (Some((last, _)), "edit.repeat") => last.as_str(),
+            _ => id,
+        };
+        library::check_read_only(effective, bdoc, &ds.doc)
+            .and_then(|()| components::check_structure_edit(bdoc, &ds.doc))
+            .map_err(|m| EngineError::Disabled(id.to_string(), m))
     }
 
     /// Bookkeeping after a successful command: normalise what changed, push undo, bump revision.
