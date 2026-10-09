@@ -1,23 +1,28 @@
-//! The prototype player: presents a frame full-window and follows its interactions.
+//! The prototype player: presents a frame full-window ([`show`]) or in the preview pane floating
+//! over the canvas ([`show_pane`]), and follows its interactions. Both run the same [`player`].
 //!
 //! The player works on its own copy of the document (interactive components, variables and scroll
-//! offsets change it without touching the user's file). Every frame is rendered through
-//! `figcraft_render::render_node` into a texture. Smart animate interpolates a temporary document
-//! between the outgoing and incoming states ([`smart_interpolate`]) and renders it each animation
-//! frame; the other transitions move or fade the two cached textures ([`transition_frames`]).
+//! offsets change it without touching the user's file) and copies the editor's document again
+//! whenever it changes, so the preview pane follows edits live. On a device, the presented frame
+//! is sized to the device's screen ([`fit_viewport`]): what doesn't fit is clipped, or scrolls when
+//! the frame's overflow allows it. Every frame is rendered through `figcraft_render::render_node`
+//! into a texture. Smart animate interpolates a temporary document between the outgoing and
+//! incoming states ([`smart_interpolate`]) and renders it each animation frame; the other
+//! transitions move or fade the two cached textures ([`transition_frames`]).
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
-use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use figcraft_color::{Color, Paint, PaintKind};
-use figcraft_doc::proto::{Action, Direction, Easing, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
-use figcraft_doc::{Document, Node, NodeId, NodeKind, VariableValue};
+use figcraft_doc::proto::{Action, Device, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger};
+use figcraft_doc::{Document, HConstraint, Node, NodeId, NodeKind, VConstraint, VariableValue};
 use figcraft_geom::{Affine, Point};
+use serde_json::{Value, json};
 
 use crate::FigApp;
-use crate::theme::{ACCENT, regular, semibold};
-
-const BAR_H: f32 = 40.0;
+use crate::icons::{self, Icon};
+use crate::theme::{ACCENT, Tokens, regular, semibold};
 
 /// A page in the player's history (what Back returns to, and how).
 #[derive(Clone, Debug)]
@@ -62,10 +67,12 @@ struct Anim {
     easing: Easing,
 }
 
+/// A frame scrolling from one offset to another.
+type ScrollMove = (NodeId, (f64, f64), (f64, f64));
+
+/// "Scroll to" in progress: each moving frame with its offsets from and to.
 struct ScrollAnim {
-    frame: NodeId,
-    from: (f64, f64),
-    to: (f64, f64),
+    frames: Vec<ScrollMove>,
     start: f64,
     dur: f64,
     easing: Easing,
@@ -117,6 +124,10 @@ pub struct Presenter {
     dragged: bool,
     flash_until: f64,
     urls: Vec<String>,
+    /// The editor's document as last copied (the player copies it again when it changes).
+    source: Option<Arc<Document>>,
+    /// Scrolling by dragging: the frame and its offset when the drag began.
+    drag_scroll: Option<(NodeId, (f64, f64))>,
 }
 
 impl Presenter {
@@ -157,19 +168,119 @@ impl Presenter {
             dragged: false,
             flash_until: 0.0,
             urls: Vec::new(),
+            source: None,
+            drag_scroll: None,
         }
     }
 
-    /// The player's document with scroll offsets applied (cached per revision).
+    /// Follow the editor's document: copy it the first time and whenever it changed, keeping the
+    /// screen, the overlays and the scroll offsets that still exist (a deleted screen goes back to
+    /// the start). Runtime state (variables set, variants changed) starts over from the edit.
+    pub fn sync(&mut self, doc: &Arc<Document>, now: f64) {
+        if self.source.as_ref().is_some_and(|s| Arc::ptr_eq(s, doc)) {
+            return;
+        }
+        let first = self.source.is_none();
+        self.source = Some(doc.clone());
+        let copy = Document::clone(doc);
+        self.original = Some(copy.clone());
+        self.doc = Some(copy);
+        if first {
+            self.arrived = now;
+            return;
+        }
+        if !doc.contains(self.current) {
+            if doc.contains(self.start) {
+                self.restart(self.start, now);
+            }
+            return;
+        }
+        self.history.retain(|v| doc.contains(v.frame));
+        self.overlays.retain(|o| doc.contains(o.id));
+        self.closing.retain(|(_, o)| doc.contains(o.id));
+        // These hold states of the document before the edit.
+        self.temp = None;
+        self.anim = None;
+        self.scroll_anim = None;
+        self.drag_scroll = None;
+        self.scroll.retain(|f, _| doc.contains(*f));
+        let clamped: Vec<(NodeId, (f64, f64))> = self.scroll.iter().map(|(f, s)| (*f, clamp_scroll(*s, self.range(doc, *f)))).collect();
+        self.scroll.extend(clamped);
+        self.rev += 1;
+    }
+
+    /// The player's document with scroll offsets applied and the presented frame sized to the
+    /// device's screen (cached per revision).
     fn display(&mut self) -> Option<Document> {
         if let Some((r, d)) = &self.display
             && *r == self.rev
         {
             return Some(d.clone());
         }
-        let d = apply_scroll(self.doc.as_ref()?, &self.scroll);
+        let doc = self.doc.as_ref()?;
+        let mut d = apply_scroll(doc, &self.scroll);
+        if let Some(vp) = viewport(doc, self.current) {
+            fit_viewport(&mut d, self.current, vp);
+        }
         self.display = Some((self.rev, d.clone()));
         Some(d)
+    }
+
+    /// How far `frame` scrolls (in `doc`, without scroll offsets): the presented frame within the
+    /// device's screen, other frames within themselves.
+    fn range(&self, doc: &Document, frame: NodeId) -> (f64, f64) {
+        let vp = if frame == self.current { viewport(doc, frame) } else { None };
+        scroll_range_in(doc, frame, vp)
+    }
+
+    /// What "Scroll to" `dest` moves: every scrolling frame around it, innermost first, brings the
+    /// layer (then the frame holding it) to its top-left as far as it can scroll. Each entry is
+    /// (frame, offset now, offset after).
+    fn scroll_to_layer(&self, doc: &Document, dest: NodeId) -> Vec<ScrollMove> {
+        let mut out = Vec::new();
+        let mut target = dest;
+        for f in doc.ancestors(dest) {
+            let (rx, ry) = self.range(doc, f);
+            let Some(tn) = doc.node(target) else { break };
+            if rx <= 0.0 && ry <= 0.0 {
+                continue;
+            }
+            let rel = doc.world_transform(f).inverse() * doc.world_transform(target);
+            let b = figcraft_geom::transform_rect_bbox(rel, tn.local_rect());
+            let from = self.scroll.get(&f).copied().unwrap_or((0.0, 0.0));
+            let to = clamp_scroll((if rx > 0.0 { b.x0 } else { from.0 }, if ry > 0.0 { b.y0 } else { from.1 }), (rx, ry));
+            out.push((f, from, to));
+            target = f;
+        }
+        out
+    }
+
+    /// Scroll the presented frame to `(x, y)` (page units, clamped to what it can scroll).
+    pub fn scroll_to(&mut self, x: f64, y: f64) {
+        let Some(doc) = self.doc.as_ref() else { return };
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let to = clamp_scroll((x, y), self.range(doc, self.current));
+        self.scroll.insert(self.current, to);
+        self.scroll_anim = None;
+        self.rev += 1;
+    }
+
+    /// The player's state for `ui.inspect`.
+    pub fn inspect(&self) -> Value {
+        let doc = self.doc.as_ref();
+        json!({
+            "current": self.current,
+            "name": doc.and_then(|d| d.node(self.current)).map(|n| n.name.as_str()),
+            "start": self.start,
+            "history": self.history.iter().map(|v| v.frame).collect::<Vec<_>>(),
+            "overlays": self.overlays.iter().map(|o| o.id).collect::<Vec<_>>(),
+            "scroll": self.scroll.get(&self.current).map_or([0.0, 0.0], |s| [s.0, s.1]),
+            "scrollRange": doc.map(|d| { let r = self.range(d, self.current); [r.0, r.1] }),
+            "device": doc.and_then(|d| page_settings(d, self.current).device()).map(|d| d.name),
+            "viewport": doc.and_then(|d| viewport(d, self.current)).map(|v| [v.0, v.1]),
+        })
     }
 
     fn snapshot(&self) -> Option<Snapshot> {
@@ -200,26 +311,38 @@ impl Presenter {
         self.rev += 1;
     }
 
-    fn go(&mut self, frame: NodeId, transition: Transition, dur: f64, easing: Easing, now: f64, remember: bool) {
+    /// Show `frame`. It starts scrolled to the top unless `preserve` keeps the scroll position of
+    /// the frame being left (as far as `frame` can scroll).
+    fn go(&mut self, frame: NodeId, transition: Transition, dur: f64, easing: Easing, now: f64, remember: bool, preserve: bool) {
         self.begin(transition, dur, easing, now);
         if remember {
             self.history.push(Visit { frame: self.current, transition, dur, easing });
         }
+        let kept = self.scroll.get(&self.current).copied().filter(|_| preserve);
         self.overlays.clear();
         self.scroll.clear();
         self.scroll_anim = None;
+        self.drag_scroll = None;
         self.temp = None;
         self.current = frame;
+        if let Some(s) = kept
+            && let Some(doc) = self.doc.as_ref()
+        {
+            let to = clamp_scroll(s, self.range(doc, frame));
+            self.scroll.insert(frame, to);
+        }
         self.arrive(now);
     }
 
-    fn restart(&mut self, start: NodeId, now: f64) {
+    /// Start over at `start` with the document as the editor has it.
+    pub fn restart(&mut self, start: NodeId, now: f64) {
         self.start = start;
         self.current = start;
         self.history.clear();
         self.overlays.clear();
         self.scroll.clear();
         self.scroll_anim = None;
+        self.drag_scroll = None;
         self.anim = None;
         self.temp = None;
         self.doc = self.original.clone();
@@ -234,6 +357,7 @@ impl Presenter {
         self.overlays = t.snap.overlays;
         self.history = t.snap.history;
         self.scroll = t.snap.scroll;
+        self.drag_scroll = None;
         self.hovered.clear();
         self.rev += 1;
     }
@@ -261,12 +385,12 @@ impl Presenter {
     fn perform(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64) -> bool {
         let Some(doc) = self.doc.clone() else { return false };
         match a {
-            Action::Navigate { dest } => {
+            Action::Navigate { dest, preserve_scroll } => {
                 let top = doc.top_level_frame(*dest).unwrap_or(*dest);
                 if !doc.contains(top) || (top == self.current && self.overlays.is_empty()) {
                     return false;
                 }
-                self.go(top, tr, dur, easing, now, true);
+                self.go(top, tr, dur, easing, now, true, *preserve_scroll);
                 true
             }
             Action::Back => {
@@ -275,29 +399,22 @@ impl Presenter {
                 }
                 match self.history.pop() {
                     Some(v) => {
-                        self.go(v.frame, v.transition.reversed(), v.dur, v.easing, now, false);
+                        self.go(v.frame, v.transition.reversed(), v.dur, v.easing, now, false, false);
                         true
                     }
                     None => false,
                 }
             }
             Action::ScrollTo { dest } => {
-                let Some(frame) = doc.ancestors(*dest).into_iter().find(|a| doc.node(*a).is_some_and(|n| n.overflow != Overflow::None)) else {
+                let frames = self.scroll_to_layer(&doc, *dest);
+                if frames.is_empty() {
                     return false;
-                };
-                let (Some(dn), Some(fnode)) = (doc.node(*dest), doc.node(frame)) else { return false };
-                let rel = doc.world_transform(frame).inverse() * doc.world_transform(*dest);
-                let b = figcraft_geom::transform_rect_bbox(rel, dn.local_rect());
-                let (rx, ry) = scroll_range(&doc, frame);
-                let hx = matches!(fnode.overflow, Overflow::Horizontal | Overflow::Both);
-                let vy = matches!(fnode.overflow, Overflow::Vertical | Overflow::Both);
-                let from = self.scroll.get(&frame).copied().unwrap_or((0.0, 0.0));
-                let to = (if hx { b.x0.clamp(0.0, rx) } else { from.0 }, if vy { b.y0.clamp(0.0, ry) } else { from.1 });
+                }
                 if matches!(tr, Transition::Instant) || dur <= 0.0 {
-                    self.scroll.insert(frame, to);
+                    self.scroll.extend(frames.iter().map(|(f, _, to)| (*f, *to)));
                     self.rev += 1;
                 } else {
-                    self.scroll_anim = Some(ScrollAnim { frame, from, to, start: now, dur, easing });
+                    self.scroll_anim = Some(ScrollAnim { frames, start: now, dur, easing });
                 }
                 true
             }
@@ -610,6 +727,14 @@ pub fn smart_interpolate(from: &Document, from_root: NodeId, to: &Document, to_r
 
 /// How far `frame`'s content can scroll `(x, y)` (0 when it doesn't overflow or doesn't scroll).
 pub fn scroll_range(doc: &Document, frame: NodeId) -> (f64, f64) {
+    scroll_range_in(doc, frame, None)
+}
+
+/// How far `frame`'s content can scroll when `viewport` (page units, from its top-left) of it
+/// shows, as a device's screen shows a top-level frame: the frame itself is content then, so a
+/// frame taller than the screen scrolls through its whole height. Without a viewport the frame
+/// shows at its own size and what overflows it scrolls. Only the axes its overflow allows scroll.
+pub fn scroll_range_in(doc: &Document, frame: NodeId, viewport: Option<(f64, f64)>) -> (f64, f64) {
     let Some(n) = doc.node(frame) else { return (0.0, 0.0) };
     if n.overflow == Overflow::None {
         return (0.0, 0.0);
@@ -628,9 +753,75 @@ pub fn scroll_range(doc: &Document, frame: NodeId) -> (f64, f64) {
         x1 += l.padding[1];
         y1 += l.padding[2];
     }
-    let rx = if matches!(n.overflow, Overflow::Horizontal | Overflow::Both) { (x1 - n.width).max(0.0) } else { 0.0 };
-    let ry = if matches!(n.overflow, Overflow::Vertical | Overflow::Both) { (y1 - n.height).max(0.0) } else { 0.0 };
+    let (vw, vh) = match viewport {
+        Some(v) => {
+            x1 = x1.max(n.width);
+            y1 = y1.max(n.height);
+            v
+        }
+        None => (n.width, n.height),
+    };
+    let rx = if matches!(n.overflow, Overflow::Horizontal | Overflow::Both) { (x1 - vw).max(0.0) } else { 0.0 };
+    let ry = if matches!(n.overflow, Overflow::Vertical | Overflow::Both) { (y1 - vh).max(0.0) } else { 0.0 };
     (if rx.is_finite() { rx } else { 0.0 }, if ry.is_finite() { ry } else { 0.0 })
+}
+
+/// `(x, y)` kept within `0..=range` on each axis (0 for non-finite values).
+fn clamp_scroll((x, y): (f64, f64), (rx, ry): (f64, f64)) -> (f64, f64) {
+    let c = |v: f64, r: f64| if v.is_finite() && r.is_finite() { v.clamp(0.0, r.max(0.0)) } else { 0.0 };
+    (c(x, rx), c(y, ry))
+}
+
+/// The prototype settings of the page holding `id` (defaults when there's none).
+pub fn page_settings(doc: &Document, id: NodeId) -> PrototypeSettings {
+    doc.page_of(id)
+        .and_then(|pg| doc.node(pg))
+        .and_then(|n| match &n.kind {
+            NodeKind::Page { prototype, .. } => Some(prototype.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// The part of top-level `frame` its page's device shows (page units): the frame clipped to the
+/// device's screen. None without a device: the frame then shows whole.
+pub fn viewport(doc: &Document, frame: NodeId) -> Option<(f64, f64)> {
+    let d = page_settings(doc, frame).device()?;
+    let n = doc.node(frame)?;
+    Some((n.width.min(d.width), n.height.min(d.height)))
+}
+
+/// Size `frame` to the `(w, h)` of it a screen shows. The content keeps its place (what doesn't
+/// fit is clipped or scrolls); fixed layers follow their constraints to the screen's edges, so a
+/// tab bar pinned to the frame's bottom sits at the bottom of the screen (stretching constraints
+/// keep the layer's size).
+pub fn fit_viewport(doc: &mut Document, frame: NodeId, (w, h): (f64, f64)) {
+    let Some(n) = doc.node(frame) else { return };
+    let (dw, dh) = (w - n.width, h - n.height);
+    if !dw.is_finite() || !dh.is_finite() || (dw == 0.0 && dh == 0.0) {
+        return;
+    }
+    let fixed: Vec<NodeId> =
+        n.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|c| c.scroll_position == ScrollPosition::Fixed)).collect();
+    for c in fixed {
+        if let Some(m) = doc.node_mut(c) {
+            let dx = match m.constraints.horizontal {
+                HConstraint::Right => dw,
+                HConstraint::Center => dw / 2.0,
+                _ => 0.0,
+            };
+            let dy = match m.constraints.vertical {
+                VConstraint::Bottom => dh,
+                VConstraint::Center => dh / 2.0,
+                _ => 0.0,
+            };
+            m.transform = Affine::translate((dx, dy)) * m.transform;
+        }
+    }
+    if let Some(m) = doc.node_mut(frame) {
+        m.width = w;
+        m.height = h;
+    }
 }
 
 /// Shift scrolling frames' children by their scroll offsets. Fixed children stay put; sticky
@@ -742,8 +933,9 @@ fn variable_value(values: &BTreeMap<String, VariableValue>, v: &serde_json::Valu
     })
 }
 
-/// Layers with interactions under `root`, with their (clipped) screen rects, bottom-most first.
-fn hotspots(doc: &Document, root: NodeId, place: &Place) -> Vec<(NodeId, Rect)> {
+/// Layers with interactions under `root`, with their screen rects (clipped by frames that clip
+/// content and by `screen`), bottom-most first.
+fn hotspots(doc: &Document, root: NodeId, place: &Place, screen: Rect) -> Vec<(NodeId, Rect)> {
     let mut out = Vec::new();
     let mut hidden: HashSet<NodeId> = HashSet::new();
     for id in doc.subtree(root) {
@@ -756,7 +948,7 @@ fn hotspots(doc: &Document, root: NodeId, place: &Place) -> Vec<(NodeId, Rect)> 
             continue;
         }
         let Some(b) = doc.world_bounds(id) else { continue };
-        let mut r = place.rect(b);
+        let mut r = place.rect(b).intersect(screen);
         let mut cur = n.parent;
         if id != root {
             while let Some(a) = cur {
@@ -786,94 +978,217 @@ fn find_trigger(doc: &Document, id: NodeId, want: impl Fn(&Trigger) -> bool) -> 
 }
 
 // ---------------------------------------------------------------------------------------------
-// The player UI.
+// The player UI, shared by the full-window presenter and the preview pane.
 
 struct Layout {
     disp: Document,
     scale: f64,
     place: Place,
-    target: Rect,
+    /// What shows the prototype: the device's screen, else the presented frame itself.
+    screen: Rect,
+    /// What the presented frame may draw into: the device's screen, else the whole area (shadows
+    /// and overflowing content show around a frame presented without a device).
+    clip: Rect,
+    device: Option<Device>,
     overlays: Vec<(NodeId, Place, Rect)>,
     /// Overlays animating out (same order as `Presenter::closing`).
     closing: Vec<(NodeId, Place, Rect)>,
 }
 
-/// The page's prototype device ("None" when unset).
-fn device_of(p: &Presenter) -> String {
-    p.doc
-        .as_ref()
-        .and_then(|d| d.page_of(p.current).and_then(|pg| d.node(pg)))
-        .and_then(|n| match &n.kind {
-            NodeKind::Page { prototype, .. } => Some(prototype.device.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "None".into())
+/// Bezel width around a device's screen of width `w`, and the screen's corner radius.
+fn bezel(device: &str, w: f32) -> (f32, f32) {
+    match device {
+        "MacBook Air" => ((w * 0.025).max(6.0), 0.0),
+        "Desktop" => ((w * 0.02).max(6.0), 0.0),
+        d if d.starts_with("iPad") => ((w * 0.05).max(8.0), w * 0.04),
+        _ => ((w * 0.06).max(6.0), w * 0.13),
+    }
 }
 
-fn layout(p: &mut Presenter, area: Rect) -> Option<Layout> {
+/// How far a device's body reaches past its screen of width `w`: (each side, top, bottom).
+fn body_outset(device: &str, w: f32) -> (f32, f32, f32) {
+    let (b, _) = bezel(device, w);
+    match device {
+        "MacBook Air" => (b + w * 0.08, b, b + (w * 0.022).max(6.0)),
+        "Desktop" => (b, b, b + w * 0.08 + 6.0),
+        _ => (b + 3.0, b, b),
+    }
+}
+
+/// Place the presented frame in `area` (kept `pad` from its edges): on its device's screen, with
+/// the whole device fitting, else the frame itself scaled to fit. Never above 100%.
+fn layout(p: &mut Presenter, area: Rect, pad: f32) -> Option<Layout> {
     let disp = p.display()?;
     let fb = disp.world_bounds(p.current)?;
-    // Leave room for the device body around the screen.
-    let avail = if device_of(p) == "None" { area.shrink(32.0) } else { area.shrink2(vec2(72.0, 80.0)) };
-    let scale = (f64::from(avail.width()) / fb.width().max(1.0)).min(f64::from(avail.height()) / fb.height().max(1.0)).clamp(0.01, 1.0);
-    let place = Place::centered(fb, area.center(), scale);
-    let target = place.rect(fb);
+    let device = page_settings(&disp, p.current).device();
+    let avail = area.shrink(pad);
+    let (sw, sh) = device.map_or((fb.width(), fb.height()), |d| (d.width, d.height));
+    let mut scale = (f64::from(avail.width()) / sw.max(1.0)).min(f64::from(avail.height()) / sh.max(1.0));
+    if let Some(d) = device {
+        let (ws, hs) = ((sw * scale) as f32, (sh * scale) as f32);
+        let (x, top, bottom) = body_outset(d.name, ws);
+        scale *= f64::from((avail.width() / (ws + 2.0 * x)).min(avail.height() / (hs + top + bottom)));
+    }
+    let scale = if scale.is_finite() { scale.clamp(0.01, 1.0) } else { 0.01 };
+    let size = vec2((sw * scale) as f32, (sh * scale) as f32);
+    // Centre the whole device: a laptop's base hangs below its screen.
+    let shift = device.map_or(0.0, |d| {
+        let (_, top, bottom) = body_outset(d.name, size.x);
+        (top - bottom) / 2.0
+    });
+    let screen = Rect::from_center_size(area.center() + vec2(0.0, shift), size);
+    let place = Place::centered(fb, screen.center(), scale);
     let place_overlay = |o: &OverlayState| {
         let ob = disp.world_bounds(o.id)?;
         let size = vec2((ob.width() * scale) as f32, (ob.height() * scale) as f32);
-        let r = overlay_rect(o.position, target, size, o.anchor);
+        let r = overlay_rect(o.position, screen, size, o.anchor);
         Some((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r))
     };
     let overlays = p.overlays.iter().filter_map(place_overlay).collect();
     let closing = p.closing.iter().filter_map(|(_, o)| place_overlay(o)).collect();
-    Some(Layout { disp, scale, place, target, overlays, closing })
+    let clip = if device.is_some() { screen } else { area };
+    Some(Layout { disp, scale, place, screen, clip, device, overlays, closing })
 }
 
+/// The keys that present the current frame full-window.
+pub const PRESENT_SHORTCUT: &str = "Alt+Cmd+Enter";
+
+/// Where the player sits: the whole window or the preview pane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Chrome {
+    pane: bool,
+    bar_h: f32,
+    /// Space kept around the device or frame.
+    pad: f32,
+    /// Corner radius of the window around the player (the pane's).
+    round: u8,
+    /// The player may take keys (the pane only while hovered, and never while the editor is
+    /// typing: text on the canvas or in a field).
+    keys: bool,
+}
+
+const FULL: Chrome = Chrome { pane: false, bar_h: 40.0, pad: 32.0, round: 0, keys: true };
+
+/// What the player's top bar asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BarAction {
+    Close,
+    Restart,
+    /// Present full-window (from the pane).
+    Present,
+}
+
+/// The full-window presenter (while `app.ui.present` is set). Escape or Close ends it.
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let now = ctx.input(|i| i.time);
     let Some(mut pres) = app.ui.present.take() else { return };
-    if pres.doc.is_none() {
-        let doc = app.session.doc().ok().cloned();
-        pres.original = doc.clone();
-        pres.doc = doc;
-        pres.arrived = now;
+    if let Ok(ds) = app.session.ds() {
+        pres.sync(&ds.doc, now);
     }
-    let bg = pres
-        .doc
-        .as_ref()
-        .and_then(|d| d.page_of(pres.current).and_then(|pg| d.node(pg)))
-        .and_then(|n| match &n.kind {
-            NodeKind::Page { prototype, .. } => Some(crate::theme::c32(prototype.background)),
-            _ => None,
-        })
-        .unwrap_or(Color32::from_rgb(0x1E, 0x1E, 0x1E));
-    let mut exit = false;
-    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(bg)).show(ui, |ui| {
-        exit = player(&mut pres, ui, &ctx, now);
+    let mut action = None;
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
+        action = player(&mut pres, ui, ui.max_rect(), now, FULL);
     });
     for u in pres.urls.drain(..) {
         app.services.open_url(&u);
     }
-    if exit || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if action == Some(BarAction::Close) || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         return;
     }
     app.ui.present = Some(pres);
 }
 
+/// The prototype preview pane: the player in a floating, resizable window over the canvas. It
+/// follows edits live, and selecting another top-level frame in the editor shows that frame.
+pub struct Pane {
+    pub player: Presenter,
+    /// The open file it previews (another tab closes it).
+    doc_uid: u64,
+    /// The top-level frame last selected in the editor.
+    selected: Option<NodeId>,
+}
+
+/// The top-level frame of the editor's first selected layer.
+fn selected_frame(ds: &figcraft_engine::DocState) -> Option<NodeId> {
+    ds.selection.first().and_then(|i| ds.doc.top_level_frame(*i))
+}
+
+impl Pane {
+    pub fn new(start: NodeId, session: &figcraft_engine::Session) -> Self {
+        let (doc_uid, selected) = session.ds().map(|ds| (ds.uid, selected_frame(ds))).unwrap_or((0, None));
+        Pane { player: Presenter::new(start), doc_uid, selected }
+    }
+}
+
+/// The preview pane's window id (its position and size persist under it).
+pub fn pane_id() -> Id {
+    Id::new("proto_preview_pane")
+}
+
+/// Show the preview pane while `app.ui.preview` is set (call once per frame, before shortcuts:
+/// keys a hovered pane's prototype uses don't reach the editor).
+pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
+    let Some(mut pane) = app.ui.preview.take() else { return };
+    let Ok(ds) = app.session.ds() else { return };
+    if ds.uid != pane.doc_uid {
+        return;
+    }
+    let now = ctx.input(|i| i.time);
+    let (doc, selected) = (ds.doc.clone(), selected_frame(ds));
+    pane.player.sync(&doc, now);
+    // Deselecting and coming back to the same frame keeps the preview where it got to.
+    if selected.is_some() && selected != pane.selected {
+        pane.selected = selected;
+        if let Some(f) = selected.filter(|f| *f != pane.player.current) {
+            pane.player.restart(f, now);
+        }
+    }
+    let t = Tokens::get(ctx);
+    let canvas = app.canvas.rect;
+    let style = ctx.global_style();
+    let typing = ds.text_edit.is_some() || ctx.memory(|m| m.focused().is_some());
+    let chrome = Chrome { pane: true, bar_h: 36.0, pad: 12.0, round: style.visuals.window_corner_radius.nw, keys: !typing };
+    let mut action = None;
+    egui::Window::new("Prototype preview")
+        .id(pane_id())
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(true)
+        .default_size(vec2(320.0, 600.0))
+        .min_size(vec2(220.0, 260.0))
+        .default_pos(pos2(canvas.max.x - 336.0, canvas.min.y + 16.0))
+        .constrain_to(ctx.content_rect())
+        .frame(egui::Frame::window(&style).fill(t.panel).inner_margin(egui::Margin::same(0)))
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+            action = player(&mut pane.player, ui, rect, now, chrome);
+        });
+    for u in pane.player.urls.drain(..) {
+        app.services.open_url(&u);
+    }
+    match action {
+        Some(BarAction::Close) => {}
+        Some(BarAction::Present) => {
+            let start = pane.player.current;
+            app.ui.preview = Some(pane);
+            app.run("proto.present", json!({"start": start}));
+        }
+        _ => app.ui.preview = Some(pane),
+    }
+}
+
 /// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs).
-fn device_body(ui: &Ui, device: &str, s: Rect) {
-    let p = ui.painter();
+fn device_body(p: &egui::Painter, device: &str, s: Rect) {
     let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
     let edge = Color32::from_rgb(0x5A, 0x5A, 0x5E);
     let w = s.width();
+    let (b, screen_r) = bezel(device, w);
     match device {
-        "None" => {}
         "MacBook Air" => {
-            let b = (w * 0.025).max(6.0);
             let lid = s.expand(b);
             p.rect_filled(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), body);
-            p.rect_stroke(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), egui::Stroke::new(1.0, edge), egui::StrokeKind::Outside);
+            p.rect_stroke(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), Stroke::new(1.0, edge), StrokeKind::Outside);
             // The base: a thin slab wider than the lid, with a finger notch.
             let base = Rect::from_min_max(pos2(lid.min.x - w * 0.08, lid.max.y), pos2(lid.max.x + w * 0.08, lid.max.y + (w * 0.022).max(6.0)));
             p.rect_filled(base, CornerRadius { nw: 2, ne: 2, sw: 10, se: 10 }, Color32::from_rgb(0xB8, 0xB9, 0xBD));
@@ -881,10 +1196,9 @@ fn device_body(ui: &Ui, device: &str, s: Rect) {
             p.rect_filled(notch, CornerRadius::same(2), Color32::from_rgb(0x8E, 0x8E, 0x93));
         }
         "Desktop" => {
-            let b = (w * 0.02).max(6.0);
             let screen = s.expand(b);
             p.rect_filled(screen, CornerRadius::same(8), body);
-            p.rect_stroke(screen, CornerRadius::same(8), egui::Stroke::new(1.0, edge), egui::StrokeKind::Outside);
+            p.rect_stroke(screen, CornerRadius::same(8), Stroke::new(1.0, edge), StrokeKind::Outside);
             let neck =
                 Rect::from_min_max(pos2(screen.center().x - w * 0.06, screen.max.y), pos2(screen.center().x + w * 0.06, screen.max.y + w * 0.08));
             p.rect_filled(neck, CornerRadius::ZERO, Color32::from_rgb(0xB8, 0xB9, 0xBD));
@@ -892,61 +1206,65 @@ fn device_body(ui: &Ui, device: &str, s: Rect) {
             p.rect_filled(foot, CornerRadius::same(3), Color32::from_rgb(0xA0, 0xA1, 0xA6));
         }
         _ => {
-            // Phones and tablets: a rounded slab with side buttons.
-            let tablet = device.starts_with("iPad");
-            let b = if tablet { (w * 0.05).max(8.0) } else { (w * 0.06).max(6.0) };
-            let screen_r = if tablet { w * 0.04 } else { w * 0.13 };
+            // Phones and tablets: a rounded slab (phones with side buttons).
             let slab = s.expand(b);
             let r = CornerRadius::same((screen_r + b).min(255.0) as u8);
-            for (x, y0, h) in [(slab.min.x - 2.0, 0.18, 0.06), (slab.min.x - 2.0, 0.27, 0.1), (slab.max.x, 0.24, 0.13)] {
-                if tablet {
-                    break;
+            if !device.starts_with("iPad") {
+                for (x, y0, h) in [(slab.min.x - 2.0, 0.18, 0.06), (slab.min.x - 2.0, 0.27, 0.1), (slab.max.x, 0.24, 0.13)] {
+                    let btn = Rect::from_min_size(pos2(x, slab.min.y + slab.height() * y0), vec2(2.5, slab.height() * h));
+                    p.rect_filled(btn, CornerRadius::same(1), edge);
                 }
-                let btn = Rect::from_min_size(pos2(x, slab.min.y + slab.height() * y0), vec2(2.5, slab.height() * h));
-                p.rect_filled(btn, CornerRadius::same(1), edge);
             }
             p.rect_filled(slab, r, body);
-            p.rect_stroke(slab, r, egui::Stroke::new(1.5, edge), egui::StrokeKind::Inside);
+            p.rect_stroke(slab, r, Stroke::new(1.5, edge), StrokeKind::Inside);
         }
     }
 }
 
 /// What sits on top of the screen: rounded screen corners (the body colour masks the frame's
 /// square corners) and a phone's camera pill.
-fn device_glass(ui: &Ui, device: &str, s: Rect) {
-    let p = ui.painter();
-    let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
+fn device_glass(p: &egui::Painter, device: &str, s: Rect) {
     let w = s.width();
-    match device {
-        "None" | "Desktop" | "MacBook Air" => {}
-        _ => {
-            let tablet = device.starts_with("iPad");
-            let screen_r = if tablet { w * 0.04 } else { w * 0.13 };
-            // An outside stroke along the rounded screen covers the frame's square corners.
-            let bezel = if tablet { (w * 0.05).max(8.0) } else { (w * 0.06).max(6.0) };
-            let cover = (screen_r * 0.45 + 1.0).min(bezel);
-            p.rect_stroke(s, CornerRadius::same(screen_r.min(255.0) as u8), egui::Stroke::new(cover, body), egui::StrokeKind::Outside);
-            if device.starts_with("iPhone") {
-                let pill = Rect::from_center_size(pos2(s.center().x, s.min.y + w * 0.045), vec2(w * 0.3, w * 0.085));
-                p.rect_filled(pill, CornerRadius::same((w * 0.0425).min(255.0) as u8), Color32::BLACK);
-            }
-        }
+    let (b, screen_r) = bezel(device, w);
+    if screen_r <= 0.0 {
+        return;
+    }
+    // An outside stroke along the rounded screen covers the frame's square corners.
+    let cover = (screen_r * 0.45 + 1.0).min(b);
+    p.rect_stroke(s, CornerRadius::same(screen_r.min(255.0) as u8), Stroke::new(cover, Color32::from_rgb(0x1C, 0x1C, 0x1E)), StrokeKind::Outside);
+    if device.starts_with("iPhone") {
+        let pill = Rect::from_center_size(pos2(s.center().x, s.min.y + w * 0.045), vec2(w * 0.3, w * 0.085));
+        p.rect_filled(pill, CornerRadius::same((w * 0.0425).min(255.0) as u8), Color32::BLACK);
     }
 }
 
-/// One frame of the player; returns true to close it.
-fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool {
-    let rect = ui.max_rect();
-    let bar = Rect::from_min_size(rect.min, vec2(rect.width(), BAR_H));
-    let area = Rect::from_min_max(pos2(rect.min.x, rect.min.y + BAR_H), rect.max);
+/// One frame of the player in `rect`: the top bar, then the prototype (on its device) below.
+/// Returns what the bar asked for (restarting is done here).
+fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) -> Option<BarAction> {
+    let ctx = ui.ctx().clone();
+    let bar = Rect::from_min_size(rect.min, vec2(rect.width(), chrome.bar_h));
+    let area = Rect::from_min_max(pos2(rect.min.x, bar.max.y), rect.max);
+    let bg = crate::theme::c32(p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default().background);
+    let r = chrome.round;
+    ui.painter().rect_filled(area, CornerRadius { nw: 0, ne: 0, sw: r, se: r }, bg);
+    let action = top_bar(p, ui, bar, now, chrome);
+    if action == Some(BarAction::Restart) {
+        p.restart(p.start, now);
+    }
     if p.doc.as_ref().is_none_or(|d| !d.contains(p.current)) {
-        return true;
+        if !chrome.pane {
+            return Some(BarAction::Close);
+        }
+        ui.painter().text(area.center(), Align2::CENTER_CENTER, "Select a frame to preview it", regular(12.0), Color32::from_gray(170));
+        return action;
     }
     // Scroll animation (Scroll to).
     if let Some(sa) = &p.scroll_anim {
         let raw = ((now - sa.start) / sa.dur.max(1e-3)).clamp(0.0, 1.0);
         let e = sa.easing.eval(raw);
-        p.scroll.insert(sa.frame, (lerp(sa.from.0, sa.to.0, e), lerp(sa.from.1, sa.to.1, e)));
+        for (f, from, to) in &sa.frames {
+            p.scroll.insert(*f, (lerp(from.0, to.0, e), lerp(from.1, to.1, e)));
+        }
         p.rev += 1;
         if raw >= 1.0 {
             p.scroll_anim = None;
@@ -954,16 +1272,22 @@ fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool
         ctx.request_repaint();
     }
     let resp = ui.interact(area, ui.id().with("present_area"), Sense::click_and_drag());
-    let close = top_bar(p, ui, bar, now);
-    if let Some(l) = layout(p, area) {
-        input(p, ctx, &l, resp.contains_pointer(), now);
+    let over = resp.contains_pointer();
+    if let Some(l) = layout(p, area, chrome.pad) {
+        // The pane only takes the keyboard while the pointer is over it.
+        input(p, &ctx, &l, over, chrome.keys && (!chrome.pane || over), now);
     }
-    let Some(l) = layout(p, area) else { return true };
-    let device = device_of(p);
-    device_body(ui, &device, l.target);
-    draw(p, ui, ctx, &l, area, now);
-    device_glass(ui, &device, l.target);
-    // Timers: the soonest pending "after delay".
+    let Some(l) = layout(p, area, chrome.pad) else { return action };
+    let painter = ui.painter_at(area);
+    if let Some(d) = l.device {
+        device_body(&painter, d.name, l.screen);
+        painter.rect_filled(l.screen, CornerRadius::ZERO, bg);
+    }
+    draw(p, &painter, &ctx, &l, now);
+    if let Some(d) = l.device {
+        device_glass(&painter, d.name, l.screen);
+    }
+    // Timers: wake up for the soonest pending "after delay".
     let mut next: Option<f64> = None;
     for id in l.disp.subtree(p.current) {
         let Some(n) = l.disp.node(id) else { continue };
@@ -976,54 +1300,73 @@ fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool
             }
         }
     }
-    match next {
-        Some(d) => ctx.request_repaint_after(std::time::Duration::from_secs_f64(d.clamp(0.0, 60.0))),
-        None => ctx.request_repaint_after(std::time::Duration::from_millis(250)),
+    if let Some(d) = next {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(d.clamp(0.0, 60.0)));
     }
-    close
+    action
 }
 
-fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64) -> bool {
-    let painter = ui.painter();
-    painter.rect_filled(bar, CornerRadius::ZERO, Color32::from_rgb(0x2C, 0x2C, 0x2C));
-    let Some(doc) = p.doc.clone() else { return true };
+/// The bar above the prototype: the flow picker and the frame's name on the left, the buttons on
+/// the right (text on the dark full-window bar, icons in the pane, which follows the theme).
+fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) -> Option<BarAction> {
+    let t = Tokens::get(ui.ctx());
+    let (fill, text, dim, hover) = if chrome.pane {
+        (t.panel, t.text, t.text_secondary, t.hover)
+    } else {
+        (Color32::from_rgb(0x2C, 0x2C, 0x2C), Color32::WHITE, Color32::from_gray(140), Color32::from_white_alpha(28))
+    };
+    let r = chrome.round;
+    ui.painter().rect_filled(bar, CornerRadius { nw: r, ne: r, sw: 0, se: 0 }, fill);
+    if chrome.pane {
+        ui.painter().line_segment([bar.left_bottom(), bar.right_bottom()], Stroke::new(1.0, t.border));
+    }
+    let doc = p.doc.as_ref()?;
     let name = doc.node(p.current).map(|n| n.name.clone()).unwrap_or_default();
     let flows = match doc.page_of(p.start).and_then(|pg| doc.node(pg)).map(|n| &n.kind) {
         Some(NodeKind::Page { flows, .. }) => flows.clone(),
         _ => vec![],
     };
-    let mut close = false;
-    // Right: close, restart.
-    let mut x = bar.max.x - 8.0;
-    let button = |ui: &mut Ui, label: &str, id: &str, x: &mut f32| -> bool {
-        let galley = ui.painter().layout_no_wrap(label.to_string(), regular(11.5), Color32::WHITE);
-        let r = Rect::from_min_size(pos2(*x - galley.size().x - 16.0, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
-        *x = r.min.x - 4.0;
-        let resp = ui.interact(r, ui.id().with(("pbar", id)), Sense::click());
-        if resp.hovered() {
-            ui.painter().rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(28));
-        }
-        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
-        resp.clicked()
+    let mut action = None;
+    // Right: the buttons, right to left.
+    let buttons: &[(BarAction, &str, Icon)] = if chrome.pane {
+        &[(BarAction::Close, "Close preview", Icon::Close), (BarAction::Present, "Present", Icon::Play), (BarAction::Restart, "Restart", Icon::Reset)]
+    } else {
+        &[(BarAction::Close, "Close", Icon::Close), (BarAction::Restart, "Restart", Icon::Reset)]
     };
-    if button(ui, "Close", "close", &mut x) {
-        close = true;
+    let mut x = bar.max.x - if chrome.pane { 6.0 } else { 8.0 };
+    for (act, label, icon) in buttons {
+        let w = if chrome.pane { 24.0 } else { ui.painter().layout_no_wrap(label.to_string(), regular(11.5), text).size().x + 16.0 };
+        let br = Rect::from_min_size(pos2(x - w, bar.center().y - 12.0), vec2(w, 24.0));
+        x = br.min.x - if chrome.pane { 2.0 } else { 4.0 };
+        let mut resp = ui.interact(br, ui.id().with(("pbar", *label)), Sense::click());
+        if chrome.pane {
+            resp = resp.on_hover_text(*label);
+        }
+        if resp.hovered() {
+            ui.painter().rect_filled(br, CornerRadius::same(5), hover);
+        }
+        if chrome.pane {
+            icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);
+        } else {
+            ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
+        }
+        if resp.clicked() {
+            action = Some(*act);
+        }
     }
-    if button(ui, "Restart", "restart", &mut x) {
-        p.restart(p.start, now);
-    }
-    // Left: flow picker and the frame's name.
-    let mut lx = bar.min.x + 12.0;
+    // Left: the flow picker and the frame's name, clipped before the buttons.
+    let left = ui.painter().with_clip_rect(Rect::from_min_max(bar.min, pos2(x, bar.max.y)));
+    let mut lx = bar.min.x + if chrome.pane { 8.0 } else { 12.0 };
     let flow_name = flows.iter().find(|f| f.start == p.start).map(|f| f.name.clone());
     if !flows.is_empty() {
-        let label = format!("{}  ▾", flow_name.clone().unwrap_or_else(|| "Flows".into()));
-        let galley = ui.painter().layout_no_wrap(label, semibold(11.5), Color32::WHITE);
-        let r = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
-        let resp = ui.interact(r, ui.id().with("pflows"), Sense::click()).on_hover_text("Flows");
+        let label = format!("{}  ▾", flow_name.unwrap_or_else(|| "Flows".into()));
+        let galley = left.layout_no_wrap(label, semibold(11.5), text);
+        let fr = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
+        let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).on_hover_text("Flows");
         if resp.hovered() {
-            ui.painter().rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(28));
+            left.rect_filled(fr, CornerRadius::same(5), hover);
         }
-        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+        left.galley(pos2(fr.min.x + 8.0, fr.center().y - galley.size().y / 2.0), galley, text);
         egui::Popup::menu(&resp).width(200.0).show(|ui| {
             for f in &flows {
                 if crate::right::menu_item(ui, &f.name, "") {
@@ -1032,15 +1375,36 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64) -> bool {
                 }
             }
         });
-        lx = r.max.x + 8.0;
-        ui.painter().text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, "/", regular(11.5), Color32::from_gray(140));
+        lx = fr.max.x + 8.0;
+        left.text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, "/", regular(11.5), dim);
         lx += 14.0;
     }
-    ui.painter().text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, name, regular(11.5), Color32::from_gray(220));
-    close
+    left.text(pos2(lx, bar.center().y), Align2::LEFT_CENTER, name, regular(11.5), if chrome.pane { text } else { Color32::from_gray(220) });
+    action
 }
 
-fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, now: f64) {
+/// Scrolling frames under the screen point `q`, innermost first: those of `root` (in the display
+/// document `disp`) that can scroll (`base` is the player's document without scroll offsets).
+fn scrollers_at(p: &Presenter, base: &Document, disp: &Document, root: NodeId, place: &Place, q: Pos2) -> Vec<NodeId> {
+    let mut out: Vec<NodeId> = disp
+        .subtree(root)
+        .into_iter()
+        .filter(|f| disp.node(*f).is_some_and(|n| n.visible && n.overflow != Overflow::None))
+        .filter(|f| disp.world_bounds(*f).is_some_and(|b| place.rect(b).contains(q)))
+        .filter(|f| p.range(base, *f) != (0.0, 0.0))
+        .collect();
+    out.reverse();
+    out
+}
+
+/// Keep a key the prototype used from reaching the editor's shortcuts.
+fn consume_key(ctx: &egui::Context, key: egui::Key) {
+    ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: k, .. } if *k == key)));
+}
+
+/// Pointer, wheel, keys and timers. `over_area`: the pointer is over the player; `keys_on`: the
+/// player takes the keyboard.
+fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, keys_on: bool, now: f64) {
     let (pos, pressed, released, down, wheel, keys) = ctx.input(|i| {
         let keys: Vec<egui::Key> = i
             .events
@@ -1059,14 +1423,18 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
             keys,
         )
     });
+    let keys = if keys_on { keys } else { Vec::new() };
     let pos = pos.filter(|_| over_area || p.press.is_some());
+    if !down {
+        p.drag_scroll = None;
+    }
     // The active layer: the top overlay, else the frame.
-    let (root, place) = match l.overlays.last() {
-        Some((id, pl, _)) => (*id, *pl),
-        None => (p.current, l.place),
+    let (root, place, clip) = match l.overlays.last() {
+        Some((id, pl, _)) => (*id, *pl, l.screen),
+        None => (p.current, l.place, l.clip),
     };
     let doc = &l.disp;
-    let hot = hotspots(doc, root, &place);
+    let hot = hotspots(doc, root, &place, clip);
     // "While hovering / pressing" reverts.
     if let Some(tmp) = &p.temp {
         let leave = if tmp.press { released || !down } else { pos.is_none_or(|q| !tmp.rect.contains(q)) };
@@ -1075,21 +1443,14 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
             return;
         }
     }
-    // Wheel scrolls the innermost scrollable frame under the pointer.
+    // The wheel scrolls the innermost frame under the pointer that can still move that way.
     if wheel != Vec2::ZERO
         && let Some(q) = pos
         && let Some(base) = p.doc.clone()
     {
-        let mut frames: Vec<NodeId> = doc.subtree(root).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.overflow != Overflow::None)).collect();
-        frames.reverse();
-        for f in frames {
-            let Some(b) = doc.world_bounds(f) else { continue };
-            if !place.rect(b).contains(q) {
-                continue;
-            }
-            let (rx, ry) = scroll_range(&base, f);
+        for f in scrollers_at(p, &base, doc, root, &place, q) {
             let cur = p.scroll.get(&f).copied().unwrap_or((0.0, 0.0));
-            let next = ((cur.0 - f64::from(wheel.x) / l.scale).clamp(0.0, rx), (cur.1 - f64::from(wheel.y) / l.scale).clamp(0.0, ry));
+            let next = clamp_scroll((cur.0 - f64::from(wheel.x) / l.scale, cur.1 - f64::from(wheel.y) / l.scale), p.range(&base, f));
             if (next.0 - cur.0).abs() > 1e-6 || (next.1 - cur.1).abs() > 1e-6 {
                 p.scroll.insert(f, next);
                 p.scroll_anim = None;
@@ -1171,11 +1532,31 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
             p.press = None;
             return;
         }
+        // Otherwise the drag scrolls the innermost frame under it that scrolls.
+        if let Some(base) = p.doc.clone()
+            && let Some(f) = scrollers_at(p, &base, doc, root, &place, start).first().copied()
+        {
+            p.drag_scroll = Some((f, p.scroll.get(&f).copied().unwrap_or((0.0, 0.0))));
+        }
+    }
+    if down
+        && let (Some((f, from)), Some(start), Some(q)) = (p.drag_scroll, p.press, pos)
+        && let Some(base) = p.doc.as_ref()
+    {
+        let d = q - start;
+        let to = clamp_scroll((from.0 - f64::from(d.x) / l.scale, from.1 - f64::from(d.y) / l.scale), p.range(base, f));
+        if p.scroll.get(&f).copied().unwrap_or((0.0, 0.0)) != to {
+            p.scroll.insert(f, to);
+            p.scroll_anim = None;
+            p.rev += 1;
+        }
+        ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
     }
     if released && p.press.is_some() {
         let dragged = p.dragged;
         p.press = None;
         p.dragged = false;
+        p.drag_scroll = None;
         if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseUp)
             && p.fire(id, k, Some(r), now)
         {
@@ -1200,6 +1581,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
         });
         if let Some((id, k)) = found {
             if p.fire(id, k, None, now) {
+                consume_key(ctx, *key);
                 return;
             }
             continue;
@@ -1207,13 +1589,14 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, no
         // Arrow keys step through top-level frames when nothing else uses them.
         if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
             && p.overlays.is_empty()
-            && let Some(base) = p.doc.clone()
+            && let Some(base) = p.doc.as_ref()
         {
             let frames = base.top_frames(base.page_of(p.current).unwrap_or(p.current));
             if let Some(i) = frames.iter().position(|f| *f == p.current) {
                 let next = if *key == egui::Key::ArrowRight { frames.get(i + 1) } else { i.checked_sub(1).and_then(|j| frames.get(j)) };
-                if let Some(n) = next {
-                    p.go(*n, Transition::Instant, 0.0, Easing::Linear, now, true);
+                if let Some(n) = next.copied() {
+                    p.go(n, Transition::Instant, 0.0, Easing::Linear, now, true, false);
+                    consume_key(ctx, *key);
                     return;
                 }
             }
@@ -1261,10 +1644,9 @@ fn key_alias(k: &str) -> Option<&'static str> {
     })
 }
 
-fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: Rect, now: f64) {
+fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Layout, now: f64) {
     let ppp = f64::from(ctx.pixels_per_point());
     let px = l.scale * ppp;
-    let painter = ui.painter_at(area);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let to_tex = p.texture(ctx, &l.disp, p.current, px);
     // Transition progress.
@@ -1276,7 +1658,7 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
         } else {
             ctx.request_repaint();
             let e = a.easing.eval(raw);
-            let from_place = a.from_doc.world_bounds(a.from_frame).map(|fb| Place::centered(fb, area.center(), l.scale));
+            let from_place = a.from_doc.world_bounds(a.from_frame).map(|fb| Place::centered(fb, l.screen.center(), l.scale));
             if matches!(a.transition, Transition::SmartAnimate) {
                 #[cfg(not(target_arch = "wasm32"))]
                 let t0 = std::time::Instant::now();
@@ -1295,7 +1677,7 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
                             t
                         }
                     };
-                    painter.with_clip_rect(l.target).image(tex.id(), l.place.rect(b), uv, Color32::WHITE);
+                    painter.with_clip_rect(l.screen).image(tex.id(), l.place.rect(b), uv, Color32::WHITE);
                     drawn = true;
                 }
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1308,15 +1690,16 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
                 let from_frame_rect = a.from_doc.world_bounds(a.from_frame).map(|b| fp.rect(b)).unwrap_or(from_rect);
                 let to_rect = l.place.rect(to.bounds);
                 let off = |r: Rect, o: (f32, f32)| vec2(r.width() * o.0, r.height() * o.1);
-                let clip =
-                    painter.with_clip_rect(l.target.union(if matches!(a.transition, Transition::Dissolve) { from_frame_rect } else { l.target }));
+                // Without a device a dissolve shows both frames whole; on one, the screen clips.
+                let dissolve_both = l.device.is_none() && matches!(a.transition, Transition::Dissolve);
+                let clip = painter.with_clip_rect(if dissolve_both { l.screen.union(from_frame_rect) } else { l.screen });
                 let draw_from = |p: &egui::Painter| {
                     if f.from_alpha > 0.0 {
                         p.image(ft.tex.id(), from_rect.translate(off(from_frame_rect, f.from_off)), uv, Color32::WHITE.gamma_multiply(f.from_alpha));
                     }
                 };
                 let draw_to = |p: &egui::Painter| {
-                    p.image(to.tex.id(), to_rect.translate(off(l.target, f.to_off)), uv, Color32::WHITE.gamma_multiply(f.to_alpha));
+                    p.image(to.tex.id(), to_rect.translate(off(l.screen, f.to_off)), uv, Color32::WHITE.gamma_multiply(f.to_alpha));
                 };
                 if f.from_on_top {
                     draw_to(&clip);
@@ -1330,7 +1713,7 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
         }
     }
     if !drawn && let Some(to) = &to_tex {
-        painter.image(to.tex.id(), l.place.rect(to.bounds), uv, Color32::WHITE);
+        painter.with_clip_rect(l.clip).image(to.tex.id(), l.place.rect(to.bounds), uv, Color32::WHITE);
     }
     // Overlays (each with its background and opening transition); closing ones run it backwards.
     let mut ovs: Vec<(f64, OverlayState)> =
@@ -1343,6 +1726,7 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
         ovs.insert(0, (1.0 - ((now - at) / o.dur.max(1e-3)).clamp(0.0, 1.0), o.clone()));
         placed.insert(0, *pl);
     }
+    let on_screen = painter.with_clip_rect(l.screen);
     for ((raw, o), (id, place, orect)) in ovs.iter().zip(placed.iter()) {
         let raw = *raw;
         if raw < 1.0 {
@@ -1356,23 +1740,23 @@ fn draw(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, l: &Layout, area: R
         };
         if let Some(bgc) = o.background {
             let c = crate::theme::c32(bgc);
-            painter.rect_filled(l.target, CornerRadius::ZERO, c.gamma_multiply(raw as f32));
+            on_screen.rect_filled(l.screen, CornerRadius::ZERO, c.gamma_multiply(raw as f32));
         }
         if let Some(tex) = p.texture(ctx, &l.disp, *id, px) {
             let r = place.rect(tex.bounds).translate(vec2(orect.width() * f.to_off.0, orect.height() * f.to_off.1));
-            painter.with_clip_rect(l.target).image(tex.tex.id(), r, uv, Color32::WHITE.gamma_multiply(f.to_alpha));
+            on_screen.image(tex.tex.id(), r, uv, Color32::WHITE.gamma_multiply(f.to_alpha));
         }
     }
     // Finished closing animations go (after drawing, so they stayed paired with the layout).
     p.closing.retain(|(at, o)| now - at < o.dur);
     // Hotspot flash after a click on nothing.
     if now < p.flash_until {
-        let (root, place) = match l.overlays.last() {
-            Some((id, pl, _)) => (*id, *pl),
-            None => (p.current, l.place),
+        let (root, place, clip) = match l.overlays.last() {
+            Some((id, pl, _)) => (*id, *pl, l.screen),
+            None => (p.current, l.place, l.clip),
         };
         let a = ((p.flash_until - now) / 0.5) as f32;
-        for (_, r) in hotspots(&l.disp, root, &place) {
+        for (_, r) in hotspots(&l.disp, root, &place, clip) {
             painter.rect_filled(r, CornerRadius::same(2), ACCENT.gamma_multiply(0.25 * a));
             painter.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.5, ACCENT.gamma_multiply(a)), StrokeKind::Outside);
         }
@@ -1520,6 +1904,135 @@ mod tests {
         let out = apply_scroll(&d, &s);
         assert_eq!(y(&out, long), -300.0);
         assert_eq!(y(&out, sticky), 0.0);
+    }
+
+    /// A page presented on an iPhone 16 (393×852): a tall screen A that scrolls vertically, with a
+    /// tab bar fixed to its bottom, a nested scrolling list and a layer at its end; screen B.
+    fn device_doc() -> (Document, NodeId, NodeId, NodeId, NodeId, NodeId) {
+        let mut d = Document::new("t");
+        let page = d.add_page("Page 1");
+        if let NodeKind::Page { prototype, .. } = &mut d.get_mut(page).unwrap().kind {
+            prototype.device = "iPhone 16".into();
+        }
+        let a = d.create(page, NodeKind::Frame, "A", 0.0, 0.0, 393.0, 2000.0).unwrap();
+        let b = d.create(page, NodeKind::Frame, "B", 500.0, 0.0, 393.0, 1500.0).unwrap();
+        for f in [a, b] {
+            d.get_mut(f).unwrap().overflow = Overflow::Vertical;
+        }
+        let bar = d.create(a, NodeKind::Rectangle, "Tab bar", 0.0, 1940.0, 393.0, 60.0).unwrap();
+        let n = d.get_mut(bar).unwrap();
+        n.scroll_position = ScrollPosition::Fixed;
+        n.constraints.vertical = VConstraint::Bottom;
+        let list = d.create(a, NodeKind::Frame, "List", 0.0, 1200.0, 393.0, 300.0).unwrap();
+        d.get_mut(list).unwrap().overflow = Overflow::Vertical;
+        let item = d.create(list, NodeKind::Rectangle, "Item", 0.0, 700.0, 393.0, 100.0).unwrap();
+        (d, a, b, bar, list, item)
+    }
+
+    fn player_on(d: Document, start: NodeId) -> Presenter {
+        let mut p = Presenter::new(start);
+        p.sync(&Arc::new(d), 0.0);
+        p
+    }
+
+    #[test]
+    fn device_screen_clips_the_frame_and_it_scrolls_through_its_height() {
+        let (mut d, a, _, bar, list, _) = device_doc();
+        assert_eq!(viewport(&d, a), Some((393.0, 852.0)));
+        // On the device the whole frame scrolls; at its own size nothing overflows it.
+        assert_eq!(scroll_range_in(&d, a, viewport(&d, a)), (0.0, 1148.0));
+        assert_eq!(scroll_range(&d, a), (0.0, 0.0));
+        // Nested frames scroll within themselves.
+        assert_eq!(scroll_range(&d, list), (0.0, 500.0));
+        // The display copy is sized to the screen; the fixed tab bar moves to the screen's bottom.
+        let mut p = player_on(d.clone(), a);
+        let disp = p.display().unwrap();
+        assert_eq!((disp.node(a).unwrap().width, disp.node(a).unwrap().height), (393.0, 852.0));
+        assert_eq!(disp.world_bounds(bar).unwrap().y0, 792.0);
+        // Scrolled, it stays there while the content moves.
+        p.scroll_to(0.0, 400.0);
+        let disp = p.display().unwrap();
+        assert_eq!(disp.world_bounds(bar).unwrap().y0, 792.0);
+        assert_eq!(disp.world_bounds(list).unwrap().y0, 800.0);
+        p.scroll_to(0.0, 99_999.0);
+        assert_eq!(p.scroll[&a], (0.0, 1148.0), "clamped to the range");
+        // Without scrolling the screen only clips; without a device the frame shows whole.
+        d.get_mut(a).unwrap().overflow = Overflow::None;
+        assert_eq!(scroll_range_in(&d, a, viewport(&d, a)), (0.0, 0.0));
+        if let Some(pg) = d.page_of(a)
+            && let NodeKind::Page { prototype, .. } = &mut d.get_mut(pg).unwrap().kind
+        {
+            prototype.device = "None".into();
+        }
+        assert_eq!(viewport(&d, a), None);
+        // A frame wider than the screen scrolls sideways when it scrolls both ways.
+        let (mut d, a, ..) = device_doc();
+        let n = d.get_mut(a).unwrap();
+        n.width = 800.0;
+        n.overflow = Overflow::Both;
+        assert_eq!(scroll_range_in(&d, a, viewport(&d, a)), (407.0, 1148.0));
+    }
+
+    #[test]
+    fn scroll_to_moves_every_scrolling_frame_around_the_layer() {
+        let (d, a, _, _, list, item) = device_doc();
+        let mut p = player_on(d.clone(), a);
+        assert!(p.perform(&Action::ScrollTo { dest: item }, item, Transition::Instant, 0.0, Easing::Linear, None, 1.0));
+        // The list brings the item to its top (as far as it scrolls), the screen brings the list.
+        assert_eq!(p.scroll[&list], (0.0, 500.0));
+        assert_eq!(p.scroll[&a], (0.0, 1148.0));
+        // Animated, it gets there over the duration.
+        let mut p = player_on(d, a);
+        assert!(p.perform(&Action::ScrollTo { dest: list }, list, Transition::Dissolve, 0.3, Easing::Linear, None, 1.0));
+        let anim = p.scroll_anim.as_ref().unwrap();
+        assert_eq!(anim.frames, vec![(a, (0.0, 0.0), (0.0, 1148.0))]);
+    }
+
+    #[test]
+    fn navigating_resets_scroll_unless_it_preserves_it() {
+        let (d, a, b, ..) = device_doc();
+        let mut p = player_on(d, a);
+        p.scroll_to(0.0, 600.0);
+        assert!(p.perform(&Action::Navigate { dest: b, preserve_scroll: false }, a, Transition::Instant, 0.0, Easing::Linear, None, 1.0));
+        assert_eq!(p.scroll.get(&b), None, "starts at the top");
+        p.restart(a, 2.0);
+        p.scroll_to(0.0, 1000.0);
+        assert!(p.perform(&Action::Navigate { dest: b, preserve_scroll: true }, a, Transition::Instant, 0.0, Easing::Linear, None, 3.0));
+        assert_eq!(p.scroll[&b], (0.0, 648.0), "kept, as far as B scrolls");
+        // Back starts at the top again.
+        assert!(p.perform(&Action::Back, b, Transition::Instant, 0.0, Easing::Linear, None, 4.0));
+        assert_eq!((p.current, p.scroll.get(&a)), (a, None));
+    }
+
+    #[test]
+    fn sync_follows_edits_and_keeps_the_screen() {
+        let (mut d, a, b, _, list, _) = device_doc();
+        let mut p = player_on(d.clone(), a);
+        p.go(b, Transition::Instant, 0.0, Easing::Linear, 1.0, true, false);
+        p.scroll_to(0.0, 600.0);
+        // The same document again changes nothing.
+        let same = Arc::new(d.clone());
+        p.sync(&same, 2.0);
+        let rev = p.rev;
+        p.sync(&same, 2.0);
+        assert_eq!(p.rev, rev);
+        // An edit is copied; the screen and its scroll stay (clamped to the new range).
+        d.get_mut(b).unwrap().height = 1000.0;
+        d.get_mut(b).unwrap().name = "B2".into();
+        p.sync(&Arc::new(d.clone()), 3.0);
+        assert_eq!(p.current, b);
+        assert_eq!(p.inspect()["name"], "B2");
+        assert_eq!(p.scroll[&b], (0.0, 148.0));
+        assert_eq!(p.history.len(), 1);
+        // The screen deleted: back to the start.
+        d.remove(b).unwrap();
+        p.sync(&Arc::new(d.clone()), 4.0);
+        assert_eq!(p.current, a);
+        assert!(p.history.is_empty() && p.scroll.is_empty());
+        // Junk scroll offsets never panic and stay in range.
+        p.scroll.insert(list, (f64::NAN, f64::INFINITY));
+        p.sync(&Arc::new(d), 5.0);
+        assert_eq!(p.scroll[&list], (0.0, 0.0));
     }
 
     #[test]

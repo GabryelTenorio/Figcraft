@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.add",
             "Add interaction",
-            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate|back|scrollTo|openOverlay {position?, close_on_outside?, background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
+            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate {preserveScroll?}|back|scrollTo|openOverlay {position?, close_on_outside?, background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
             true,
             add
         ),
@@ -120,23 +120,47 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("proto.present", "Present", "{start? (frame id)}", false, |s, p| {
-            let start = id(p, "start").or_else(|| {
-                let ds = s.ds().ok()?;
-                ds.selection
-                    .first()
-                    .and_then(|i| ds.doc.top_level_frame(*i))
-                    .or_else(|| match &ds.doc.node(ds.page)?.kind {
-                        NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
-                        _ => None,
-                    })
-                    .or_else(|| ds.doc.top_frames(ds.page).first().copied())
-            });
-            let start = start.ok_or_else(|| bad("proto.present", "no frame to present"))?;
-            s.request_ui("present", json!({"start": start}));
-            Ok(json!({"start": start}))
+        spec!(
+            "proto.present",
+            "Present",
+            "{start? (frame id; default: the selected frame, else the first flow, else the first frame)}",
+            false,
+            |s, p| { open_player(s, p, "proto.present", "present") }
+        ),
+        spec!(
+            "proto.preview",
+            "Open prototype preview",
+            "{start? (frame id; default as proto.present)}  a floating preview pane over the canvas that follows edits live",
+            false,
+            |s, p| open_player(s, p, "proto.preview", "preview")
+        ),
+        spec!("proto.closePreview", "Close prototype preview", "{}", false, |s, _| {
+            s.request_ui("preview.close", json!({}));
+            ok()
         }),
     ]
+}
+
+/// Ask the UI to present (full screen or in the preview pane) from `start`, else the selected
+/// top-level frame, the page's first flow or its first frame.
+fn open_player(s: &mut Session, p: &Value, cmd: &str, ui: &str) -> Result<Value> {
+    let ds = s.ds()?;
+    let start = match id(p, "start") {
+        // A layer inside a frame presents its top-level frame.
+        Some(f) => ds.doc.top_level_frame(f).ok_or_else(|| bad(cmd, "`start` isn't a frame or inside one"))?,
+        None => ds
+            .selection
+            .first()
+            .and_then(|i| ds.doc.top_level_frame(*i))
+            .or_else(|| match &ds.doc.node(ds.page)?.kind {
+                NodeKind::Page { flows, .. } => flows.first().map(|f| f.start),
+                _ => None,
+            })
+            .or_else(|| ds.doc.top_frames(ds.page).first().copied())
+            .ok_or_else(|| bad(cmd, "no frame to present"))?,
+    };
+    s.request_ui(ui, json!({"start": start}));
+    Ok(json!({"start": start}))
 }
 
 /// Every node an action points at must exist.
@@ -163,7 +187,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     {
         Interaction {
             trigger: parse(cmd, p, "trigger")?.unwrap_or_default(),
-            actions: vec![Action::Navigate { dest: d }],
+            actions: vec![Action::Navigate { dest: d, preserve_scroll: false }],
             transition: parse(cmd, p, "transition")?.unwrap_or_default(),
             duration_ms: duration(p).unwrap_or(300),
             easing: parse(cmd, p, "easing")?.unwrap_or_default(),
@@ -283,7 +307,7 @@ mod tests {
         s.execute("proto.interaction.set", &json!({"id": a, "index": 0, "transition": {"type": "push", "direction": "top"}, "easing": "linear"}))
             .unwrap();
         let it = s.doc().unwrap().node(a).unwrap().interactions[0].clone();
-        assert_eq!(it.actions, vec![Action::Navigate { dest: b }]);
+        assert_eq!(it.actions, vec![Action::Navigate { dest: b, preserve_scroll: false }]);
         assert_eq!(it.transition, Transition::Push { direction: Direction::Top });
         assert_eq!(it.easing, Easing::Linear);
         // Overlay action with settings; camelCase accepted.
@@ -341,6 +365,43 @@ mod tests {
         // A new flow gets an unused default name.
         let r = s.execute("proto.flow.add", &json!({"start": a})).unwrap();
         assert_eq!(r["name"], "Flow 2");
+    }
+
+    #[test]
+    fn present_and_preview_pick_a_top_level_frame() {
+        let mut s = Session::new();
+        let a = frame(&mut s, 0.0);
+        let b = frame(&mut s, 200.0);
+        let r = s.execute("node.create", &json!({"type": "rectangle", "parent": b, "x": 205, "y": 5, "width": 10, "height": 10})).unwrap();
+        let child = id_of(&r["id"]).unwrap();
+        let last = |s: &mut Session| {
+            let r = s.ui_requests.pop().unwrap();
+            s.ui_requests.clear();
+            (r.kind, id_of(&r.data["start"]))
+        };
+        // A layer inside a frame previews its frame; the selection is the default.
+        assert_eq!(s.execute("proto.preview", &json!({"start": child})).unwrap()["start"], json!(b));
+        assert_eq!(last(&mut s), ("preview".to_string(), Some(b)));
+        s.execute("select.set", &json!({"ids": [a]})).unwrap();
+        s.execute("proto.present", &json!({})).unwrap();
+        assert_eq!(last(&mut s), ("present".to_string(), Some(a)));
+        // A start that isn't in a frame is an error, not a silent fallback.
+        assert!(s.execute("proto.preview", &json!({"start": 987_654})).is_err());
+        s.execute("proto.closePreview", &json!({})).unwrap();
+        assert_eq!(last(&mut s).0, "preview.close");
+    }
+
+    #[test]
+    fn navigate_can_preserve_scroll() {
+        let mut s = Session::new();
+        let a = frame(&mut s, 0.0);
+        let b = frame(&mut s, 200.0);
+        s.execute("proto.interaction.add", &json!({"id": a, "action": {"type": "navigate", "dest": b, "preserveScroll": true}})).unwrap();
+        let it = s.doc().unwrap().node(a).unwrap().interactions[0].clone();
+        assert_eq!(it.actions, vec![Action::Navigate { dest: b, preserve_scroll: true }]);
+        // Off is the default and isn't written out.
+        let off = serde_json::to_value(Action::Navigate { dest: b, preserve_scroll: false }).unwrap();
+        assert!(off.get("preserve_scroll").is_none(), "{off}");
     }
 
     #[test]

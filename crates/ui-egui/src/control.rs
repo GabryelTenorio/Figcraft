@@ -10,7 +10,7 @@
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
-//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?}`
+//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
 //! - `app.quit {}`
@@ -251,6 +251,26 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if p.get("collapseLayers").and_then(Value::as_bool) == Some(true) {
                 app.ui.expanded.clear();
+            }
+            // The prototype preview pane: true / a frame id opens it, false or null closes it.
+            match p.get("preview") {
+                Some(Value::Bool(false) | Value::Null) => app.ui.preview = None,
+                Some(v @ (Value::Bool(true) | Value::Number(_))) => {
+                    let params = if v.is_number() { json!({"start": v}) } else { json!({}) };
+                    app.session.execute("proto.preview", &params).map_err(|e| e.to_string())?;
+                    app.handle_ui_requests();
+                }
+                _ => {}
+            }
+            // Scroll the presented screen (the full-window player, else the preview pane) to [x, y].
+            if let Some(s) = p.get("presentScroll").and_then(Value::as_array) {
+                let at = |i: usize| s.get(i).and_then(Value::as_f64).unwrap_or(0.0);
+                let player = match (app.ui.present.as_mut(), app.ui.preview.as_mut()) {
+                    (Some(p), _) => Some(p),
+                    (None, Some(pane)) => Some(&mut pane.player),
+                    _ => None,
+                };
+                player.ok_or("nothing is presented")?.scroll_to(at(0), at(1));
             }
             Ok(app.inspect())
         }

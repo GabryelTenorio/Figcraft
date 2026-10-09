@@ -42,6 +42,8 @@ pub mod widgets;
 mod layers_drag_tests;
 #[cfg(test)]
 mod perf_tests;
+#[cfg(test)]
+mod present_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -117,6 +119,8 @@ pub struct UiState {
     pub home: bool,
     pub toast: Option<(String, f64)>,
     pub present: Option<present::Presenter>,
+    /// The prototype preview pane floating over the canvas, when open.
+    pub preview: Option<present::Pane>,
     pub picker: Option<colorpicker::PickerTarget>,
     pub context_menu: Option<(egui::Pos2, Vec<NodeId>)>,
     /// Layers panel search: open, the filter text, the shift-click range anchor and the selection
@@ -169,6 +173,7 @@ impl Default for UiState {
             home: false,
             toast: None,
             present: None,
+            preview: None,
             picker: None,
             context_menu: None,
             layer_search: false,
@@ -270,6 +275,12 @@ impl FigApp {
                         self.ui.present = Some(present::Presenter::new(start));
                     }
                 }
+                "preview" => {
+                    if let Some(start) = r.data.get("start").and_then(figcraft_engine::params::id_of) {
+                        self.ui.preview = Some(present::Pane::new(start, &self.session));
+                    }
+                }
+                "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
                 "comment.new" => {
@@ -420,6 +431,8 @@ impl FigApp {
                 toolbar::show(self, ui);
             }
         });
+        // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor.
+        present::show_pane(self, &ctx);
         shortcuts::handle(self, &ctx);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
@@ -465,6 +478,8 @@ impl FigApp {
             "home": self.ui.home,
             "dark": self.ui.dark,
             "presenting": self.ui.present.is_some(),
+            "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
+            "preview": self.ui.preview.as_ref().map(|p| p.player.inspect()),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
             "variables": self.ui.variables.is_some(),

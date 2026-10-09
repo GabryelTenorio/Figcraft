@@ -148,7 +148,7 @@ fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Optio
     let cur_dest = cur.and_then(|a| a.dest()).filter(|d| frames.contains(d));
     let frame_dest = cur_dest.or_else(|| frames.iter().copied().find(|f| Some(*f) != own)).or(frames.first().copied());
     Some(match label {
-        "Navigate to" => Action::Navigate { dest: frame_dest? },
+        "Navigate to" => Action::Navigate { dest: frame_dest?, preserve_scroll: matches!(cur, Some(Action::Navigate { preserve_scroll: true, .. })) },
         "Change to" => {
             let vs = variants_for(doc, node);
             let mine = figcraft_engine::components::owning_component(doc, node);
@@ -262,31 +262,34 @@ fn flows_of(doc: &Document, page: NodeId) -> Vec<proto::Flow> {
     }
 }
 
-/// One flow row: play, editable name, remove.
-fn flow_row(app: &mut FigApp, ui: &mut Ui, f: &proto::Flow) {
+/// A square icon button painted at `rect`; true when clicked.
+fn icon_button(ui: &mut Ui, id: Id, rect: Rect, icon: Icon, tip: &str) -> bool {
     let t = Tokens::get(ui.ctx());
+    let resp = ui.interact(rect, id, Sense::click()).on_hover_text(tip);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(ui.painter(), rect.shrink(5.0), icon, t.icon);
+    resp.clicked()
+}
+
+/// One flow row: play, editable name, preview, remove.
+fn flow_row(app: &mut FigApp, ui: &mut Ui, f: &proto::Flow) {
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
-    let play = Rect::from_center_size(pos2(r.min.x + PAD + 8.0, r.center().y), vec2(24.0, 24.0));
-    let presp = ui.interact(play, ui.id().with(("flow_play", f.start)), Sense::click()).on_hover_text("Present this flow");
-    if presp.hovered() {
-        ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
-    }
-    icons::paint(ui.painter(), play.shrink(5.0), Icon::Play, t.icon);
-    if presp.clicked() {
+    let button = |dx: f32| Rect::from_center_size(pos2(dx, r.center().y), vec2(24.0, 24.0));
+    let play = button(r.min.x + PAD + 8.0);
+    if icon_button(ui, Id::new(("flow_play", f.start)), play, Icon::Play, "Present this flow") {
         app.run("proto.present", json!({"start": f.start}));
     }
-    let name_rect = Rect::from_min_max(pos2(play.max.x + 6.0, r.center().y - 9.0), pos2(r.max.x - 40.0, r.center().y + 9.0));
+    let name_rect = Rect::from_min_max(pos2(play.max.x + 6.0, r.center().y - 9.0), pos2(r.max.x - 64.0, r.center().y + 9.0));
     if let Some(n) = widgets::text_field_inline(ui, Id::new(("flow_name", f.start)), &f.name, name_rect, regular(11.0)) {
         app.run("proto.flow.rename", json!({"start": f.start, "name": n}));
     }
-    let rm = Rect::from_center_size(pos2(r.max.x - 20.0, r.center().y), vec2(24.0, 24.0));
-    let rresp = ui.interact(rm, ui.id().with(("flow_rm", f.start)), Sense::click()).on_hover_text("Remove starting point");
-    if rresp.hovered() {
-        ui.painter().rect_filled(rm, CornerRadius::same(5), t.hover);
+    if icon_button(ui, Id::new(("flow_preview", f.start)), button(r.max.x - 44.0), Icon::Preview, "Preview this flow") {
+        app.run("proto.preview", json!({"start": f.start}));
     }
-    icons::paint(ui.painter(), rm.shrink(5.0), Icon::Minus, t.icon);
-    if rresp.clicked() {
+    if icon_button(ui, Id::new(("flow_rm", f.start)), button(r.max.x - 20.0), Icon::Minus, "Remove starting point") {
         app.run("proto.flow.remove", json!({"start": f.start}));
     }
 }
@@ -312,7 +315,9 @@ fn flows_overview(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
 }
 
 fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
-    widgets::section_header(ui, "Prototype settings", &[], false);
+    if widgets::section_header(ui, "Prototype settings", &[(Icon::Preview, "Open prototype preview")], false).is_some() {
+        app.run("proto.preview", json!({}));
+    }
     let (device, bg) = match doc.node(page).map(|n| &n.kind) {
         Some(NodeKind::Page { prototype, .. }) => (prototype.device.clone(), prototype.background),
         _ => ("None".into(), figcraft_color::Color::BLACK),
@@ -321,7 +326,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, &device, ui.available_width(), None);
         egui::Popup::menu(&resp).show(|ui| {
-            for d in ["None", "iPhone 16", "iPhone 16 Pro Max", "Android Compact", "iPad mini", "MacBook Air", "Desktop"] {
+            for d in std::iter::once("None").chain(proto::PrototypeSettings::DEVICES.iter().map(|d| d.name)) {
                 if menu_item(ui, d, "") {
                     app.run("proto.settings", json!({"device": d}));
                     ui.close();
@@ -343,9 +348,16 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
 fn flow_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, frame: NodeId) {
     let flows = flows_of(doc, page);
     let mine = flows.iter().find(|f| f.start == frame).cloned();
-    let buttons: &[(Icon, &str)] = if mine.is_none() { &[(Icon::Plus, "Add starting point")] } else { &[] };
-    if widgets::section_header(ui, "Flow starting point", buttons, mine.is_none()).is_some() {
-        app.run("proto.flow.add", json!({"start": frame}));
+    // A flow's row has its own preview button.
+    let buttons: &[(Icon, &str)] = if mine.is_none() { &[(Icon::Preview, "Preview this frame"), (Icon::Plus, "Add starting point")] } else { &[] };
+    match widgets::section_header(ui, "Flow starting point", buttons, mine.is_none()) {
+        Some(0) => {
+            app.run("proto.preview", json!({"start": frame}));
+        }
+        Some(_) => {
+            app.run("proto.flow.add", json!({"start": frame}));
+        }
+        None => {}
     }
     if let Some(f) = mine {
         flow_row(app, ui, &f);
@@ -398,12 +410,7 @@ fn interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, nod
             open_editor(ui.ctx(), if active { None } else { Some((id, i)) });
         }
         let rm = Rect::from_center_size(pos2(r.max.x - 20.0, r.center().y), vec2(24.0, 24.0));
-        let rresp = ui.interact(rm, ui.id().with(("proto_rm", id, i)), Sense::click()).on_hover_text("Remove interaction");
-        if rresp.hovered() {
-            ui.painter().rect_filled(rm, CornerRadius::same(5), t.hover);
-        }
-        icons::paint(ui.painter(), rm.shrink(5.0), Icon::Minus, t.icon);
-        if rresp.clicked() {
+        if icon_button(ui, ui.id().with(("proto_rm", id, i)), rm, Icon::Minus, "Remove interaction") {
             open_editor(ui.ctx(), None);
             app.run("proto.interaction.remove", json!({"ids": targets_for(app, id), "index": i}));
             return;
@@ -617,7 +624,15 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
     });
     let frames = frames_for(doc, page);
     match &action {
-        Action::Navigate { dest } => dest_dropdown(app, ui, doc, &frames, Some(*dest), "Destination", |d| Action::Navigate { dest: d }, node, k),
+        Action::Navigate { dest, preserve_scroll } => {
+            let (dest, preserve_scroll) = (*dest, *preserve_scroll);
+            dest_dropdown(app, ui, doc, &frames, Some(dest), "Destination", |d| Action::Navigate { dest: d, preserve_scroll }, node, k);
+            row(ui, 28.0, |ui| {
+                if widgets::checkbox(ui, preserve_scroll, "Preserve scroll position") {
+                    patch(app, node, k, json!({"action": Action::Navigate { dest, preserve_scroll: !preserve_scroll }}));
+                }
+            });
+        }
         Action::SwapOverlay { dest } => dest_dropdown(app, ui, doc, &frames, Some(*dest), "Overlay", |d| Action::SwapOverlay { dest: d }, node, k),
         Action::ChangeTo { dest } => {
             let vs = variants_for(doc, node);

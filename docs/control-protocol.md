@@ -62,7 +62,10 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings (`frameMs`,
 `renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
-the `pixels` re-rendered after a pan or an edit, or `reused`).
+the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
+(full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
+`name`, `start`, `history`, open `overlays`, the screen's `scroll` offset and `scrollRange`, the
+`device` and the `viewport` of the frame its screen shows (`null` when nothing plays).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 
@@ -90,14 +93,16 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, preview?, presentScroll?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `colorPicker`
 (`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
 or a collection id or name to show: the Variables editor), `layerFilter` (string:
 open the layers search with that filter; `null` closes it), `collapseLayers` (true: collapse the
-layers tree). Returns `ui.inspect`.
+layers tree), `preview` (true or a frame id: open the prototype preview pane like
+`proto.preview`; false or `null` closes it), `presentScroll` (`[x, y]`: scroll the presented
+screen, the full window's else the pane's, clamped to what it can scroll). Returns `ui.inspect`.
 
 ### `ui.screenshot {path}`
 

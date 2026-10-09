@@ -93,7 +93,7 @@ fn duplicate_remaps_ids_and_interactions() {
     let b = d.create(f, NodeKind::Rectangle, "B", 20.0, 0.0, 10.0, 10.0).unwrap();
     d.get_mut(a).unwrap().interactions.push(proto::Interaction {
         trigger: proto::Trigger::OnClick,
-        actions: vec![proto::Action::Navigate { dest: b }],
+        actions: vec![proto::Action::Navigate { dest: b, preserve_scroll: false }],
         transition: proto::Transition::Instant,
         duration_ms: 300,
         easing: proto::Easing::EaseOut,
@@ -103,7 +103,7 @@ fn duplicate_remaps_ids_and_interactions() {
     assert_eq!(kids.len(), 2);
     assert!(!kids.contains(&a));
     let a2 = d.node(kids[0]).unwrap();
-    let proto::Action::Navigate { dest } = a2.interactions[0].actions[0] else { panic!() };
+    let proto::Action::Navigate { dest, .. } = a2.interactions[0].actions[0] else { panic!() };
     assert_eq!(dest, kids[1]);
     assert!(d.validate().is_empty());
 }

@@ -128,6 +128,19 @@ from the pen's open end; clicking a point connects or branches), `vector.edit.pe
 `vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
 `vector.edit.state`; local coordinates are the layer's own.
 
+### Prototypes
+
+Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
+the scroll position with `preserveScroll: true`), flows `proto.flow.add` / `rename` / `remove`,
+and the device and background `proto.settings {device?, background?}` (`None`, `iPhone 16`,
+`iPhone 16 Pro Max`, `Android Compact`, `iPad mini`, `MacBook Air`, `Desktop`). On a device the
+presented frame is sized to the device's screen: what doesn't fit is clipped, or scrolls when the
+frame's `overflow` allows it, while `fixed` layers stay on screen (pinned to the edges their
+constraints name). `proto.present {start?}` plays the prototype full-window and `proto.preview
+{start?}` in a resizable pane over the canvas that follows edits live; `proto.closePreview` closes
+it. The player's state is in `inspect_ui` (`presenter`, `preview`) when attached, and `ui.set
+{presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
+
 ### Local libraries
 
 A `.figcraft` file can be published as a library and used from other files (local files only: no

@@ -71,7 +71,11 @@ dimension measured side by side.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
    laptop, desktop bodies drawn in code) around the presented frame; overlays animate out with
    their opening transition reversed; several selected layers edit their interactions together
-   (or replace mixed ones). *Left:* scrolling inside device frames. 3–5 h.
+   (or replace mixed ones); scrolling inside device frames (the frame sized to the device's screen,
+   clipped or scrolling by wheel and drag, fixed layers pinned to the screen by their constraints,
+   nested "Scroll to", preserve scroll position); a resizable preview pane over the canvas that
+   plays the selected frame and follows edits live. *Left:* device rotation and presentation
+   scaling options, scroll momentum. 1–3 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -157,7 +161,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
 | Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
-| Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
+| Prototyping | 6 | 76% | device rotation, presentation scaling options, scroll momentum | 1–3 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
 | Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |

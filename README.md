@@ -102,7 +102,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>Prototype and hand off</h3>
-      Connections, triggers, actions and Smart Animate-style transitions, flows and a presentation view. Inspect mode with measurements, CSS and SVG. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
+      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Inspect mode with measurements, CSS and SVG. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
     </td>
   </tr>
 </table>

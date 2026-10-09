@@ -67,9 +67,14 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     if sresp.clicked() {
         app.ui.export_preview = true;
     }
+    // Play presents; its chevron opens the play menu (present, or preview in a pane).
     let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
-    let presp = ui.interact(play, ui.id().with("play"), Sense::click()).on_hover_text("Present  ⌥⌘↵");
-    if presp.hovered() {
+    let (tri_r, chev_r) =
+        (Rect::from_min_max(play.min, pos2(play.max.x - 16.0, play.max.y)), Rect::from_min_max(pos2(play.max.x - 16.0, play.min.y), play.max));
+    let present_keys = crate::toolbar::pretty_shortcut(crate::present::PRESENT_SHORTCUT);
+    let presp = ui.interact(tri_r, ui.id().with("play"), Sense::click()).on_hover_text(format!("Present  {present_keys}"));
+    let mresp = ui.interact(chev_r, ui.id().with("play_menu"), Sense::click()).on_hover_text("Present or preview");
+    if presp.hovered() || mresp.hovered() {
         ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
     }
     let tri = Rect::from_center_size(play.center() - vec2(7.0, 0.0), vec2(16.0, 16.0));
@@ -79,6 +84,17 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     if presp.clicked() {
         app.run("proto.present", json!({}));
     }
+    egui::Popup::menu(&mresp).width(200.0).show(|ui| {
+        if menu_item(ui, "Present", &present_keys) {
+            app.run("proto.present", json!({}));
+            ui.close();
+        }
+        let (label, cmd) = if app.ui.preview.is_some() { ("Close preview", "proto.closePreview") } else { ("Preview", "proto.preview") };
+        if menu_item(ui, label, "") {
+            app.run(cmd, json!({}));
+            ui.close();
+        }
+    });
     // Tabs row.
     let (tabs, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     ui.painter().line_segment([tabs.left_top(), tabs.right_top()], Stroke::new(1.0, t.border));

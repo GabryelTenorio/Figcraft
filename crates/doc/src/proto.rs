@@ -350,6 +350,9 @@ impl OverlayPosition {
 pub enum Action {
     Navigate {
         dest: NodeId,
+        /// Keep the scroll position of the frame being left (else the destination starts at the top).
+        #[serde(default, alias = "preserveScroll", skip_serializing_if = "is_false")]
+        preserve_scroll: bool,
     },
     Back,
     ScrollTo {
@@ -398,7 +401,7 @@ impl Action {
     }
     pub fn dest(&self) -> Option<NodeId> {
         match self {
-            Action::Navigate { dest }
+            Action::Navigate { dest, .. }
             | Action::ScrollTo { dest }
             | Action::OpenOverlay { dest, .. }
             | Action::SwapOverlay { dest }
@@ -423,6 +426,10 @@ pub struct Interaction {
 
 fn default_duration() -> u32 {
     300
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -464,5 +471,30 @@ pub struct PrototypeSettings {
 impl Default for PrototypeSettings {
     fn default() -> Self {
         Self { device: "None".into(), background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E) }
+    }
+}
+
+/// A device prototypes are presented on: its name and screen size in points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Device {
+    pub name: &'static str,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl PrototypeSettings {
+    /// The devices to pick from ("None" presents the frame at its own size).
+    pub const DEVICES: [Device; 6] = [
+        Device { name: "iPhone 16", width: 393.0, height: 852.0 },
+        Device { name: "iPhone 16 Pro Max", width: 440.0, height: 956.0 },
+        Device { name: "Android Compact", width: 412.0, height: 917.0 },
+        Device { name: "iPad mini", width: 744.0, height: 1133.0 },
+        Device { name: "MacBook Air", width: 1280.0, height: 832.0 },
+        Device { name: "Desktop", width: 1440.0, height: 1024.0 },
+    ];
+
+    /// The chosen device (None for "None" or a name we don't know).
+    pub fn device(&self) -> Option<Device> {
+        Self::DEVICES.iter().find(|d| d.name == self.device).copied()
     }
 }

@@ -172,6 +172,13 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
             return true;
         }
     }
+    if let Some((want, k)) = parse(crate::present::PRESENT_SHORTCUT)
+        && k == key
+        && mods_match(want, m)
+    {
+        app.run("proto.present", json!({}));
+        return true;
+    }
     // Enter while the pen is drawing finishes it.
     if key == Key::Enter && app.session.tool.pen.is_some() {
         let _ = app.session.pen_finish();

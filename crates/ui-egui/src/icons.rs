@@ -123,6 +123,8 @@ pub enum Icon {
     Swap,
     Link,
     Prototype,
+    /// The prototype preview pane: a small window playing a frame.
+    Preview,
     Section2,
     Logo,
     /// Ignore auto layout: a layer pinned at an offset inside its frame.
@@ -700,6 +702,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle(4.5, 11.5, 2.0);
             p.poly(&[(6.0, 10.0), (9.0, 6.0), (12.5, 4.0)], false);
             p.poly(&[(10.0, 3.0), (12.8, 3.8), (12.0, 6.6)], false);
+        }
+        Preview => {
+            // A window with a title strip and a play triangle in it.
+            p.rect(2.5, 2.5, 13.5, 13.5, 2.0);
+            p.line(2.5, 5.0, 13.5, 5.0);
+            p.fill_poly(&[(6.5, 7.0), (10.5, 9.25), (6.5, 11.5)]);
         }
         AbsolutePosition => {
             // The frame, a small layer near its top-right corner, and the two offsets pinning it.
