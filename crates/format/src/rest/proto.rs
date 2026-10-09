@@ -113,7 +113,7 @@ impl Ctx<'_> {
         let ms = num(j, "transitionDuration").map(|d| d.clamp(0.0, MAX_MS) as u32).unwrap_or(0);
         Some(Interaction {
             trigger: Trigger::OnClick,
-            actions: vec![Action::Navigate { dest }],
+            actions: vec![Action::Navigate { dest, preserve_scroll: false }],
             transition: if ms > 0 { Transition::Dissolve } else { Transition::Instant },
             duration_ms: if ms > 0 { ms } else { DEFAULT_MS },
             easing: easing_type(text(j, "transitionEasing"), None),
@@ -233,7 +233,9 @@ impl Ctx<'_> {
             return None;
         };
         Some(match text(a, "navigation") {
-            Some("NAVIGATE") | None => Action::Navigate { dest },
+            Some("NAVIGATE") | None => {
+                Action::Navigate { dest, preserve_scroll: a.get("preserveScrollPosition").and_then(Value::as_bool).unwrap_or(false) }
+            }
             Some("SWAP") => Action::SwapOverlay { dest },
             Some("SCROLL_TO") => Action::ScrollTo { dest },
             Some("CHANGE_TO") => Action::ChangeTo { dest },

@@ -68,7 +68,7 @@ fn open_reads_variables_from_param_or_next_to_the_file() {
     let button = named(&s, "Button");
     assert_eq!(button.bound.get("fill").map(String::as_str), Some(BRAND));
     let details = named(&s, "Details").id;
-    assert_eq!(button.interactions[0].actions, [Action::Navigate { dest: details }]);
+    assert_eq!(button.interactions[0].actions, [Action::Navigate { dest: details, preserve_scroll: false }]);
     assert_eq!(button.interactions[0].trigger, Trigger::OnClick);
     // The binding is live: switching the mode recolours the button.
     s.execute("variable.setMode", &json!({"collection": "Theme", "mode": "Dark"})).unwrap();

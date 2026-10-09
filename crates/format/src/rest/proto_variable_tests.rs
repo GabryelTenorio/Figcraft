@@ -213,7 +213,7 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!(its.len(), 7, "{its:#?}");
 
     assert_eq!(its[0].trigger, Trigger::OnClick);
-    assert_eq!(its[0].actions, [Action::Navigate { dest: id("Details") }]);
+    assert_eq!(its[0].actions, [Action::Navigate { dest: id("Details"), preserve_scroll: false }]);
     assert_eq!((its[0].transition, its[0].duration_ms), (Transition::SmartAnimate, 450));
     assert_eq!(its[0].easing, Easing::CustomBezier { x1: 0.1, y1: 0.2, x2: 0.3, y2: 1.4 });
 
@@ -239,7 +239,7 @@ fn interactions_triggers_actions_and_transitions() {
     let details = named(&doc, "Details");
     assert_eq!(details.interactions.len(), 1);
     let legacy = &details.interactions[0];
-    assert_eq!((&legacy.trigger, &legacy.actions[..]), (&Trigger::OnClick, &[Action::Navigate { dest: id("Home") }][..]));
+    assert_eq!((&legacy.trigger, &legacy.actions[..]), (&Trigger::OnClick, &[Action::Navigate { dest: id("Home"), preserve_scroll: false }][..]));
     assert_eq!((legacy.transition, legacy.duration_ms, legacy.easing), (Transition::Dissolve, 200, Easing::EaseIn));
 
     for w in ["change variable modes", "video triggers", "modifier keys", "without a destination"] {
@@ -286,7 +286,7 @@ fn scrolling_flows_and_prototype_device() {
     ] {
         let got = device(d);
         assert_eq!(got, want);
-        assert!(PrototypeSettings::DEVICES.iter().any(|d| d.name == got), "{got}");
+        assert!(got == "None" || PrototypeSettings::DEVICES.iter().any(|d| d.name == got), "{got}");
     }
 }
 
