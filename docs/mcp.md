@@ -141,6 +141,18 @@ instances and component properties are mapped. Image fills keep their `imageRef`
 placeholder unless the image files sit in an `images` folder next to the JSON, named by `imageRef`
 (`images/<imageRef>.png`); nothing is fetched from the network.
 
+### Version history
+
+Named snapshots of the document, kept in the `.figcraft` file (they persist once the file is saved;
+a new, renamed or deleted version marks the file as changed). Driven with `run_command`:
+`file.saveVersion {name?, description?}` (returns `{id, index, name, description, time}`; untitled
+versions are named "Version N"), `version.list` (oldest first; `time` is Unix seconds),
+`version.restore {id | index}` (replaces the document with the version as one undo step; the file
+name stays), `version.rename {id | index, name, description?}`, `version.delete {id | index}` and
+`version.duplicate {id | index}` (opens the version as a new document tab). Indexes are validated
+(a negative or out-of-range index is an error). A file keeps at most 100 versions; there are no
+automatic versions. `file.versionHistory` returns the same list and opens the panel in the app.
+
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.
 

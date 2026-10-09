@@ -81,19 +81,37 @@ fn avatar(painter: &egui::Painter, center: Pos2, r: f32, name: &str) {
     painter.text(center, Align2::CENTER_CENTER, initials(name), semibold(r * 0.8), Color32::WHITE);
 }
 
+/// Seconds since `t` (Unix seconds); `None` for unknown or future times.
+fn age(t: u64) -> Option<u64> {
+    let now = figcraft_engine::cmd::comment::now_secs();
+    (t != 0 && now >= t).then(|| now - t)
+}
+
 /// "now", "5m", "3h", "2d", or a week count.
 pub fn ago(created: u64) -> String {
-    let now = figcraft_engine::cmd::comment::now_secs();
-    if created == 0 || now < created {
-        return String::new();
-    }
-    let d = now - created;
+    let Some(d) = age(created) else { return String::new() };
     match d {
         0..60 => "now".into(),
         60..3600 => format!("{}m", d / 60),
         3600..86_400 => format!("{}h", d / 3600),
         86_400..604_800 => format!("{}d", d / 86_400),
         _ => format!("{}w", d / 604_800),
+    }
+}
+
+/// "Just now", "5 minutes ago", "Yesterday", "3 weeks ago"…
+pub fn ago_long(t: u64) -> String {
+    let Some(d) = age(t) else { return String::new() };
+    let units = |n: u64, unit: &str| if n == 1 { format!("1 {unit} ago") } else { format!("{n} {unit}s ago") };
+    match d {
+        0..60 => "Just now".into(),
+        60..3600 => units(d / 60, "minute"),
+        3600..86_400 => units(d / 3600, "hour"),
+        86_400..172_800 => "Yesterday".into(),
+        172_800..604_800 => units(d / 86_400, "day"),
+        604_800..2_592_000 => units(d / 604_800, "week"),
+        2_592_000..31_536_000 => units(d / 2_592_000, "month"),
+        _ => units(d / 31_536_000, "year"),
     }
 }
 

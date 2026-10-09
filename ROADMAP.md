@@ -75,8 +75,10 @@ dimension measured side by side.
    of prototype interactions and variables. 20–32 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
-8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history UI,
-   multiplayer and plugins are not started. 30–60 h.
+8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
+   landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel);
+   previews on the canvas and autosave checkpoints are missing. Multiplayer and plugins are not
+   started. 25–55 h.
 9. **Hardening and performance**: real-world file corpus, perf budgets at 50k layers (tile cache,
    incremental re-render), Windows/Linux/browser QA, accessibility. 40–60 h.
 
@@ -145,7 +147,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Prototyping | 6 | 65% | multi-selection editing, scrolling inside device frames | 4–7 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
 | Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
-| Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
+| Comments, versions, misc | 3 | 35% | version preview on the canvas, autosave checkpoints, comment polish, plugins (WASM) | 12–20 |
 
 Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).
 

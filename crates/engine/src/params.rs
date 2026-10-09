@@ -32,6 +32,15 @@ pub fn req_num(cmd: &str, p: &Value, key: &str) -> Result<f64> {
     num(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a number")))
 }
 
+/// A list index from params: a whole number, never negative (no casting -1 to 0).
+pub fn req_index(cmd: &str, p: &Value, key: &str) -> Result<usize> {
+    let k = req_num(cmd, p, key)?;
+    if !(0.0..1e9).contains(&k) || k.fract() != 0.0 {
+        return Err(bad(cmd, format!("`{key}` out of range")));
+    }
+    Ok(k as usize)
+}
+
 pub fn string(p: &Value, key: &str) -> Option<String> {
     match get(p, key)? {
         Value::String(s) => Some(s.clone()),

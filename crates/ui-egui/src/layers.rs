@@ -82,7 +82,7 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
         let ir = Rect::from_center_size(pos2(r.center().x, y + 14.0), vec2(36.0, 28.0));
         let hit = Rect::from_min_max(pos2(r.min.x, y), pos2(r.max.x, y + 48.0));
         let resp = ui.interact(hit, ui.id().with(("rail", label)), Sense::click()).on_hover_text(label);
-        let active = tab.is_some_and(|tb| tb == app.ui.left_tab && !app.ui.left_collapsed);
+        let active = tab.is_some_and(|tb| tb == app.ui.left_tab && !app.ui.left_collapsed && !app.ui.versions.open);
         if active {
             ui.painter().rect_filled(ir, CornerRadius::same(6), t.selected_row);
         } else if resp.hovered() {
@@ -93,12 +93,14 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
         if resp.clicked() {
             match tab {
                 Some(tb) => {
-                    if app.ui.left_tab == tb && !app.ui.left_collapsed {
+                    // Leaving the version history shows the tab rather than collapsing it.
+                    if active {
                         app.ui.left_collapsed = true;
                     } else {
                         app.ui.left_tab = tb;
                         app.ui.left_collapsed = false;
                     }
+                    app.ui.versions = Default::default();
                 }
                 None => {
                     ui.data_mut(|d| d.insert_temp(Id::new("variables_open"), true));
@@ -110,6 +112,10 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
 }
 
 pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
+    if app.ui.versions.open {
+        crate::versions::panel(app, ui);
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let full = ui.max_rect();
     // Header: file name (or "Assets") + drafts + collapse.

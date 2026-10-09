@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use figcraft_doc::*;
+use figcraft_format::Version;
 use serde_json::{Value, json};
 
 use super::{CommandSpec, ok};
@@ -72,41 +73,77 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.revert", "Revert to saved", "{}", false, |s, _| {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
-            let (doc, _) = load(&path)?;
+            let (loaded, _) = load_path(&path)?;
             let i = s.active;
             if let Some(slot) = s.docs.get_mut(i) {
-                *slot = DocState::new(doc, Some(path));
+                *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions);
             }
             ok()
         }),
-        spec!("file.saveVersion", "Save to version history", "{name?, description?}", false, |s, p| {
-            let name = string(p, "name").unwrap_or_else(|| format!("Version {}", s.ds().map(|d| versions(d).len() + 1).unwrap_or(1)));
-            let ds = s.ds_mut()?;
-            let snap = ds.doc.clone();
-            push_version(ds, name, string(p, "description").unwrap_or_default(), snap);
-            ok()
-        }),
-        spec!("file.versionHistory", "Show version history", "{}", false, |s, _| {
-            let ds = s.ds()?;
-            let v: Vec<Value> =
-                versions(ds).iter().enumerate().map(|(i, v)| json!({"index": i, "name": v.0, "description": v.1, "time": v.2})).collect();
+        spec!(
+            "file.saveVersion",
+            "Save to version history",
+            "{name?, description?}  snapshot the document into the file's version history (kept when the file is saved); returns the version",
+            false,
+            save_version
+        ),
+        spec!("file.versionHistory", "Show version history", "{}  opens the panel; returns the versions like `version.list`", false, |s, _| {
+            let list = version_list(s.ds()?);
             s.request_ui("panel.versionHistory", json!({}));
-            Ok(Value::Array(v))
+            Ok(list)
         }),
-        spec!("version.restore", "Restore version", "{index}", true, |s, p| {
-            let i = req_num("version.restore", p, "index")? as usize;
-            let ds = s.ds_mut()?;
-            let Some((_, _, _, doc)) =
-                version_list().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&ds.uid).and_then(|v| v.get(i)).cloned()
-            else {
-                return Err(bad("version.restore", "no such version"));
-            };
-            ds.doc = doc;
-            if !ds.doc.pages.contains(&ds.page) {
-                ds.page = ds.doc.first_page().unwrap_or(ds.page);
+        spec!(
+            "version.list",
+            "List versions",
+            "{}  the version history, oldest first: [{id, index, name, description, time (Unix seconds)}]",
+            false,
+            |s, _| Ok(version_list(s.ds()?))
+        ),
+        spec!(
+            "version.restore",
+            "Restore version",
+            "{id | index}  replace the document with the version (one undo step; the file name stays)",
+            true,
+            restore_version
+        ),
+        spec!("version.rename", "Rename version", "{id | index, name, description?}", false, |s, p| {
+            const CMD: &str = "version.rename";
+            let name = req_string(CMD, p, "name")?;
+            if name.trim().is_empty() {
+                return Err(bad(CMD, "`name` can't be empty"));
             }
+            let ds = s.ds_mut()?;
+            let i = version_index(CMD, ds, p)?;
+            let description = string(p, "description");
+            let v = ds.versions_mut().get_mut(i).ok_or_else(|| bad(CMD, "no such version"))?;
+            v.name = figcraft_format::clip(name.trim(), figcraft_format::MAX_VERSION_NAME);
+            if let Some(d) = description {
+                v.description = figcraft_format::clip(d.trim(), figcraft_format::MAX_VERSION_DESCRIPTION);
+            }
+            Ok(version_json(i, v))
+        }),
+        spec!("version.delete", "Delete version", "{id | index}", false, |s, p| {
+            let ds = s.ds_mut()?;
+            let i = version_index("version.delete", ds, p)?;
+            ds.versions_mut().remove(i);
             ok()
         }),
+        spec!(
+            "version.duplicate",
+            "Duplicate version",
+            "{id | index}  open the version as a new document; returns its tab `index`",
+            false,
+            |s, p| {
+                let ds = s.ds()?;
+                let v = ds.versions.get(version_index("version.duplicate", ds, p)?).ok_or_else(|| bad("version.duplicate", "no such version"))?;
+                let mut doc = (*read_version(v)?).clone();
+                doc.name = format!("{} ({})", ds.doc.name, v.name);
+                doc.take_dirty();
+                s.docs.push(DocState::new(doc, None));
+                s.active = s.docs.len() - 1;
+                Ok(json!({"index": s.active}))
+            }
+        ),
         spec!("doc.switch", "Switch document", "{index}", false, |s, p| {
             let i = req_num("doc.switch", p, "index")? as usize;
             if i >= s.docs.len() {
@@ -131,28 +168,85 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-type Version = (String, String, u64, Arc<Document>);
-
-fn version_list() -> &'static std::sync::Mutex<std::collections::HashMap<u64, Vec<Version>>> {
-    static V: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<u64, Vec<Version>>>> = std::sync::OnceLock::new();
-    V.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+fn version_json(index: usize, v: &Version) -> Value {
+    json!({"id": v.id, "index": index, "name": v.name, "description": v.description, "time": v.time})
 }
 
-fn now_secs() -> u64 {
-    super::comment::now_secs()
+fn version_list(ds: &DocState) -> Value {
+    Value::Array(ds.versions.iter().enumerate().map(|(i, v)| version_json(i, v)).collect())
 }
 
-fn push_version(ds: &DocState, name: String, desc: String, doc: Arc<Document>) {
-    version_list().lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(ds.uid).or_default().push((name, desc, now_secs(), doc));
+/// The version named by `id`, else by `index` (validated: never negative, never past the end).
+fn version_index(cmd: &str, ds: &DocState, p: &Value) -> Result<usize> {
+    if let Some(id) = string(p, "id") {
+        return ds.versions.iter().position(|v| v.id == id).ok_or_else(|| bad(cmd, format!("no version `{id}`")));
+    }
+    if get(p, "index").is_none() {
+        return Err(bad(cmd, "pass the version's `id` or `index`"));
+    }
+    let i = req_index(cmd, p, "index")?;
+    if i < ds.versions.len() { Ok(i) } else { Err(bad(cmd, format!("no version at index {i}"))) }
 }
 
-pub fn versions(ds: &DocState) -> Vec<(String, String, u64)> {
-    version_list()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&ds.uid)
-        .map(|v| v.iter().map(|(a, b, c, _)| (a.clone(), b.clone(), *c)).collect())
-        .unwrap_or_default()
+fn read_version(v: &Version) -> Result<Arc<Document>> {
+    v.document().map_err(|e| EngineError::Other(format!("version “{}” can't be read: {e}", v.name)))
+}
+
+/// A new version id: the time in milliseconds (hex), unique in the history.
+fn new_version_id(versions: &[Version]) -> String {
+    let mut n = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    loop {
+        let id = format!("{n:x}");
+        if !versions.iter().any(|v| v.id == id) {
+            return id;
+        }
+        n = n.wrapping_add(1);
+    }
+}
+
+fn save_version(s: &mut Session, p: &Value) -> Result<Value> {
+    let ds = s.ds_mut()?;
+    if ds.versions.len() >= figcraft_format::MAX_VERSIONS {
+        return Err(EngineError::Disabled(
+            "file.saveVersion".into(),
+            format!("the version history is full ({} versions): delete old versions first", figcraft_format::MAX_VERSIONS),
+        ));
+    }
+    let name =
+        string(p, "name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| format!("Version {}", ds.versions.len() + 1));
+    let description = string(p, "description").unwrap_or_default();
+    let mut snap = ds.doc.clone();
+    // The version opens on the page shown when it was saved.
+    if snap.current_page != Some(ds.page) {
+        Arc::make_mut(&mut snap).current_page = Some(ds.page);
+    }
+    let v = Version::new(new_version_id(&ds.versions), &name, description.trim(), super::comment::now_secs(), snap);
+    let out = version_json(ds.versions.len(), &v);
+    ds.versions_mut().push(v);
+    Ok(out)
+}
+
+fn restore_version(s: &mut Session, p: &Value) -> Result<Value> {
+    let ds = s.ds_mut()?;
+    let i = version_index("version.restore", ds, p)?;
+    let v = ds.versions.get(i).ok_or_else(|| bad("version.restore", "no such version"))?;
+    let mut doc = read_version(v)?;
+    let out = version_json(i, v);
+    let d = Arc::make_mut(&mut doc);
+    d.name = ds.doc.name.clone();
+    // The snapshot is already consistent: nothing to re-normalise.
+    d.take_dirty();
+    // Stay on the current page when the version has it.
+    ds.page = Some(ds.page)
+        .filter(|pg| d.pages.contains(pg))
+        .or_else(|| d.current_page.filter(|pg| d.pages.contains(pg)))
+        .or_else(|| d.first_page())
+        .unwrap_or(ds.page);
+    ds.doc = doc;
+    ds.selection.clear();
+    ds.text_edit = None;
+    ds.vector_edit = None;
+    Ok(out)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -188,28 +282,29 @@ fn file_stem(path: &str) -> String {
 /// Load a document from any supported file (REST API file JSON images come from an `images`
 /// folder next to the file).
 pub fn load(path: &str) -> Result<(Document, Vec<String>)> {
-    load_path(path).map(|(doc, notes, _)| (doc, notes))
+    load_path(path).map(|(l, _)| (l.doc, l.issues))
 }
 
 pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String>)> {
-    load_with(bytes, name_hint, &figcraft_format::rest::no_images).map(|(doc, notes, _)| (doc, notes))
+    load_with(bytes, name_hint, &figcraft_format::rest::no_images).map(|(l, _)| (l.doc, l.issues))
 }
 
-/// [`load`], also telling whether the file was REST API file JSON.
-pub fn load_path(path: &str) -> Result<(Document, Vec<String>, bool)> {
+/// [`load`] with the version history, also telling whether the file was REST API file JSON.
+pub fn load_path(path: &str) -> Result<(figcraft_format::Loaded, bool)> {
     let bytes = read(path)?;
     load_with(&bytes, path, &rest_images(path))
 }
 
-/// Load from bytes. Returns the document, notes (repairs of a native file, or import warnings) and
-/// whether it was imported from REST API file JSON (such a file is never saved over).
-fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::ImageResolver) -> Result<(Document, Vec<String>, bool)> {
+/// Load from bytes. Returns the document with its notes (repairs of a native file, or import
+/// warnings) and version history, and whether it was imported from REST API file JSON (such a file
+/// is never saved over).
+fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::ImageResolver) -> Result<(figcraft_format::Loaded, bool)> {
     match ext(name_hint).as_str() {
         "svg" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
             figcraft_svg::import_svg(&mut doc, bytes, page, 0.0, 0.0, &file_stem(name_hint)).map_err(|e| EngineError::Other(e.to_string()))?;
-            Ok((doc, vec![], false))
+            Ok((doc.into(), false))
         }
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
             let mut doc = Document::new(file_stem(name_hint));
@@ -217,19 +312,19 @@ fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::Image
             let (hash, w, h) = figcraft_format::add_image(&mut doc, bytes.to_vec()).map_err(|e| EngineError::Other(e.to_string()))?;
             let id = doc.create(page, NodeKind::Rectangle, &file_stem(name_hint), 0.0, 0.0, f64::from(w), f64::from(h))?;
             doc.get_mut(id)?.fills = vec![figcraft_color::Paint::image(hash, figcraft_color::ImageScaleMode::Fill)];
-            Ok((doc, vec![], false))
+            Ok((doc.into(), false))
         }
         _ => {
             if let Some(r) = figcraft_format::rest::try_import(bytes, images) {
                 let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
                 link_instances(&mut doc);
-                return Ok((doc, warnings, true));
+                return Ok((figcraft_format::Loaded { issues: warnings, ..doc.into() }, true));
             }
-            let (mut doc, issues) = figcraft_format::load_bytes(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-            if doc.name.is_empty() {
-                doc.name = file_stem(name_hint);
+            let mut loaded = figcraft_format::load_bytes_with_versions(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+            if loaded.doc.name.is_empty() {
+                loaded.doc.name = file_stem(name_hint);
             }
-            Ok((doc, issues, false))
+            Ok((loaded, false))
         }
     }
 }
@@ -280,12 +375,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.active = i;
         return Ok(json!({"index": i}));
     }
-    let (doc, notes, rest) = load_path(&path)?;
+    let (loaded, rest) = load_path(&path)?;
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
-    s.docs.push(DocState::new(doc, native.then_some(path)));
+    s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions));
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active});
-    out[if rest { "warnings" } else { "repairs" }] = json!(notes);
+    out[if rest { "warnings" } else { "repairs" }] = json!(loaded.issues);
     Ok(out)
 }
 
@@ -304,12 +399,17 @@ pub fn thumbnail(doc: &Document) -> Option<Vec<u8>> {
     figcraft_render::encode_png(&pix).ok()
 }
 
-fn save_to(s: &mut Session, path: String) -> Result<Value> {
-    let ds = s.ds_mut()?;
+/// The `.figcraft` file for a document: content, thumbnail and version history.
+pub fn file_bytes(ds: &DocState) -> Result<Vec<u8>> {
     let mut doc = (*ds.doc).clone();
     doc.current_page = Some(ds.page);
     let thumb = thumbnail(&doc);
-    let bytes = figcraft_format::save_bytes(&doc, thumb.as_deref()).map_err(|e| EngineError::Other(e.to_string()))?;
+    figcraft_format::save_bytes_with_versions(&doc, thumb.as_deref(), &ds.versions).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+fn save_to(s: &mut Session, path: String) -> Result<Value> {
+    let ds = s.ds_mut()?;
+    let bytes = file_bytes(ds)?;
     write(&path, &bytes)?;
     ds.path = Some(path.clone());
     ds.mark_saved();
@@ -468,11 +568,11 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(r) => r,
                 None => &figcraft_format::rest::no_images,
             };
-            let (other, notes, rest) = load_with(&bytes, &name, images)?;
-            let pages = append_pages(s.doc_mut()?, &other)?;
+            let (other, rest) = load_with(&bytes, &name, images)?;
+            let pages = append_pages(s.doc_mut()?, &other.doc)?;
             let mut out = json!({"pages": pages});
             if rest {
-                out["warnings"] = json!(notes);
+                out["warnings"] = json!(other.issues);
             }
             Ok(out)
         }

@@ -34,6 +34,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "file.placeImage" => app.import_dialog(true),
         "file.save" => app.save(),
         "file.saveAs" => app.save_as_dialog(),
+        "file.saveVersion" => crate::versions::start_save(app),
         "file.export" | "file.exportSvg" => app.ui.export_preview = true,
         "edit.copyAsCss" => {
             let ids = app.session.selection();

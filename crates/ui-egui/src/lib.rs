@@ -33,6 +33,7 @@ pub mod toolbar;
 pub mod typography;
 pub mod variable_ui;
 pub mod vector_panel;
+pub mod versions;
 pub mod widgets;
 
 use std::collections::BTreeSet;
@@ -121,6 +122,7 @@ pub struct UiState {
     pub find: Option<(String, String)>,
     pub left_collapsed: bool,
     pub comments: comments::CommentUi,
+    pub versions: versions::VersionUi,
 }
 
 impl Default for UiState {
@@ -161,6 +163,7 @@ impl Default for UiState {
             find: None,
             left_collapsed: false,
             comments: comments::CommentUi::default(),
+            versions: versions::VersionUi::default(),
         }
     }
 }
@@ -225,6 +228,7 @@ impl FigApp {
                 "panel.prototype" => self.ui.right_tab = RightTab::Prototype,
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
+                "panel.versionHistory" => versions::open(self),
                 "home" => self.ui.home = true,
                 "dialog.saveAs" => self.save_as_dialog(),
                 "present" => {
@@ -411,6 +415,7 @@ impl FigApp {
             "presenting": self.ui.present.is_some(),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
+            "versionHistory": self.ui.versions.open,
             "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,

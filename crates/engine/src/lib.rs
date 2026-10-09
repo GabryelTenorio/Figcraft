@@ -220,6 +220,10 @@ pub struct DocState {
     /// Vector edit mode: the vector being edited, its selected points and the edit tool.
     pub vector_edit: Option<vectoredit::VectorEdit>,
     pub uid: u64,
+    /// The file's version history, oldest first (saved in the `.figcraft` file; not undoable).
+    pub versions: Vec<figcraft_format::Version>,
+    /// The version history changed since the last save.
+    versions_changed: bool,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -245,17 +249,32 @@ impl DocState {
             hover: None,
             vector_edit: None,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            versions: Vec::new(),
+            versions_changed: false,
         };
         st.zoom_to_fit();
         st
     }
 
+    /// With the version history read from its file.
+    pub fn with_versions(mut self, versions: Vec<figcraft_format::Version>) -> Self {
+        self.versions = versions;
+        self
+    }
+
+    /// The version history, for editing (the file then has unsaved changes).
+    pub fn versions_mut(&mut self) -> &mut Vec<figcraft_format::Version> {
+        self.versions_changed = true;
+        &mut self.versions
+    }
+
     pub fn is_dirty(&self) -> bool {
-        !Arc::ptr_eq(&self.doc, &self.saved_doc)
+        !Arc::ptr_eq(&self.doc, &self.saved_doc) || self.versions_changed
     }
 
     pub fn mark_saved(&mut self) {
         self.saved_doc = self.doc.clone();
+        self.versions_changed = false;
     }
 
     pub fn doc_mut(&mut self) -> &mut Document {
@@ -744,3 +763,5 @@ mod tests;
 mod text_fill_tests;
 #[cfg(test)]
 mod variable_tests;
+#[cfg(test)]
+mod version_tests;

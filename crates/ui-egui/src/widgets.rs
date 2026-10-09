@@ -480,6 +480,29 @@ pub fn checkbox(ui: &mut Ui, on: bool, label: &str) -> bool {
     resp.clicked()
 }
 
+/// A text button: `primary` is filled with the accent colour, otherwise outlined. A disabled
+/// button is dimmed and never reports clicks.
+pub fn button(ui: &mut Ui, label: &str, primary: bool, enabled: bool) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let galley = ui.painter().layout_no_wrap(label.to_string(), regular(11.0), t.text);
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 24.0, FIELD_H), sense);
+    let hot = enabled && resp.hovered();
+    let (fill, text) = match (primary, hot) {
+        (true, false) => (t.accent, Color32::WHITE),
+        (true, true) => (t.accent_hover, Color32::WHITE),
+        (false, false) => (Color32::TRANSPARENT, t.text),
+        (false, true) => (t.hover, t.text),
+    };
+    let dim = |c: Color32| if enabled { c } else { c.gamma_multiply(0.4) };
+    ui.painter().rect_filled(rect, CornerRadius::same(5), dim(fill));
+    if !primary {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
+    }
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, regular(11.0), dim(text));
+    resp
+}
+
 /// Text in a row.
 pub fn label(ui: &mut Ui, text: &str, color: Color32) {
     ui.label(egui::RichText::new(text).font(regular(11.0)).color(color));

@@ -155,9 +155,5 @@ pub fn specs() -> Vec<CommandSpec> {
 
 /// A guide index from params (never negative).
 fn guide_index(cmd: &str, p: &Value) -> crate::Result<usize> {
-    let k = req_num(cmd, p, "index")?;
-    if !(0.0..1e9).contains(&k) {
-        return Err(bad(cmd, "`index` out of range"));
-    }
-    Ok(k as usize)
+    req_index(cmd, p, "index")
 }

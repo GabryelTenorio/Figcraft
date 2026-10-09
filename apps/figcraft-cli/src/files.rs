@@ -303,7 +303,12 @@ pub fn run_script(script: &str, input: Option<&str>, out: Option<&str>) -> CliRe
     }
     if let Some(out) = out {
         let ds = s.ds().map_err(|e| CliError::Failed(e.to_string()))?;
-        write_doc(&ds.doc, ds.page, out)?;
+        if ext(out) == "figcraft" {
+            // Through the engine, so the version history is kept.
+            write(out, &figcraft_engine::cmd::file::file_bytes(ds).map_err(|e| CliError::Failed(e.to_string()))?)?;
+        } else {
+            write_doc(&ds.doc, ds.page, out)?;
+        }
         eprintln!("wrote {out}");
     }
     Ok(ExitCode::SUCCESS)
