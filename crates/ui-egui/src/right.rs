@@ -204,7 +204,10 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     widgets::separator(ui);
     match vector_edit {
         Some(ve) => crate::vector_panel::points(app, ui, &doc, &ve),
-        None => position(app, ui, &doc, &sel),
+        None => {
+            crate::section_panel::section(app, ui, &doc, &sel);
+            position(app, ui, &doc, &sel);
+        }
     }
     widgets::separator(ui);
     crate::layout_panel::layout_section(app, ui, &doc, &sel);

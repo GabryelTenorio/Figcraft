@@ -98,7 +98,7 @@ Or in a project's `.mcp.json`:
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `inspect.code` (CSS, SwiftUI or Jetpack Compose for a layer), `style.create`, `variable.bind`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
-| `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), text…); returns the updated layers. |
+| `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`), text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |

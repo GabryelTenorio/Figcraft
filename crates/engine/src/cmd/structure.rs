@@ -16,6 +16,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("object.ungroup", "Ungroup selection", "{ids?}", true, ungroup),
         spec!("object.frameSelection", "Frame selection", "{ids?, name?}", true, |s, p| wrap(s, p, Wrap::Frame)),
         spec!("object.removeFrame", "Remove frame", "{ids?}", true, ungroup),
+        spec!(
+            "object.resizeToFit",
+            "Resize to fit",
+            "{ids?} (frames, sections and components shrink or grow to their contents; the contents stay put)",
+            true,
+            resize_to_fit
+        ),
         spec!("object.mask", "Use as mask", "{ids?}", true, mask),
         spec!("object.releaseMask", "Release mask", "{ids?}", true, |s, p| {
             for i in req_targets("object.releaseMask", s, p)? {
@@ -476,4 +483,51 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
         return ok();
     }
     flatten(s, &json!({"ids": ids}))
+}
+
+/// Fit containers to their visible children's bounds, keeping the children where they are on the
+/// page (auto layout frames hug instead); rotated containers fit in their own axes.
+fn resize_to_fit(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "object.resizeToFit";
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    let mut fitted = Vec::new();
+    for id in ids {
+        let Some(n) = doc.node(id).cloned() else { continue };
+        let container = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
+        if !container || n.children.is_empty() || matches!(n.kind, NodeKind::Instance { .. }) {
+            continue;
+        }
+        // Auto layout frames fit by hugging their contents.
+        if n.layout.is_some() {
+            let node = doc.get_mut(id)?;
+            node.child_layout.sizing_h = Sizing::Hug;
+            node.child_layout.sizing_v = Sizing::Hug;
+            fitted.push(id);
+            continue;
+        }
+        // Children's bounds in the container's own coordinates.
+        let mut b: Option<figcraft_geom::Rect> = None;
+        for c in n.children.iter().filter_map(|c| doc.node(*c)).filter(|c| c.visible) {
+            let r = figcraft_geom::transform_rect_bbox(c.transform, c.local_rect());
+            if r.x0.is_finite() && r.y0.is_finite() && r.x1.is_finite() && r.y1.is_finite() {
+                b = Some(b.map_or(r, |u| u.union(r)));
+            }
+        }
+        let Some(b) = b else { continue };
+        let (w, h) = (b.width().max(0.01), b.height().max(0.01));
+        // Move the container by the offset, and its children back by it.
+        let shift = Affine::translate((b.x0, b.y0));
+        let node = doc.get_mut(id)?;
+        node.transform *= shift;
+        node.width = w;
+        node.height = h;
+        for c in &n.children {
+            if let Ok(cn) = doc.get_mut(*c) {
+                cn.transform = shift.inverse() * cn.transform;
+            }
+        }
+        fitted.push(id);
+    }
+    Ok(json!({"ids": fitted}))
 }

@@ -101,6 +101,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if n.kind.is_frame_like() {
             o.insert("clip".into(), json!(n.clip));
         }
+        if !n.dev_status.is_none() {
+            o.insert("devStatus".into(), json!(n.dev_status.id()));
+        }
         if n.is_mask {
             o.insert("isMask".into(), json!(true));
             o.insert("maskType".into(), json!(n.mask_type.id()));

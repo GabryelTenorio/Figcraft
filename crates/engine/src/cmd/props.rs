@@ -289,6 +289,14 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "effects" => doc.get_mut(id)?.effects = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?,
             "clip" | "clipsContent" => doc.get_mut(id)?.clip = v.as_bool().ok_or_else(|| bad(cmd, "`clip` must be a boolean"))?,
             "isMask" => doc.get_mut(id)?.is_mask = v.as_bool().unwrap_or(false),
+            "devStatus" => {
+                let st = if v.is_null() {
+                    Some(DevStatus::None)
+                } else {
+                    v.as_str().and_then(|s| DevStatus::ALL.into_iter().find(|d| d.id().eq_ignore_ascii_case(s)))
+                };
+                doc.get_mut(id)?.dev_status = st.ok_or_else(|| bad(cmd, "devStatus: none|readyForDev|completed"))?;
+            }
             "maskType" => {
                 let t = v.as_str().and_then(|s| MaskType::ALL.into_iter().find(|m| m.id().eq_ignore_ascii_case(s)));
                 doc.get_mut(id)?.mask_type = t.ok_or_else(|| bad(cmd, "maskType: alpha|vector|luminance"))?;

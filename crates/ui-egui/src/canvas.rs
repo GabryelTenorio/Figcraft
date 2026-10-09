@@ -505,6 +505,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 let r = Rect::from_min_size(tl + vec2(0.0, 0.0), galley.size() + vec2(16.0, 8.0));
                 painter.rect_filled(r, CornerRadius::same(4), if selected { ACCENT } else { t.hover });
                 painter.galley(r.min + vec2(8.0, 4.0), galley, if selected { Color32::WHITE } else { t.text });
+                status_badge(painter, n.dev_status, pos2(r.max.x + 6.0, r.center().y));
             } else {
                 let max_w = (b.width() * zoom) as f32;
                 let mut x = tl.x;
@@ -514,7 +515,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 }
                 let galley = painter.layout(n.name.clone(), regular(11.0), col, max_w.max(20.0));
                 if galley.rows.len() <= 1 {
+                    let end = x + galley.size().x;
                     painter.galley(pos2(x, tl.y - 16.0), galley, col);
+                    status_badge(painter, n.dev_status, pos2(end + 6.0, tl.y - 9.0));
                 }
             }
         }
@@ -806,6 +809,19 @@ fn hatch(polys: &[Vec<Pos2>], gap: f32) -> Vec<[Pos2; 2]> {
         y += gap;
     }
     out
+}
+
+/// A frame's or section's handoff status as a small pill left-centred on `at`.
+fn status_badge(painter: &egui::Painter, status: figcraft_doc::DevStatus, at: Pos2) {
+    let (label, fill) = match status {
+        figcraft_doc::DevStatus::None => return,
+        figcraft_doc::DevStatus::ReadyForDev => ("Ready for dev", Color32::from_rgb(0x14, 0xAE, 0x5C)),
+        figcraft_doc::DevStatus::Completed => ("Completed", Color32::from_rgb(0x6E, 0x6E, 0x73)),
+    };
+    let galley = painter.layout_no_wrap(label.to_string(), semibold(10.0), Color32::WHITE);
+    let r = Rect::from_min_size(pos2(at.x, at.y - galley.size().y / 2.0 - 2.0), galley.size() + vec2(10.0, 4.0));
+    painter.rect_filled(r, CornerRadius::same(4), fill);
+    painter.galley(r.min + vec2(5.0, 2.0), galley, Color32::WHITE);
 }
 
 fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel: &[NodeId]) {

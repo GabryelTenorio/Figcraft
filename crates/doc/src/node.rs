@@ -147,6 +147,37 @@ impl MaskType {
     }
 }
 
+/// Handoff status of a frame or section.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DevStatus {
+    #[default]
+    None,
+    ReadyForDev,
+    Completed,
+}
+
+impl DevStatus {
+    pub const ALL: [DevStatus; 3] = [DevStatus::None, DevStatus::ReadyForDev, DevStatus::Completed];
+    pub fn is_none(&self) -> bool {
+        *self == DevStatus::None
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            DevStatus::None => "none",
+            DevStatus::ReadyForDev => "readyForDev",
+            DevStatus::Completed => "completed",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            DevStatus::None => "No status",
+            DevStatus::ReadyForDev => "Ready for dev",
+            DevStatus::Completed => "Completed",
+        }
+    }
+}
+
 /// A ruler guide on a page or frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
@@ -345,6 +376,10 @@ pub struct Node {
     /// A nested instance inside a main component whose properties show on the main's instances.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exposed: bool,
+
+    /// Handoff status of a frame or section (shown as a badge next to its name).
+    #[serde(default, skip_serializing_if = "DevStatus::is_none")]
+    pub dev_status: DevStatus,
     /// Inside an instance: property groups overridden locally ("fills", "characters", …).
     #[serde(default)]
     pub overrides: BTreeSet<String>,
@@ -433,6 +468,8 @@ impl Node {
             constrain_proportions: false,
             source: None,
             exposed: false,
+
+            dev_status: DevStatus::None,
             overrides: BTreeSet::new(),
             prop_refs: BTreeMap::new(),
             plugin_data: BTreeMap::new(),

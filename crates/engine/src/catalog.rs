@@ -113,6 +113,7 @@ pub static MENU: &[MenuItem] = &[
     m!("Object", "Group selection", "object.group", "Cmd+G"),
     m!("Object", "Ungroup selection", "object.ungroup", "Shift+Cmd+G"),
     m!("Object", "Remove frame", "object.removeFrame", ""),
+    m!("Object", "Resize to fit", "object.resizeToFit", "Alt+Shift+Cmd+R"),
     m!("Object", SEP, "", ""),
     m!("Object", "Add auto layout", "layout.add", "Shift+A"),
     m!("Object", "Remove auto layout", "layout.remove", "Alt+Shift+A"),

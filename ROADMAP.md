@@ -138,7 +138,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
-| Frames, groups, sections, masks | 5 | 70% | section tooling (section presets, auto-size to contents, section-level properties) | 3–5 |
+| Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
 | Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
 | Components & variants | 9 | 60% | libraries, slots, descriptions, nested override edge cases | 10–15 |
