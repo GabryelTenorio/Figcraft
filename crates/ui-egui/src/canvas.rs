@@ -604,7 +604,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 }
             }
         }
-        if let Some(b) = selection_box(&doc, &sel) {
+        // The shape builder reshapes by regions: no transform box.
+        if app.session.tool.tool != ToolId::ShapeBuilder
+            && let Some(b) = selection_box(&doc, &sel)
+        {
             let q = b.map(|p| app.to_screen(p.x, p.y));
             if sel.len() > 1 {
                 quad(painter, q, stroke(col, 1.0));
@@ -631,6 +634,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
             }
         }
+    }
+    if app.session.tool.tool == ToolId::ShapeBuilder
+        && let Some(arr) = figcraft_engine::shapebuilder::current(&app.session)
+    {
+        builder_overlay(app, painter, t, &arr);
     }
     // Text editing: caret and selection, or the IME composition underlined at the caret.
     let preedit = app.preedit_view();
@@ -748,12 +756,7 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
     // Paint bucket target: hatched like a fill to come.
     if !ov.face.is_empty() {
         let polys: Vec<Vec<Pos2>> = ov.face.iter().map(|poly| poly.iter().map(sp).collect()).collect();
-        for l in hatch(&polys, 5.0) {
-            painter.line_segment(l, stroke(ACCENT, 1.0));
-        }
-        for poly in &polys {
-            painter.add(Shape::closed_line(poly.clone(), stroke(ACCENT, 2.0)));
-        }
+        hatched(painter, &polys, ACCENT);
     }
     let hover_seg = match ov.vector_hover {
         Some(VHit::Segment { seg, .. }) => Some(seg),
@@ -792,6 +795,40 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
     }
     if let Some([x0, y0, x1, y1]) = ov.rubber {
         painter.add(Shape::dashed_line(&[app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 1.0), 4.0, 3.0));
+    }
+}
+
+/// Shape builder: every region's edges, and the hovered or collected regions hatched (in the
+/// danger colour when releasing removes them).
+fn builder_overlay(app: &FigApp, painter: &egui::Painter, t: &Tokens, arr: &figcraft_engine::shapebuilder::Arrangement) {
+    let ov = &app.session.tool.overlay;
+    let screen = |r: &figcraft_engine::shapebuilder::Region| -> Vec<Vec<Pos2>> {
+        r.polys.iter().map(|poly| poly.iter().map(|p| app.to_screen(p.x, p.y)).collect()).collect()
+    };
+    // Edges read on any fill: a light halo under a thin accent line.
+    for r in &arr.regions {
+        for poly in screen(r) {
+            painter.add(Shape::closed_line(poly.clone(), stroke(Color32::from_white_alpha(150), 2.5)));
+            painter.add(Shape::closed_line(poly, stroke(ACCENT, 1.0)));
+        }
+    }
+    let col = if ov.builder_remove { t.danger } else { ACCENT };
+    for r in ov.builder_regions.iter().filter_map(|i| arr.regions.get(*i)) {
+        hatched(painter, &screen(r), col);
+    }
+}
+
+/// Polygons hatched and outlined in `col` (an area about to be filled, merged or removed), each
+/// line on a light halo so it reads on any fill, even one in `col`.
+fn hatched(painter: &egui::Painter, polys: &[Vec<Pos2>], col: Color32) {
+    let halo = Color32::from_white_alpha(200);
+    for l in hatch(polys, 6.0) {
+        painter.line_segment(l, stroke(halo, 3.0));
+        painter.line_segment(l, stroke(col, 1.25));
+    }
+    for poly in polys {
+        painter.add(Shape::closed_line(poly.clone(), stroke(halo, 4.0)));
+        painter.add(Shape::closed_line(poly.clone(), stroke(col, 2.0)));
     }
 }
 

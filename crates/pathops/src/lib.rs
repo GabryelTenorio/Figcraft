@@ -115,6 +115,136 @@ pub fn boolean(paths: &[BezPath], op: BoolOp) -> Result<BezPath, PathOpsError> {
     Ok(acc)
 }
 
+/// Per-input winding numbers for [`faces`] (index = input path; trailing zeros trimmed so equal
+/// coverage compares equal).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Windings(Vec<i32>);
+
+impl Windings {
+    fn trimmed(mut self) -> Self {
+        while self.0.last() == Some(&0) {
+            self.0.pop();
+        }
+        self
+    }
+}
+
+impl std::ops::Add for Windings {
+    type Output = Self;
+    fn add(mut self, rhs: Self) -> Self {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign for Windings {
+    fn add_assign(&mut self, rhs: Self) {
+        if self.0.len() < rhs.0.len() {
+            self.0.resize(rhs.0.len(), 0);
+        }
+        for (a, b) in self.0.iter_mut().zip(rhs.0) {
+            *a += b;
+        }
+        *self = std::mem::take(self).trimmed();
+    }
+}
+
+impl linesweeper::topology::WindingNumber for Windings {
+    type Tag = usize;
+    fn single(tag: usize, positive: bool) -> Self {
+        let mut v = vec![0; tag + 1];
+        if let Some(w) = v.last_mut() {
+            *w = if positive { 1 } else { -1 };
+        }
+        Self(v)
+    }
+    fn of_tag(&self, tag: usize) -> Self {
+        let mut v = vec![0; tag + 1];
+        if let (Some(w), Some(src)) = (v.last_mut(), self.0.get(tag)) {
+            *w = *src;
+        }
+        Self(v).trimmed()
+    }
+}
+
+/// One face of the arrangement of several closed paths: a connected area that the same set of
+/// inputs covers.
+#[derive(Clone, Debug)]
+pub struct ArrangementFace {
+    /// The face's outer contour and its holes (fill with either rule).
+    pub path: BezPath,
+    /// The inputs covering the face, by index, ascending.
+    pub cover: Vec<usize>,
+}
+
+/// The most inputs [`faces`] accepts, and the most faces it returns.
+pub const MAX_ARRANGEMENT_INPUTS: usize = 256;
+const MAX_FACES: usize = 4096;
+
+/// Split the plane by the outlines of `paths` (each filled with its own rule: `true` = even-odd)
+/// into faces: the connected areas covered by the same inputs. Areas no input covers are left
+/// out. Open subpaths are closed first.
+pub fn faces(paths: &[(BezPath, bool)]) -> Result<Vec<ArrangementFace>, PathOpsError> {
+    if paths.len() > MAX_ARRANGEMENT_INPUTS || paths.iter().any(|(p, _)| !finite(p)) {
+        return Err(PathOpsError::BadInput);
+    }
+    let closed_paths: Vec<BezPath> = paths.iter().map(|(p, _)| closed(p)).collect();
+    if closed_paths.iter().all(|p| p.elements().is_empty()) {
+        return Ok(Vec::new());
+    }
+    let bbox = closed_paths.iter().filter(|p| !p.elements().is_empty()).map(Shape::bounding_box).reduce(|a, b| a.union(b));
+    let m = bbox.map(|b| b.x0.abs().max(b.x1.abs()).max(b.y0.abs()).max(b.y1.abs())).unwrap_or(0.0);
+    let eps = (m * f64::EPSILON * 64.0).max(1e-6);
+    let topo = linesweeper::topology::Topology::<Windings>::from_paths(closed_paths.iter().enumerate().map(|(i, p)| (p, i)), eps)
+        .map_err(|_| PathOpsError::BadInput)?;
+    let even_odd: Vec<bool> = paths.iter().map(|(_, e)| *e).collect();
+    let cover_of = |w: &Windings| -> Vec<usize> {
+        w.0.iter()
+            .enumerate()
+            .filter(|(i, n)| if even_odd.get(*i).copied().unwrap_or(false) { *n % 2 != 0 } else { **n != 0 })
+            .map(|(i, _)| i)
+            .collect()
+    };
+    // Every coverage that occurs on either side of an output segment.
+    let mut covers: std::collections::BTreeSet<Vec<usize>> = std::collections::BTreeSet::new();
+    for seg in topo.segment_indices() {
+        let half = seg.first_half();
+        for w in [topo.winding_clockwise(half), topo.winding_counter_clockwise(half)] {
+            let c = cover_of(w);
+            if !c.is_empty() {
+                covers.insert(c);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for cover in covers {
+        let contours = topo.contours(|w| cover_of(w) == cover);
+        let all: Vec<&linesweeper::topology::Contour> = contours.contours().collect();
+        // Each outer contour with its direct holes is one connected face (islands inside the
+        // holes are faces of their own).
+        for (i, c) in all.iter().enumerate().filter(|(_, c)| c.outer) {
+            let mut path = c.path.clone();
+            for hole in all.iter().filter(|h| !h.outer && h.parent.map(|p| p.0) == Some(i)) {
+                path.extend(hole.path.elements().iter().copied());
+            }
+            out.push(ArrangementFace { path, cover: cover.clone() });
+            if out.len() >= MAX_FACES {
+                return Ok(out);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The union of disjoint faces (shared edges dissolve) as one clean path.
+pub fn union_faces<'a>(faces: impl IntoIterator<Item = &'a BezPath>) -> Result<BezPath, PathOpsError> {
+    let mut all = BezPath::new();
+    for f in faces {
+        all.extend(f.elements().iter().copied());
+    }
+    simplify(&all)
+}
+
 fn kcap(c: StrokeCap) -> Cap {
     match c {
         StrokeCap::Round | StrokeCap::CircleFilled => Cap::Round,
@@ -312,6 +442,39 @@ mod tests {
         let x = boolean(&[a, b], BoolOp::Exclude).unwrap();
         let bb = x.bounding_box();
         assert_eq!((bb.x0, bb.y0, bb.x1, bb.y1), (0.0, 0.0, 15.0, 15.0));
+    }
+
+    #[test]
+    fn arrangement_faces() {
+        // Two overlapping squares: A only, B only, both.
+        let f = faces(&[(sq(0.0, 0.0, 10.0), false), (sq(5.0, 5.0, 10.0), false)]).unwrap();
+        let mut got: Vec<(Vec<usize>, i64)> = f.iter().map(|x| (x.cover.clone(), x.path.area().abs().round() as i64)).collect();
+        got.sort();
+        assert_eq!(got, vec![(vec![0], 75), (vec![0, 1], 25), (vec![1], 75)]);
+        // Uniting faces dissolves their shared edges.
+        let u = union_faces(f.iter().map(|x| &x.path)).unwrap();
+        assert!((u.area().abs() - 175.0).abs() < 1e-6);
+        assert_eq!(u.elements().iter().filter(|e| matches!(e, PathEl::MoveTo(_))).count(), 1);
+        // A square inside a ring (even-odd): the ring, the square, and the gap between them is
+        // not covered; the square's area under the ring's hole is a face of its own.
+        let mut ring = sq(0.0, 0.0, 30.0);
+        ring.extend(sq(10.0, 10.0, 10.0).elements().iter().copied());
+        let f = faces(&[(ring, true), (sq(12.0, 12.0, 4.0), false)]).unwrap();
+        let mut got: Vec<(Vec<usize>, i64)> = f.iter().map(|x| (x.cover.clone(), x.path.area().abs().round() as i64)).collect();
+        got.sort();
+        assert_eq!(got, vec![(vec![0], 800), (vec![1], 16)]);
+        // Two overlapping circles: three faces with curved edges.
+        let c = |x: f64| kurbo::Circle::new((x, 0.0), 10.0).to_path(0.01);
+        let f = faces(&[(c(0.0), false), (c(10.0), false)]).unwrap();
+        assert_eq!(f.len(), 3);
+        assert!(f.iter().all(|x| x.path.elements().iter().any(|e| matches!(e, PathEl::CurveTo(..)))));
+        // Hostile and empty input.
+        let mut bad = BezPath::new();
+        bad.move_to((f64::NAN, 0.0));
+        bad.line_to((1.0, 1.0));
+        assert!(faces(&[(bad, false)]).is_err());
+        assert!(faces(&[]).unwrap().is_empty());
+        assert!(faces(&vec![(sq(0.0, 0.0, 1.0), false); MAX_ARRANGEMENT_INPUTS + 1]).is_err());
     }
 
     #[test]

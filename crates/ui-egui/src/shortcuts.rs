@@ -83,15 +83,14 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
     if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && app.ui.picker.is_some() && crate::handles::remove_selected_stop(app, ctx) {
         return true;
     }
-    // Vector edit mode has its own keys (tools, nudging points, delete, join); the rest fall through.
-    if app.session.ds().is_ok_and(|d| d.vector_edit.is_some()) {
-        match figcraft_engine::vectoredit::key(&mut app.session, key.name(), m.shift, m.alt, m.command) {
-            Ok(true) => return true,
-            Ok(false) => {}
-            Err(e) => {
-                app.toast(e.to_string());
-                return true;
-            }
+    // Vector edit mode and the shape builder have their own keys (tools, nudging points, delete,
+    // join, Enter to finish); the rest fall through.
+    match app.session.tool_key(key.name(), m.shift, m.alt, m.command) {
+        Ok(true) => return true,
+        Ok(false) => {}
+        Err(e) => {
+            app.toast(e.to_string());
+            return true;
         }
     }
     // Catalog shortcuts (exact modifier match).

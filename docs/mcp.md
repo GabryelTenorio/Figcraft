@@ -155,6 +155,23 @@ read library files return an error).
 - **Update**: `library.updates` lists the components and styles with a newer published version;
   `library.acceptUpdates {ids? (library ids)}` pulls them in, keeping instance overrides.
 
+### Shape builder
+
+The selected shapes' outlines split the canvas into regions (areas covered by the same shapes).
+`shapeBuilder.regions {ids?}` lists them: an SVG `path` in page coordinates, the `sources` covering
+each one (top-most first), `bounds` and a `point` inside. `shapeBuilder.merge {ids?, regions?,
+points?}` makes one vector from the regions (by index, or the regions under page points), styled
+like the top-most shape over the first one; `shapeBuilder.remove {ids?, regions?, points?}` deletes
+them. Either way every shape covering a picked region loses that area (it becomes a vector, or goes
+when nothing is left), and each call is one undo step. The tool is `tool.shapeBuilder` (Shift+M):
+click or drag across regions with `pointer` to merge, add `alt` to remove; `shapeBuilder.mode
+{mode: merge|remove}` swaps what a plain click does.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.regions","params":{"ids":[2,3]}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.merge","params":{"ids":[2,3],"points":[[120,80],[160,80]]}}}}
+```
+
 ### Importing REST API file JSON
 
 The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, best with

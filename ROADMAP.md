@@ -42,8 +42,9 @@ dimension measured side by side.
    pen that extends, branches and closes paths (vector networks), paint bucket fill/unfill of any
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
-   merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E). *Left:* variable
-   width strokes, shape builder, transform box for several points, point snapping. 12–18 h.
+   merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E), shape builder
+   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept).
+   *Left:* variable width strokes, transform box for several points, point snapping. 10–15 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -97,7 +98,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** hardening and performance (9) with the fidelity pass (7); the rest of vector editing
-  (eraser, shape builder, variable width) and components (nested overrides, libraries).
+  (variable width) and components (nested overrides, libraries).
 - **Then:** interop depth (6: .fig best effort, paste from other apps), version history and
   collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
@@ -147,7 +148,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 65% | pixel preview, frame guides, perf at scale | 6–10 |
 | Selection & transform | 8 | 64% | scale tool polish, measure hover polish | 8–12 |
 | Layers panel | 5 | 76% | keyboard row navigation, drag between pages | 2–4 |
-| Shapes & vector | 8 | 60% | variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 12–18 |
+| Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |

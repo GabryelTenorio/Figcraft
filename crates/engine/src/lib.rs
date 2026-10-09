@@ -17,6 +17,7 @@ pub mod inspect;
 pub mod library;
 pub mod measure;
 pub mod params;
+pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
 pub mod textedit;
@@ -861,6 +862,8 @@ mod proto_multi_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod section_tests;
+#[cfg(test)]
+mod shapebuilder_tests;
 #[cfg(test)]
 mod style_tests;
 #[cfg(test)]

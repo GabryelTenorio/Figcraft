@@ -36,10 +36,11 @@ pub enum ToolId {
     Text,
     Comment,
     Eyedropper,
+    ShapeBuilder,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 17] = [
+    pub const ALL: [ToolId; 18] = [
         ToolId::Move,
         ToolId::Scale,
         ToolId::Hand,
@@ -57,6 +58,7 @@ impl ToolId {
         ToolId::Text,
         ToolId::Comment,
         ToolId::Eyedropper,
+        ToolId::ShapeBuilder,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -77,6 +79,7 @@ impl ToolId {
             ToolId::Text => "text",
             ToolId::Comment => "comment",
             ToolId::Eyedropper => "eyedropper",
+            ToolId::ShapeBuilder => "shapeBuilder",
         }
     }
     pub fn from_id(s: &str) -> Option<ToolId> {
@@ -101,6 +104,7 @@ impl ToolId {
             ToolId::Text => "Text",
             ToolId::Comment => "Comment",
             ToolId::Eyedropper => "Pick color",
+            ToolId::ShapeBuilder => "Shape builder",
         }
     }
     pub fn shortcut(self) -> &'static str {
@@ -120,6 +124,7 @@ impl ToolId {
             ToolId::Text => "T",
             ToolId::Comment => "C",
             ToolId::Eyedropper => "I",
+            ToolId::ShapeBuilder => "Shift+M",
             _ => "",
         }
     }
@@ -227,6 +232,10 @@ pub struct Overlay {
     /// The eraser brush under the pointer (x, y, radius in page units).
     pub brush: Option<[f64; 3]>,
     pub face: Vec<Vec<[f64; 2]>>,
+    /// Shape builder: the regions under the pointer or collected by the drag (indexes into
+    /// [`crate::shapebuilder::current`]) and whether releasing removes them.
+    pub builder_regions: Vec<usize>,
+    pub builder_remove: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -292,6 +301,13 @@ pub(crate) enum Gesture {
     },
     /// Vector edit mode gestures (handled in `vectoredit`).
     Vector(crate::vectoredit::VGesture),
+    /// Shape builder: regions collected so far (handled in `shapebuilder`).
+    ShapeBuild {
+        picked: Vec<usize>,
+        remove: bool,
+        start: Point,
+        last: Point,
+    },
 }
 
 /// The pen tool's in-progress path (page coordinates).
@@ -314,6 +330,10 @@ pub struct ToolState {
     pub temp_from: Option<ToolId>,
     /// Last click (for double-click detection by agents that only send downs).
     pub last_hover: Option<NodeId>,
+    /// Shape builder: the cached arrangement of the selection, and Remove mode (a plain click
+    /// removes; Alt merges).
+    pub shape_builder: Option<std::sync::Arc<crate::shapebuilder::Arrangement>>,
+    pub builder_remove: bool,
 }
 
 impl ToolState {
@@ -441,7 +461,13 @@ impl Session {
         }
         self.tool.tool = t;
         self.tool.gesture = Gesture::None;
-        self.tool.overlay = Overlay::default();
+        self.tool.overlay = Overlay { builder_remove: self.tool.builder_remove && t == ToolId::ShapeBuilder, ..Overlay::default() };
+        self.tool.shape_builder = None;
+        if t == ToolId::ShapeBuilder {
+            // Regions show straight away, before the pointer moves.
+            let sel = self.selection();
+            let _ = crate::shapebuilder::arrangement(self, &sel);
+        }
         if let Ok(ds) = self.ds_mut() {
             if t != ToolId::Text && t != ToolId::Move {
                 ds.text_edit = None;
@@ -455,6 +481,9 @@ impl Session {
         let tool = self.tool.tool;
         if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
             return Ok(());
+        }
+        if tool == ToolId::ShapeBuilder {
+            return self.shape_builder_pointer(ev);
         }
         match ev.kind {
             PointerKind::Hover => self.hover(ev),
@@ -786,7 +815,7 @@ impl Session {
                 textedit::set_caret(self, idx, true)?;
                 Ok(())
             }
-            Gesture::Vector(_) => Ok(()),
+            Gesture::Vector(_) | Gesture::ShapeBuild { .. } => Ok(()),
             Gesture::PenDrag { anchor } => {
                 let out = ev.p() - *anchor;
                 if let Some(pen) = self.tool.pen.as_mut()
@@ -1190,7 +1219,7 @@ impl Session {
                 self.pencil_finish(&points)?;
             }
             Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
-            Gesture::PenDrag { .. } => {}
+            Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } => {}
             Gesture::Vector(_) => self.commit_interaction()?,
         }
         if let Ok(ds) = self.ds_mut() {
@@ -1458,6 +1487,15 @@ impl Session {
                     "props": {"fills": [], "strokes": ["#000000"], "strokeWeight": 2, "strokeCap": "round", "strokeJoin": "round", "strokeAlign": "center"}}),
         )?;
         Ok(())
+    }
+
+    /// Keys the current mode handles before menu shortcuts (vector edit mode's tools and point
+    /// keys, Enter to finish the shape builder). Returns whether the key was used.
+    pub fn tool_key(&mut self, name: &str, shift: bool, alt: bool, cmd: bool) -> Result<bool> {
+        if self.ds().is_ok_and(|d| d.vector_edit.is_some()) {
+            return crate::vectoredit::key(self, name, shift, alt, cmd);
+        }
+        crate::shapebuilder::key(self, name)
     }
 
     /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect.
