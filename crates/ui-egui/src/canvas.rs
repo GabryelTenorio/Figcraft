@@ -139,9 +139,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     if let Some(done) = worker.poll()
         && done.generation == app.canvas.generation
     {
+        // A pixel preview render is magnified with hard pixel edges.
+        let filter = if done.view.scale == 1.0 && app.session.ds().is_ok_and(pixel_preview) {
+            egui::TextureOptions::NEAREST
+        } else {
+            egui::TextureOptions::LINEAR
+        };
         match &mut app.canvas.texture {
-            Some(t) => t.set(done.image, egui::TextureOptions::LINEAR),
-            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, egui::TextureOptions::LINEAR)),
+            Some(t) => t.set(done.image, filter),
+            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, filter)),
         }
         app.canvas.tex_view = Some(done.view);
         app.canvas.render_work = Some(done.work);
@@ -205,13 +211,24 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
 }
 
+/// Pixel preview is on and zoomed in past one screen pixel per page pixel.
+fn pixel_preview(ds: &figcraft_engine::DocState) -> bool {
+    ds.view.pixel_preview && ds.view.zoom > 1.0
+}
+
 fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
-    let scale = ds.view.zoom * f64::from(ppp);
-    let (ox, oy) = ds.view.origin();
-    let w = (rect.width() * ppp).ceil().max(1.0) as u32;
-    let h = (rect.height() * ppp).ceil().max(1.0) as u32;
+    let (mut ox, mut oy) = ds.view.origin();
+    let (scale, w, h) = if pixel_preview(ds) {
+        // Pixel preview: render one pixel per page unit from a whole-pixel origin, shown magnified
+        // without smoothing.
+        (ox, oy) = (ox.floor(), oy.floor());
+        let z = ds.view.zoom.max(1e-9);
+        (1.0, (f64::from(rect.width()) / z).ceil() as u32 + 2, (f64::from(rect.height()) / z).ceil() as u32 + 2)
+    } else {
+        (ds.view.zoom * f64::from(ppp), (rect.width() * ppp).ceil().max(1.0) as u32, (rect.height() * ppp).ceil().max(1.0) as u32)
+    };
     // The edited text is drawn live (an IME composition included); the caret is an overlay.
     let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
     let key = JobKey {
