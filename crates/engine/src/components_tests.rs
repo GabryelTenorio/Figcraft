@@ -588,3 +588,37 @@ fn place_instances_into_frames_and_auto_layout_slots() {
     }
     healthy(&s);
 }
+
+#[test]
+fn exposed_nested_instances_show_their_properties_on_instances() {
+    let mut s = Session::new();
+    let (icon, shape, button, nested) = button(&mut s);
+    ex(&mut s, "component.addProperty", json!({"id": icon, "name": "Filled", "type": "boolean", "default": true, "layer": shape}));
+    let i = idv(&ex(&mut s, "instance.create", json!({"component": button, "x": 300, "y": 400})));
+    let exposed = |s: &mut Session| ex(s, "instance.exposed", json!({"id": i}))["instances"].as_array().unwrap().len();
+    assert_eq!(exposed(&mut s), 0);
+    ex(&mut s, "component.exposeInstance", json!({"id": nested}));
+    assert!(node(&s, nested).exposed);
+    healthy(&s);
+    let inested = copy_of(&s, i, nested);
+    let list = ex(&mut s, "instance.exposed", json!({"id": i}));
+    assert_eq!(list["instances"][0]["id"], json!(inested.0));
+    // The nested copy's property is set from the outer instance and survives main edits.
+    ex(&mut s, "instance.setProperties", json!({"ids": [inested], "properties": {"Filled": false}}));
+    let ishape = copy_of(&s, inested, copy_of(&s, nested, shape));
+    assert!(!node(&s, ishape).visible);
+    ex(&mut s, "node.set", json!({"id": button, "props": {"fill": "#00ff00"}}));
+    let inested = copy_of(&s, i, nested);
+    let ishape = copy_of(&s, inested, copy_of(&s, nested, shape));
+    assert!(!node(&s, ishape).visible, "kept across main edits");
+    healthy(&s);
+    // Un-exposing hides it again; one undo step each.
+    ex(&mut s, "component.exposeInstance", json!({"id": nested, "exposed": false}));
+    assert_eq!(exposed(&mut s), 0);
+    s.undo().unwrap();
+    assert_eq!(exposed(&mut s), 1);
+    // Only nested instances inside a main can be exposed.
+    assert!(s.execute("component.exposeInstance", &json!({"id": i})).is_err());
+    assert!(s.execute("component.exposeInstance", &json!({"id": inested})).is_err());
+    assert!(s.execute("component.exposeInstance", &json!({"id": shape})).is_err());
+}

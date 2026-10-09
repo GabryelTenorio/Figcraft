@@ -77,6 +77,39 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": i, "parent": slot.parent}))
             }
         ),
+        spec!(
+            "component.exposeInstance",
+            "Expose nested instance",
+            "{id? (an instance inside a main component), exposed? (default true)} — its properties then show on the main's instances",
+            true,
+            |s, p| {
+                let cmd = "component.exposeInstance";
+                let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a nested instance"))?;
+                let exposed = boolean(p, "exposed").unwrap_or(true);
+                let doc = s.doc_mut()?;
+                let ok_target = doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Instance { .. }))
+                    && owning_component(doc, id).is_some_and(|c| c != id)
+                    && !inside_instance(doc, id);
+                if !ok_target {
+                    return Err(bad(cmd, "only instances nested inside a main component can be exposed"));
+                }
+                doc.get_mut(id)?.exposed = exposed;
+                Ok(json!({"id": id, "exposed": exposed}))
+            }
+        ),
+        spec!(
+            "instance.exposed",
+            "Exposed nested instances",
+            "{id? (instance)} → the nested instance copies whose properties it exposes",
+            false,
+            |s, p| {
+                let id = targets(s, p).first().copied().ok_or_else(|| bad("instance.exposed", "select an instance"))?;
+                let doc = s.doc()?;
+                let out: Vec<serde_json::Value> =
+                    exposed_copies(doc, id).into_iter().filter_map(|c| doc.node(c).map(|n| json!({"id": c, "name": n.name}))).collect();
+                Ok(json!({"instances": out}))
+            }
+        ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
         spec!("component.resetInstance", "Reset all changes", "{ids?}", true, reset_instance),
         spec!(

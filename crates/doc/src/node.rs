@@ -342,6 +342,9 @@ pub struct Node {
     /// Inside an instance: the node of the main component this one mirrors.
     #[serde(default)]
     pub source: Option<NodeId>,
+    /// A nested instance inside a main component whose properties show on the main's instances.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exposed: bool,
     /// Inside an instance: property groups overridden locally ("fills", "characters", …).
     #[serde(default)]
     pub overrides: BTreeSet<String>,
@@ -429,6 +432,7 @@ impl Node {
             var_modes: BTreeMap::new(),
             constrain_proportions: false,
             source: None,
+            exposed: false,
             overrides: BTreeSet::new(),
             prop_refs: BTreeMap::new(),
             plugin_data: BTreeMap::new(),

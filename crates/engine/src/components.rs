@@ -821,3 +821,27 @@ pub fn mirror_issues(doc: &Document) -> Vec<String> {
 #[cfg(test)]
 #[path = "components_tests.rs"]
 mod tests;
+
+/// The nested instance copies inside instance `id` whose main-component counterpart is exposed
+/// (top-most first; an exposed instance's own exposed nested instances follow it).
+pub fn exposed_copies(doc: &Document, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack: Vec<NodeId> = doc.node(id).map(|n| n.children.iter().rev().copied().collect()).unwrap_or_default();
+    let mut seen = 0usize;
+    while let Some(c) = stack.pop() {
+        seen += 1;
+        if seen > 100_000 {
+            break;
+        }
+        let Some(n) = doc.node(c) else { continue };
+        let exposed = matches!(n.kind, NodeKind::Instance { .. }) && n.source.and_then(|src| doc.node(src)).is_some_and(|src| src.exposed);
+        if exposed {
+            out.push(c);
+        }
+        // Only exposed nested instances pass their own exposed instances up.
+        if !matches!(n.kind, NodeKind::Instance { .. }) || exposed {
+            stack.extend(n.children.iter().rev().copied());
+        }
+    }
+    out
+}

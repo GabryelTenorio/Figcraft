@@ -339,7 +339,7 @@ fn group_label(g: &str) -> String {
 /// The instance section: main component + swap, variants, properties, actions.
 fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     let t = Tokens::get(ui.ctx());
-    let NodeKind::Instance { component, props } = &n.kind else { return };
+    let NodeKind::Instance { component, .. } = &n.kind else { return };
     let id = n.id;
     let missing = !doc.contains(*component);
     let set = variant_set(doc, *component);
@@ -411,6 +411,39 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             app.run("component.goToMain", json!({"id": id}));
         }
     });
+    // A nested instance inside a main component can expose its properties on the main's instances.
+    if nested_in_main(doc, id) {
+        row(ui, 32.0, |ui| {
+            if widgets::checkbox(ui, n.exposed, "Expose properties to instances") {
+                app.run("component.exposeInstance", json!({"id": id, "exposed": !n.exposed}));
+            }
+        });
+    }
+    instance_props(app, ui, doc, n, &comps);
+    // Exposed nested instances: their properties, under their names.
+    if !nested {
+        for c in figcraft_engine::components::exposed_copies(doc, id) {
+            let Some(cn) = doc.node(c) else { continue };
+            row(ui, 28.0, |ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                icons::paint(ui.painter(), r, Icon::Instance, crate::theme::COMPONENT);
+                ui.label(egui::RichText::new(&cn.name).font(semibold(11.0)).color(t.text));
+            });
+            instance_props(app, ui, doc, cn, &comps);
+        }
+    }
+}
+
+/// An instance placed inside a main component (not inside another instance).
+fn nested_in_main(doc: &Document, id: NodeId) -> bool {
+    !inside_instance(doc, id) && figcraft_engine::components::owning_component(doc, id).is_some_and(|c| c != id)
+}
+
+/// Variant and component property controls for instance `n`.
+fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps: &[(NodeId, String)]) {
+    let NodeKind::Instance { component, props } = &n.kind else { return };
+    let id = n.id;
+    let set = variant_set(doc, *component);
     // Variant properties.
     if let Some(set) = set {
         let current = doc.node(*component).map(|c| variant_props(&c.name)).unwrap_or_default();
@@ -458,7 +491,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                     let resp = widgets::dropdown(ui, &label, w, Some(Icon::Instance));
                     egui::Popup::menu(&resp).width(200.0).show(|ui| {
                         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                            for (c, name) in &comps {
+                            for (c, name) in comps {
                                 if menu_item(ui, name, "") {
                                     app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): c.0}}));
                                     ui.close();
