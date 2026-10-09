@@ -61,7 +61,7 @@
     </td>
     <td width="25%" valign="top">
       <h3>🔌 Offline and private</h3>
-      Your files are plain <code>.figcraft</code> archives on your own disk. No account, no cloud, no telemetry. SVG, PNG, JPG, WebP and PDF in and out.
+      Your files are plain <code>.figcraft</code> archives on your own disk. No account, no cloud, no telemetry. SVG, PNG, JPG, WebP and PDF in and out; designs exported as the public REST API file JSON import too.
     </td>
     <td width="25%" valign="top">
       <h3>🤖 Agent-ready</h3>

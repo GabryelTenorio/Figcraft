@@ -18,7 +18,13 @@ pub fn specs() -> Vec<CommandSpec> {
             s.active = s.docs.len() - 1;
             Ok(json!({"index": s.active}))
         }),
-        spec!("file.open", "Open", "{path} (.figcraft, .json, .svg, .png, .jpg …)", false, open),
+        spec!(
+            "file.open",
+            "Open",
+            "{path} (.figcraft, .json: FigCraft or REST API file JSON, .svg, .png, .jpg …); REST imports return `warnings`",
+            false,
+            open
+        ),
         spec!("file.save", "Save", "{path?} (programmatic saves need a path the first time)", false, save),
         spec!("file.saveAs", "Save as", "{path}", false, save_as),
         spec!(
@@ -45,7 +51,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.import",
             "Import",
-            "{path | data (base64) + name, x?, y?}  SVG becomes vectors, images become image layers, .figcraft pages are appended",
+            "{path | data (base64) + name, x?, y?}  SVG becomes vectors, images become image layers, .figcraft and REST API file JSON pages are appended (REST: with `warnings`)",
             true,
             import
         ),
@@ -179,19 +185,31 @@ fn file_stem(path: &str) -> String {
     std::path::Path::new(path).file_stem().and_then(|e| e.to_str()).unwrap_or("Untitled").to_string()
 }
 
-/// Load a document from any supported file.
+/// Load a document from any supported file (REST API file JSON images come from an `images`
+/// folder next to the file).
 pub fn load(path: &str) -> Result<(Document, Vec<String>)> {
-    let bytes = read(path)?;
-    load_bytes(&bytes, path)
+    load_path(path).map(|(doc, notes, _)| (doc, notes))
 }
 
 pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String>)> {
+    load_with(bytes, name_hint, &figcraft_format::rest::no_images).map(|(doc, notes, _)| (doc, notes))
+}
+
+/// [`load`], also telling whether the file was REST API file JSON.
+pub fn load_path(path: &str) -> Result<(Document, Vec<String>, bool)> {
+    let bytes = read(path)?;
+    load_with(&bytes, path, &rest_images(path))
+}
+
+/// Load from bytes. Returns the document, notes (repairs of a native file, or import warnings) and
+/// whether it was imported from REST API file JSON (such a file is never saved over).
+fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::ImageResolver) -> Result<(Document, Vec<String>, bool)> {
     match ext(name_hint).as_str() {
         "svg" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
             figcraft_svg::import_svg(&mut doc, bytes, page, 0.0, 0.0, &file_stem(name_hint)).map_err(|e| EngineError::Other(e.to_string()))?;
-            Ok((doc, vec![]))
+            Ok((doc, vec![], false))
         }
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
             let mut doc = Document::new(file_stem(name_hint));
@@ -199,16 +217,60 @@ pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String
             let (hash, w, h) = figcraft_format::add_image(&mut doc, bytes.to_vec()).map_err(|e| EngineError::Other(e.to_string()))?;
             let id = doc.create(page, NodeKind::Rectangle, &file_stem(name_hint), 0.0, 0.0, f64::from(w), f64::from(h))?;
             doc.get_mut(id)?.fills = vec![figcraft_color::Paint::image(hash, figcraft_color::ImageScaleMode::Fill)];
-            Ok((doc, vec![]))
+            Ok((doc, vec![], false))
         }
         _ => {
+            if let Some(r) = figcraft_format::rest::try_import(bytes, images) {
+                let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
+                link_instances(&mut doc);
+                return Ok((doc, warnings, true));
+            }
             let (mut doc, issues) = figcraft_format::load_bytes(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
             if doc.name.is_empty() {
                 doc.name = file_stem(name_hint);
             }
-            Ok((doc, issues))
+            Ok((doc, issues, false))
         }
     }
+}
+
+/// Link imported instances to their mains (layer sources, overrides found by comparing values),
+/// innermost first so outer instances settle last.
+fn link_instances(doc: &mut Document) {
+    let mut insts: Vec<(usize, NodeId)> =
+        doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })).map(|n| (doc.ancestors(n.id).len(), n.id)).collect();
+    insts.sort_by_key(|a| std::cmp::Reverse(a.0));
+    for (_, i) in insts {
+        crate::components::rebase_instance(doc, i);
+    }
+}
+
+/// Largest image file read for a REST API file JSON import.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_IMAGE_FILE: u64 = 256 * 1024 * 1024;
+
+/// Image bytes for a REST API file JSON's `imageRef`: `images/<imageRef>[.png|.jpg|…]` next to
+/// the file.
+#[cfg(not(target_arch = "wasm32"))]
+fn rest_images(path: &str) -> impl Fn(&str) -> Option<Vec<u8>> {
+    let dir = std::path::Path::new(path).parent().map(|d| d.join("images"));
+    move |r: &str| {
+        // Image refs are content hashes; anything else never becomes a path.
+        if r.is_empty() || r.len() > 128 || !r.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            return None;
+        }
+        let dir = dir.as_ref()?;
+        ["", ".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().find_map(|e| {
+            let p = dir.join(format!("{r}{e}"));
+            let meta = std::fs::metadata(&p).ok()?;
+            if meta.is_file() && meta.len() <= MAX_IMAGE_FILE { std::fs::read(&p).ok() } else { None }
+        })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn rest_images(_path: &str) -> impl Fn(&str) -> Option<Vec<u8>> {
+    figcraft_format::rest::no_images
 }
 
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
@@ -218,11 +280,13 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.active = i;
         return Ok(json!({"index": i}));
     }
-    let (doc, issues) = load(&path)?;
-    let native = matches!(ext(&path).as_str(), "figcraft" | "json");
+    let (doc, notes, rest) = load_path(&path)?;
+    let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
     s.docs.push(DocState::new(doc, native.then_some(path)));
     s.active = s.docs.len() - 1;
-    Ok(json!({"index": s.active, "repairs": issues}))
+    let mut out = json!({"index": s.active});
+    out[if rest { "warnings" } else { "repairs" }] = json!(notes);
+    Ok(out)
 }
 
 /// Thumbnail PNG of the first page's content (for file browsers / the home screen).
@@ -375,8 +439,9 @@ fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
-    let (bytes, name) = if let Some(path) = string(p, "path") {
-        (read(&path)?, path)
+    let path = string(p, "path");
+    let (bytes, name) = if let Some(path) = &path {
+        (read(path)?, path.clone())
     } else if let Some(d) = string(p, "data") {
         let d = d.split_once(',').map(|(_, b)| b.to_string()).unwrap_or(d);
         (
@@ -398,32 +463,65 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(json!({"id": id}))
         }
         "figcraft" | "json" => {
-            let (other, _) = figcraft_format::load_bytes(&bytes).map_err(|e| EngineError::Other(e.to_string()))?;
-            let doc = s.doc_mut()?;
-            for (k, v) in &other.images {
-                doc.images.entry(k.clone()).or_insert_with(|| v.clone());
+            let resolver = path.as_deref().map(rest_images);
+            let images: figcraft_format::rest::ImageResolver = match &resolver {
+                Some(r) => r,
+                None => &figcraft_format::rest::no_images,
+            };
+            let (other, notes, rest) = load_with(&bytes, &name, images)?;
+            let pages = append_pages(s.doc_mut()?, &other)?;
+            let mut out = json!({"pages": pages});
+            if rest {
+                out["warnings"] = json!(notes);
             }
-            let mut new_pages = Vec::new();
-            for pg in &other.pages {
-                let Some(pn) = other.node(*pg) else { continue };
-                let np = doc.add_page(&pn.name);
-                for c in pn.children.clone() {
-                    let nodes: Vec<Node> = other.subtree(c).into_iter().filter_map(|i| other.node(i).cloned()).collect();
-                    let mut map = std::collections::BTreeMap::new();
-                    for n in &nodes {
-                        map.insert(n.id, doc.alloc_id());
-                    }
-                    doc.paste_nodes(&nodes, &map, c, np, None)?;
-                }
-                new_pages.push(np);
-            }
-            Ok(json!({"pages": new_pages}))
+            Ok(out)
         }
         _ => {
             let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
             super::create::place_image(s, &json!({"data": b64, "x": x.unwrap_or(center.0), "y": y.unwrap_or(center.1), "name": file_stem(&name)}))
         }
     }
+}
+
+/// Append `other`'s pages (with their backgrounds, its images and styles) to `doc`. Ids are
+/// remapped across all pages at once, so instances keep their main and instance layers their
+/// source wherever those are.
+fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
+    for (k, v) in &other.images {
+        doc.images.entry(k.clone()).or_insert_with(|| v.clone());
+    }
+    for st in &other.styles {
+        if !doc.styles.iter().any(|s| s.id == st.id) {
+            doc.styles.push(st.clone());
+        }
+    }
+    let mut map = std::collections::BTreeMap::new();
+    for pg in &other.pages {
+        for id in other.subtree(*pg).into_iter().skip(1) {
+            map.insert(id, doc.alloc_id());
+        }
+    }
+    let mut new_pages = Vec::new();
+    for pg in &other.pages {
+        let Some(pn) = other.node(*pg) else { continue };
+        let np = doc.add_page(&pn.name);
+        if let (NodeKind::Page { background: from, .. }, Some(NodeKind::Page { background, .. })) = (&pn.kind, doc.node_mut(np).map(|n| &mut n.kind))
+        {
+            *background = *from;
+        }
+        for c in &pn.children {
+            let nodes: Vec<Node> = other.subtree(*c).into_iter().filter_map(|i| other.node(i).cloned()).collect();
+            doc.paste_nodes(&nodes, &map, *c, np, None)?;
+        }
+        new_pages.push(np);
+    }
+    for new in map.values() {
+        let src = doc.node(*new).and_then(|n| n.source).and_then(|s| map.get(&s).copied());
+        if let (Some(src), Some(n)) = (src, doc.node_mut(*new)) {
+            n.source = Some(src);
+        }
+    }
+    Ok(new_pages)
 }
 
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
@@ -438,4 +536,94 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         s.active = s.docs.len().saturating_sub(1);
     }
     ok()
+}
+
+#[cfg(test)]
+mod rest_import_tests {
+    use super::*;
+
+    /// A synthetic REST API file JSON: a component with a text layer, an instance of it whose text
+    /// is overridden, and an image fill.
+    fn kit() -> Value {
+        let at = |x: f64, y: f64| json!([[1, 0, x], [0, 1, y]]);
+        let label = |id: &str, text: &str| {
+            json!({"id": id, "name": "Label", "type": "TEXT", "relativeTransform": at(8.0, 8.0), "size": {"x": 40, "y": 20}, "characters": text,
+                   "style": {"fontFamily": "Inter", "fontSize": 14}, "fills": [{"type": "SOLID", "color": {"r": 0, "g": 0, "b": 0, "a": 1}}]})
+        };
+        json!({"name": "Kit", "document": {"id": "0:0", "type": "DOCUMENT", "children": [
+            {"id": "0:1", "name": "Main", "type": "CANVAS", "backgroundColor": {"r": 0.9, "g": 0.9, "b": 0.9, "a": 1}, "children": [
+                {"id": "1:1", "name": "Button", "type": "COMPONENT", "relativeTransform": at(0.0, 0.0), "size": {"x": 100, "y": 40},
+                 "fills": [{"type": "SOLID", "color": {"r": 0.2, "g": 0.4, "b": 1, "a": 1}}], "children": [label("1:2", "OK")]},
+                {"id": "2:1", "name": "Button", "type": "INSTANCE", "componentId": "1:1", "relativeTransform": at(0.0, 100.0), "size": {"x": 100, "y": 40},
+                 "fills": [{"type": "SOLID", "color": {"r": 0.2, "g": 0.4, "b": 1, "a": 1}}], "children": [label("I2:1;1:2", "Go")]},
+                {"id": "3:1", "name": "Photo", "type": "RECTANGLE", "relativeTransform": at(200.0, 0.0), "size": {"x": 30, "y": 20},
+                 "fills": [{"type": "IMAGE", "imageRef": "photo1", "scaleMode": "FILL"}]}
+            ]}
+        ]}, "components": {"1:1": {"key": "k", "name": "Button", "description": ""}}, "styles": {}})
+    }
+
+    fn instance(doc: &Document) -> &Node {
+        doc.nodes().find(|n| matches!(n.kind, NodeKind::Instance { .. })).unwrap()
+    }
+
+    #[test]
+    fn rest_json_loads_with_linked_instances() {
+        let bytes = serde_json::to_vec(&kit()).unwrap();
+        let (doc, warnings) = load_bytes(&bytes, "kit.json").unwrap();
+        assert_eq!(doc.name, "Kit");
+        assert!(warnings.iter().any(|w| w.contains("placeholder")), "{warnings:?}");
+        let inst = instance(&doc);
+        let NodeKind::Instance { component, .. } = inst.kind else { panic!() };
+        assert_eq!(inst.source, Some(component));
+        let main_label = doc.node(component).unwrap().children[0];
+        let label = doc.node(inst.children[0]).unwrap();
+        assert_eq!(label.source, Some(main_label));
+        assert!(label.overrides.contains("characters"), "{:?}", label.overrides);
+        assert!(crate::components::mirror_issues(&doc).is_empty());
+        assert!(thumbnail(&doc).is_some());
+    }
+
+    #[test]
+    fn open_and_import_rest_json() {
+        let dir = std::env::temp_dir().join(format!("figcraft-rest-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("images")).unwrap();
+        let png = {
+            let mut d = Document::new("x");
+            let p = d.first_page().unwrap();
+            let id = d.create(p, NodeKind::Rectangle, "R", 0.0, 0.0, 3.0, 2.0).unwrap();
+            export_bytes(&d, &[id], ExportFormat::Png, 1.0).unwrap()
+        };
+        std::fs::write(dir.join("images").join("photo1.png"), &png).unwrap();
+        let path = dir.join("kit.json");
+        std::fs::write(&path, serde_json::to_vec(&kit()).unwrap()).unwrap();
+        let path = path.to_string_lossy().to_string();
+
+        let mut s = Session::new();
+        let r = s.execute("file.open", &json!({"path": path})).unwrap();
+        assert!(r["warnings"].as_array().is_some_and(|w| w.iter().all(|w| !w.as_str().unwrap_or("").contains("placeholder"))), "{r}");
+        assert!(r.get("repairs").is_none());
+        assert_eq!(s.ds().unwrap().path, None, "an import is never saved over its JSON");
+        let doc = s.doc().unwrap();
+        let photo = doc.nodes().find(|n| n.name == "Photo").unwrap();
+        let figcraft_color::PaintKind::Image(img) = &photo.fills[0].kind else { panic!() };
+        assert_eq!(doc.images.get(&img.image).map(|i| (i.width, i.height)), Some((3, 2)), "read from images/ next to the file");
+
+        // Import into another document: pages are appended and references follow the new ids.
+        let mut s = Session::new();
+        let data = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&kit()).unwrap());
+        let r = s.execute("file.import", &json!({"data": data, "name": "kit.json"})).unwrap();
+        assert_eq!(r["pages"].as_array().map(Vec::len), Some(1));
+        assert!(r["warnings"].is_array(), "{r}");
+        let doc = s.doc().unwrap();
+        assert_eq!(doc.pages.len(), 2);
+        let page = doc.node(doc.pages[1]).unwrap();
+        assert!(matches!(page.kind, NodeKind::Page { background, .. } if (background.r - 0.9).abs() < 1e-6));
+        let inst = instance(doc);
+        let NodeKind::Instance { component, .. } = inst.kind else { panic!() };
+        assert!(doc.node(component).is_some_and(|c| matches!(c.kind, NodeKind::Component { .. })));
+        let label = doc.node(inst.children[0]).unwrap();
+        assert!(label.source.is_some_and(|src| doc.is_ancestor(component, src)));
+        assert!(crate::components::mirror_issues(doc).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

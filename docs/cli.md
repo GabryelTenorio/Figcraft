@@ -10,7 +10,13 @@ Bad arguments print usage and exit with code 2; failures exit with 1. The CLI ne
 
 ### `info <file> [--json]`
 
-Pages, node counts, top-level frames (id, type, name, size), style/variable/image counts.
+Pages, node counts, top-level frames (id, type, name, size), style/variable/image counts. Repairs
+of a damaged file and import warnings go to stderr as `note:` lines (`notes` with `--json`).
+
+Every subcommand that reads a file also takes the public REST API file JSON (the response of
+`GET /v1/files/:key` or of its nodes endpoint, written to a `.json` file): it is imported on the fly.
+Image fills come from `images/<imageRef>.png` (or `.jpg`, …) next to the JSON when present, else a
+grey placeholder.
 
 ```text
 $ figcraft-cli info app.figcraft
@@ -36,7 +42,7 @@ figcraft-cli export app.figcraft -o hero.svg --node "Hero"
 
 ### `convert <in> <out>`
 
-By extension. Inputs: `.figcraft`, `.json`, `.svg` (becomes vectors), `.png/.jpg/.webp/.gif/.bmp`
+By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.svg` (becomes vectors), `.png/.jpg/.webp/.gif/.bmp`
 (an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
 `.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (when PDF export is
 available).

@@ -4,7 +4,11 @@
 //! header), `images/<sha256>` for every image the document uses, and an optional
 //! `thumbnail.png`. Plain JSON (the `document.json` alone) also opens. Reading is lenient:
 //! structural problems are repaired (see [`Document::repair`]) and reported.
+//!
+//! [`rest`] imports the public REST API file JSON.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+pub mod rest;
 
 use std::io::{Read, Write};
 use std::sync::Arc;

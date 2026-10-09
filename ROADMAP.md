@@ -66,8 +66,12 @@ dimension measured side by side.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
    laptop, desktop bodies drawn in code) around the presented frame. *Left:* overlay close
    animation, multi-selection editing, scrolling inside device frames. 5–8 h.
-6. **Interop**: .fig import (best effort), PDF export (in progress), image crop handles (landed),
-   paste from other apps, Figma REST JSON import. 25–40 h.
+6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
+   / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
+   paths, auto layout, constraints, grids, components, sets, instances with overrides, component
+   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest).
+   *Left:* .fig import (best effort), PDF export (in progress), paste from other apps, REST import
+   of prototype interactions and variables. 20–32 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history UI,
@@ -137,7 +141,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Components & variants | 9 | 55% | nested overrides depth, libraries, slots, descriptions | 12–18 |
 | Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
 | Prototyping | 6 | 60% | overlay close animation, multi-selection editing, scrolling inside device frames | 6–10 |
-| Import/export | 6 | 45% | PDF (in progress), .fig import, export panel polish | 20–35 |
+| Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 

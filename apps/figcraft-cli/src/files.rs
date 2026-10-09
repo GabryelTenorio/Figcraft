@@ -10,7 +10,12 @@ use serde_json::{Value, json};
 use crate::{CliError, CliResult};
 
 pub fn load(path: &str) -> CliResult<Document> {
-    figcraft_engine::cmd::file::load(path).map(|(d, _)| d).map_err(|e| CliError::Failed(format!("can't open {path}: {e}")))
+    load_noted(path).map(|(d, _)| d)
+}
+
+/// The document with the loader's notes (repairs of a damaged file, or import warnings).
+fn load_noted(path: &str) -> CliResult<(Document, Vec<String>)> {
+    figcraft_engine::cmd::file::load(path).map_err(|e| CliError::Failed(format!("can't open {path}: {e}")))
 }
 
 fn ext(path: &str) -> String {
@@ -112,7 +117,7 @@ pub fn write_doc(doc: &Document, page: NodeId, out: &str) -> CliResult<()> {
 }
 
 pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
-    let doc = load(path)?;
+    let (doc, notes) = load_noted(path)?;
     let pages: Vec<Value> = doc
         .pages
         .iter()
@@ -137,10 +142,14 @@ pub fn info(path: &str, as_json: bool) -> CliResult<ExitCode> {
         "styles": doc.styles.len(),
         "variables": doc.variables.variables.len(),
         "images": doc.images.len(),
+        "notes": notes,
     });
     if as_json {
         println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         return Ok(ExitCode::SUCCESS);
+    }
+    for n in &notes {
+        eprintln!("note: {n}");
     }
     println!(
         "{} — {} ({} nodes, {} styles, {} variables, {} images)",
