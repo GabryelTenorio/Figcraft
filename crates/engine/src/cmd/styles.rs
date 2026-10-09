@@ -13,6 +13,19 @@ use crate::{EngineError, Result, Session, bad, spec};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
+            "paint.documentColors",
+            "Document colours",
+            "{page?, limit? (default 21)} → solid colours used on the page, most used first",
+            false,
+            |s, p| {
+                let page = id(p, "page").unwrap_or(s.page()?);
+                let limit = num(p, "limit").map(|l| l.clamp(1.0, 500.0) as usize).unwrap_or(21);
+                let colors = document_colors(s.doc()?, page);
+                let out: Vec<Value> = colors.into_iter().take(limit).map(|(c, n)| json!({"color": c.to_hex(), "count": n})).collect();
+                Ok(json!({"colors": out}))
+            }
+        ),
+        spec!(
             "style.create",
             "Create style",
             "{type: paint|text|effect|grid, name, from? (node id; default first selected), description?, value? (paints/effects/grids/text style JSON)}",
@@ -460,4 +473,29 @@ pub fn apply_bindings(doc: &mut Document) {
 fn unique_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
     let max = existing.filter_map(|e| e.strip_prefix(prefix)?.strip_prefix(':')?.parse::<u64>().ok()).max().unwrap_or(0);
     format!("{prefix}:{}", max + 1)
+}
+
+/// Solid fill and stroke colours used under `page` (alpha includes the paint's opacity), most used
+/// first.
+pub fn document_colors(doc: &Document, page: NodeId) -> Vec<(Color, usize)> {
+    let mut counts: BTreeMap<[u8; 4], (Color, usize)> = BTreeMap::new();
+    let mut stack = vec![page];
+    let mut seen = 0usize;
+    while let Some(id) = stack.pop() {
+        seen += 1;
+        if seen > 200_000 {
+            break;
+        }
+        let Some(n) = doc.node(id) else { continue };
+        stack.extend(n.children.iter().copied());
+        for paint in n.fills.iter().chain(n.strokes.iter()).filter(|p| p.visible) {
+            if let Some(c) = paint.solid_color() {
+                let c = c.with_alpha(c.a * paint.opacity);
+                counts.entry(c.to_rgba8()).or_insert((c, 0)).1 += 1;
+            }
+        }
+    }
+    let mut out: Vec<(Color, usize)> = counts.into_values().collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_hex().cmp(&b.0.to_hex())));
+    out
 }

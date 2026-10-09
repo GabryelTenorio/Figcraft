@@ -122,7 +122,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Selection & transform | 8 | 60% | rotated multi-select handles, scale tool polish, measure hover polish | 10–15 |
 | Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
 | Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
-| Paint | 7 | 55% | gradient handles on canvas, image crop mode, document colours, colour models | 12–18 |
+| Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 55% | arrowhead set, dash/gap UI, per-side UI, stroke styles | 5–8 |
 | Effects | 4 | 60% | effect styles UI, glass/texture fidelity, shadow spread on non-rects exactness | 6–10 |
 | Frames, groups, sections, masks | 5 | 55% | section tooling, mask types (luminance/outline), frame presets UI | 6–10 |
@@ -135,7 +135,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **49%**.
+Weighted feature depth ≈ **50%**.
 
 ## Milestones
 

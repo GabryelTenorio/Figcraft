@@ -77,7 +77,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context) {
                     crate::menus::invoke(app, "edit.paste");
                 }
             }
-            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat) => {
+            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat, ctx) => {
                 // handled
             }
             _ => {}
@@ -85,7 +85,11 @@ pub fn handle(app: &mut FigApp, ctx: &Context) {
     }
 }
 
-fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool) -> bool {
+fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Context) -> bool {
+    // A gradient open in the colour picker: Delete removes its selected stop.
+    if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && app.ui.picker.is_some() && crate::handles::remove_selected_stop(app, ctx) {
+        return true;
+    }
     // Vector edit mode has its own keys (tools, nudging points, delete, join); the rest fall through.
     if app.session.ds().is_ok_and(|d| d.vector_edit.is_some()) {
         match figcraft_engine::vectoredit::key(&mut app.session, key.name(), m.shift, m.alt, m.command) {

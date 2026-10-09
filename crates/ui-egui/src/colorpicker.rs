@@ -76,6 +76,133 @@ fn finish(app: &mut FigApp) {
     }
 }
 
+/// The selected gradient stop in the picker (shared with the on-canvas stops).
+pub fn stop_id() -> Id {
+    Id::new("cp_stop")
+}
+
+/// Apply a swatch colour: a solid paint's colour, or the selected gradient stop's.
+fn set_color(app: &mut FigApp, target: &PickerTarget, paint: &mut Paint, c: Color, stop: Id, ui: &Ui) {
+    match &mut paint.kind {
+        PaintKind::Solid { color } => {
+            *color = c.with_alpha(1.0);
+            paint.opacity = c.a;
+        }
+        PaintKind::Gradient(g) => {
+            let sel: usize = ui.data(|d| d.get_temp(stop)).unwrap_or(0);
+            if let Some(s) = g.stops.get_mut(sel) {
+                s.color = c;
+            }
+        }
+        PaintKind::Image(_) => return,
+    }
+    write(app, target, paint, false);
+}
+
+/// The page's most used solid colours, recomputed only when the document snapshot changes.
+fn page_colors(app: &FigApp, ui: &Ui) -> Vec<Color> {
+    let Ok(ds) = app.session.ds() else { return vec![] };
+    let key = (std::sync::Arc::as_ptr(&ds.doc) as usize, ds.page);
+    let cache_id = Id::new("cp_doc_colors");
+    if let Some((k, colors)) = ui.data(|d| d.get_temp::<((usize, figcraft_doc::NodeId), Vec<Color>)>(cache_id))
+        && k == key
+    {
+        return colors;
+    }
+    let colors: Vec<Color> = figcraft_engine::cmd::styles::document_colors(&ds.doc, ds.page).into_iter().take(21).map(|(c, _)| c).collect();
+    ui.data_mut(|d| d.insert_temp(cache_id, (key, colors.clone())));
+    colors
+}
+
+/// Colour models the value row can show.
+const MODELS: [&str; 5] = ["Hex", "RGB", "HSL", "HSB", "CSS"];
+
+/// The model dropdown with its fields and the alpha field. Returns a committed colour.
+fn model_fields(ui: &mut Ui, c: Color) -> Option<Color> {
+    let model_id = Id::new("cp_model");
+    let model: usize = ui.data(|d| d.get_temp(model_id)).unwrap_or(0).min(MODELS.len() - 1);
+    let mut out: Option<Color> = None;
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let resp = widgets::dropdown(ui, MODELS.get(model).copied().unwrap_or("Hex"), 52.0, None);
+        egui::Popup::menu(&resp).show(|ui| {
+            for (i, m) in MODELS.iter().enumerate() {
+                if crate::right::menu_item(ui, m, "") {
+                    ui.data_mut(|d| d.insert_temp(model_id, i));
+                    ui.close();
+                }
+            }
+        });
+        let num = |ui: &mut Ui, id: &str, v: f64, w: f32| match widgets::number_field(
+            ui,
+            Id::new(("cp_f", id)),
+            widgets::Lead::None,
+            Some(v.round()),
+            "",
+            w,
+            1.0,
+        ) {
+            Some(widgets::FieldEdit::Set(x)) | Some(widgets::FieldEdit::Scrub(x, _)) => Some(x),
+            None => None,
+        };
+        match MODELS.get(model).copied().unwrap_or("Hex") {
+            "RGB" => {
+                let [r, g, b, _] = c.to_rgba8();
+                let vals = [f64::from(r), f64::from(g), f64::from(b)];
+                for (k, v) in vals.iter().enumerate() {
+                    if let Some(x) = num(ui, ["r", "g", "b"][k.min(2)], *v, 31.0) {
+                        let mut rgb = vals;
+                        if let Some(slot) = rgb.get_mut(k) {
+                            *slot = x.clamp(0.0, 255.0);
+                        }
+                        out = Some(Color::new(rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0, c.a));
+                    }
+                }
+            }
+            "HSL" | "HSB" => {
+                let hsl = model == 2;
+                let (h, s2, l2) = if hsl {
+                    let x = figcraft_color::Hsl::from_color(c);
+                    (x.h, x.s, x.l)
+                } else {
+                    let x = Hsb::from_color(c);
+                    (x.h, x.s, x.b)
+                };
+                let vals = [f64::from(h), f64::from(s2) * 100.0, f64::from(l2) * 100.0];
+                for (k, v) in vals.iter().enumerate() {
+                    if let Some(x) = num(ui, ["h", "s", "l"][k.min(2)], *v, 31.0) {
+                        let mut v3 = vals;
+                        if let Some(slot) = v3.get_mut(k) {
+                            *slot = if k == 0 { x.rem_euclid(360.0) } else { x.clamp(0.0, 100.0) };
+                        }
+                        let (h, a, b) = (v3[0] as f32, v3[1] as f32 / 100.0, v3[2] as f32 / 100.0);
+                        let col = if hsl { figcraft_color::Hsl { h, s: a, l: b }.to_color() } else { Hsb { h, s: a, b }.to_color() };
+                        out = Some(col.with_alpha(c.a));
+                    }
+                }
+            }
+            "CSS" => {
+                if let Some(text) = widgets::text_field(ui, Id::new("cp_css"), &c.to_css(), 152.0, "") {
+                    out = Color::parse_css(&text);
+                }
+            }
+            _ => {
+                if let Some(h) = widgets::text_field(ui, Id::new("cp_hex"), &c.to_hex(), 101.0, "") {
+                    out = Color::from_hex(&h).map(|h| h.with_alpha(if h.a < 1.0 { h.a } else { c.a }));
+                }
+            }
+        }
+        if MODELS.get(model) != Some(&"CSS")
+            && let Some(widgets::FieldEdit::Set(v)) =
+                widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, Some((f64::from(out.unwrap_or(c).a) * 100.0).round()), "%", 44.0, 1.0)
+        {
+            out = Some(out.unwrap_or(c).with_alpha((v / 100.0).clamp(0.0, 1.0) as f32));
+        }
+    });
+    out
+}
+
 fn hue_color(h: f32) -> Color32 {
     c32(Hsb { h, s: 1.0, b: 1.0 }.to_color())
 }
@@ -265,7 +392,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 PaintKind::Solid { color } => Some(color.with_alpha(color.a * paint.opacity)),
                 _ => None,
             };
-            let sel_stop_id = Id::new("cp_stop");
+            let sel_stop_id = stop_id();
             if let PaintKind::Gradient(g) = &paint.kind {
                 let mut g = g.clone();
                 let mut sel: usize = ui.data(|d| d.get_temp(sel_stop_id)).unwrap_or(0).min(g.stops.len().saturating_sub(1));
@@ -451,38 +578,13 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     changed = true;
                     done |= d;
                 }
-                // Hex + alpha fields.
-                let mut hex_set = None;
-                let mut alpha_set = None;
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    widgets::label(ui, "Hex", t.text_secondary);
-                    if let Some(h) = widgets::text_field(ui, Id::new("cp_hex"), &nc.to_hex(), 96.0, "") {
-                        hex_set = Color::from_hex(&h);
-                    }
-                    if let Some(widgets::FieldEdit::Set(v)) =
-                        widgets::number_field(ui, Id::new("cp_a"), widgets::Lead::None, Some((f64::from(nc.a) * 100.0).round()), "%", 56.0, 1.0)
-                    {
-                        alpha_set = Some((v / 100.0).clamp(0.0, 1.0) as f32);
-                    }
-                });
-                if let Some(h) = hex_set {
-                    nc = h.with_alpha(if h.a < 1.0 { h.a } else { nc.a });
+                // Colour model fields (Hex, RGB, HSL, HSB or CSS) + alpha.
+                if let Some(c) = model_fields(ui, nc) {
+                    nc = c;
                     hsb = Hsb::from_color(nc);
                     changed = true;
                     done = true;
                 }
-                if let Some(a) = alpha_set {
-                    nc = nc.with_alpha(a);
-                    changed = true;
-                    done = true;
-                }
-                // RGB readout.
-                let [r, g, b, _] = nc.to_rgba8();
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    widgets::label(ui, &format!("RGB  {r}  {g}  {b}"), t.text_secondary);
-                });
                 ui.data_mut(|d| d.insert_temp(Id::new("cp_hsb"), (hsb.h, hsb.s, hsb.b, nc.to_rgba8())));
                 if changed {
                     match &mut paint.kind {
@@ -504,7 +606,23 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     finish(app);
                 }
             }
-            // Document / recent colours.
+            // Colours used on this page.
+            let doc_colors = page_colors(app, ui);
+            if !doc_colors.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    widgets::label(ui, "On this page", t.text_secondary);
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.add_space(16.0);
+                    for c in &doc_colors {
+                        if widgets::swatch(ui, &Paint::solid(*c), 14.0).on_hover_text(c.to_hex()).clicked() {
+                            set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
+                        }
+                    }
+                });
+            }
+            // Recent colours.
             let recent = app.session.recent_colors.clone();
             if !recent.is_empty() {
                 ui.horizontal(|ui| {
@@ -515,11 +633,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     ui.add_space(16.0);
                     for c in recent.iter().take(14) {
                         if widgets::swatch(ui, &Paint::solid(*c), 14.0).clicked() {
-                            if let PaintKind::Solid { color } = &mut paint.kind {
-                                *color = c.with_alpha(1.0);
-                                paint.opacity = c.a;
-                            }
-                            write(app, &target, &paint, false);
+                            set_color(app, &target, &mut paint, *c, sel_stop_id, ui);
                         }
                     }
                 });

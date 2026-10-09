@@ -382,3 +382,24 @@ fn arrows_reorder_auto_layout_children_and_cmd_arrows_resize() {
     let r = s.doc().unwrap().node(row).unwrap().clone();
     assert_eq!(r.child_layout.sizing_v, figcraft_doc::Sizing::Hug);
 }
+
+#[test]
+fn document_colors_are_counted_per_page() {
+    let mut s = sess();
+    for (i, c) in ["#FF0000", "#FF0000", "#00FF00"].iter().enumerate() {
+        let r = id(&s.execute("shape.rectangle", &json!({"x": i * 20, "y": 0, "width": 10, "height": 10})).unwrap());
+        s.execute("node.set", &json!({"id": r, "props": {"fills": [c], "strokes": ["#0000FF"]}})).unwrap();
+    }
+    let v = s.execute("paint.documentColors", &json!({})).unwrap();
+    let list: Vec<(String, u64)> =
+        v["colors"].as_array().unwrap().iter().map(|c| (c["color"].as_str().unwrap().to_string(), c["count"].as_u64().unwrap())).collect();
+    assert_eq!(list.first(), Some(&("0000FF".to_string(), 3)));
+    assert!(list.contains(&("FF0000".to_string(), 2)));
+    assert!(list.contains(&("00FF00".to_string(), 1)));
+    let v = s.execute("paint.documentColors", &json!({"limit": 1})).unwrap();
+    assert_eq!(v["colors"].as_array().unwrap().len(), 1);
+    // Another page is separate.
+    s.execute("page.add", &json!({})).unwrap();
+    let v = s.execute("paint.documentColors", &json!({})).unwrap();
+    assert!(v["colors"].as_array().unwrap().is_empty());
+}

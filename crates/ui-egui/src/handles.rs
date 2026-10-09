@@ -17,7 +17,7 @@ const PINK: Color32 = Color32::from_rgb(0xF2, 0x48, 0x8C);
 
 #[derive(Clone, Debug)]
 enum Drag {
-    /// Gradient handle 0 = from, 1 = to, 2 = width.
+    /// Gradient handle 0 = from, 1 = to, 2 = width; 3 + i = stop `i` (slides along the line).
     Gradient { id: NodeId, fills: bool, index: usize, which: usize },
     /// Padding side 0 top, 1 right, 2 bottom, 3 left.
     Padding { id: NodeId, side: usize, start: Pos2, value: f64 },
@@ -74,6 +74,41 @@ fn gradient_target(app: &FigApp) -> Option<(NodeId, bool, usize, figcraft_color:
         PaintKind::Gradient(g) => Some((id, *fills, *index, g.clone())),
         _ => None,
     }
+}
+
+/// Where `p` projects onto segment a→b: (t in 0..1, distance in points).
+fn line_param(a: Pos2, b: Pos2, p: Pos2) -> Option<(f64, f32)> {
+    let ab = b - a;
+    let len2 = ab.length_sq();
+    if len2 < 1e-6 {
+        return None;
+    }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    Some((f64::from(t), (a + ab * t - p).length()))
+}
+
+fn set_gradient(app: &mut FigApp, id: NodeId, fills: bool, index: usize, g: figcraft_color::Gradient) {
+    let Some(n) = app.session.doc().ok().and_then(|d| d.node(id)).cloned() else { return };
+    let list = if fills { &n.fills } else { &n.strokes };
+    let Some(mut paint) = list.get(index).cloned() else { return };
+    paint.kind = PaintKind::Gradient(g);
+    let cmd = if fills { "fill.set" } else { "stroke.set" };
+    let _ = app.session.execute(cmd, &json!({"ids": [id], "index": index, "paint": paint}));
+}
+
+/// Delete/Backspace while a gradient is open: remove its selected stop (two always stay).
+pub fn remove_selected_stop(app: &mut FigApp, ctx: &egui::Context) -> bool {
+    let Some((id, fills, index, mut g)) = gradient_target(app) else { return false };
+    let sel: usize = ctx.data(|d| d.get_temp(crate::colorpicker::stop_id())).unwrap_or(0);
+    if g.stops.len() <= 2 || sel >= g.stops.len() {
+        return g.stops.len() <= 2;
+    }
+    g.stops.remove(sel);
+    ctx.data_mut(|d| d.insert_temp(crate::colorpicker::stop_id(), sel.saturating_sub(1)));
+    let _ = app.session.begin_interaction("Remove gradient stop");
+    set_gradient(app, id, fills, index, g);
+    let _ = app.session.commit_interaction();
+    true
 }
 
 fn unit_to_screen(app: &FigApp, id: NodeId, u: (f64, f64)) -> Option<Pos2> {
@@ -210,11 +245,15 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
         if g.kind != figcraft_color::GradientKind::Linear {
             painter.add(Shape::dashed_line(&[a, c], Stroke::new(1.0, Color32::WHITE), 4.0, 3.0));
         }
-        for s in g.sorted_stops() {
+        let selected: usize = painter.ctx().data(|d| d.get_temp(crate::colorpicker::stop_id())).unwrap_or(0);
+        for (i, s) in g.stops.iter().enumerate() {
             let p = a + (b - a) * s.position;
             let r = Rect::from_center_size(p, vec2(12.0, 12.0));
             painter.rect_filled(r, CornerRadius::same(2), crate::theme::c32(s.color.with_alpha(1.0)));
             painter.rect_stroke(r, CornerRadius::same(2), Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
+            if i == selected {
+                painter.rect_stroke(r.expand(2.0), CornerRadius::same(3), Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+            }
         }
         for (i, p) in [a, b, c].iter().enumerate() {
             if i == 2 && g.kind == figcraft_color::GradientKind::Linear {
@@ -321,7 +360,34 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
                 return true;
             }
         }
-        return false;
+        // Stops: select and slide them; a click elsewhere on the line adds one there.
+        let (Some(a), Some(b)) = (pts[0], pts[1]) else { return false };
+        let stop_hit = g.stops.iter().position(|st| (a + (b - a) * st.position - pos).length() <= 8.0);
+        let t = line_param(a, b, pos);
+        let on_line = t.is_some_and(|(_, d)| d <= 5.0);
+        if stop_hit.is_none() && !on_line {
+            return false;
+        }
+        ctx.set_cursor_icon(if stop_hit.is_some() { egui::CursorIcon::Grab } else { egui::CursorIcon::Copy });
+        if pressed {
+            let stop = match stop_hit {
+                Some(i) => {
+                    let _ = app.session.begin_interaction("Edit gradient");
+                    i
+                }
+                None => {
+                    let pos01 = t.map(|(t, _)| t).unwrap_or(0.5) as f32;
+                    let mut g2 = g.clone();
+                    g2.stops.push(figcraft_color::ColorStop { position: pos01, color: g.sample(pos01) });
+                    let _ = app.session.begin_interaction("Add gradient stop");
+                    set_gradient(app, id, fills, index, g2);
+                    g.stops.len()
+                }
+            };
+            ctx.data_mut(|d| d.insert_temp(crate::colorpicker::stop_id(), stop));
+            ctx.data_mut(|d| d.insert_temp(drag_id(), Drag::Gradient { id, fills, index, which: 3 + stop }));
+        }
+        return true;
     }
     if let Some((id, fills, index, _, rect)) = crop_target(app) {
         let Some(c) = crop_corners(app, id, rect) else { return false };
@@ -387,7 +453,13 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
                 match which {
                     0 => g.from = u,
                     1 => g.to = u,
-                    _ => g.width = u,
+                    2 => g.width = u,
+                    stop => {
+                        let (Some(a), Some(b)) = (unit_to_screen(app, *id, g.from), unit_to_screen(app, *id, g.to)) else { return };
+                        if let (Some((t, _)), Some(st)) = (line_param(a, b, pos), g.stops.get_mut(stop - 3)) {
+                            st.position = t as f32;
+                        }
+                    }
                 }
             }
             let cmd = if *fills { "fill.set" } else { "stroke.set" };

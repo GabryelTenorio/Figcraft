@@ -232,6 +232,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(v) = p.get("showResolvedComments").and_then(Value::as_bool) {
                 app.ui.comments.show_resolved = v;
             }
+            // Colour picker on the selection's paint `{fills?, index?}`; null closes it.
+            if let Some(v) = p.get("colorPicker") {
+                app.ui.picker = v.is_object().then(|| crate::colorpicker::PickerTarget::Paint {
+                    fills: v.get("fills").and_then(Value::as_bool).unwrap_or(true),
+                    index: v.get("index").and_then(Value::as_u64).unwrap_or(0).min(1000) as usize,
+                    ids: app.session.selection(),
+                });
+            }
             // Layers panel search: a string opens it with that filter, null closes it.
             if let Some(v) = p.get("layerFilter") {
                 app.ui.layer_search = v.is_string();
