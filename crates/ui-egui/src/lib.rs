@@ -27,6 +27,7 @@ pub mod proto_canvas;
 pub mod proto_panel;
 pub mod render_worker;
 pub mod right;
+pub mod scale_panel;
 pub mod section_panel;
 pub mod shortcuts;
 pub mod tabs;

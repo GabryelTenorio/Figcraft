@@ -206,6 +206,10 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         Some(ve) => crate::vector_panel::points(app, ui, &doc, &ve),
         None => {
             crate::section_panel::section(app, ui, &doc, &sel);
+            if app.session.tool.tool == figcraft_engine::ToolId::Scale {
+                crate::scale_panel::section(app, ui, &doc, &sel);
+                widgets::separator(ui);
+            }
             position(app, ui, &doc, &sel);
         }
     }

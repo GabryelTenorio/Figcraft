@@ -1,0 +1,106 @@
+//! The Scale tool's panel (K): scale the selection by a factor or to a width or height, around an
+//! anchor point. Everything goes through `transform.scale`, so strokes, effects, corner radii and
+//! text scale with the layers.
+
+use egui::{CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use figcraft_doc::{Document, NodeId};
+use serde_json::json;
+
+use crate::FigApp;
+use crate::right::row;
+use crate::theme::Tokens;
+use crate::widgets::{self, FieldEdit, Lead};
+
+fn anchor_id() -> Id {
+    Id::new("scale_anchor")
+}
+
+/// The Scale section, shown in place of Position while the Scale tool is active.
+pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
+    let Some(b) = doc.bounds_of(sel) else { return };
+    widgets::section_header(ui, "Scale", &[], false);
+    let col = widgets::col_width(ui.available_width());
+    // Anchor: column and row (0 start, 1 middle, 2 end) of the point that stays put.
+    let anchor: (u8, u8) = ui.data(|d| d.get_temp(anchor_id())).unwrap_or((0, 0));
+    let mut factor: Option<f64> = None;
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    widgets::sublabels(ui, "Dimensions", None);
+    row(ui, 32.0, |ui| {
+        if let Some(FieldEdit::Set(w)) = widgets::number_field(ui, Id::new("scale_w"), Lead::Text("W"), Some(round(b.width())), "", col, 1.0)
+            && b.width() > 1e-9
+        {
+            factor = Some(w / b.width());
+        }
+        if let Some(FieldEdit::Set(h)) = widgets::number_field(ui, Id::new("scale_h"), Lead::Text("H"), Some(round(b.height())), "", col, 1.0)
+            && b.height() > 1e-9
+        {
+            factor = Some(h / b.height());
+        }
+    });
+    widgets::sublabels(ui, "Scale", Some("Anchor"));
+    crate::right::block(ui, 52.0, 2.0, |ui| {
+        if let Some(FieldEdit::Set(k)) = widgets::number_field(ui, Id::new("scale_k"), Lead::None, Some(1.0), "x", col, 0.1) {
+            factor = Some(k);
+        }
+        ui.add_space(8.0);
+        if let Some(a) = anchor_picker(ui, anchor) {
+            ui.data_mut(|d| d.insert_temp(anchor_id(), a));
+        }
+    });
+    if let Some((k, cx, cy)) = factor.and_then(|k| scale_about(b, anchor, k)) {
+        app.run("transform.scale", json!({"ids": sel, "factor": k, "cx": cx, "cy": cy}));
+    }
+}
+
+/// The factor (clamped to 0.01–100) and pivot for scaling `b` by `k` around `anchor`; None when
+/// nothing would change or `k` isn't a usable number.
+fn scale_about(b: figcraft_geom::Rect, anchor: (u8, u8), k: f64) -> Option<(f64, f64, f64)> {
+    let k = Some(k).filter(|k| k.is_finite() && *k > 0.0 && (*k - 1.0).abs() > 1e-9)?.clamp(0.01, 100.0);
+    let (ax, ay) = (f64::from(anchor.0.min(2)) / 2.0, f64::from(anchor.1.min(2)) / 2.0);
+    Some((k, b.x0 + b.width() * ax, b.y0 + b.height() * ay))
+}
+
+/// A 3 × 3 grid of anchor points; the chosen one is filled. Returns a newly clicked anchor.
+fn anchor_picker(ui: &mut Ui, cur: (u8, u8)) -> Option<(u8, u8)> {
+    let t = Tokens::get(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
+    ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
+    let mut out = None;
+    for row in 0..3u8 {
+        for col in 0..3u8 {
+            let c = pos2(r.min.x + 8.0 + f32::from(col) * 16.0, r.min.y + 8.0 + f32::from(row) * 16.0);
+            let hit = Rect::from_center_size(c, vec2(16.0, 16.0));
+            let resp = ui.interact(hit, Id::new(("scale_anchor_dot", col, row)), Sense::click());
+            let on = (col, row) == cur;
+            if on {
+                ui.painter().rect_filled(Rect::from_center_size(c, vec2(7.0, 7.0)), CornerRadius::same(2), t.accent);
+            } else {
+                let dot = Rect::from_center_size(c, vec2(if resp.hovered() { 6.0 } else { 4.0 }, if resp.hovered() { 6.0 } else { 4.0 }));
+                ui.painter().rect_filled(dot, CornerRadius::same(1), if resp.hovered() { t.icon } else { t.icon_secondary });
+            }
+            if resp.clicked() {
+                out = Some((col, row));
+            }
+        }
+    }
+    ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scale_about;
+    use figcraft_geom::Rect;
+
+    #[test]
+    fn pivot_follows_the_anchor_and_bad_factors_do_nothing() {
+        let b = Rect::new(10.0, 20.0, 110.0, 70.0);
+        assert_eq!(scale_about(b, (0, 0), 2.0), Some((2.0, 10.0, 20.0)));
+        assert_eq!(scale_about(b, (1, 1), 0.5), Some((0.5, 60.0, 45.0)));
+        assert_eq!(scale_about(b, (2, 2), 3.0), Some((3.0, 110.0, 70.0)));
+        assert_eq!(scale_about(b, (0, 0), 1e6).map(|s| s.0), Some(100.0));
+        for k in [1.0, 0.0, -2.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(scale_about(b, (0, 0), k), None, "{k}");
+        }
+    }
+}
