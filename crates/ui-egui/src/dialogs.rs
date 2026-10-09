@@ -1,10 +1,13 @@
 //! Dialogs: About, Preferences, keyboard shortcuts, find & replace, variables, export.
 
 use egui::{Align2, Color32, Context, CornerRadius, RichText, Sense, Stroke, vec2};
+use figcraft_doc::{ExportFormat, ExportSetting, ExportSize};
 use figcraft_engine::catalog::MENU;
+use figcraft_engine::cmd::file::{export_jobs, exportable_layers};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::export_panel::{export_layers, save_one, suggested_name};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::toolbar::pretty_shortcut;
@@ -159,50 +162,87 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// What the Export dialog was asked to do.
+enum ExportChoice {
+    /// Every layer with export settings, with those settings.
+    Layers,
+    /// The layers together as one file.
+    Once(ExportSetting),
+}
+
+/// The Export dialog: the layers' own export settings when they have some, and one-off presets for
+/// the selection (or the page) as one file.
 fn export_dialog(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     let mut open = true;
     let sel = app.session.selection();
-    let page_children: Vec<_> = app.session.ds().ok().and_then(|d| d.doc.node(d.page).map(|p| p.children.clone())).unwrap_or_default();
-    let ids = if sel.is_empty() { page_children } else { sel };
-    let mut do_export: Option<(&str, f64)> = None;
+    let Ok(ds) = app.session.ds() else {
+        app.ui.export_preview = false;
+        return;
+    };
+    let (doc, page) = (ds.doc.clone(), ds.page);
+    let ids = if sel.is_empty() { doc.node(page).map(|p| p.children.clone()).unwrap_or_default() } else { sel.clone() };
+    // With nothing selected, every layer on the page that has export settings.
+    let with_settings = if sel.is_empty() { exportable_layers(&doc, page) } else { sel };
+    let jobs = export_jobs(&doc, &with_settings);
+    let preset = |size: f64, format| ExportSetting { size: ExportSize::Scale { value: size }, suffix: String::new(), format };
+    let presets = [
+        preset(1.0, ExportFormat::Png),
+        preset(2.0, ExportFormat::Png),
+        preset(3.0, ExportFormat::Png),
+        preset(2.0, ExportFormat::Jpg),
+        preset(2.0, ExportFormat::Webp),
+        preset(1.0, ExportFormat::Svg),
+        preset(1.0, ExportFormat::Pdf),
+    ];
+    let mut choice = None;
     window("Export", ctx).open(&mut open).show(ctx, |ui| {
         ui.set_width(320.0);
-        ui.label(RichText::new(format!("{} layer{}", ids.len(), if ids.len() == 1 { "" } else { "s" })).color(t.text_secondary));
-        ui.add_space(8.0);
-        for (label, fmt, scale) in [
-            ("PNG @1x", "png", 1.0),
-            ("PNG @2x", "png", 2.0),
-            ("PNG @3x", "png", 3.0),
-            ("JPG @2x", "jpg", 2.0),
-            ("WebP @2x", "webp", 2.0),
-            ("SVG", "svg", 1.0),
-        ] {
+        let caption = |ui: &mut egui::Ui, s: &str| {
+            ui.label(RichText::new(s).font(regular(11.0)).color(t.text_secondary));
+        };
+        if !jobs.is_empty() {
+            caption(ui, "With the layers' export settings");
+            const SHOWN: usize = 6;
+            for j in jobs.iter().take(SHOWN) {
+                ui.label(RichText::new(&j.file).font(regular(12.0)).color(t.text));
+            }
+            if jobs.len() > SHOWN {
+                caption(ui, &format!("and {} more", jobs.len() - SHOWN));
+            }
+            ui.add_space(6.0);
+            let layers = jobs.iter().map(|j| j.id).collect::<std::collections::BTreeSet<_>>().len();
+            let label = format!("Export {layers} layer{}", if layers == 1 { "" } else { "s" });
+            if crate::widgets::button(ui, &label, true, true).clicked() {
+                choice = Some(ExportChoice::Layers);
+            }
+            ui.add_space(10.0);
+            let (r, _) = ui.allocate_exact_size(vec2(320.0, 1.0), Sense::hover());
+            ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.border));
+            ui.add_space(10.0);
+        }
+        caption(ui, &format!("{} layer{} as one file", ids.len(), if ids.len() == 1 { "" } else { "s" }));
+        ui.add_space(4.0);
+        for p in &presets {
+            let label = if p.format.is_raster() { format!("{} @{}", p.format.label(), p.size.label()) } else { p.format.label().to_string() };
             let (r, resp) = ui.allocate_exact_size(vec2(320.0, 30.0), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
             }
             ui.painter().text(r.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, label, regular(12.0), t.text);
             if resp.clicked() {
-                do_export = Some((fmt, scale));
+                choice = Some(ExportChoice::Once(p.clone()));
             }
         }
-        ui.add_space(4.0);
-        let (r, _) = ui.allocate_exact_size(vec2(320.0, 1.0), Sense::hover());
-        ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.border));
     });
-    if let Some((fmt, scale)) = do_export {
-        let name = ids.first().and_then(|i| app.session.doc().ok()?.node(*i).map(|n| n.name.clone())).unwrap_or_else(|| "Export".into());
-        let sfx = if fmt != "svg" && scale != 1.0 { format!("@{scale}x") } else { String::new() };
-        if let Some(p) = app.services.pick_save("Export", &format!("{name}{sfx}.{fmt}"), &[fmt]) {
-            let ps = p.to_string_lossy().to_string();
-            if app.run("file.export", json!({"ids": ids, "format": fmt, "scale": scale, "path": ps})).is_some() {
-                app.toast("Exported");
-            }
-        }
-        open = false;
+    let close = choice.is_some() || !open;
+    match choice {
+        Some(ExportChoice::Layers) => export_layers(app, &with_settings),
+        Some(ExportChoice::Once(s)) if !ids.is_empty() => save_one(app, &ids, &s, &suggested_name(&doc, &ids, &s, "Export")),
+        Some(ExportChoice::Once(_)) => app.toast("Nothing to export"),
+        None => {}
     }
-    if !open {
+    if close {
         app.ui.export_preview = false;
     }
 }

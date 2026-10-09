@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.open",
             "Open",
-            "{path} (.figcraft, .json: FigCraft or REST API file JSON, .svg, .png, .jpg …); REST imports return `warnings`",
+            "{path, variables? (REST: the local variables JSON as an object, JSON text or a path; default `<name>.variables.json` or `variables.json` next to the file)} (.figcraft, .json: FigCraft or REST API file JSON, .svg, .png, .jpg …); REST imports return `warnings`",
             false,
             open
         ),
@@ -31,9 +31,16 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1), path? (else returns base64 `data`)}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`)}",
             false,
             export
+        ),
+        spec!(
+            "file.exportLayers",
+            "Export layers",
+            "{ids? (default the selection, else every layer on the page with export settings), dir? (folder to write into; else each file comes back as base64 `data`)}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
+            false,
+            export_layers
         ),
         spec!("file.exportSvg", "Export selection as SVG", "{ids?, path?}", false, |s, p| {
             let mut q = p.clone();
@@ -52,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.import",
             "Import",
-            "{path | data (base64) + name, x?, y?}  SVG becomes vectors, images become image layers, .figcraft and REST API file JSON pages are appended (REST: with `warnings`)",
+            "{path | data (base64) + name, x?, y?, variables? (REST: the local variables JSON as an object, JSON text or a path)}  SVG becomes vectors, images become image layers, .figcraft and REST API file JSON pages are appended with their variables and flows (REST: with `warnings`)",
             true,
             import
         ),
@@ -73,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("file.revert", "Revert to saved", "{}", false, |s, _| {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
-            let (loaded, _) = load_path(&path)?;
+            let (loaded, _) = load_path(&path, None)?;
             let i = s.active;
             if let Some(slot) = s.docs.get_mut(i) {
                 *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions);
@@ -362,23 +369,30 @@ fn file_stem(path: &str) -> String {
 /// Load a document from any supported file (REST API file JSON images come from an `images`
 /// folder next to the file).
 pub fn load(path: &str) -> Result<(Document, Vec<String>)> {
-    load_path(path).map(|(l, _)| (l.doc, l.issues))
+    load_path(path, None).map(|(l, _)| (l.doc, l.issues))
 }
 
 pub fn load_bytes(bytes: &[u8], name_hint: &str) -> Result<(Document, Vec<String>)> {
-    load_with(bytes, name_hint, &figcraft_format::rest::no_images).map(|(l, _)| (l.doc, l.issues))
+    load_with(bytes, name_hint, None, &figcraft_format::rest::no_images).map(|(l, _)| (l.doc, l.issues))
 }
 
-/// [`load`] with the version history, also telling whether the file was REST API file JSON.
-pub fn load_path(path: &str) -> Result<(figcraft_format::Loaded, bool)> {
+/// [`load`] with the version history, also telling whether the file was REST API file JSON. A REST
+/// import reads its variables from `variables`, else from a variables JSON next to the file.
+pub fn load_path(path: &str, variables: Option<&Value>) -> Result<(figcraft_format::Loaded, bool)> {
     let bytes = read(path)?;
-    load_with(&bytes, path, &rest_images(path))
+    let sibling = if variables.is_none() { sibling_variables(path) } else { None };
+    load_with(&bytes, path, variables.or(sibling.as_ref()), &rest_images(path))
 }
 
 /// Load from bytes. Returns the document with its notes (repairs of a native file, or import
 /// warnings) and version history, and whether it was imported from REST API file JSON (such a file
-/// is never saved over).
-fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::ImageResolver) -> Result<(figcraft_format::Loaded, bool)> {
+/// is never saved over). `variables`: the local variables JSON for a REST API file JSON.
+fn load_with(
+    bytes: &[u8],
+    name_hint: &str,
+    variables: Option<&Value>,
+    images: figcraft_format::rest::ImageResolver,
+) -> Result<(figcraft_format::Loaded, bool)> {
     match ext(name_hint).as_str() {
         "svg" => {
             let mut doc = Document::new(file_stem(name_hint));
@@ -395,7 +409,7 @@ fn load_with(bytes: &[u8], name_hint: &str, images: figcraft_format::rest::Image
             Ok((doc.into(), false))
         }
         _ => {
-            if let Some(r) = figcraft_format::rest::try_import(bytes, images) {
+            if let Some(r) = figcraft_format::rest::try_import_with(bytes, variables, images) {
                 let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
                 link_instances(&mut doc);
                 return Ok((figcraft_format::Loaded { issues: warnings, ..doc.into() }, true));
@@ -448,14 +462,59 @@ fn rest_images(_path: &str) -> impl Fn(&str) -> Option<Vec<u8>> {
     figcraft_format::rest::no_images
 }
 
+/// Largest variables JSON read from disk.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_VARIABLES_FILE: u64 = 256 * 1024 * 1024;
+
+/// A local variables JSON next to a REST API file JSON: `<name>.variables.json`, else
+/// `variables.json`.
+#[cfg(not(target_arch = "wasm32"))]
+fn sibling_variables(path: &str) -> Option<Value> {
+    if ext(path) != "json" {
+        return None;
+    }
+    let file = std::path::Path::new(path);
+    let dir = file.parent()?;
+    [format!("{}.variables.json", file_stem(path)), "variables.json".to_string()].iter().map(|n| dir.join(n)).filter(|c| c != file).find_map(|c| {
+        let meta = std::fs::metadata(&c).ok()?;
+        if !meta.is_file() || meta.len() > MAX_VARIABLES_FILE {
+            return None;
+        }
+        let v: Value = serde_json::from_slice(&std::fs::read(&c).ok()?).ok()?;
+        figcraft_format::rest::is_variables_json(&v).then_some(v)
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sibling_variables(_path: &str) -> Option<Value> {
+    None
+}
+
+/// The local variables JSON a command passes as `variables`: an object, JSON text or a file path.
+fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
+    let parse = |text: &[u8]| serde_json::from_slice::<Value>(text).map_err(|e| bad(cmd, format!("variables: {e}")));
+    let v = match get(p, "variables") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v @ Value::Object(_)) => v.clone(),
+        Some(Value::String(s)) if s.trim_start().starts_with('{') => parse(s.as_bytes())?,
+        Some(Value::String(path)) => parse(&read(path)?)?,
+        Some(_) => return Err(bad(cmd, "variables: the local variables JSON (an object, JSON text or a path)")),
+    };
+    if !figcraft_format::rest::is_variables_json(&v) {
+        return Err(bad(cmd, "variables: expected the local variables JSON (`meta.variableCollections` and `meta.variables`)"));
+    }
+    Ok(Some(v))
+}
+
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = req_string("file.open", p, "path")?;
+    let variables = variables_param("file.open", p)?;
     // Already open: switch to it.
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
         s.active = i;
         return Ok(json!({"index": i}));
     }
-    let (loaded, rest) = load_path(&path)?;
+    let (loaded, rest) = load_path(&path, variables.as_ref())?;
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
     s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions));
     s.active = s.docs.len() - 1;
@@ -583,7 +642,10 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         .and_then(|f| ExportFormat::from_ext(&f))
         .or_else(|| string(p, "path").and_then(|pp| ExportFormat::from_ext(&ext(&pp))))
         .unwrap_or_default();
-    let scale = num_or(p, "scale", 1.0).clamp(0.01, 64.0);
+    let scale = match size_param("file.export", p)? {
+        Some(size) => export_scale(doc, &ids, size),
+        None => num_or(p, "scale", 1.0).clamp(0.01, ExportSize::MAX_SCALE),
+    };
     let bytes = export_bytes(doc, &ids, format, scale)?;
     match string(p, "path") {
         Some(path) => {
@@ -592,6 +654,113 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => Ok(json!({"format": format.ext(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
     }
+}
+
+/// The scale that gives `ids` (their bounds together) the export size `size`.
+pub fn export_scale(doc: &Document, ids: &[NodeId], size: ExportSize) -> f64 {
+    let b = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b));
+    b.map_or(1.0, |b| size.scale_for(b.width(), b.height()))
+}
+
+/// `e` with the `size` ("2x", "512w", "512h" or `{by, value}`), `suffix` and `format` that `p` sets.
+pub(super) fn export_setting(cmd: &str, mut e: ExportSetting, p: &Value) -> Result<ExportSetting> {
+    if let Some(size) = size_param(cmd, p)? {
+        e.size = size;
+    }
+    if let Some(s) = string(p, "suffix") {
+        e.suffix = s.chars().filter(|c| !c.is_control()).take(200).collect();
+    }
+    if let Some(f) = string(p, "format") {
+        e.format = ExportFormat::from_ext(&f).ok_or_else(|| bad(cmd, "format: png|jpg|svg|pdf|webp"))?;
+    }
+    Ok(e)
+}
+
+/// An export size passed as `size`: "2x", "512w", "512h", a number (scale) or `{by, value}`.
+fn size_param(cmd: &str, p: &Value) -> Result<Option<ExportSize>> {
+    let size = match get(p, "size") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::String(s)) => ExportSize::parse(s),
+        Some(Value::Number(n)) => n.as_f64().and_then(|value| ExportSize::Scale { value }.checked()),
+        Some(v) => serde_json::from_value::<ExportSize>(v.clone()).ok().and_then(ExportSize::checked),
+    };
+    size.map(Some).ok_or_else(|| bad(cmd, "size: 2x, 512w or 512h (or {by: scale|width|height, value})"))
+}
+
+/// Most files one `file.exportLayers` writes.
+const MAX_EXPORT_FILES: usize = 1000;
+
+/// One file of a layer export: the layer, its setting and the file name.
+pub struct ExportJob {
+    pub id: NodeId,
+    pub setting: ExportSetting,
+    pub file: String,
+}
+
+/// The files exporting `ids` with their export settings makes, with unique names (repeats get
+/// " 2", " 3"…). Layers without settings make none.
+pub fn export_jobs(doc: &Document, ids: &[NodeId]) -> Vec<ExportJob> {
+    let mut used = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for id in ids {
+        let Some(n) = doc.node(*id) else { continue };
+        let name = safe_file_name(&n.name);
+        let base = Some(name.trim().trim_end_matches('.')).filter(|b| !b.is_empty()).unwrap_or("Untitled");
+        for e in &n.exports {
+            if out.len() >= MAX_EXPORT_FILES {
+                return out;
+            }
+            let stem = format!("{base}{}", safe_file_name(&e.file_suffix()));
+            let ext = e.format.ext();
+            let file =
+                (1..).map(|k| if k == 1 { format!("{stem}.{ext}") } else { format!("{stem} {k}.{ext}") }).find(|f| used.insert(f.to_lowercase()));
+            if let Some(file) = file {
+                out.push(ExportJob { id: *id, setting: e.clone(), file });
+            }
+        }
+    }
+    out
+}
+
+/// `name` without path separators and characters file systems reject.
+fn safe_file_name(name: &str) -> String {
+    name.chars().take(200).map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect()
+}
+
+/// Layers on `page` that have export settings (document order).
+pub fn exportable_layers(doc: &Document, page: NodeId) -> Vec<NodeId> {
+    doc.subtree(page).into_iter().skip(1).filter(|i| doc.node(*i).is_some_and(|n| !n.exports.is_empty())).collect()
+}
+
+fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.exportLayers";
+    let doc = s.doc()?;
+    let mut ids = targets(s, p);
+    if ids.is_empty() {
+        ids = exportable_layers(doc, s.page()?);
+    }
+    let jobs = export_jobs(doc, &ids);
+    if jobs.is_empty() {
+        return Err(EngineError::Disabled(cmd.into(), "no export settings (add one with export.add)".into()));
+    }
+    let dir = string(p, "dir");
+    let mut files = Vec::with_capacity(jobs.len());
+    for job in &jobs {
+        let scale = export_scale(doc, &[job.id], job.setting.size);
+        let bytes = export_bytes(doc, &[job.id], job.setting.format, scale)?;
+        let mut f = json!({"name": job.file, "id": job.id, "bytes": bytes.len()});
+        match &dir {
+            Some(d) => {
+                let path = std::path::Path::new(d).join(&job.file).to_string_lossy().to_string();
+                write(&path, &bytes)?;
+                f["path"] = json!(path);
+            }
+            None => f["data"] = json!(base64::engine::general_purpose::STANDARD.encode(&bytes)),
+        }
+        files.push(f);
+    }
+    let with_settings: std::collections::BTreeSet<NodeId> = jobs.iter().map(|j| j.id).collect();
+    Ok(json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())}))
 }
 
 /// Every top-level frame of a page (reading order), one PDF page each.
@@ -620,6 +789,7 @@ fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn import(s: &mut Session, p: &Value) -> Result<Value> {
     let path = string(p, "path");
+    let variables = variables_param("file.import", p)?;
     let (bytes, name) = if let Some(path) = &path {
         (read(path)?, path.clone())
     } else if let Some(d) = string(p, "data") {
@@ -648,7 +818,8 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(r) => r,
                 None => &figcraft_format::rest::no_images,
             };
-            let (other, rest) = load_with(&bytes, &name, images)?;
+            let sibling = if variables.is_none() { path.as_deref().and_then(sibling_variables) } else { None };
+            let (other, rest) = load_with(&bytes, &name, variables.as_ref().or(sibling.as_ref()), images)?;
             let pages = append_pages(s.doc_mut()?, &other.doc)?;
             let mut out = json!({"pages": pages});
             if rest {
@@ -663,9 +834,10 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-/// Append `other`'s pages (with their backgrounds, its images and styles) to `doc`. Ids are
-/// remapped across all pages at once, so instances keep their main and instance layers their
-/// source wherever those are.
+/// Append `other`'s pages (with their settings and flows, its images, styles and variables) to
+/// `doc`. Ids are remapped across all pages at once, so instances keep their main, instance layers
+/// their source and interactions and flows their targets wherever those are. Styles, variables and
+/// collections whose id the document already has are kept as they are.
 fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
     for (k, v) in &other.images {
         doc.images.entry(k.clone()).or_insert_with(|| v.clone());
@@ -675,6 +847,10 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
             doc.styles.push(st.clone());
         }
     }
+    let have: std::collections::BTreeSet<String> = doc.variables.collections.iter().map(|c| c.id.clone()).collect();
+    doc.variables.collections.extend(other.variables.collections.iter().filter(|c| !have.contains(&c.id)).cloned());
+    let have: std::collections::BTreeSet<String> = doc.variables.variables.iter().map(|v| v.id.clone()).collect();
+    doc.variables.variables.extend(other.variables.variables.iter().filter(|v| !have.contains(&v.id)).cloned());
     let mut map = std::collections::BTreeMap::new();
     for pg in &other.pages {
         for id in other.subtree(*pg).into_iter().skip(1) {
@@ -685,9 +861,12 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
     for pg in &other.pages {
         let Some(pn) = other.node(*pg) else { continue };
         let np = doc.add_page(&pn.name);
-        if let (NodeKind::Page { background: from, .. }, Some(NodeKind::Page { background, .. })) = (&pn.kind, doc.node_mut(np).map(|n| &mut n.kind))
-        {
-            *background = *from;
+        let mut kind = pn.kind.clone();
+        if let NodeKind::Page { flows, .. } = &mut kind {
+            flows.retain_mut(|f| map.get(&f.start).map(|n| f.start = *n).is_some());
+        }
+        if let Some(n) = doc.node_mut(np) {
+            n.kind = kind;
         }
         for c in &pn.children {
             let nodes: Vec<Node> = other.subtree(*c).into_iter().filter_map(|i| other.node(i).cloned()).collect();

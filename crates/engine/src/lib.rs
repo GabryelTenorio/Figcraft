@@ -11,12 +11,14 @@ pub mod catalog;
 pub mod cmd;
 pub mod codegen;
 pub mod components;
+pub mod devinspect;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
 pub mod library;
 pub mod measure;
 pub mod params;
+pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
 pub mod textedit;
@@ -875,7 +877,11 @@ mod al_nesting_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
+mod devinspect_tests;
+#[cfg(test)]
 mod frame_tests;
+#[cfg(test)]
+mod import_export_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
@@ -884,6 +890,8 @@ mod proto_multi_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod section_tests;
+#[cfg(test)]
+mod shapebuilder_tests;
 #[cfg(test)]
 mod style_tests;
 #[cfg(test)]

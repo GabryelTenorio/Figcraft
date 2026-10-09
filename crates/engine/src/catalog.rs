@@ -255,6 +255,7 @@ pub static MENU: &[MenuItem] = &[
     m!("Tools", "Pencil", "tool.pencil", "Shift+P"),
     m!("Tools", "Text", "tool.text", "T"),
     m!("Tools", "Comment", "tool.comment", "C"),
+    m!("Tools", "Shape builder", "tool.shapeBuilder", "Shift+M"),
     m!("Tools", "Actions", "app.actions", "Cmd+K"),
 ];
 

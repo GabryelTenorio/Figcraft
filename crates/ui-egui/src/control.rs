@@ -136,10 +136,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 figcraft_engine::textedit::key(&mut app.session, key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())?;
                 return Ok(json!({"ok": true}));
             }
-            // Vector edit mode keys (tools, nudging points, delete, join).
-            if app.session.ds().is_ok_and(|d| d.vector_edit.is_some())
-                && figcraft_engine::vectoredit::key(&mut app.session, key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())?
-            {
+            // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter).
+            if app.session.tool_key(key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())? {
                 return Ok(json!({"ok": true}));
             }
             match crate::shortcuts::parse(&spec) {
@@ -253,6 +251,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if p.get("collapseLayers").and_then(Value::as_bool) == Some(true) {
                 app.ui.expanded.clear();
+            }
+            if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
+                app.ui.export_thumb = v;
             }
             Ok(app.inspect())
         }

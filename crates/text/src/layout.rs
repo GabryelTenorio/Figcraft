@@ -767,6 +767,28 @@ impl TextLayout {
         (self.lines.last().map(|l| self.line_end_x(l)).unwrap_or(0.0), li)
     }
 
+    /// The caret one step left or right of `index` on screen, for lines with right-to-left runs
+    /// (None on plain left-to-right lines: there a step is one char). At the line's edge it moves
+    /// on logically, to the neighbouring line.
+    pub fn visual_step(&self, index: usize, right: bool) -> Option<usize> {
+        let (x, li) = self.caret(index);
+        let line = self.lines.get(li)?;
+        let gl = self.glyphs.get(line.glyph_start..line.glyph_end)?;
+        if !line.rtl && !gl.iter().any(|g| g.rtl) {
+            return None;
+        }
+        // The caret can't sit after a paragraph's newline on its own line.
+        let end = if line.para_end && li + 1 < self.lines.len() { line.char_end.saturating_sub(1) } else { line.char_end };
+        let next = (line.char_start..=end.max(line.char_start))
+            .filter(|i| *i != index)
+            .map(|i| (i, self.caret(i).0))
+            .filter(|(_, cx)| if right { *cx > x + 0.01 } else { *cx < x - 0.01 })
+            .min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs()).then(a.0.cmp(&b.0)))
+            .map(|(i, _)| i);
+        // At the edge: on to the next line in reading order.
+        Some(next.unwrap_or(if right != line.rtl { index + 1 } else { index.saturating_sub(1) }))
+    }
+
     /// Where a line's text ends: its right edge, or its left edge for a right-to-left paragraph.
     fn line_end_x(&self, line: &Line) -> f64 {
         let glyphs = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]).iter().filter(|g| g.char_end > g.char_start);

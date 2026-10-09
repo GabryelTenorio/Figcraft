@@ -28,7 +28,7 @@ const GROUPS: &[Group] = &[
             (ToolId::Star, Icon::Star),
         ],
     },
-    Group { key: "pen", tools: &[(ToolId::Pen, Icon::Pen), (ToolId::Pencil, Icon::Pencil)] },
+    Group { key: "pen", tools: &[(ToolId::Pen, Icon::Pen), (ToolId::Pencil, Icon::Pencil), (ToolId::ShapeBuilder, Icon::ShapeBuilder)] },
     Group { key: "text", tools: &[(ToolId::Text, Icon::Text)] },
     Group { key: "comment", tools: &[(ToolId::Comment, Icon::Comment)] },
 ];
@@ -45,18 +45,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         edit_toolbar(app, ui, tool);
         return;
     }
+    // So does the shape builder, for its merge/remove modes.
+    if app.session.tool.tool == ToolId::ShapeBuilder {
+        builder_toolbar(app, ui);
+        return;
+    }
     let cell = 32.0;
     let gap = 4.0;
     let width = GROUPS.len() as f32 * (cell + 4.0) + 4.0 * 10.0 + 2.0 * (cell + 4.0) + 16.0 + 4.0 * 34.0 + 24.0;
-    let height = 48.0;
-    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - height / 2.0), vec2(width, height));
-    let painter = ui.painter();
-    // Shadow + pill.
-    for (i, a) in [(6.0, 10u8), (3.0, 16), (1.0, 24)] {
-        painter.rect_filled(rect.expand(i).translate(vec2(0.0, i * 0.5)), CornerRadius::same((13.0 + i) as u8), Color32::from_black_alpha(a));
-    }
-    painter.rect_filled(rect, CornerRadius::same(13), t.panel);
-    painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    let rect = pill(ui, canvas, width, &t);
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;
     let cy = rect.center().y;
@@ -65,18 +62,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let shown = if in_group { current } else { remembered(ui, g.key, g.tools.first().map(|x| x.0).unwrap_or(ToolId::Move)) };
         let icon = g.tools.iter().find(|(tid, _)| *tid == shown).map(|(_, i)| *i).unwrap_or(Icon::Move);
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
-        let resp = ui.interact(r, ui.id().with(("tool", g.key)), Sense::click());
-        let active = in_group;
-        let bg = if active {
-            ACCENT
-        } else if resp.hovered() {
-            t.hover
-        } else {
-            Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(r, CornerRadius::same(5), bg);
-        icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
-        let resp = resp.on_hover_text(format!("{}  {}", shown.label(), shown.shortcut()));
+        let resp = tool_cell(ui, &t, r, ("tool", g.key), icon, in_group).on_hover_text(format!("{}  {}", shown.label(), shown.shortcut()));
         if resp.clicked() {
             app.run("tool.set", json!({"tool": shown.id()}));
         }
@@ -117,7 +103,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         }
         x += cell + 4.0;
     }
-    ui.painter().line_segment([pos2(x + 2.0, cy - 14.0), pos2(x + 2.0, cy + 14.0)], Stroke::new(1.0, t.border));
+    divider(ui, &t, x, cy);
     x += 8.0;
     // Mode switcher: Draw · Design · Prototype · Inspect (code).
     let modes = [(Icon::Pencil, "Draw"), (Icon::Frame, "Design"), (Icon::Prototype, "Prototype"), (Icon::Code, "Inspect")];
@@ -177,15 +163,8 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
     let cell = 32.0;
-    let done_w = 56.0;
-    let width = VTool::ALL.len() as f32 * (cell + 4.0) + 8.0 + 12.0 + done_w + 8.0;
-    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0));
-    let painter = ui.painter();
-    for (i, a) in [(6.0, 10u8), (3.0, 16), (1.0, 24)] {
-        painter.rect_filled(rect.expand(i).translate(vec2(0.0, i * 0.5)), CornerRadius::same((13.0 + i) as u8), Color32::from_black_alpha(a));
-    }
-    painter.rect_filled(rect, CornerRadius::same(13), t.panel);
-    painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    let width = VTool::ALL.len() as f32 * (cell + 4.0) + 8.0 + 12.0 + DONE_W + 8.0;
+    let rect = pill(ui, canvas, width, &t);
     let cy = rect.center().y;
     let mut x = rect.min.x + 8.0;
     // Holding Cmd with the Move tool bends: show it.
@@ -197,16 +176,7 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
         } else {
             format!("{}  {}", tool.label(), pretty_shortcut(tool.shortcut()))
         };
-        let resp = ui.interact(r, ui.id().with(("vtool", tool.id())), Sense::click()).on_hover_text(tip);
         let active = tool == current && !held || held && tool == VTool::Bend;
-        let bg = if active {
-            ACCENT
-        } else if resp.hovered() {
-            t.hover
-        } else {
-            Color32::TRANSPARENT
-        };
-        ui.painter().rect_filled(r, CornerRadius::same(5), bg);
         let icon = match tool {
             VTool::Move => Icon::Move,
             VTool::Pen => Icon::Pen,
@@ -216,21 +186,94 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
             VTool::Cut => Icon::Cut,
             VTool::Eraser => Icon::Eraser,
         };
-        icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
-        if resp.clicked() {
+        if tool_cell(ui, &t, r, ("vtool", tool.id()), icon, active).on_hover_text(tip).clicked() {
             app.run("vector.edit.tool", json!({"tool": tool.id()}));
         }
         x += cell + 4.0;
     }
-    ui.painter().line_segment([pos2(x + 2.0, cy - 14.0), pos2(x + 2.0, cy + 14.0)], Stroke::new(1.0, t.border));
-    x += 12.0;
-    let done = Rect::from_min_size(pos2(x, cy - 14.0), vec2(done_w, 28.0));
-    let dresp = ui.interact(done, ui.id().with("vdone"), Sense::click()).on_hover_text("Done editing  Esc");
-    ui.painter().rect_filled(done, CornerRadius::same(6), if dresp.hovered() { t.accent_hover } else { ACCENT });
-    ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.5), Color32::WHITE);
-    if dresp.clicked() {
+    if done_button(ui, &t, x, cy, "Done editing  Esc") {
         app.run("vector.edit.end", json!({}));
     }
+}
+
+/// The pill shown while the shape builder is active: Merge and Remove modes, a hint and Done.
+fn builder_toolbar(app: &mut FigApp, ui: &mut Ui) {
+    let t = Tokens::get(ui.ctx());
+    let cell = 32.0;
+    let remove = app.session.tool.builder_remove;
+    let has_regions = figcraft_engine::shapebuilder::current(&app.session).is_some_and(|a| !a.regions.is_empty());
+    let alt = pretty_shortcut("Alt");
+    let hint = if !has_regions {
+        "Select overlapping shapes".to_string()
+    } else if remove {
+        format!("Click or drag to remove · {alt} merges")
+    } else {
+        format!("Click or drag to merge · {alt} removes")
+    };
+    let galley = ui.painter().layout_no_wrap(hint, regular(12.0), t.text_secondary);
+    let width = 2.0 * (cell + 4.0) + 8.0 + 12.0 + galley.size().x + 12.0 + 12.0 + DONE_W + 8.0;
+    let rect = pill(ui, app.canvas.rect, width, &t);
+    let cy = rect.center().y;
+    let mut x = rect.min.x + 8.0;
+    for (mode, icon, tip) in [("merge", Icon::ShapeBuilder, "Merge regions"), ("remove", Icon::ShapeBuilderRemove, "Remove regions")] {
+        let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
+        if tool_cell(ui, &t, r, ("sbmode", mode), icon, (mode == "remove") == remove).on_hover_text(tip).clicked() {
+            app.run("shapeBuilder.mode", json!({"mode": mode}));
+        }
+        x += cell + 4.0;
+    }
+    divider(ui, &t, x, cy);
+    x += 12.0;
+    let w = galley.size().x;
+    ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, t.text_secondary);
+    x += w + 12.0;
+    if done_button(ui, &t, x, cy, &format!("Done  {}", pretty_shortcut("Enter"))) {
+        app.run("tool.set", json!({"tool": "move"}));
+    }
+}
+
+/// The floating pill (shadow, panel, border) `width` wide at the bottom centre of the canvas.
+fn pill(ui: &Ui, canvas: Rect, width: f32, t: &Tokens) -> Rect {
+    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0));
+    let painter = ui.painter();
+    for (i, a) in [(6.0, 10u8), (3.0, 16), (1.0, 24)] {
+        painter.rect_filled(rect.expand(i).translate(vec2(0.0, i * 0.5)), CornerRadius::same((13.0 + i) as u8), Color32::from_black_alpha(a));
+    }
+    painter.rect_filled(rect, CornerRadius::same(13), t.panel);
+    painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    rect
+}
+
+/// A square tool button: accent when active, tinted on hover.
+fn tool_cell(ui: &mut Ui, t: &Tokens, r: Rect, id: impl egui::AsIdSalt, icon: Icon, active: bool) -> egui::Response {
+    let resp = ui.interact(r, ui.id().with(id), Sense::click());
+    let bg = if active {
+        ACCENT
+    } else if resp.hovered() {
+        t.hover
+    } else {
+        Color32::TRANSPARENT
+    };
+    ui.painter().rect_filled(r, CornerRadius::same(5), bg);
+    icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
+    resp
+}
+
+/// A vertical separator just after `x`.
+fn divider(ui: &Ui, t: &Tokens, x: f32, cy: f32) {
+    ui.painter().line_segment([pos2(x + 2.0, cy - 14.0), pos2(x + 2.0, cy + 14.0)], Stroke::new(1.0, t.border));
+}
+
+const DONE_W: f32 = 56.0;
+
+/// A divider at `x` and the accent Done button after it; true when clicked.
+fn done_button(ui: &mut Ui, t: &Tokens, x: f32, cy: f32, tip: &str) -> bool {
+    divider(ui, t, x, cy);
+    let done = Rect::from_min_size(pos2(x + 12.0, cy - 14.0), vec2(DONE_W, 28.0));
+    let resp = ui.interact(done, ui.id().with("tool_done"), Sense::click()).on_hover_text(tip);
+    ui.painter().rect_filled(done, CornerRadius::same(6), if resp.hovered() { t.accent_hover } else { ACCENT });
+    ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.5), Color32::WHITE);
+    resp.clicked()
 }
 
 fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {

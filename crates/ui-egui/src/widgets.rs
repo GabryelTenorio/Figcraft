@@ -279,8 +279,37 @@ pub fn eval(s: &str, cur: Option<f64>) -> Option<f64> {
 
 /// A text field that commits on Enter / focus loss. Returns the new text when committed.
 pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &str) -> Option<String> {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    text_field_in(ui, id, value, rect, placeholder)
+}
+
+/// An editable field with a menu of `options` behind the chevron at its right (export sizes…).
+/// Returns the typed text (on Enter / focus loss) or the option picked.
+pub fn combo_field(ui: &mut Ui, id: Id, value: &str, width: f32, options: &[String]) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    let mut out = text_field_in(ui, id, value, rect, "");
+    // The chevron sits on top of the field's right end.
+    let chev = Rect::from_min_max(pos2(rect.max.x - 18.0, rect.min.y), rect.max);
+    let resp = ui.interact(chev, id.with("menu"), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(chev.shrink(2.0), CornerRadius::same(4), t.hover);
+    }
+    icons::paint(ui.painter(), Rect::from_center_size(chev.center(), vec2(12.0, 12.0)), Icon::Chevron, t.icon_secondary);
+    egui::Popup::menu(&resp).show(|ui| {
+        for o in options {
+            if crate::right::menu_item(ui, o, "") {
+                out = Some(o.clone());
+                ui.close();
+            }
+        }
+    });
+    out
+}
+
+/// [`text_field`] drawn into `rect`.
+fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
     let editing_id = id.with("editing");
     let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     let resp = ui.interact(rect, id.with("click"), Sense::click());

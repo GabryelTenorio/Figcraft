@@ -77,7 +77,7 @@ A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `d
 
 ### `ui.key {key, shift?, alt?, cmd?, ctrl?}`
 
-A key as if typed on the canvas (in vector edit mode the edit keys come first: `V` `P` `Q` `X` `Shift+B` tools, arrows nudge points, `Delete`/`Shift+Delete`, `Cmd+A`, `Cmd+J`): a menu shortcut (`{"key":"G","cmd":true}` groups), a tool key,
+A key as if typed on the canvas (in vector edit mode the edit keys come first: `V` `P` `Q` `X` `Shift+B` tools, arrows nudge points, `Delete`/`Shift+Delete`, `Cmd+A`, `Cmd+J`; with the shape builder, `Enter` finishes): a menu shortcut (`{"key":"G","cmd":true}` groups), a tool key,
 `Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). While text is being
 edited, keys go to the text editor. Returns `{"command": id}` for shortcuts.
 
@@ -90,14 +90,14 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `colorPicker`
 (`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
 or a collection id or name to show: the Variables editor), `layerFilter` (string:
 open the layers search with that filter; `null` closes it), `collapseLayers` (true: collapse the
-layers tree). Returns `ui.inspect`.
+layers tree), `exportPreview` (bool: the Design panel Export section's preview). Returns `ui.inspect`.
 
 ### `ui.screenshot {path}`
 

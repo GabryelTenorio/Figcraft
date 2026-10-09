@@ -116,6 +116,10 @@ pub enum Icon {
     Variable,
     Clock,
     Eraser,
+    /// Shape builder: merge regions (and the tool).
+    ShapeBuilder,
+    /// Shape builder: remove regions.
+    ShapeBuilderRemove,
     Swap,
     Link,
     Prototype,
@@ -651,6 +655,21 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle(8.0, 8.0, 6.0);
             p.line(8.0, 8.0, 8.0, 4.5);
             p.line(8.0, 8.0, 10.5, 9.5);
+        }
+        ShapeBuilder | ShapeBuilderRemove => {
+            // Two overlapping rings; their shared lens filled (merge) or crossed out (remove).
+            let (r, d) = (4.4f32, 2.0f32);
+            let a = (d / r).acos();
+            p.circle(8.0 - d, 8.0, r);
+            p.circle(8.0 + d, 8.0, r);
+            let arc =
+                |cx: f32, t0: f32, t1: f32| (0..=8).map(move |i| t0 + (t1 - t0) * i as f32 / 8.0).map(move |t| (cx + r * t.cos(), 8.0 + r * t.sin()));
+            let lens: Vec<(f32, f32)> = arc(8.0 - d, -a, a).chain(arc(8.0 + d, std::f32::consts::PI - a, std::f32::consts::PI + a)).collect();
+            if icon == ShapeBuilder {
+                p.fill_poly(&lens);
+            } else {
+                p.line(6.2, 9.8, 9.8, 6.2);
+            }
         }
         Eraser => {
             // A tilted block with a band near its tip, over a short trace line.

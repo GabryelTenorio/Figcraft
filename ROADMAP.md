@@ -42,8 +42,9 @@ dimension measured side by side.
    pen that extends, branches and closes paths (vector networks), paint bucket fill/unfill of any
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
-   merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E). *Left:* variable
-   width strokes, shape builder, transform box for several points, point snapping. 12–18 h.
+   merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E), shape builder
+   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept).
+   *Left:* variable width strokes, transform box for several points, point snapping. 10–15 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -78,10 +79,15 @@ dimension measured side by side.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
-   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest).
-   Paste from other apps: images, SVG and text (the newest clipboard content wins over our own
-   copy). *Left:* .fig import (best effort), PDF export (in progress), REST import
-   of prototype interactions and variables. 20–32 h.
+   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest),
+   now with prototyping (interactions with their triggers, actions, transitions and easing, flows,
+   scrolling, the prototype device) and variables (the local variables JSON passed along, next to
+   the file or embedded: collections, modes, aliases, scopes, layer bindings and explicit modes).
+   Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
+   JPG, WebP, SVG and PDF, suffix), a preview, and "Export N layers" (`file.exportLayers`) in the
+   panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
+   content wins over our own copy). *Left:* .fig import (best effort), PDF export (in progress),
+   REST import of conditional and variable-mode prototype actions. 14–26 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
@@ -101,7 +107,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** hardening and performance (9) with the fidelity pass (7); the rest of vector editing
-  (eraser, shape builder, variable width) and components (nested overrides, libraries).
+  (variable width) and components (nested overrides, libraries).
 - **Then:** interop depth (6: .fig best effort, paste from other apps), version history and
   collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
@@ -148,21 +154,21 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 65% | pixel preview, frame guides, perf at scale | 6–10 |
+| Canvas & navigation | 6 | 72% | frame guides, 2x pixel preview | 3–5 |
 | Selection & transform | 8 | 64% | scale tool polish, measure hover polish | 8–12 |
 | Layers panel | 5 | 76% | keyboard row navigation, drag between pages | 2–4 |
-| Shapes & vector | 8 | 60% | variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 12–18 |
+| Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
-| Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
+| Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
-| Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
-| Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
+| Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |
+| Dev mode / inspect | 2 | 65% | asset export list in Inspect, code for whole frames as components | 3–4 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 
 Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).

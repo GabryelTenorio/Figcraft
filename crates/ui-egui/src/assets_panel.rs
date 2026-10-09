@@ -120,7 +120,7 @@ fn fingerprint(doc: &Document, id: NodeId) -> u64 {
     h.finish()
 }
 
-fn thumbnail(ctx: &egui::Context, doc: &Document, id: NodeId, px: f32) -> Option<egui::TextureHandle> {
+pub(crate) fn thumbnail(ctx: &egui::Context, doc: &Document, id: NodeId, px: f32) -> Option<egui::TextureHandle> {
     let b = figcraft_render::export_bounds(doc, id)?;
     let side = b.width().max(b.height());
     if !(side.is_finite() && side > 0.0) {

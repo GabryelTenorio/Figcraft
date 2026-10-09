@@ -139,9 +139,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     if let Some(done) = worker.poll()
         && done.generation == app.canvas.generation
     {
+        // A pixel preview render is magnified with hard pixel edges.
+        let filter = if done.view.scale == 1.0 && app.session.ds().is_ok_and(pixel_preview) {
+            egui::TextureOptions::NEAREST
+        } else {
+            egui::TextureOptions::LINEAR
+        };
         match &mut app.canvas.texture {
-            Some(t) => t.set(done.image, egui::TextureOptions::LINEAR),
-            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, egui::TextureOptions::LINEAR)),
+            Some(t) => t.set(done.image, filter),
+            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, filter)),
         }
         app.canvas.tex_view = Some(done.view);
         app.canvas.render_work = Some(done.work);
@@ -205,13 +211,24 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
 }
 
+/// Pixel preview is on and zoomed in past one screen pixel per page pixel.
+fn pixel_preview(ds: &figcraft_engine::DocState) -> bool {
+    ds.view.pixel_preview && ds.view.zoom > 1.0
+}
+
 fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
-    let scale = ds.view.zoom * f64::from(ppp);
-    let (ox, oy) = ds.view.origin();
-    let w = (rect.width() * ppp).ceil().max(1.0) as u32;
-    let h = (rect.height() * ppp).ceil().max(1.0) as u32;
+    let (mut ox, mut oy) = ds.view.origin();
+    let (scale, w, h) = if pixel_preview(ds) {
+        // Pixel preview: render one pixel per page unit from a whole-pixel origin, shown magnified
+        // without smoothing.
+        (ox, oy) = (ox.floor(), oy.floor());
+        let z = ds.view.zoom.max(1e-9);
+        (1.0, (f64::from(rect.width()) / z).ceil() as u32 + 2, (f64::from(rect.height()) / z).ceil() as u32 + 2)
+    } else {
+        (ds.view.zoom * f64::from(ppp), (rect.width() * ppp).ceil().max(1.0) as u32, (rect.height() * ppp).ceil().max(1.0) as u32)
+    };
     // The edited text is drawn live (an IME composition included); the caret is an overlay.
     let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
     let key = JobKey {
@@ -604,7 +621,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 }
             }
         }
-        if let Some(b) = selection_box(&doc, &sel) {
+        // The shape builder reshapes by regions: no transform box.
+        if app.session.tool.tool != ToolId::ShapeBuilder
+            && let Some(b) = selection_box(&doc, &sel)
+        {
             let q = b.map(|p| app.to_screen(p.x, p.y));
             if sel.len() > 1 {
                 quad(painter, q, stroke(col, 1.0));
@@ -631,6 +651,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
             }
         }
+    }
+    if app.session.tool.tool == ToolId::ShapeBuilder
+        && let Some(arr) = figcraft_engine::shapebuilder::current(&app.session)
+    {
+        builder_overlay(app, painter, t, &arr);
     }
     // Text editing: caret and selection, or the IME composition underlined at the caret.
     let preedit = app.preedit_view();
@@ -748,12 +773,7 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
     // Paint bucket target: hatched like a fill to come.
     if !ov.face.is_empty() {
         let polys: Vec<Vec<Pos2>> = ov.face.iter().map(|poly| poly.iter().map(sp).collect()).collect();
-        for l in hatch(&polys, 5.0) {
-            painter.line_segment(l, stroke(ACCENT, 1.0));
-        }
-        for poly in &polys {
-            painter.add(Shape::closed_line(poly.clone(), stroke(ACCENT, 2.0)));
-        }
+        hatched(painter, &polys, ACCENT);
     }
     let hover_seg = match ov.vector_hover {
         Some(VHit::Segment { seg, .. }) => Some(seg),
@@ -792,6 +812,40 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
     }
     if let Some([x0, y0, x1, y1]) = ov.rubber {
         painter.add(Shape::dashed_line(&[app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 1.0), 4.0, 3.0));
+    }
+}
+
+/// Shape builder: every region's edges, and the hovered or collected regions hatched (in the
+/// danger colour when releasing removes them).
+fn builder_overlay(app: &FigApp, painter: &egui::Painter, t: &Tokens, arr: &figcraft_engine::shapebuilder::Arrangement) {
+    let ov = &app.session.tool.overlay;
+    let screen = |r: &figcraft_engine::shapebuilder::Region| -> Vec<Vec<Pos2>> {
+        r.polys.iter().map(|poly| poly.iter().map(|p| app.to_screen(p.x, p.y)).collect()).collect()
+    };
+    // Edges read on any fill: a light halo under a thin accent line.
+    for r in &arr.regions {
+        for poly in screen(r) {
+            painter.add(Shape::closed_line(poly.clone(), stroke(Color32::from_white_alpha(150), 2.5)));
+            painter.add(Shape::closed_line(poly, stroke(ACCENT, 1.0)));
+        }
+    }
+    let col = if ov.builder_remove { t.danger } else { ACCENT };
+    for r in ov.builder_regions.iter().filter_map(|i| arr.regions.get(*i)) {
+        hatched(painter, &screen(r), col);
+    }
+}
+
+/// Polygons hatched and outlined in `col` (an area about to be filled, merged or removed), each
+/// line on a light halo so it reads on any fill, even one in `col`.
+fn hatched(painter: &egui::Painter, polys: &[Vec<Pos2>], col: Color32) {
+    let halo = Color32::from_white_alpha(200);
+    for l in hatch(polys, 6.0) {
+        painter.line_segment(l, stroke(halo, 3.0));
+        painter.line_segment(l, stroke(col, 1.25));
+    }
+    for poly in polys {
+        painter.add(Shape::closed_line(poly.clone(), stroke(halo, 4.0)));
+        painter.add(Shape::closed_line(poly.clone(), stroke(col, 2.0)));
     }
 }
 
