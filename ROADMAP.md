@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (vector edit mode tools, auto layout depth, layers panel depth)._
+_Last updated: 2026-10-10 (day 2: vector editing, auto layout, text, components and assets, prototyping, interop, styles and variables, inspect code, panels polish)._
 
 ## Where we are
 
@@ -17,11 +17,11 @@ _Last updated: 2026-10-10 (vector edit mode tools, auto layout depth, layers pan
 |---|---|
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~70%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
-| Menu/command breadth (`docs/parity.md`) | **96%** of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~40%** |
-| Parity including interaction fidelity and hardening | **~25–30%** |
-| Time to **feature parity** | **~260–380 h** one agent · **~70–110 h** with 4–6 agents |
-| Time to **full parity** (feature parity + fidelity pass + hardening) | **~420–600 h** one agent · **~110–170 h** with 4–6 agents |
+| Menu/command breadth (`docs/parity.md`) | **97%** of the catalogued menu tree has a command |
+| Feature depth (weighted rubric below) | **~58%** |
+| Parity including interaction fidelity and hardening | **~35–40%** |
+| Time to **feature parity** | **~130–210 h** one agent · **~35–60 h** with 4–6 agents |
+| Time to **full parity** (feature parity + fidelity pass + hardening) | **~210–330 h** one agent · **~60–95 h** with 4–6 agents |
 
 ## Honest assessment (2026-10-09)
 
@@ -81,16 +81,17 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** text depth (2) and auto layout depth (3) in parallel with the fidelity pass (7); the
-  rest of vector editing (1).
-- **Then:** auto layout/components/prototyping depth (3–5), interop (6).
+- **Next:** hardening and performance (9) with the fidelity pass (7); the rest of vector editing
+  (eraser, shape builder, variable width) and components (nested overrides, libraries).
+- **Then:** interop depth (6: .fig best effort, paste from other apps), version history and
+  collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
 
 - **Architecture:** 13 crates with enforced layering (`cargo xtask layers`): geom, color, doc,
   layout, text, pathops, render, format, svg, engine, ui-egui (+ mcp, pdf in progress). Every action
-  is a command (~250); undo is unlimited via structural sharing (`Arc` node snapshots); gestures are
+  is a command (~330); undo is unlimited via structural sharing (`Arc` node snapshots); gestures are
   one undo step; `command.batch` runs several commands as one step.
 - **Document model:** pages, frames, groups, sections, rectangles, ellipses (arcs/rings), polygons,
   stars, lines/arrows, vector networks, text with styled runs, boolean groups, components, component
@@ -120,7 +121,7 @@ dimension measured side by side.
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).
-- **Tests:** ~120 automated tests including a junk-parameter sweep over every command.
+- **Tests:** ~260 automated tests including junk-parameter sweeps over every command (and every vector-edit command while editing), importer fuzzing and render regressions.
 
 ## Parity estimate (weighted rubric)
 
@@ -145,7 +146,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **52%**.
+Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).
 
 ## Milestones
 
