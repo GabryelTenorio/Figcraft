@@ -59,6 +59,11 @@ Or in a project's `.mcp.json`:
   plus `absoluteBounds` in page coordinates.
 - Children of an auto-layout frame are positioned by the layout: set `layout`, `gap`, `padding`,
   `mainAlign`, `crossAlign`, `sizingH`/`sizingV` instead of x/y. More auto layout props:
+  - `sizingH` / `sizingV`: `fixed`, `hug` (auto layout frames and text) or `fill` (children in an
+    auto layout flow). A child can't fill an axis its parent hugs: setting `fill` turns the parent
+    `fixed` on that axis, and a parent set to `hug` turns the children that filled it `fixed`. A
+    layer moved out of auto layout (or whose frame loses it) keeps its size as `fixed`. Fill
+    children share the space like CSS flexbox, within their min/max.
   - `minWidth` / `maxWidth` / `minHeight` / `maxHeight` (px, `null` removes) bound Hug, Fill and
     Fixed sizes; a hugging text wider than its max width wraps.
   - `absolute: true` takes a child out of the flow (it stays where it is and follows its

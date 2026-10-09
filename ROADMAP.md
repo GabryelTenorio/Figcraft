@@ -55,7 +55,11 @@ dimension measured side by side.
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
    alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI, wrap-aware
-   drag-reorder (by row) and dragging into a grid cell. *Left:* nested hug/fill edge cases. 4–7 h.
+   drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one pass
+   (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
+   Fill/Hug rules, drag across nested auto layout frames (deepest one wins, insertion line, out to
+   the canvas or a plain frame). *Left:* visual QA of nested edge cases, arrow-key moves across
+   nested frames. 2–4 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -152,7 +156,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
-| Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
+| Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
 | Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |

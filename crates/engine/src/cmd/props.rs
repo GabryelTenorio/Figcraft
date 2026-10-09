@@ -784,13 +784,30 @@ pub fn weight_name(w: u16) -> &'static str {
 }
 
 fn set_sizing(cmd: &str, doc: &mut Document, id: NodeId, s: Sizing, horizontal: bool) -> Result<()> {
-    let parent_al = doc.get(id)?.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
-    let n = doc.get_mut(id)?;
+    let parent = doc.get(id)?.parent.filter(|p| doc.node(*p).is_some_and(|p| p.layout.is_some()));
     match s {
-        Sizing::Fill if !parent_al => return Err(bad(cmd, "Fill needs an auto layout parent")),
-        Sizing::Hug if n.layout.is_none() && !matches!(n.kind, NodeKind::Text(_)) => return Err(bad(cmd, "Hug needs auto layout or text")),
+        Sizing::Fill if parent.is_none() => return Err(bad(cmd, "Fill needs an auto layout parent")),
+        Sizing::Hug if doc.get(id)?.layout.is_none() && !matches!(doc.get(id)?.kind, NodeKind::Text(_)) => {
+            return Err(bad(cmd, "Hug needs auto layout or text"));
+        }
         _ => {}
     }
+    // A child can't fill an axis its parent hugs: the parent becomes fixed at its current size.
+    // (The other way round, a parent that starts to hug fixes the children that filled it: see
+    // `figcraft_layout::coherent_sizing`, applied after every edit.)
+    if s == Sizing::Fill
+        && let Some(p) = parent
+    {
+        let cl = &mut doc.get_mut(p)?.child_layout;
+        let ps = if horizontal { &mut cl.sizing_h } else { &mut cl.sizing_v };
+        if *ps == Sizing::Hug {
+            *ps = Sizing::Fixed;
+        }
+    }
+    // Start from the sizing the layer has in effect (an auto-width text hugs both axes), so the
+    // other axis keeps its meaning: an auto-width text set to fill its width wraps (auto height).
+    figcraft_layout::coherent_sizing(doc, id);
+    let n = doc.get_mut(id)?;
     if horizontal {
         n.child_layout.sizing_h = s;
     } else {

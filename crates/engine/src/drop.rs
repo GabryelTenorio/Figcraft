@@ -5,8 +5,6 @@ use figcraft_doc::*;
 use figcraft_geom::Point;
 use serde::Serialize;
 
-use crate::cmd::create::frame_at;
-
 /// A drop destination.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DropSlot {
@@ -18,31 +16,41 @@ pub struct DropSlot {
 }
 
 /// The slot in auto layout frame `parent` for pointer `p`, ignoring `exclude` (layers being
-/// moved): the index before the first child whose centre is past the pointer, and the line to
-/// draw there.
+/// moved): the index (among the children left once `exclude` is taken out) before the first
+/// placed child whose centre is past the pointer, and the line to draw there. Hidden children and
+/// those ignoring auto layout don't take part.
 pub fn auto_layout_slot(doc: &Document, parent: NodeId, p: Point, exclude: &[NodeId]) -> Option<(usize, Option<[f64; 4]>)> {
     let pn = doc.node(parent)?;
     let layout = pn.layout.as_ref()?;
     let vertical = layout.mode == LayoutMode::Vertical;
     let kids: Vec<NodeId> = pn.children.iter().copied().filter(|c| !exclude.contains(c)).collect();
+    // Placed children as (index in `kids`, id).
+    let flow: Vec<(usize, NodeId)> =
+        kids.iter().copied().enumerate().filter(|(_, c)| doc.node(*c).is_some_and(|n| n.visible && !n.child_layout.absolute)).collect();
+    // A slot before the k-th placed child (k = its count: after the last) as an index in `kids`.
+    let index = |k: usize| flow.get(k).map_or(kids.len(), |(i, _)| *i);
+    let flow_ids: Vec<NodeId> = flow.iter().map(|(_, c)| *c).collect();
     if layout.wrap && !vertical && layout.mode != LayoutMode::Grid {
-        return Some(wrap_slot(doc, &kids, p));
+        let (k, line) = wrap_slot(doc, &flow_ids, p);
+        return Some((index(k), line));
     }
     let pos = if vertical { p.y } else { p.x };
-    let idx = kids
+    let k = flow_ids
         .iter()
         .position(|c| doc.world_bounds(*c).is_some_and(|b| pos < if vertical { b.center().y } else { b.center().x }))
-        .unwrap_or(kids.len());
-    let line = kids
-        .get(idx)
-        .and_then(|c| doc.world_bounds(*c))
-        .map(|b| if vertical { [b.x0, b.y0 - 2.0, b.x1, b.y0 - 2.0] } else { [b.x0 - 2.0, b.y0, b.x0 - 2.0, b.y1] })
-        .or_else(|| {
-            kids.last()
-                .and_then(|c| doc.world_bounds(*c))
-                .map(|b| if vertical { [b.x0, b.y1 + 2.0, b.x1, b.y1 + 2.0] } else { [b.x1 + 2.0, b.y0, b.x1 + 2.0, b.y1] })
-        });
-    Some((idx, line))
+        .unwrap_or(flow_ids.len());
+    let line = flow_ids.get(k).and_then(|c| doc.world_bounds(*c)).map(|b| line_before(b, vertical, 2.0)).or_else(|| {
+        flow_ids
+            .last()
+            .and_then(|c| doc.world_bounds(*c))
+            .map(|b| if vertical { [b.x0, b.y1 + 2.0, b.x1, b.y1 + 2.0] } else { [b.x1 + 2.0, b.y0, b.x1 + 2.0, b.y1] })
+    });
+    Some((index(k), line))
+}
+
+/// The insertion line `off` before a child with page bounds `b` (above it in a column).
+pub fn line_before(b: figcraft_geom::Rect, vertical: bool, off: f64) -> [f64; 4] {
+    if vertical { [b.x0, b.y0 - off, b.x1, b.y0 - off] } else { [b.x0 - off, b.y0, b.x0 - off, b.y1] }
 }
 
 /// The slot in a wrapping row layout: the visual row under the pointer (children wrap in flow
@@ -113,9 +121,61 @@ pub fn grid_cell_at(doc: &Document, parent: NodeId, p: Point) -> Option<(u32, u3
     Some((u32::try_from(ci).ok()?, u32::try_from(ri).ok()?, [r.x0, r.y0, r.x1, r.y1]))
 }
 
+/// The container a drop at page point `p` goes into (`None`: the page), skipping `exclude` (layers
+/// being dragged) and their descendants. Inside auto layout the deepest auto layout frame under the
+/// pointer wins: plain frames there are items of the flow, not destinations (dropping onto a card
+/// in a list inserts next to it). Elsewhere the deepest frame or section under the pointer wins.
+pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -> Option<NodeId> {
+    fn rec(doc: &Document, id: NodeId, p: Point, exclude: &[NodeId], in_al: bool, depth: usize) -> Option<NodeId> {
+        if depth > 128 || exclude.contains(&id) {
+            return None;
+        }
+        let n = doc.node(id)?;
+        if !n.visible || n.locked {
+            return None;
+        }
+        let container = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
+        if !container {
+            // Groups: frames inside them can still take the drop.
+            return n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al, depth + 1));
+        }
+        let inside = doc.world_bounds(id).is_some_and(|b| b.contains(p)) && n.local_rect().contains(doc.world_transform(id).inverse() * p);
+        if !inside || matches!(n.kind, NodeKind::Instance { .. }) {
+            return None;
+        }
+        let auto_layout = n.layout.is_some();
+        let deeper = n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al || auto_layout, depth + 1));
+        deeper.or((auto_layout || !in_al).then_some(id))
+    }
+    doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, 0))
+}
+
+/// Margin (page units) around the auto layout frame a dragged layer comes from that still keeps it.
+const HOME_MARGIN: f64 = 8.0;
+
+/// Where layers being dragged (`moving`) land: [`drop_parent`], except that the frame they come
+/// from keeps them while the pointer is over it (an auto layout frame: within a few units of it)
+/// and over nothing deeper. So a layer in a plain card of an auto layout list moves within the
+/// card, and one reordered in a list doesn't fall out of it at the edge.
+pub fn drag_parent(doc: &Document, page: NodeId, p: Point, moving: &[NodeId]) -> NodeId {
+    let hit = drop_parent(doc, page, p, moving);
+    let home = moving.first().and_then(|m| doc.node(*m)).and_then(|n| n.parent).filter(|h| *h != page);
+    if let Some(home) = home
+        && let Some(hn) = doc.node(home)
+        && ((hn.kind.is_frame_like() && !matches!(hn.kind, NodeKind::Instance { .. })) || matches!(hn.kind, NodeKind::Section { .. }))
+        && hit.is_none_or(|h| h != home && doc.is_ancestor(h, home))
+    {
+        let margin = if hn.layout.is_some() { HOME_MARGIN } else { 0.0 };
+        if doc.world_bounds(home).is_some_and(|b| b.inflate(margin, margin).contains(p)) {
+            return home;
+        }
+    }
+    hit.unwrap_or(page)
+}
+
 /// Where a drop at page point `p` lands.
 pub fn slot(doc: &Document, page: NodeId, p: Point) -> DropSlot {
-    let parent = frame_at(doc, page, p, &[]).unwrap_or(page);
+    let parent = drop_parent(doc, page, p, &[]).unwrap_or(page);
     match auto_layout_slot(doc, parent, p, &[]) {
         Some((index, line)) => DropSlot { parent, index: Some(index), line },
         None => DropSlot { parent, index: None, line: None },
