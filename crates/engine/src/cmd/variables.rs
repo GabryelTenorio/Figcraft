@@ -59,21 +59,16 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
         Some(Value::Null) => Some(None),
         Some(Value::Array(a)) => {
-            let allowed = scopes_for(var.kind);
-            let mut list: Vec<String> = Vec::new();
+            let mut ids = Vec::with_capacity(a.len());
             for x in a {
                 let id = x.as_str().ok_or_else(|| bad(cmd, "scopes: [scope ids]"))?;
-                let known = id == ALL_SCOPES || (id == "ALL_FILLS" && var.kind == VariableType::Color) || allowed.iter().any(|(k, _)| *k == id);
-                if !known {
+                if !scope_known(var.kind, id) {
                     return Err(bad(cmd, format!("`{id}` isn't a scope for {} variables", var.kind.id())));
                 }
-                if !list.iter().any(|l| l == id) {
-                    list.push(id.to_string());
-                }
+                ids.push(id);
             }
             // Every scope listed is the same as no limit.
-            let all = list.iter().any(|l| l == ALL_SCOPES) || (!allowed.is_empty() && allowed.iter().all(|(k, _)| list.iter().any(|l| l == k)));
-            Some(if all { None } else { Some(list) })
+            Some(normalize_scopes(var.kind, ids))
         }
         Some(_) => return Err(bad(cmd, "scopes: [scope ids] or null")),
     };

@@ -1,6 +1,6 @@
 //! The right panel: Design, Prototype and Inspect tabs.
 
-use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -244,7 +244,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         grids(app, ui, &doc, &sel);
         widgets::separator(ui);
     }
-    export(app, ui, &doc, &sel);
+    crate::export_panel::section(app, ui, &doc, &sel);
 }
 
 fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
@@ -305,17 +305,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         });
     }
     widgets::separator(ui);
-    let all: Vec<NodeId> = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
-    widgets::section_header(ui, "Export", &[(Icon::Plus, "Export page")], false);
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
-        ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, "Export page as PNG", regular(11.0), t.text);
-        if resp.clicked() {
-            export_now(app, &all, "png", 1.0);
-        }
-    });
+    crate::export_panel::page_section(app, ui, doc, page);
 }
 
 fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
@@ -1324,130 +1314,110 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
 }
 
-fn export_now(app: &mut FigApp, ids: &[NodeId], format: &str, scale: f64) {
-    let name = ids.first().and_then(|i| app.session.doc().ok()?.node(*i).map(|n| n.name.clone())).unwrap_or_else(|| "Export".into());
-    let suffix = if (scale - 1.0).abs() > 1e-9 && format != "svg" && format != "pdf" { format!("@{scale}x") } else { String::new() };
-    if let Some(p) = app.services.pick_save("Export", &format!("{name}{suffix}.{format}"), &[format]) {
-        let ps = p.to_string_lossy().to_string();
-        if app.run("file.export", json!({"ids": ids, "format": format, "scale": scale, "path": ps})).is_some() {
-            app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
-        }
-    }
-}
-
-fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
-    let ids = sel.to_vec();
-    let list = common(doc, sel, |n| n.exports.clone()).unwrap_or_default();
-    if widgets::section_header(ui, "Export", &[(Icon::Plus, "Add export setting")], list.is_empty()).is_some() {
-        let next = match list.last().map(|e| e.size) {
-            Some(ExportSize::Scale { value }) => {
-                ExportSetting { size: ExportSize::Scale { value: value + 1.0 }, suffix: format!("@{}x", value + 1.0), format: ExportFormat::Png }
-            }
-            _ => ExportSetting::default(),
-        };
-        app.run("export.add", json!({"ids": ids, "setting": next}));
-    }
-    for (i, e) in list.iter().enumerate() {
-        row(ui, 32.0, |ui| {
-            let scale = match e.size {
-                ExportSize::Scale { value } => format!("{value}x"),
-                ExportSize::Width { value } => format!("{value}w"),
-                ExportSize::Height { value } => format!("{value}h"),
-            };
-            let resp = widgets::dropdown(ui, &scale, 64.0, None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for s in [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0] {
-                    if menu_item(ui, &format!("{s}x"), "") {
-                        let mut l = list.clone();
-                        if let Some(slot) = l.get_mut(i) {
-                            slot.size = ExportSize::Scale { value: s };
-                        }
-                        app.set_props(&ids, json!({"exports": l}));
-                        ui.close();
-                    }
-                }
-            });
-            if let Some(sfx) = widgets::text_field(ui, Id::new(("exp_sfx", i)), &e.suffix, 64.0, "Suffix") {
-                let mut l = list.clone();
-                if let Some(slot) = l.get_mut(i) {
-                    slot.suffix = sfx;
-                }
-                app.set_props(&ids, json!({"exports": l}));
-            }
-            let resp = widgets::dropdown(ui, &e.format.ext().to_uppercase(), 56.0, None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for f in [ExportFormat::Png, ExportFormat::Jpg, ExportFormat::Svg, ExportFormat::Webp] {
-                    if menu_item(ui, &f.ext().to_uppercase(), "") {
-                        let mut l = list.clone();
-                        if let Some(slot) = l.get_mut(i) {
-                            slot.format = f;
-                        }
-                        app.set_props(&ids, json!({"exports": l}));
-                        ui.close();
-                    }
-                }
-            });
-            if icons::button(ui, Icon::Minus, 24.0, false, "Remove").clicked() {
-                app.run("export.remove", json!({"ids": ids, "index": i}));
-            }
-        });
-    }
-    let name = if sel.len() == 1 {
-        sel.first().and_then(|i| doc.node(*i)).map(|n| n.name.clone()).unwrap_or_default()
-    } else {
-        format!("{} layers", sel.len())
-    };
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
-        ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
-        if resp.hovered() {
-            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-        }
-        let galley = ui.painter().layout(format!("Export {name}"), regular(11.0), t.text, w - 16.0);
-        ui.painter().galley(r.center() - galley.size() / 2.0, galley, t.text);
-        if resp.clicked() {
-            let e = list.first().cloned().unwrap_or_default();
-            let scale = match e.size {
-                ExportSize::Scale { value } => value,
-                _ => 1.0,
-            };
-            export_now(app, &ids, e.format.ext(), scale);
-        }
-    });
-}
-
 /// The Inspect tab: size and position, and code for the selected layer.
+/// One group of inspected properties: label, value (with a swatch for colours) and the style or
+/// variable it comes from. Clicking a row copies its value.
+fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspect::Section) {
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
+    ui.painter().text(pos2(hr.min.x + PAD, hr.center().y), Align2::LEFT_CENTER, s.title, semibold(11.0), t.text);
+    for p in &s.rows {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+        let resp = resp.on_hover_text(format!("Copy {}", p.value));
+        if resp.hovered() {
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+        }
+        let painter = ui.painter();
+        painter.text(pos2(r.min.x + PAD, r.center().y), Align2::LEFT_CENTER, &p.label, regular(11.0), t.text_secondary);
+        // The style or variable, right-aligned as a chip.
+        let mut right = r.max.x - PAD;
+        if let Some(token) = &p.token {
+            let galley = painter.layout_no_wrap(token.clone(), regular(10.0), t.text_secondary);
+            let chip =
+                Rect::from_min_max(pos2((right - galley.size().x - 12.0).max(r.min.x + 196.0), r.center().y - 9.0), pos2(right, r.center().y + 9.0));
+            painter.rect_filled(chip, CornerRadius::same(4), t.field);
+            painter.with_clip_rect(chip.shrink2(vec2(6.0, 0.0))).galley(
+                pos2(chip.min.x + 6.0, chip.center().y - galley.size().y / 2.0),
+                galley,
+                t.text_secondary,
+            );
+            right = chip.min.x - 6.0;
+        }
+        let mut x = r.min.x + 96.0;
+        if let Some(c) = p.color.as_deref().and_then(figcraft_color::Color::from_hex) {
+            let sw = Rect::from_min_size(pos2(x, r.center().y - 6.0), vec2(12.0, 12.0));
+            widgets::paint_swatch(painter, sw, &Paint::solid(c));
+            x += 18.0;
+        }
+        let value_r = Rect::from_min_max(pos2(x, r.min.y), pos2(right.max(x + 10.0), r.max.y));
+        painter.with_clip_rect(value_r).text(pos2(x, r.center().y), Align2::LEFT_CENTER, &p.value, regular(11.0), t.text);
+        if resp.clicked() {
+            app.services.clipboard_set_text(&p.value);
+            app.toast(format!("Copied {}", p.label.to_lowercase()));
+        }
+    }
+    ui.add_space(4.0);
+}
+
+/// The selection's layers with export settings: click one to export it, or export them all.
+fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devinspect::Asset]) {
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    let all = widgets::section_header(ui, "Assets", if assets.is_empty() { &[] } else { &[(Icon::Export, "Export all")] }, false).is_some();
+    if assets.is_empty() {
+        row(ui, 28.0, |ui| widgets::label(ui, "No export settings. Add them in the Design tab.", t.text_secondary));
+        return;
+    }
+    let mut export: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
+    for a in assets {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+        let resp = resp.on_hover_text(format!("Export {}", a.name));
+        if resp.hovered() {
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - PAD - 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Export, t.icon);
+        }
+        let name_r = Rect::from_min_max(pos2(r.min.x + PAD, r.min.y), pos2(r.min.x + 96.0 - 4.0, r.max.y));
+        ui.painter().with_clip_rect(name_r).text(pos2(name_r.min.x, r.center().y), Align2::LEFT_CENTER, &a.name, regular(11.0), t.text);
+        let fmt_r = Rect::from_min_max(pos2(r.min.x + 96.0, r.min.y), pos2(r.max.x - PAD - 16.0, r.max.y));
+        ui.painter().with_clip_rect(fmt_r).text(
+            pos2(fmt_r.min.x, r.center().y),
+            Align2::LEFT_CENTER,
+            a.exports.join(", "),
+            regular(11.0),
+            t.text_secondary,
+        );
+        if resp.clicked() {
+            export = Some(vec![a.id]);
+        }
+    }
+    if let Some(ids) = export {
+        crate::export_panel::export_layers(app, &ids);
+    }
+    ui.add_space(4.0);
+}
+
 fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(ds) = app.session.ds() else { return };
     let doc = ds.doc.clone();
     let sel = ds.selection.clone();
-    widgets::section_header(ui, "Inspect", &[], false);
     let Some(first) = sel.first().copied() else {
-        row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its code and measurements", t.text_secondary));
+        widgets::section_header(ui, "Inspect", &[], false);
+        row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its properties and code", t.text_secondary));
+        row(ui, 32.0, |ui| widgets::label(ui, "Hover other layers to measure the distance", t.text_secondary));
         return;
     };
-    if let Some(b) = doc.world_bounds(first) {
-        row(ui, 32.0, |ui| {
-            widgets::label(
-                ui,
-                &format!(
-                    "{} × {}   at {}, {}",
-                    crate::canvas::fmt(b.width()),
-                    crate::canvas::fmt(b.height()),
-                    crate::canvas::fmt(b.x0),
-                    crate::canvas::fmt(b.y0)
-                ),
-                t.text,
-            );
-        });
+    let name = doc.node(first).map(|n| n.name.clone()).unwrap_or_default();
+    widgets::section_header(ui, &name, &[], false);
+    for s in figcraft_engine::devinspect::properties(&doc, first) {
+        inspect_section(app, ui, &s);
     }
-    widgets::separator(ui);
+    inspect_assets(app, ui, &figcraft_engine::devinspect::assets(&doc, &sel));
     use figcraft_engine::codegen::{CodeLang, code_for};
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
+    widgets::separator(ui);
     let copy = widgets::section_header(ui, "Code", &[(Icon::Export, "Copy")], false).is_some();
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, lang.label(), 120.0, Some(Icon::Code));

@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod cmd;
 pub mod codegen;
 pub mod components;
+pub mod devinspect;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
@@ -799,6 +800,12 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     }
     touched.extend(doc.take_dirty());
     let live = |doc: &Document, t: &BTreeSet<NodeId>| -> Vec<NodeId> { t.iter().copied().filter(|i| doc.contains(*i)).collect() };
+    // 0b. Fill and hug only where they can apply (a layer moved out of auto layout, a parent that
+    // started to hug or lost auto layout): the rest becomes fixed at its current size.
+    for id in live(doc, &touched) {
+        figcraft_layout::coherent_sizing(doc, id);
+    }
+    touched.extend(doc.take_dirty());
     // 1. Text auto-size.
     for id in live(doc, &touched) {
         let Some(n) = doc.node(id) else { continue };
@@ -866,9 +873,15 @@ pub fn normalize(doc: &mut Document, before: &Document) {
 #[cfg(test)]
 mod al_drag_tests;
 #[cfg(test)]
+mod al_nesting_tests;
+#[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
+mod devinspect_tests;
+#[cfg(test)]
 mod frame_tests;
+#[cfg(test)]
+mod import_export_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]

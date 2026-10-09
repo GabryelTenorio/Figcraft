@@ -118,3 +118,32 @@ fn a_layer_cant_drop_into_its_own_child_and_escape_cancels() {
     u.button(f, false);
     assert_ne!(u.app.session.doc().unwrap().node(rect).unwrap().parent, Some(frame));
 }
+
+#[test]
+fn dropping_layers_on_another_page_moves_them_there() {
+    let (mut u, _frame, _child, rect) = setup();
+    let p1 = u.app.session.page().unwrap();
+    let p2 = id(u.app.session.execute("page.add", &json!({})).unwrap());
+    u.app.session.execute("page.select", &json!({"id": p1})).unwrap();
+    u.frame(vec![]);
+    // Find Page 2's row in the Pages list: the click that switches to it.
+    let mut at = None;
+    for y in (90..400).step_by(4) {
+        let p = Pos2::new(150.0, y as f32);
+        u.button(p, true);
+        u.button(p, false);
+        if u.app.session.page().unwrap() == p2 {
+            // Rows are 32 high: aim at the middle, past the hit tolerance at its edge.
+            at = Some(p + vec2(0.0, 12.0));
+            u.app.session.execute("page.select", &json!({"id": p1})).unwrap();
+            u.frame(vec![]);
+            break;
+        }
+    }
+    let page_row = at.expect("page 2 row");
+    let r = u.row_at(rect);
+    u.drag_to(r, page_row);
+    u.button(page_row, false);
+    let doc = u.app.session.doc().unwrap();
+    assert_eq!(doc.ancestors(rect).last().copied(), Some(p2), "moved to page 2");
+}

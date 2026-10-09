@@ -56,7 +56,11 @@ dimension measured side by side.
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
    alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI, wrap-aware
-   drag-reorder (by row) and dragging into a grid cell. *Left:* nested hug/fill edge cases. 4–7 h.
+   drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one pass
+   (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
+   Fill/Hug rules, drag across nested auto layout frames (deepest one wins, insertion line, out to
+   the canvas or a plain frame). *Left:* visual QA of nested edge cases, arrow-key moves across
+   nested frames. 2–4 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -79,10 +83,15 @@ dimension measured side by side.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
-   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest).
-   Paste from other apps: images, SVG and text (the newest clipboard content wins over our own
-   copy). *Left:* .fig import (best effort), PDF export (in progress), REST import
-   of prototype interactions and variables. 20–32 h.
+   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest),
+   now with prototyping (interactions with their triggers, actions, transitions and easing, flows,
+   scrolling, the prototype device) and variables (the local variables JSON passed along, next to
+   the file or embedded: collections, modes, aliases, scopes, layer bindings and explicit modes).
+   Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
+   JPG, WebP, SVG and PDF, suffix), a preview, and "Export N layers" (`file.exportLayers`) in the
+   panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
+   content wins over our own copy). *Left:* .fig import (best effort), PDF export (in progress),
+   REST import of conditional and variable-mode prototype actions. 14–26 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
@@ -149,21 +158,21 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 65% | pixel preview, frame guides, perf at scale | 6–10 |
+| Canvas & navigation | 6 | 72% | frame guides, 2x pixel preview | 3–5 |
 | Selection & transform | 8 | 64% | scale tool polish, measure hover polish | 8–12 |
-| Layers panel | 5 | 76% | keyboard row navigation, drag between pages | 2–4 |
+| Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
 | Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
-| Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
-| Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
+| Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
+| Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
 | Prototyping | 6 | 76% | device rotation, presentation scaling options, scroll momentum | 1–3 |
-| Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
-| Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
+| Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |
+| Dev mode / inspect | 2 | 72% | code for whole frames as components | 1–3 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 
 Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).

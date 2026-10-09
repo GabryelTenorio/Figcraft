@@ -59,6 +59,11 @@ Or in a project's `.mcp.json`:
   plus `absoluteBounds` in page coordinates.
 - Children of an auto-layout frame are positioned by the layout: set `layout`, `gap`, `padding`,
   `mainAlign`, `crossAlign`, `sizingH`/`sizingV` instead of x/y. More auto layout props:
+  - `sizingH` / `sizingV`: `fixed`, `hug` (auto layout frames and text) or `fill` (children in an
+    auto layout flow). A child can't fill an axis its parent hugs: setting `fill` turns the parent
+    `fixed` on that axis, and a parent set to `hug` turns the children that filled it `fixed`. A
+    layer moved out of auto layout (or whose frame loses it) keeps its size as `fixed`. Fill
+    children share the space like CSS flexbox, within their min/max.
   - `minWidth` / `maxWidth` / `minHeight` / `maxHeight` (px, `null` removes) bound Hug, Fill and
     Fixed sizes; a hugging text wider than its max width wraps.
   - `absolute: true` takes a child out of the flow (it stays where it is and follows its
@@ -95,16 +100,16 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `inspect.code` (CSS, SwiftUI or Jetpack Compose for a layer), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `inspect.code` (CSS, SwiftUI or Jetpack Compose for a layer), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`), text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale, path?}` | png, jpg, svg, webp (pdf when available). Without `path`, images come back as MCP image content, SVG as text. |
+| `export {ids, format, scale \| size, path?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
-| `open_file {path}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON, see below), `.svg` or an image; save as `.figcraft`. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (menu shortcuts, tool keys, Escape, Delete, arrows; text editing keys while editing text). |
@@ -190,14 +195,28 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, best with
 `geometry=paths` so vectors carry their outlines) and its nodes endpoint opens like any document:
 `open_file {path}` (a new, untitled document; the JSON is never saved over) or
-`run_command {command: "file.import", params: {path}}` (pages appended to the current document).
+`run_command {command: "file.import", params: {path}}` (pages appended to the current document,
+with their flows, prototype settings and variables).
 The result's `warnings` list what was skipped or approximated (unsupported layer, paint and effect
-types, prototype interactions, variable bindings, instances of components outside the file, which
-come in as frames). Pages, the layer tree, geometry, paints, strokes, effects, corners, constraints,
-auto layout, layout grids, exports, text with styled runs, vectors, components, component sets,
-instances and component properties are mapped. Image fills keep their `imageRef` and show a grey
+types, video and gamepad triggers, conditional and variable-mode actions, bindings to library
+variables, instances of components outside the file, which come in as frames). Pages, the layer
+tree, geometry, paints, strokes, effects, corners, constraints, auto layout, layout grids, exports,
+text with styled runs, vectors, components, component sets, instances and component properties are
+mapped, and so is prototyping: `interactions` (on click, hover, press, drag, after delay, mouse
+enter/leave/down/up and key triggers; navigate, overlays, back, scroll to, change to, open link and
+set variable actions; dissolve, smart animate, move, push and slide transitions with their easing,
+custom bezier and spring curves included), flow starting points, scroll overflow and fixed/sticky
+layers, and the prototype device. Image fills keep their `imageRef` and show a grey
 placeholder unless the image files sit in an `images` folder next to the JSON, named by `imageRef`
 (`images/<imageRef>.png`); nothing is fetched from the network.
+
+Variables come from the local variables response (`GET /v1/files/:key/variables/local`):
+collections with their modes (the default mode first), values per mode, aliases and scopes. Pass it
+as `variables` (a path, or the JSON object or text) to `open_file`, `file.open` or `file.import`,
+put it next to the file as `<name>.variables.json` or `variables.json`, or embed its `meta` in the
+file JSON. Layers' `boundVariables` (sizes, gaps and padding, corner radii, opacity, stroke weight,
+visibility, text, font properties, single solid fills and strokes) and `explicitVariableModes` then
+link to them, so switching a mode with `variable.setMode` restyles the layers.
 
 ### Version history
 

@@ -482,6 +482,25 @@ pub enum ExportFormat {
 }
 
 impl ExportFormat {
+    /// Every format, in the order the export menus list them.
+    pub const ALL: [ExportFormat; 5] = [ExportFormat::Png, ExportFormat::Jpg, ExportFormat::Svg, ExportFormat::Pdf, ExportFormat::Webp];
+
+    /// Pixel formats (their size depends on the export scale).
+    pub fn is_raster(self) -> bool {
+        matches!(self, ExportFormat::Png | ExportFormat::Jpg | ExportFormat::Webp)
+    }
+
+    /// The name menus show ("PNG", "WebP").
+    pub fn label(self) -> &'static str {
+        match self {
+            ExportFormat::Png => "PNG",
+            ExportFormat::Jpg => "JPG",
+            ExportFormat::Svg => "SVG",
+            ExportFormat::Pdf => "PDF",
+            ExportFormat::Webp => "WebP",
+        }
+    }
+
     pub fn ext(self) -> &'static str {
         match self {
             ExportFormat::Png => "png",
@@ -518,6 +537,63 @@ impl Default for ExportSize {
     }
 }
 
+impl ExportSize {
+    /// Scale presets offered by the export size menu.
+    pub const SCALES: [f64; 7] = [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0];
+    /// Largest export scale.
+    pub const MAX_SCALE: f64 = 64.0;
+    /// Largest exported width or height.
+    pub const MAX_PIXELS: f64 = 16384.0;
+
+    /// Parse "2x", "0.5X", "@2x", "2" (scale), "512w" (width) or "512h" (height). Values must be
+    /// positive and within the export limits.
+    pub fn parse(s: &str) -> Option<ExportSize> {
+        let s = s.trim().trim_start_matches('@').to_ascii_lowercase();
+        let (num, unit) = match s.char_indices().last() {
+            Some((i, c)) if c.is_ascii_alphabetic() => (s.get(..i)?.trim(), Some(c)),
+            _ => (s.as_str(), None),
+        };
+        let value: f64 = num.parse().ok()?;
+        match unit {
+            None | Some('x') => ExportSize::Scale { value },
+            Some('w') => ExportSize::Width { value },
+            Some('h') => ExportSize::Height { value },
+            _ => return None,
+        }
+        .checked()
+    }
+
+    /// The size when its value is positive and within the export limits.
+    pub fn checked(self) -> Option<ExportSize> {
+        let (value, max) = match self {
+            ExportSize::Scale { value } => (value, Self::MAX_SCALE),
+            ExportSize::Width { value } | ExportSize::Height { value } => (value, Self::MAX_PIXELS),
+        };
+        (value.is_finite() && value > 0.0 && value <= max).then_some(self)
+    }
+
+    /// "2x", "512w", "512h".
+    pub fn label(self) -> String {
+        let n = |v: f64| crate::text::trim_num(v);
+        match self {
+            ExportSize::Scale { value } => format!("{}x", n(value)),
+            ExportSize::Width { value } => format!("{}w", n(value)),
+            ExportSize::Height { value } => format!("{}h", n(value)),
+        }
+    }
+
+    /// The scale that gives a `w` × `h` box this size (1 for an empty box).
+    pub fn scale_for(self, w: f64, h: f64) -> f64 {
+        let s = match self {
+            ExportSize::Scale { value } => value,
+            ExportSize::Width { value } if w > 0.0 => value / w,
+            ExportSize::Height { value } if h > 0.0 => value / h,
+            _ => 1.0,
+        };
+        if s.is_finite() && s > 0.0 { s.min(Self::MAX_SCALE) } else { 1.0 }
+    }
+}
+
 /// One row of a node's Export section.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -525,4 +601,28 @@ pub struct ExportSetting {
     pub size: ExportSize,
     pub suffix: String,
     pub format: ExportFormat,
+}
+
+impl ExportSetting {
+    /// The row adding a setting after `last` creates: 1x first, then one scale step up with a
+    /// matching "@2x"-style suffix.
+    pub fn next_after(last: Option<&ExportSetting>) -> ExportSetting {
+        match last.map(|e| e.size) {
+            Some(ExportSize::Scale { value }) => {
+                let size = ExportSize::Scale { value: (value.floor() + 1.0).min(ExportSize::MAX_SCALE) };
+                ExportSetting { suffix: format!("@{}", size.label()), size, format: ExportFormat::Png }
+            }
+            _ => ExportSetting::default(),
+        }
+    }
+
+    /// What the exported file name gets after the layer name: the suffix, else "@2x"-style for
+    /// raster exports at another scale.
+    pub fn file_suffix(&self) -> String {
+        match self.size {
+            _ if !self.suffix.is_empty() => self.suffix.clone(),
+            ExportSize::Scale { value } if (value - 1.0).abs() > 1e-9 && self.format.is_raster() => format!("@{}", self.size.label()),
+            _ => String::new(),
+        }
+    }
 }

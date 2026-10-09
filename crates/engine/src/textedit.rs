@@ -186,8 +186,12 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
         "Right" if line => line_end(&chars, cur),
         "Left" if word => word_left(&chars, cur),
         "Right" if word => word_right(&chars, cur),
-        "Left" => cur.saturating_sub(1),
-        "Right" => (cur + 1).min(n),
+        // Plain arrows move on screen through right-to-left runs, by char elsewhere.
+        "Left" | "Right" => match layout.as_ref().and_then(|l| l.visual_step(cur, key == "Right")) {
+            Some(i) => i.min(n),
+            None if key == "Left" => cur.saturating_sub(1),
+            None => (cur + 1).min(n),
+        },
         "Home" => line_start(&chars, cur),
         "End" => line_end(&chars, cur),
         "Up" | "Down" => match &layout {

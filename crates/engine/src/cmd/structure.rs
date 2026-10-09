@@ -40,12 +40,12 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("layout.add", "Add auto layout", "{ids?, direction? (horizontal|vertical|grid)}", true, layout_add),
         spec!("layout.remove", "Remove auto layout", "{ids?}", true, |s, p| {
             for i in req_targets("layout.remove", s, p)? {
-                let n = s.doc_mut()?.get_mut(i)?;
-                n.layout = None;
-                n.child_layout.sizing_h = Sizing::Fixed;
-                n.child_layout.sizing_v = Sizing::Fixed;
+                // Hugging needs auto layout and the children that filled have nothing to fill: both
+                // become fixed (the frame keeps filling its own auto layout parent).
+                let doc = s.doc_mut()?;
+                doc.get_mut(i)?.layout = None;
+                figcraft_layout::coherent_sizing(doc, i);
             }
-            // Children that filled become fixed.
             ok()
         }),
         spec!("layout.suggest", "Suggest auto layout", "{ids?}", true, layout_add),

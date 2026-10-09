@@ -4,7 +4,9 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::proto::{Action, Direction, Easing, Interaction, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{
+    Action, Direction, Easing, Interaction, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 

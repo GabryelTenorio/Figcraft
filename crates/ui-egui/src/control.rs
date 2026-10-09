@@ -272,6 +272,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 };
                 player.ok_or("nothing is presented")?.scroll_to(at(0), at(1));
             }
+            if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
+                app.ui.export_thumb = v;
+            }
             Ok(app.inspect())
         }
         "ui.render" => {

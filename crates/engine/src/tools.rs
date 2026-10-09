@@ -334,6 +334,8 @@ pub struct ToolState {
     /// removes; Alt merges).
     pub shape_builder: Option<std::sync::Arc<crate::shapebuilder::Arrangement>>,
     pub builder_remove: bool,
+    /// Show distances from the selection on hover without holding Alt (Dev mode inspection).
+    pub redlines: bool,
 }
 
 impl ToolState {
@@ -534,13 +536,13 @@ impl Session {
             } else if let Some(leaf) = doc.hit_test(page, ev.p(), ev.tol() * 2.0) {
                 let t = select_target(&doc, leaf, &sel, ev.cmd);
                 hover = Some(t);
-                if ev.alt && !sel.is_empty() && !sel.contains(&t) {
+                if (ev.alt || self.tool.redlines) && !sel.is_empty() && !sel.contains(&t) {
                     // Alt: measure from the selection to the hovered layer.
                     if let (Some(a), Some(b)) = (doc.bounds_of(&sel), doc.world_bounds(t)) {
                         guides = crate::snap::measure(a, b);
                     }
                 }
-            } else if ev.alt && !sel.is_empty() {
+            } else if (ev.alt || self.tool.redlines) && !sel.is_empty() {
                 // Alt over empty canvas inside a frame: distances to the parent.
                 if let Some(a) = doc.bounds_of(&sel)
                     && let Some(p) = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).filter(|p| *p != page)
@@ -699,9 +701,11 @@ impl Session {
                 let ids = ids.clone();
                 let dup = *duplicate;
                 let page = self.page()?;
-                let mut insert_line = None;
                 let mut drop_cell = None;
                 let mut drop_target = None;
+                let mut in_flow = false;
+                // Placed in a row or column: (is it a column, its gap) for the insertion line.
+                let mut slot_axis: Option<(bool, f64)> = None;
                 self.preview(|doc, sel| {
                     let mut moving = ids.clone();
                     if dup {
@@ -714,52 +718,63 @@ impl Session {
                         moving = copies;
                         *sel = moving.clone();
                     }
-                    // Auto layout children reorder instead of moving freely.
-                    let al_parent = moving
-                        .first()
-                        .and_then(|i| doc.node(*i))
-                        .and_then(|n| n.parent)
-                        .filter(|p| doc.node(*p).is_some_and(|pn| pn.layout.is_some()));
+                    let p = ev.p();
+                    let home = moving.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent);
+                    // Absolute children of an auto layout frame stay in it; the rest may change parent.
                     let flow = moving.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute));
-                    if let (Some(pp), true) = (al_parent, flow) {
-                        let pb = doc.world_bounds(pp).unwrap_or_default();
-                        let still_inside = pb.inflate(8.0, 8.0).contains(ev.p());
-                        let grid = doc.node(pp).and_then(|n| n.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Grid);
-                        if still_inside && grid {
-                            // Grids: the dragged layer takes the cell under the pointer.
-                            if let (Some(first), Some((col, row, rect))) = (moving.first().copied(), crate::drop::grid_cell_at(doc, pp, ev.p())) {
-                                let cl = &mut doc.get_mut(first)?.child_layout;
-                                cl.grid_column = Some(col);
-                                cl.grid_row = Some(row);
-                                drop_cell = Some(rect);
+                    let target = if flow { crate::drop::drag_parent(doc, page, p, &moving) } else { home.unwrap_or(page) };
+                    let mode = doc.node(target).and_then(|n| n.layout.as_ref()).map(|l| l.mode);
+                    if let (true, Some(mode)) = (flow, mode) {
+                        // Into (or within) an auto layout frame: the layers take the slot (a grid: the
+                        // cell) under the pointer, as the frame shows it now. A frame other than the
+                        // one they come from is outlined too.
+                        let cell = if mode == LayoutMode::Grid { crate::drop::grid_cell_at(doc, target, p) } else { None };
+                        let idx =
+                            if mode == LayoutMode::Grid { 0 } else { crate::drop::auto_layout_slot(doc, target, p, &moving).map_or(0, |(i, _)| i) };
+                        for m in &moving {
+                            if doc.get(*m)?.parent != Some(target) {
+                                doc.reparent(*m, target, None)?;
                             }
-                            return Ok(());
                         }
-                        if still_inside {
-                            let (idx, line_at) = crate::drop::auto_layout_slot(doc, pp, ev.p(), &moving).unwrap_or((0, None));
-                            insert_line = line_at;
-                            let mut new_kids: Vec<NodeId> = doc.get(pp)?.children.iter().copied().filter(|c| !moving.contains(c)).collect();
+                        if let (Some(first), Some((col, row, rect))) = (moving.first().copied(), cell) {
+                            let cl = &mut doc.get_mut(first)?.child_layout;
+                            cl.grid_column = Some(col);
+                            cl.grid_row = Some(row);
+                            drop_cell = Some(rect);
+                        } else if mode != LayoutMode::Grid {
+                            let mut kids: Vec<NodeId> = doc.get(target)?.children.iter().copied().filter(|c| !moving.contains(c)).collect();
                             for (k, m) in moving.iter().enumerate() {
-                                new_kids.insert((idx + k).min(new_kids.len()), *m);
+                                kids.insert((idx + k).min(kids.len()), *m);
                             }
-                            doc.get_mut(pp)?.children = new_kids;
-                            return Ok(());
+                            let gap = doc.node(target).and_then(|n| n.layout.as_ref()).map_or(0.0, |l| l.gap);
+                            doc.get_mut(target)?.children = kids;
+                            slot_axis = Some((mode == LayoutMode::Vertical, gap));
                         }
-                        // Dragged out of the auto layout frame: becomes free and moves.
-                        let kids_out = moving.clone();
-                        for m in &kids_out {
+                        drop_target = (Some(target) != home).then_some(target);
+                        in_flow = true;
+                        return Ok(());
+                    }
+                    // A free move. Layers dragged out of an auto layout flow leave it (onto the page
+                    // while dragging; the drop puts them in the frame under the pointer).
+                    for m in &moving {
+                        let in_al = doc.node(*m).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
+                        if flow && in_al {
                             doc.reparent(*m, page, None)?;
                         }
+                        move_world(doc, *m, d.x, d.y)?;
                     }
-                    for i in &moving {
-                        move_world(doc, *i, d.x, d.y)?;
-                    }
-                    // Drop target: the frame under the pointer.
-                    drop_target = frame_at(doc, page, ev.p(), &moving);
+                    drop_target = (flow && target != page).then_some(target);
                     Ok(())
                 })?;
-                self.tool.overlay.guides = guides;
-                self.tool.overlay.insert_line = insert_line;
+                // Snapping guides mean nothing while the layout places the layers.
+                self.tool.overlay.guides = if in_flow { Vec::new() } else { guides };
+                // The preview already shows the layers in their slot: the line marks it there, in
+                // the middle of the gap before them (clear of the selection box).
+                let placed = if dup { self.selection() } else { ids };
+                self.tool.overlay.insert_line = slot_axis.and_then(|(vertical, gap)| {
+                    let off = if gap.is_finite() { (gap / 2.0).clamp(3.0, 24.0) } else { 3.0 };
+                    self.doc().ok()?.bounds_of(&placed).map(|b| crate::drop::line_before(b, vertical, off))
+                });
                 self.tool.overlay.drop_cell = drop_cell;
                 self.tool.overlay.drop_target = drop_target;
                 self.tool.gesture = g.clone();
@@ -1143,34 +1158,25 @@ impl Session {
         match g {
             Gesture::Move { ids, moved, duplicate, .. } => {
                 if moved {
-                    // Re-parent into the frame under the pointer (or out to the page).
+                    // A free move lands in the frame under the pointer (or the page) where it was
+                    // dropped; layers in an auto layout frame already sit in their slot.
                     let page = self.page()?;
                     let sel = self.selection();
                     let moving = if duplicate { sel } else { ids };
                     let doc = self.doc()?.clone();
                     let in_al =
                         moving.iter().any(|m| doc.node(*m).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
-                    if !in_al {
-                        let target = drop_target.unwrap_or(page);
-                        let current = moving.first().and_then(|m| doc.node(*m)).and_then(|n| n.parent);
-                        let target_is_al = doc.node(target).is_some_and(|n| n.layout.is_some());
-                        if current != Some(target) {
-                            let ds = self.ds_mut()?;
-                            let d = ds.doc_mut();
-                            for m in &moving {
-                                if d.reparent(*m, target, None).is_err() {
-                                    continue;
-                                }
-                            }
-                            if target_is_al {
-                                // Dropped into auto layout: place by pointer position.
-                                let before = ds.doc.clone();
-                                crate::normalize(ds.doc_mut(), &before);
-                            }
-                            let before = self.ds()?.doc.clone();
-                            let ds = self.ds_mut()?;
-                            crate::normalize(ds.doc_mut(), &before);
+                    let target = drop_target.unwrap_or(page);
+                    let current = moving.first().and_then(|m| doc.node(*m)).and_then(|n| n.parent);
+                    if !in_al && current != Some(target) {
+                        let ds = self.ds_mut()?;
+                        let before = ds.doc.clone();
+                        let d = ds.doc_mut();
+                        for m in &moving {
+                            // A layer can't go into itself; it stays where it is.
+                            let _ = d.reparent(*m, target, None);
                         }
+                        crate::normalize(ds.doc_mut(), &before);
                     }
                     self.commit_interaction()?;
                 } else {

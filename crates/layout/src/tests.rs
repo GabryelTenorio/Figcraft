@@ -11,7 +11,7 @@ fn setup(mode: LayoutMode) -> (Document, NodeId, Vec<NodeId>) {
     (d, f, vec![a, b])
 }
 
-fn pos(d: &Document, id: NodeId) -> (f64, f64, f64, f64) {
+pub(super) fn pos(d: &Document, id: NodeId) -> (f64, f64, f64, f64) {
     let n = d.node(id).unwrap();
     let c = n.transform.as_coeffs();
     (c[4], c[5], n.width, n.height)
@@ -165,7 +165,7 @@ fn hostile_values() {
 
 /// A fake measurer: each text has a natural (unwrapped) size and a first baseline; wrapping at a
 /// narrower width adds lines of the natural height.
-struct FakeMeasure(std::collections::HashMap<NodeId, (f64, f64, f64)>);
+pub(super) struct FakeMeasure(pub(super) std::collections::HashMap<NodeId, (f64, f64, f64)>);
 
 impl Measure for FakeMeasure {
     fn text_height(&self, _: &Document, id: NodeId, width: f64) -> Option<f64> {
@@ -180,7 +180,7 @@ impl Measure for FakeMeasure {
     }
 }
 
-fn text(d: &mut Document, parent: NodeId, name: &str) -> NodeId {
+pub(super) fn text(d: &mut Document, parent: NodeId, name: &str) -> NodeId {
     d.create(parent, NodeKind::Text(figcraft_doc::TextData::new(name)), name, 0.0, 0.0, 10.0, 10.0).unwrap()
 }
 

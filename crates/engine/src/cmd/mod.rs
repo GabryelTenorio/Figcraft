@@ -81,6 +81,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::vectoredit::specs());
         list.extend(crate::shapebuilder::specs());
         list.extend(crate::codegen::specs());
+        list.extend(crate::devinspect::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {
             if index.insert(s.id, i).is_some() {
