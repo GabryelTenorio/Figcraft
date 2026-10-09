@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod cmd;
 pub mod codegen;
 pub mod components;
+pub mod devinspect;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
@@ -867,6 +868,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
 mod al_drag_tests;
 #[cfg(test)]
 mod autosave_tests;
+#[cfg(test)]
+mod devinspect_tests;
 #[cfg(test)]
 mod frame_tests;
 #[cfg(test)]

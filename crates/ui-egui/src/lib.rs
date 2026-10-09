@@ -376,6 +376,8 @@ impl FigApp {
         let t = theme::Tokens::get(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
+        // The Inspect tab measures on hover without Alt.
+        self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
         if self.ui.present.is_some() {
             present::show(self, ui);
             return;

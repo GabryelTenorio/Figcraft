@@ -334,6 +334,8 @@ pub struct ToolState {
     /// removes; Alt merges).
     pub shape_builder: Option<std::sync::Arc<crate::shapebuilder::Arrangement>>,
     pub builder_remove: bool,
+    /// Show distances from the selection on hover without holding Alt (Dev mode inspection).
+    pub redlines: bool,
 }
 
 impl ToolState {
@@ -534,13 +536,13 @@ impl Session {
             } else if let Some(leaf) = doc.hit_test(page, ev.p(), ev.tol() * 2.0) {
                 let t = select_target(&doc, leaf, &sel, ev.cmd);
                 hover = Some(t);
-                if ev.alt && !sel.is_empty() && !sel.contains(&t) {
+                if (ev.alt || self.tool.redlines) && !sel.is_empty() && !sel.contains(&t) {
                     // Alt: measure from the selection to the hovered layer.
                     if let (Some(a), Some(b)) = (doc.bounds_of(&sel), doc.world_bounds(t)) {
                         guides = crate::snap::measure(a, b);
                     }
                 }
-            } else if ev.alt && !sel.is_empty() {
+            } else if (ev.alt || self.tool.redlines) && !sel.is_empty() {
                 // Alt over empty canvas inside a frame: distances to the parent.
                 if let Some(a) = doc.bounds_of(&sel)
                     && let Some(p) = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).filter(|p| *p != page)

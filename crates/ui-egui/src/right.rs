@@ -1403,35 +1403,71 @@ fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 }
 
 /// The Inspect tab: size and position, and code for the selected layer.
+/// One group of inspected properties: label, value (with a swatch for colours) and the style or
+/// variable it comes from. Clicking a row copies its value.
+fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspect::Section) {
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
+    ui.painter().text(pos2(hr.min.x + PAD, hr.center().y), Align2::LEFT_CENTER, s.title, semibold(11.0), t.text);
+    for p in &s.rows {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+        let resp = resp.on_hover_text(format!("Copy {}", p.value));
+        if resp.hovered() {
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+        }
+        let painter = ui.painter();
+        painter.text(pos2(r.min.x + PAD, r.center().y), Align2::LEFT_CENTER, &p.label, regular(11.0), t.text_secondary);
+        // The style or variable, right-aligned as a chip.
+        let mut right = r.max.x - PAD;
+        if let Some(token) = &p.token {
+            let galley = painter.layout_no_wrap(token.clone(), regular(10.0), t.text_secondary);
+            let chip =
+                Rect::from_min_max(pos2((right - galley.size().x - 12.0).max(r.min.x + 196.0), r.center().y - 9.0), pos2(right, r.center().y + 9.0));
+            painter.rect_filled(chip, CornerRadius::same(4), t.field);
+            painter.with_clip_rect(chip.shrink2(vec2(6.0, 0.0))).galley(
+                pos2(chip.min.x + 6.0, chip.center().y - galley.size().y / 2.0),
+                galley,
+                t.text_secondary,
+            );
+            right = chip.min.x - 6.0;
+        }
+        let mut x = r.min.x + 96.0;
+        if let Some(c) = p.color.as_deref().and_then(figcraft_color::Color::from_hex) {
+            let sw = Rect::from_min_size(pos2(x, r.center().y - 6.0), vec2(12.0, 12.0));
+            widgets::paint_swatch(painter, sw, &Paint::solid(c));
+            x += 18.0;
+        }
+        let value_r = Rect::from_min_max(pos2(x, r.min.y), pos2(right.max(x + 10.0), r.max.y));
+        painter.with_clip_rect(value_r).text(pos2(x, r.center().y), Align2::LEFT_CENTER, &p.value, regular(11.0), t.text);
+        if resp.clicked() {
+            app.services.clipboard_set_text(&p.value);
+            app.toast(format!("Copied {}", p.label.to_lowercase()));
+        }
+    }
+    ui.add_space(4.0);
+}
+
 fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(ds) = app.session.ds() else { return };
     let doc = ds.doc.clone();
     let sel = ds.selection.clone();
-    widgets::section_header(ui, "Inspect", &[], false);
     let Some(first) = sel.first().copied() else {
-        row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its code and measurements", t.text_secondary));
+        widgets::section_header(ui, "Inspect", &[], false);
+        row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its properties and code", t.text_secondary));
+        row(ui, 32.0, |ui| widgets::label(ui, "Hover other layers to measure the distance", t.text_secondary));
         return;
     };
-    if let Some(b) = doc.world_bounds(first) {
-        row(ui, 32.0, |ui| {
-            widgets::label(
-                ui,
-                &format!(
-                    "{} × {}   at {}, {}",
-                    crate::canvas::fmt(b.width()),
-                    crate::canvas::fmt(b.height()),
-                    crate::canvas::fmt(b.x0),
-                    crate::canvas::fmt(b.y0)
-                ),
-                t.text,
-            );
-        });
+    let name = doc.node(first).map(|n| n.name.clone()).unwrap_or_default();
+    widgets::section_header(ui, &name, &[], false);
+    for s in figcraft_engine::devinspect::properties(&doc, first) {
+        inspect_section(app, ui, &s);
     }
-    widgets::separator(ui);
     use figcraft_engine::codegen::{CodeLang, code_for};
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
+    widgets::separator(ui);
     let copy = widgets::section_header(ui, "Code", &[(Icon::Export, "Copy")], false).is_some();
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, lang.label(), 120.0, Some(Icon::Code));
