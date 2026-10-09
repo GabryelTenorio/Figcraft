@@ -87,6 +87,15 @@ impl Services for Desktop {
             let _ = c.set_image(arboard::ImageData { width: w as usize, height: h as usize, bytes: std::borrow::Cow::Borrowed(rgba) });
         }
     }
+    fn clipboard_get_image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        let img = self.clipboard.as_mut()?.get_image().ok()?;
+        let (w, h) = (u32::try_from(img.width).ok()?, u32::try_from(img.height).ok()?);
+        // Refuse absurd sizes (and mismatched buffers) rather than allocate.
+        if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 100_000_000 || img.bytes.len() != (w as usize) * (h as usize) * 4 {
+            return None;
+        }
+        Some((w, h, img.bytes.into_owned()))
+    }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
     }

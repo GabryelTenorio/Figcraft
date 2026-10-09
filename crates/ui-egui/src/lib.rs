@@ -59,6 +59,10 @@ pub trait Services {
         None
     }
     fn clipboard_set_png(&mut self, _w: u32, _h: u32, _rgba: &[u8]) {}
+    /// An image on the system clipboard as (width, height, straight RGBA).
+    fn clipboard_get_image(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        None
+    }
     fn open_url(&mut self, _url: &str) {}
     /// Recently opened files (persisted by the app).
     fn recent_files(&self) -> Vec<String> {
@@ -124,6 +128,10 @@ pub struct UiState {
     pub left_collapsed: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
+
+    /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
+    /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
+    pub last_copy: Option<String>,
 }
 
 impl Default for UiState {
@@ -165,6 +173,8 @@ impl Default for UiState {
             left_collapsed: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
+
+            last_copy: None,
         }
     }
 }

@@ -59,24 +59,17 @@ pub fn handle(app: &mut FigApp, ctx: &Context) {
         text_keys(app, ctx, &events);
         return;
     }
+    // An image-only clipboard brings no paste event, just the key: paste from the key then.
+    let paste_event = events.iter().any(|e| matches!(e, Event::Paste(_)));
+    let paste_key = events.iter().any(|e| matches!(e, Event::Key { key: Key::V, pressed: true, repeat: false, modifiers, .. } if modifiers.command && !modifiers.shift && !modifiers.alt));
+    if paste_key && !paste_event {
+        crate::menus::paste(app, None);
+    }
     for ev in &events {
         match ev {
             Event::Copy => crate::menus::invoke(app, "edit.copy"),
             Event::Cut => crate::menus::invoke(app, "edit.cut"),
-            Event::Paste(text) => {
-                if app.session.clipboard.nodes.is_empty() && !text.is_empty() {
-                    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
-                    if text.trim_start().starts_with("<svg") {
-                        use base64::Engine as _;
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                        app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
-                    } else {
-                        app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
-                    }
-                } else {
-                    crate::menus::invoke(app, "edit.paste");
-                }
-            }
+            Event::Paste(text) => crate::menus::paste(app, Some(text)),
             Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat, ctx) => {
                 // handled
             }

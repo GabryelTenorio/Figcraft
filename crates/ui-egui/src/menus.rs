@@ -27,6 +27,46 @@ pub const UI_COMMANDS: &[&str] = &[
 ];
 
 /// Run a menu item: some open dialogs or use platform services, the rest go to the engine.
+/// Paste: the system clipboard wins when it holds something newer than our own copy (an image, SVG
+/// or text from another app); otherwise our copied layers. `event_text` is the text the platform
+/// handed over with the paste event (the browser has no other way to read it).
+pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
+    let sys_text = app.services.clipboard_get_text().or_else(|| event_text.map(str::to_string)).filter(|t| !t.is_empty());
+    let ours = sys_text.is_some() && sys_text == app.ui.last_copy;
+    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
+    if !ours {
+        if let Some((png, w, h)) = clipboard_png(app) {
+            use base64::Engine as _;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+            // Centred in the view.
+            let (x, y) = ((cx - f64::from(w) / 2.0).round(), (cy - f64::from(h) / 2.0).round());
+            app.run("file.import", json!({"data": b64, "name": "Pasted image.png", "x": x, "y": y}));
+            return;
+        }
+        // Text from elsewhere when it's newer than our copy, or when we have nothing to paste.
+        if let Some(text) = sys_text.filter(|_| app.ui.last_copy.is_some() || app.session.clipboard.nodes.is_empty()) {
+            if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
+                use base64::Engine as _;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+                app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
+            } else {
+                app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
+            }
+            return;
+        }
+    }
+    app.run("edit.paste", json!({}));
+}
+
+/// The system clipboard's image as PNG bytes, with its size.
+fn clipboard_png(app: &mut FigApp) -> Option<(Vec<u8>, u32, u32)> {
+    let (w, h, rgba) = app.services.clipboard_get_image()?;
+    let img = image::RgbaImage::from_raw(w, h, rgba)?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some((out.into_inner(), w, h))
+}
+
 pub fn invoke(app: &mut FigApp, id: &str) {
     match id {
         "file.open" => app.open_dialog(),
@@ -78,33 +118,17 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         }
         "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
         "edit.copy" | "edit.cut" => {
+            let ids = app.session.selection();
+            // SVG for other apps, taken before a cut removes the layers.
+            let svg = app.session.doc().ok().and_then(|d| figcraft_svg_export(d, &ids));
             app.run(id, json!({}));
-            // Mirror to the system clipboard as SVG text so other apps can paste.
-            let ids: Vec<_> = app.session.clipboard.nodes.iter().map(|(r, _)| *r).collect();
-            if id == "edit.copy"
-                && let Some(svg) = app.session.doc().ok().and_then(|d| figcraft_svg_export(d, &ids))
-            {
-                app.services.clipboard_set_text(&svg);
-            }
+            // Mirror to the system clipboard (SVG text, else a marker) and remember it, so a later
+            // paste knows whether the clipboard still holds our layers.
+            let text = svg.unwrap_or_else(|| format!("figcraft://clipboard/{}", ids.len()));
+            app.services.clipboard_set_text(&text);
+            app.ui.last_copy = Some(text);
         }
-        "edit.paste" => {
-            // Paste SVG / text from the system clipboard when our clipboard is empty.
-            if app.session.clipboard.nodes.is_empty()
-                && let Some(text) = app.services.clipboard_get_text()
-            {
-                if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
-                    use base64::Engine as _;
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
-                    app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
-                } else if !text.is_empty() {
-                    let (cx, cy) = app.session.ds().map(|d| (d.view.cx, d.view.cy)).unwrap_or((0.0, 0.0));
-                    app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
-                }
-                return;
-            }
-            app.run(id, json!({}));
-        }
+        "edit.paste" => paste(app, None),
         "file.close" if app.session.ds().map(|d| d.is_dirty()).unwrap_or(false) => {
             app.toast("Unsaved changes: save first (⌘S), or close the tab with ⌥-click to discard");
         }

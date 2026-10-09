@@ -72,7 +72,8 @@ dimension measured side by side.
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
    properties, styles; image fills from an `images` folder or placeholders; warnings for the rest).
-   *Left:* .fig import (best effort), PDF export (in progress), paste from other apps, REST import
+   Paste from other apps: images, SVG and text (the newest clipboard content wins over our own
+   copy). *Left:* .fig import (best effort), PDF export (in progress), REST import
    of prototype interactions and variables. 20–32 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
