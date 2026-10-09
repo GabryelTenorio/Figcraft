@@ -1,0 +1,120 @@
+//! Dragging rows in the layers panel, driven through egui headless: holding over a collapsed
+//! frame opens it, a layer can't be dropped into itself, Escape cancels, and the list scrolls at
+//! its edges.
+
+use egui::{Event, Pos2, RawInput, Rect, vec2};
+use figcraft_doc::NodeId;
+use figcraft_engine::Session;
+use serde_json::json;
+
+use crate::{FigApp, NoServices};
+
+struct Ui {
+    ctx: egui::Context,
+    app: FigApp,
+    time: f64,
+}
+
+impl Ui {
+    fn new(s: Session) -> Self {
+        let mut u = Self { ctx: egui::Context::default(), app: FigApp::new(s, Box::new(NoServices)), time: 0.0 };
+        for _ in 0..3 {
+            u.frame(vec![]);
+        }
+        u
+    }
+
+    fn frame(&mut self, events: Vec<Event>) {
+        self.time += 1.0 / 60.0;
+        let input =
+            RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
+        let app = &mut self.app;
+        self.ctx.run_ui(input, |ui| app.ui(ui)).textures_delta.clear();
+    }
+
+    /// The middle of `id`'s row in the layers panel (found by hovering down the panel).
+    fn row_at(&mut self, id: NodeId) -> Pos2 {
+        let mut hits = Vec::new();
+        for y in (60..900).step_by(2) {
+            let p = Pos2::new(150.0, y as f32);
+            // The panel only sets the hover when a row is under the pointer.
+            self.app.session.ds_mut().unwrap().hover = None;
+            self.frame(vec![Event::PointerMoved(p)]);
+            if self.app.session.ds().unwrap().hover == Some(id) {
+                hits.push(p.y);
+            } else if !hits.is_empty() {
+                break;
+            }
+        }
+        assert!(!hits.is_empty(), "no row for {id:?}");
+        Pos2::new(150.0, (hits[0] + hits[hits.len() - 1]) / 2.0)
+    }
+
+    fn button(&mut self, p: Pos2, pressed: bool) {
+        self.frame(vec![
+            Event::PointerMoved(p),
+            Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },
+        ]);
+    }
+
+    /// Press on `from` and move to `to` in small steps (a drag, not yet released).
+    fn drag_to(&mut self, from: Pos2, to: Pos2) {
+        self.button(from, true);
+        for k in 1..=10 {
+            self.frame(vec![Event::PointerMoved(from + (to - from) * (k as f32 / 10.0))]);
+        }
+    }
+}
+
+fn id(v: serde_json::Value) -> NodeId {
+    NodeId(v["id"].as_u64().unwrap())
+}
+
+/// A frame with one child (collapsed in the panel) and a rectangle beside it.
+fn setup() -> (Ui, NodeId, NodeId, NodeId) {
+    let mut s = Session::new();
+    let frame = id(s.execute("node.create", &json!({"type": "frame", "x": 0, "y": 0, "width": 100, "height": 100})).unwrap());
+    let child = id(s.execute("node.create", &json!({"type": "ellipse", "parent": frame, "x": 10, "y": 10, "width": 10, "height": 10})).unwrap());
+    let rect = id(s.execute("node.create", &json!({"type": "rectangle", "x": 200, "y": 0, "width": 10, "height": 10})).unwrap());
+    s.execute("select.none", &json!({})).unwrap();
+    let mut u = Ui::new(s);
+    u.app.ui.expanded.clear();
+    u.frame(vec![]);
+    (u, frame, child, rect)
+}
+
+#[test]
+fn holding_over_a_collapsed_frame_opens_it_and_dropping_moves_the_layer_in() {
+    let (mut u, frame, child, rect) = setup();
+    let (r, f) = (u.row_at(rect), u.row_at(frame));
+    u.drag_to(r, f);
+    assert!(!u.app.ui.expanded.contains(&frame));
+    // Hold for a second over the middle of the frame's row.
+    for _ in 0..60 {
+        u.frame(vec![Event::PointerMoved(f)]);
+    }
+    assert!(u.app.ui.expanded.contains(&frame), "spring-loaded open");
+    u.button(f, false);
+    let doc = u.app.session.doc().unwrap();
+    assert_eq!(doc.node(rect).unwrap().parent, Some(frame), "dropped into the frame");
+    assert!(doc.node(frame).unwrap().children.contains(&child));
+}
+
+#[test]
+fn a_layer_cant_drop_into_its_own_child_and_escape_cancels() {
+    let (mut u, frame, child, rect) = setup();
+    u.app.ui.expanded.insert(frame);
+    u.frame(vec![]);
+    let (f, c) = (u.row_at(frame), u.row_at(child));
+    let parent_before = u.app.session.doc().unwrap().node(frame).unwrap().parent;
+    u.drag_to(f, c);
+    u.button(c, false);
+    assert_eq!(u.app.session.doc().unwrap().node(frame).unwrap().parent, parent_before, "not moved into itself");
+    assert!(u.app.ui.last_error.is_none(), "{:?}", u.app.ui.last_error);
+    // Escape during a drag: releasing over a target then does nothing.
+    let (r, f) = (u.row_at(rect), u.row_at(frame));
+    u.drag_to(r, f);
+    u.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
+    u.button(f, false);
+    assert_ne!(u.app.session.doc().unwrap().node(rect).unwrap().parent, Some(frame));
+}

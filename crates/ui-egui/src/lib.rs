@@ -39,6 +39,8 @@ pub mod versions;
 pub mod widgets;
 
 #[cfg(test)]
+mod layers_drag_tests;
+#[cfg(test)]
 mod perf_tests;
 
 use std::collections::BTreeSet;

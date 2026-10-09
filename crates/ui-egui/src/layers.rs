@@ -408,6 +408,19 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     let mut rename_done: Option<(NodeId, String)> = None;
     let mut hovered_row: Option<NodeId> = None;
     let drag_id = Id::new("layer_drag");
+    // Escape cancels a drag.
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        ui.data_mut(|d| d.remove::<NodeId>(drag_id));
+    }
+    let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
+    // What a drag moves: the selection when the dragged row is in it.
+    let moving: Vec<NodeId> = match dragging {
+        Some(dg) if sel.contains(&dg) => sel.clone(),
+        Some(dg) => vec![dg],
+        None => Vec::new(),
+    };
+    // A layer can't go into itself or its own descendants.
+    let blocked = |id: NodeId| moving.contains(&id) || doc.ancestors(id).iter().any(|a| moving.contains(a));
     let mut drop: Option<(NodeId, i8)> = None;
     // Only the rows in view are laid out and drawn; the rest is empty scroll space.
     egui::ScrollArea::vertical().auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
@@ -426,7 +439,24 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 crate::widgets::label(ui, hint, t.text_secondary);
             });
         }
-        let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
+        // Dragging near the list's top or bottom edge scrolls it, faster closer to the edge.
+        if dragging.is_some()
+            && let Some(p) = ui.input(|i| i.pointer.hover_pos())
+        {
+            const EDGE: f32 = 28.0;
+            let view = ui.clip_rect();
+            let dy = if p.y < view.min.y + EDGE {
+                (view.min.y + EDGE - p.y).min(EDGE)
+            } else if p.y > view.max.y - EDGE {
+                -(p.y - (view.max.y - EDGE)).min(EDGE)
+            } else {
+                0.0
+            };
+            if dy != 0.0 && view.x_range().contains(p.x) {
+                ui.scroll_with_delta(vec2(0.0, dy * 0.5));
+                ui.ctx().request_repaint();
+            }
+        }
         let first = ((viewport.min.y / pitch).floor().max(0.0) as usize).min(rows.len());
         let last = ((viewport.max.y / pitch).ceil().max(0.0) as usize).saturating_add(1).min(rows.len());
         let band = Rect::from_x_y_ranges(ui.max_rect().x_range(), (top + first as f32 * pitch)..=(top + last as f32 * pitch));
@@ -551,8 +581,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             if resp.drag_started() {
                 ui.data_mut(|d| d.insert_temp(drag_id, row.id));
             }
-            if let Some(dg) = dragging
-                && dg != row.id
+            if dragging.is_some()
+                && !blocked(row.id)
                 && let Some(p) = ui.input(|i| i.pointer.hover_pos())
                 && r.contains(p)
             {
@@ -572,6 +602,23 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 };
                 if zone == 0 {
                     ui.painter().rect_stroke(rr, CornerRadius::same(5), Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
+                    // Holding over a collapsed group or frame opens it, to drop deeper inside.
+                    if row.has_kids && !app.ui.expanded.contains(&row.id) {
+                        let hold_id = Id::new("layer_drag_hold");
+                        let now = ui.input(|i| i.time);
+                        match ui.data(|d| d.get_temp::<(NodeId, f64)>(hold_id)) {
+                            Some((id, since)) if id == row.id => {
+                                if now - since > 0.6 {
+                                    toggle = Some(row.id);
+                                    ui.data_mut(|d| d.remove::<(NodeId, f64)>(hold_id));
+                                }
+                            }
+                            _ => {
+                                ui.data_mut(|d| d.insert_temp(hold_id, (row.id, now)));
+                            }
+                        }
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    }
                 } else {
                     ui.painter().line_segment([pos2(x0, y), pos2(rr.max.x, y)], Stroke::new(2.0, ACCENT));
                 }
@@ -586,11 +633,26 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             app.run("select.none", json!({}));
         }
     });
+    // The dragged layers' name follows the pointer.
+    if let (Some(dg), Some(p)) = (dragging, ui.input(|i| i.pointer.hover_pos())) {
+        let label = match moving.len() {
+            1 => doc.node(dg).map(|n| n.name.clone()).unwrap_or_default(),
+            n => format!("{n} layers"),
+        };
+        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("layer_drag_ghost")));
+        let galley = painter.layout_no_wrap(label, regular(11.0), t.text);
+        let r = Rect::from_min_size(p + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
+        painter.rect_filled(r, CornerRadius::same(5), t.panel);
+        painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
+        painter.galley(r.min + vec2(8.0, 4.0), galley, t.text);
+    }
     if ui.input(|i| i.pointer.any_released()) {
-        let dragged: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
-        ui.data_mut(|d| d.remove::<NodeId>(drag_id));
-        if let (Some(dg), Some((target, zone))) = (dragged, drop) {
-            let ids = if sel.contains(&dg) { sel.clone() } else { vec![dg] };
+        ui.data_mut(|d| {
+            d.remove::<NodeId>(drag_id);
+            d.remove::<(NodeId, f64)>(Id::new("layer_drag_hold"));
+        });
+        if let (Some(_), Some((target, zone))) = (dragging, drop) {
+            let ids = moving.clone();
             match zone {
                 0 => {
                     app.run("node.reparent", json!({"ids": ids, "parent": target}));
