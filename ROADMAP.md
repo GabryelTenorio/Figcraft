@@ -60,8 +60,9 @@ dimension measured side by side.
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
    the frame or auto layout slot under the pointer); exposed nested instances (their properties
-   show on the main's instances). *Left:* nested override edge cases, slots,
-   local libraries (publish/use across files), component descriptions UI. 10–14 h.
+   show on the main's instances); component descriptions (edited on the main, shown on
+   instances). *Left:* nested override edge cases, slots, local libraries (publish/use across
+   files). 10–14 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -143,7 +144,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
 | Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
-| Components & variants | 9 | 60% | libraries, slots, descriptions, nested override edge cases | 10–15 |
+| Components & variants | 9 | 60% | libraries, slots, nested override edge cases | 10–15 |
 | Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
 | Prototyping | 6 | 65% | multi-selection editing, scrolling inside device frames | 4–7 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |

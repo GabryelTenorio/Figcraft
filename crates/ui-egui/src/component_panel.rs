@@ -23,8 +23,14 @@ pub fn instance_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
     let Some(n) = doc.node(*id) else { return };
     match &n.kind {
         NodeKind::Instance { .. } => instance_ui(app, ui, doc, n),
-        NodeKind::ComponentSet { .. } => properties_ui(app, ui, doc, n.id),
-        NodeKind::Component { .. } => properties_ui(app, ui, doc, variant_set(doc, n.id).unwrap_or(n.id)),
+        NodeKind::ComponentSet { description } => {
+            properties_ui(app, ui, doc, n.id);
+            description_ui(app, ui, n.id, description);
+        }
+        NodeKind::Component { description, .. } => {
+            properties_ui(app, ui, doc, variant_set(doc, n.id).unwrap_or(n.id));
+            description_ui(app, ui, n.id, description);
+        }
         _ => {}
     }
     if !matches!(n.kind, NodeKind::Instance { .. }) && n.source.is_some() && owning_instance(doc, n.id).is_some() {
@@ -36,6 +42,50 @@ pub fn instance_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
     {
         bind_ui(app, ui, doc, n);
     }
+}
+
+/// A component's description: a multi-line field, saved when it loses focus.
+fn description_ui(app: &mut FigApp, ui: &mut Ui, id: NodeId, description: &str) {
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    widgets::sublabels(ui, "Description", None);
+    let buf_id = Id::new(("comp_desc", id));
+    // The draft lives only while the field has focus; otherwise it shows the stored text.
+    let focused = ui.memory(|m| m.has_focus(buf_id.with("te")));
+    let mut text: String = if focused { ui.data(|d| d.get_temp(buf_id)).unwrap_or_else(|| description.to_string()) } else { description.to_string() };
+    let mut done = None;
+    ui.horizontal(|ui| {
+        ui.add_space(crate::widgets::PAD);
+        let w = ui.available_width() - crate::widgets::PAD;
+        let r = egui::Frame::NONE.fill(t.field).corner_radius(egui::CornerRadius::same(5)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .id(buf_id.with("te"))
+                    .frame(egui::Frame::NONE)
+                    .font(crate::theme::regular(11.0))
+                    .hint_text("Describe how and when to use this component")
+                    .desired_rows(3)
+                    .desired_width(w - 12.0),
+            )
+        });
+        if r.inner.lost_focus() {
+            done = Some(text.clone());
+        }
+    });
+    match done {
+        Some(new) => {
+            ui.data_mut(|d| d.remove::<String>(buf_id));
+            if new != description {
+                app.run("node.set", json!({"id": id, "props": {"description": new.chars().take(10_000).collect::<String>()}}));
+            }
+        }
+        None => {
+            if ui.memory(|m| m.has_focus(buf_id.with("te"))) {
+                ui.data_mut(|d| d.insert_temp(buf_id, text));
+            }
+        }
+    }
+    ui.add_space(8.0);
 }
 
 /// Local components (and component sets, not their variants), for swap menus: (id, label).
@@ -411,6 +461,22 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             app.run("component.goToMain", json!({"id": id}));
         }
     });
+    // The main component's description (the set's when the variant has none).
+    let desc = [Some(*component), set]
+        .into_iter()
+        .flatten()
+        .filter_map(|c| match doc.node(c).map(|n| &n.kind) {
+            Some(NodeKind::Component { description, .. } | NodeKind::ComponentSet { description }) => Some(description.trim().to_string()),
+            _ => None,
+        })
+        .find(|d| !d.is_empty());
+    if let Some(d) = desc {
+        ui.horizontal(|ui| {
+            ui.add_space(crate::widgets::PAD);
+            ui.add(egui::Label::new(egui::RichText::new(d).font(crate::theme::regular(11.0)).color(t.text_secondary)).wrap());
+        });
+        ui.add_space(4.0);
+    }
     // A nested instance inside a main component can expose its properties on the main's instances.
     if nested_in_main(doc, id) {
         row(ui, 32.0, |ui| {

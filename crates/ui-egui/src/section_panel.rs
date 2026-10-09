@@ -26,7 +26,9 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let is_section = |i: &NodeId| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }));
     let top_frame = |i: &NodeId| {
         doc.node(*i).is_some_and(|n| {
-            n.kind.is_frame_like() && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
+            n.kind.is_frame_like()
+                && !matches!(n.kind, NodeKind::Instance { .. })
+                && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
         })
     };
     let sections = !sel.is_empty() && sel.iter().all(is_section);
