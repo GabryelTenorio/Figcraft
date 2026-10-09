@@ -1,4 +1,5 @@
-//! Text layout: shaping styled spans, fallback fonts, line breaking, alignment and decorations.
+//! Text layout: shaping styled spans, fallback fonts, bidirectional text, line breaking,
+//! alignment and decorations.
 
 use std::sync::Arc;
 
@@ -24,6 +25,8 @@ pub struct Glyph {
     pub char_end: usize,
     /// Index into [`TextLayout::styles`].
     pub style: usize,
+    /// Part of a right-to-left run: its first char sits at the glyph's right edge.
+    pub rtl: bool,
 }
 
 impl Glyph {
@@ -50,6 +53,8 @@ pub struct Line {
     pub x: f64,
     /// The line ends a paragraph (hard break or end of text).
     pub para_end: bool,
+    /// The paragraph runs right to left (its first strong character is right-to-left).
+    pub rtl: bool,
 }
 
 /// A decoration line (underline/strikethrough) to paint with the style's fills.
@@ -91,6 +96,8 @@ struct Item {
     char_end: usize,
     style: usize,
     ch: char,
+    /// Bidi embedding level (odd = right to left).
+    level: u8,
 }
 
 impl Item {
@@ -100,6 +107,64 @@ impl Item {
     fn break_after(&self) -> bool {
         self.is_space() || matches!(self.ch, '-' | '\u{2010}' | '\u{2013}' | '\u{2014}' | '/') || is_cjk(self.ch)
     }
+}
+
+/// Bidi embedding levels per char, and whether each char's paragraph runs right to left.
+pub(crate) struct Bidi {
+    pub(crate) levels: Vec<u8>,
+    pub(crate) rtl_para: Vec<bool>,
+}
+
+impl Bidi {
+    /// None when the text has nothing right to left (the common case costs one scan).
+    pub(crate) fn of(text: &str) -> Option<Bidi> {
+        if !text.chars().any(is_rtl_char) {
+            return None;
+        }
+        let info = unicode_bidi::BidiInfo::new(text, None);
+        let mut paras = info.paragraphs.iter().peekable();
+        let n = text.chars().count();
+        let (mut levels, mut rtl_para) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for (b, _) in text.char_indices() {
+            while paras.peek().is_some_and(|p| p.range.end <= b) {
+                paras.next();
+            }
+            levels.push(info.levels.get(b).map(|l| l.number()).unwrap_or(0));
+            rtl_para.push(paras.peek().is_some_and(|p| p.level.is_rtl()));
+        }
+        Some(Bidi { levels, rtl_para })
+    }
+}
+
+/// Characters of right-to-left scripts and the explicit right-to-left marks.
+fn is_rtl_char(c: char) -> bool {
+    matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF | 0x200F | 0x202B | 0x202E | 0x2067)
+}
+
+/// Visual order of a line's items from their levels (rule L2: from the highest level down to the
+/// lowest odd one, reverse every run at that level or above).
+pub(crate) fn visual_order(levels: &[u8]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..levels.len()).collect();
+    let Some(lowest_odd) = levels.iter().copied().filter(|l| l % 2 == 1).min() else { return order };
+    let highest = levels.iter().copied().max().unwrap_or(0);
+    let level = |order: &[usize], i: usize| order.get(i).and_then(|k| levels.get(*k)).copied().unwrap_or(0);
+    for lvl in (lowest_odd..=highest).rev() {
+        let mut i = 0;
+        while i < order.len() {
+            if level(&order, i) < lvl {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < order.len() && level(&order, i) >= lvl {
+                i += 1;
+            }
+            if let Some(run) = order.get_mut(start..i) {
+                run.reverse();
+            }
+        }
+    }
+    order
 }
 
 fn is_cjk(c: char) -> bool {
@@ -139,7 +204,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         .filter_map(|(k, on)| <[u8; 4]>::try_from(k.as_bytes()).ok().map(|t| Feature::new(Tag::new(&t), u32::from(*on), ..)))
         .collect();
 
-    // Shape each span, split by paragraph, falling back per char.
+    // Shape each span, split by paragraph, bidi run and fallback face.
+    let bidi = Bidi::of(&text.characters);
+    let level_at = |i: usize| bidi.as_ref().and_then(|b| b.levels.get(i)).copied().unwrap_or(0);
+    let rtl_para_at = |i: usize| bidi.as_ref().and_then(|b| b.rtl_para.get(i)).copied().unwrap_or(false);
     let mut items: Vec<Item> = Vec::with_capacity(chars.len());
     for (si, (start, end, _)) in spans.iter().enumerate() {
         let st_idx = span_style.get(si).copied().unwrap_or(0);
@@ -158,8 +226,12 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             };
             let first = chars.get(seg_start).copied().unwrap_or(' ');
             let face = face_for(first);
+            let level = level_at(seg_start);
             let mut seg_end = seg_start + 1;
-            while seg_end < *end && chars.get(seg_end).is_some_and(|c| *c != '\n' && first != '\n' && face_for(*c).id == face.id) {
+            while seg_end < *end
+                && chars.get(seg_end).is_some_and(|c| *c != '\n' && first != '\n' && face_for(*c).id == face.id)
+                && level_at(seg_end) == level
+            {
                 seg_end += 1;
             }
             if first == '\n' {
@@ -175,9 +247,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     char_end: seg_start + 1,
                     style: st_idx,
                     ch: '\n',
+                    level,
                 });
             } else {
-                let seg = Segment { start: seg_start, end: seg_end, style, size, spacing, st_idx };
+                let seg = Segment { start: seg_start, end: seg_end, style, size, spacing, st_idx, level };
                 shape_segment(&chars, &seg, &face, &features, &mut items);
             }
             seg_start = seg_end;
@@ -288,6 +361,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
         let width: f64 = items.get(*s..vis_end).unwrap_or(&[]).iter().map(|it| it.adv).sum();
         let line_indent = marker_width + if para_start_line { indent } else { 0.0 };
+        let rtl_line = rtl_para_at(items.get(*s).map(|it| it.char_start).unwrap_or(0));
         let gstart = out.glyphs.len();
         let mut pen = line_indent;
         // Justify: extra space per gap.
@@ -328,12 +402,23 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                         char_start: at,
                         char_end: at,
                         style: st_idx,
+                        rtl: false,
                     });
                     mx += adv;
                 }
             }
         }
-        for it in items.get(*s..*e).unwrap_or(&[]) {
+        // Right-to-left runs are placed in visual order; trailing spaces take the paragraph's
+        // direction (rule L1).
+        let line_items = items.get(*s..*e).unwrap_or(&[]);
+        let order: Vec<usize> = if bidi.is_some() {
+            let para_level = u8::from(rtl_line);
+            let levels: Vec<u8> = line_items.iter().enumerate().map(|(k, it)| if *s + k >= vis_end { para_level } else { it.level }).collect();
+            visual_order(&levels)
+        } else {
+            (0..line_items.len()).collect()
+        };
+        for it in order.iter().filter_map(|k| line_items.get(*k)) {
             if it.ch == '\n' {
                 continue;
             }
@@ -350,6 +435,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     char_start: it.char_start,
                     char_end: it.char_end,
                     style: it.style,
+                    rtl: it.level % 2 == 1,
                 });
             }
             pen += it.adv;
@@ -370,6 +456,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             width: width + line_indent,
             x: 0.0,
             para_end: *para_end,
+            rtl: rtl_line,
         });
         y += lh;
         para_start_line = *para_end;
@@ -510,6 +597,7 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
         char_start: last.char_end,
         char_end: last.char_end,
         style: last.style,
+        rtl: false,
     });
     if let Some(l) = out.lines.last_mut() {
         l.glyph_end = out.glyphs.len();
@@ -529,6 +617,8 @@ struct Segment<'a> {
     size: f64,
     spacing: f64,
     st_idx: usize,
+    /// Bidi level (odd: shaped right to left).
+    level: u8,
 }
 
 /// Synthesised small caps: lower-case letters drawn as capitals at this fraction of the size.
@@ -586,11 +676,17 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
         for (u, src, _) in &mapped {
             buf.add(*u, *src as u32);
         }
-        buf.set_direction(Direction::LeftToRight);
+        let rtl = seg.level % 2 == 1;
+        buf.set_direction(if rtl { Direction::RightToLeft } else { Direction::LeftToRight });
         buf.guess_segment_properties();
         let gb = shaper.shape(buf, ShapeOptions::new().features(&feats));
         for (info, pos) in gb.glyph_infos().iter().zip(gb.glyph_positions()) {
             raw.push((info.glyph_id, info.cluster, pos.x_advance, pos.x_offset, pos.y_offset));
+        }
+        // Right-to-left glyphs come out in visual order; items are kept in logical order (lines
+        // put runs back in visual order).
+        if rtl {
+            raw.reverse();
         }
     } else {
         for (u, src, _) in &mapped {
@@ -620,6 +716,7 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
             char_end: cend,
             style: seg.st_idx,
             ch,
+            level: seg.level,
         });
     }
 }
@@ -646,6 +743,7 @@ impl TextLayout {
                 }
                 if index >= g.char_start && index < g.char_end {
                     let frac = (index - g.char_start) as f64 / (g.char_end - g.char_start) as f64;
+                    let frac = if g.rtl { 1.0 - frac } else { frac };
                     return (g.x + g.advance * frac, li);
                 }
             }
@@ -655,14 +753,14 @@ impl TextLayout {
         (self.lines.last().map(|l| self.line_end_x(l)).unwrap_or(0.0), li)
     }
 
+    /// Where a line's text ends: its right edge, or its left edge for a right-to-left paragraph.
     fn line_end_x(&self, line: &Line) -> f64 {
-        self.glyphs
-            .get(line.glyph_start..line.glyph_end)
-            .unwrap_or(&[])
-            .iter()
-            .filter(|g| g.char_end > g.char_start)
-            .map(|g| g.x + g.advance)
-            .fold(line.x, f64::max)
+        let glyphs = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]).iter().filter(|g| g.char_end > g.char_start);
+        if line.rtl {
+            glyphs.map(|g| g.x).fold(f64::INFINITY, f64::min).min(line.x + line.width)
+        } else {
+            glyphs.map(|g| g.x + g.advance).fold(line.x, f64::max)
+        }
     }
 
     /// The char index nearest to `(x, y)` (layout coordinates).
@@ -678,11 +776,14 @@ impl TextLayout {
                 continue;
             }
             if x < g.x + g.advance / 2.0 {
-                return g.char_start;
+                // A right-to-left glyph's left half is after it.
+                return if g.rtl { g.char_end } else { g.char_start };
             }
         }
         let last_line = li + 1 == self.lines.len();
-        if line.para_end && !last_line { line.char_end.saturating_sub(1).max(line.char_start) } else { line.char_end }
+        let end = if line.para_end && !last_line { line.char_end.saturating_sub(1).max(line.char_start) } else { line.char_end };
+        // Right of a right-to-left line is its start.
+        if line.rtl { line.char_start } else { end }
     }
 
     /// Selection rectangles for chars `start..end`.
@@ -691,6 +792,11 @@ impl TextLayout {
         let mut out = Vec::new();
         for (li, line) in self.lines.iter().enumerate() {
             if b <= line.char_start || a > line.char_end || (a == line.char_end && li + 1 < self.lines.len()) {
+                continue;
+            }
+            let gl = self.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
+            if line.rtl || gl.iter().any(|g| g.rtl) {
+                out.extend(Self::mixed_selection(gl, a, b, line));
                 continue;
             }
             let (x0, _) = self.caret(a.max(line.char_start));
@@ -702,6 +808,27 @@ impl TextLayout {
             out.push(Rect::new(x0, line.top, x1.max(x0 + 1.0), line.top + line.height));
         }
         out
+    }
+
+    /// Selection rectangles on a line with right-to-left runs: the selected part of each glyph
+    /// (they're in visual order), merged where they touch.
+    fn mixed_selection(gl: &[Glyph], a: usize, b: usize, line: &Line) -> Vec<Rect> {
+        let mut spans: Vec<(f64, f64)> = Vec::new();
+        for g in gl.iter().filter(|g| g.char_end > g.char_start) {
+            let (ga, gb) = (g.char_start.max(a), g.char_end.min(b));
+            if ga >= gb {
+                continue;
+            }
+            let n = (g.char_end - g.char_start) as f64;
+            let (f0, f1) = ((ga - g.char_start) as f64 / n, (gb - g.char_start) as f64 / n);
+            let (x0, x1) =
+                if g.rtl { (g.x + g.advance * (1.0 - f1), g.x + g.advance * (1.0 - f0)) } else { (g.x + g.advance * f0, g.x + g.advance * f1) };
+            match spans.last_mut() {
+                Some(last) if (x0 - last.1).abs() < 0.5 => last.1 = last.1.max(x1),
+                _ => spans.push((x0, x1)),
+            }
+        }
+        spans.into_iter().map(|(x0, x1)| Rect::new(x0, line.top, x1.max(x0 + 1.0), line.top + line.height)).collect()
     }
 
     /// All glyph outlines as one path (for outline/flatten and boolean ops).

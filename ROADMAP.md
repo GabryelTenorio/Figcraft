@@ -144,7 +144,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
-| Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
+| Text | 8 | 65% | visual caret movement in right-to-left runs, right-to-left layer names in the panels, text style picker depth, axis hover preview | 6–9 |
 | Components & variants | 9 | 60% | libraries, slots, nested override edge cases | 10–15 |
 | Styles & variables | 5 | 66% | aliasing UI, scoping, binding effects, line height and letter spacing | 4–7 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |

@@ -43,6 +43,7 @@ usvg = "0.48"
 krilla = "0.8"
 skrifa = "0.47"
 harfrust = "0.13"
+unicode-bidi = "0.3"
 linesweeper = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"

@@ -13,4 +13,5 @@ figcraft-geom = { workspace = true }
 figcraft-doc = { workspace = true }
 skrifa = { workspace = true }
 harfrust = { workspace = true }
+unicode-bidi = { workspace = true }
 log = { workspace = true }

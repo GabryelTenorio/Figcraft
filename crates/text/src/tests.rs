@@ -327,3 +327,60 @@ fn static_fonts_have_no_axes() {
     assert!(face.axis_values(&st).is_empty());
     assert!(face.coords(&[700.0]).is_empty());
 }
+
+#[test]
+fn bidi_visual_order_follows_levels() {
+    assert_eq!(crate::layout::visual_order(&[0, 0, 1, 1, 1, 0]), vec![0, 1, 4, 3, 2, 5]);
+    // A left-to-right run inside a right-to-left paragraph keeps its order.
+    assert_eq!(crate::layout::visual_order(&[1, 1, 2, 2, 1]), vec![4, 2, 3, 1, 0]);
+    assert_eq!(crate::layout::visual_order(&[0, 0, 0]), vec![0, 1, 2]);
+    assert!(crate::layout::visual_order(&[]).is_empty());
+    // Plain left-to-right text skips the analysis.
+    assert!(crate::layout::Bidi::of("Hello, world 123").is_none());
+    let b = crate::layout::Bidi::of("abc \u{5D0}\u{5D1}\u{5D2}\n\u{5D3} x").unwrap();
+    assert_eq!(b.levels.get(..4), Some(&[0, 0, 0, 0][..]));
+    assert!(b.levels.get(4..7).unwrap().iter().all(|l| l % 2 == 1));
+    // Paragraph direction comes from each paragraph's first strong char.
+    assert!(!b.rtl_para[0] && b.rtl_para[8]);
+}
+
+/// The x of the glyph for char `i`.
+fn glyph_x(l: &TextLayout, i: usize) -> f64 {
+    l.glyphs.iter().find(|g| g.char_start == i && g.char_end > i).map(|g| g.x).unwrap()
+}
+
+#[test]
+fn bidi_runs_lay_out_right_to_left() {
+    if !have_fonts() {
+        eprintln!("no fonts; skipping");
+        return;
+    }
+    // Hebrew inside an English line: its first letter is right of its last.
+    let mut t = TextData::new("abc \u{5D0}\u{5D1}\u{5D2}");
+    t.style.font_size = 20.0;
+    let l = layout(&t, None, None);
+    assert!(!l.lines[0].rtl);
+    assert!(glyph_x(&l, 2) < glyph_x(&l, 6), "Hebrew after the English");
+    assert!(glyph_x(&l, 4) > glyph_x(&l, 6), "א right of ג");
+    assert!(l.glyphs.iter().filter(|g| g.char_start >= 4).all(|g| g.rtl));
+    // Glyphs are stored left to right and don't overlap.
+    let xs: Vec<f64> = l.glyphs.iter().map(|g| g.x).collect();
+    assert!(xs.windows(2).all(|w| w[0] <= w[1] + 1e-6), "{xs:?}");
+
+    // A Hebrew paragraph with English inside: English sits on the left, in reading order.
+    let t = TextData::new("\u{5D0}\u{5D1}\u{5D2} abc");
+    let l = layout(&t, None, None);
+    assert!(l.lines[0].rtl);
+    assert!(glyph_x(&l, 4) < glyph_x(&l, 5) && glyph_x(&l, 6) < glyph_x(&l, 2));
+    assert!(glyph_x(&l, 0) > glyph_x(&l, 2));
+    // The caret starts at the right and ends at the left; clicks map back.
+    let right = l.glyphs.iter().map(|g| g.x + g.advance).fold(0.0, f64::max);
+    assert!((l.caret(0).0 - right).abs() < 1e-6, "{} vs {right}", l.caret(0).0);
+    assert!(l.caret(7).0 < glyph_x(&l, 2));
+    assert_eq!(l.hit(right + 50.0, 5.0), 0);
+    assert_eq!(l.hit(-50.0, 5.0), 4, "left of the English run: before 'a'");
+    // Selecting the Hebrew word highlights its glyphs only.
+    let r = l.selection_rects(0, 3);
+    assert_eq!(r.len(), 1);
+    assert!(r[0].x0 >= glyph_x(&l, 2) - 1e-6 && r[0].x1 <= right + 1e-6 && r[0].x0 > glyph_x(&l, 6));
+}
