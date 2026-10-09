@@ -250,6 +250,7 @@ fn device_rect(xf: Affine, r: Rect) -> Rect {
 }
 
 /// Local bounds a node paints into (its box grown by stroke/effect reach, plus unclipped children).
+/// Text that overflows its box counts where its glyphs are, so it isn't culled while visible.
 fn local_paint_bounds(doc: &Document, n: &Node, depth: usize) -> Rect {
     let reach = n.paint_reach();
     let mut r = n.local_rect().inflate(reach, reach);
@@ -266,8 +267,36 @@ fn local_paint_bounds(doc: &Document, n: &Node, depth: usize) -> Rect {
     // Text can overflow its box.
     if let NodeKind::Text(_) = n.kind {
         r = r.inflate(n.height.max(10.0), n.height.max(10.0) * 0.5);
+        if let Some((l, dy)) = figcraft_text::layout_node(n)
+            && let Some(ink) = l.ink_bounds()
+        {
+            r = r.union(ink + figcraft_geom::kurbo::Vec2::new(0.0, dy));
+        }
     }
     r
+}
+
+/// How far (document units) effects that read outside a node's paint bounds reach: blurs and
+/// drop shadows. Culling and partial renders keep this much margin.
+pub fn effect_margin(n: &Node) -> f64 {
+    n.effects
+        .iter()
+        .filter(|e| e.visible)
+        .map(|e| match &e.kind {
+            EffectKind::BackgroundBlur { radius } | EffectKind::LayerBlur { radius } => *radius * 2.0,
+            EffectKind::DropShadow(s) => s.radius * 2.0 + s.spread.abs() + s.offset.0.abs() + s.offset.1.abs(),
+            _ => 0.0,
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Everything node `id` can paint, in page coordinates: its paint bounds (glyphs of overflowing
+/// text included) grown by its effects' margin. What a change to the node can affect on screen.
+pub fn paint_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
+    let n = doc.node(id)?;
+    let m = effect_margin(n).abs();
+    let local = local_paint_bounds(doc, n, 0);
+    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), local).inflate(m, m))
 }
 
 fn needs_layer(n: &Node) -> bool {
@@ -299,16 +328,7 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     let local = local_paint_bounds(ctx.doc, n, 0);
     let dev = device_rect(xf, local);
     // Effects that read outside (blur) need a margin when culling.
-    let blur_margin = n
-        .effects
-        .iter()
-        .filter(|e| e.visible)
-        .map(|e| match &e.kind {
-            EffectKind::BackgroundBlur { radius } | EffectKind::LayerBlur { radius } => *radius * 2.0 * ctx.scale,
-            EffectKind::DropShadow(s) => (s.radius * 2.0 + s.spread.abs() + s.offset.0.abs() + s.offset.1.abs()) * ctx.scale,
-            _ => 0.0,
-        })
-        .fold(0.0, f64::max);
+    let blur_margin = effect_margin(n) * ctx.scale;
     let view = Rect::new(0.0, 0.0, f64::from(pw), f64::from(ph)).inflate(blur_margin, blur_margin);
     if dev.intersect(view).is_zero_area() && !(dev.width() == 0.0 || dev.height() == 0.0) {
         return;

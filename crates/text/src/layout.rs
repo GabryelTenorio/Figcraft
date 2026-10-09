@@ -625,6 +625,20 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
 }
 
 impl TextLayout {
+    /// A box (layout coordinates) holding everything the text paints: each glyph's advance box,
+    /// grown by half its size for ascenders, descenders and overhangs, plus decorations. None when
+    /// nothing is laid out.
+    pub fn ink_bounds(&self) -> Option<Rect> {
+        let lines = self.lines.iter().map(|l| (l, self.glyphs.get(l.glyph_start..l.glyph_end).unwrap_or(&[])));
+        let glyphs = lines.flat_map(|(l, gs)| {
+            gs.iter().map(move |g| {
+                let pad = g.size.abs() * 0.5;
+                Rect::new(g.x.min(g.x + g.advance) - pad, l.top - pad, g.x.max(g.x + g.advance) + pad, l.top + l.height + pad)
+            })
+        });
+        glyphs.chain(self.decorations.iter().map(|d| d.rect)).filter(|r| r.x0.is_finite() && r.y1.is_finite()).reduce(|a, b| a.union(b))
+    }
+
     /// The caret position (x, line index) before char `index`.
     pub fn caret(&self, index: usize) -> (f64, usize) {
         for (li, line) in self.lines.iter().enumerate() {

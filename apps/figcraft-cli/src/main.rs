@@ -22,7 +22,7 @@ USAGE:
   figcraft-cli run <script.json|script.jsonl> [--in <file>] [--out <file>]
   figcraft-cli commands [--json] [--filter TEXT]
   figcraft-cli mcp [--attach PORT]
-  figcraft-cli perf [--shapes N] [--frames N]
+  figcraft-cli perf [--layers N[,N...]]
   figcraft-cli help | --help | --version
 
 Files: .figcraft (native), .json (FigCraft JSON), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image
@@ -118,10 +118,9 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             mcp(a.value("attach").as_deref())
         }
         "perf" => {
-            let a = Args::parse(rest, &["shapes", "frames"], &[])?;
-            let shapes = a.usize("shapes", 20_000)?.clamp(1, 2_000_000);
-            let frames = a.usize("frames", 200)?.clamp(1, 100_000);
-            perf::run(shapes, frames)
+            let a = Args::parse(rest, &["layers"], &[])?;
+            let sizes: Vec<usize> = a.usizes("layers", &[1000, 10_000])?.into_iter().map(|n| n.clamp(10, 2_000_000)).collect();
+            perf::run(&sizes)
         }
         other => Err(CliError::Usage(format!("unknown subcommand `{other}`"))),
     }

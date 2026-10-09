@@ -87,9 +87,12 @@ machines.
 Serve MCP on stdio: headless by default, or attached to a running app started with
 `figcraft --control PORT`. See [mcp.md](mcp.md).
 
-### `perf [--shapes N] [--frames N]`
+### `perf [--layers N[,N...]]`
 
-Builds a synthetic document (default 20 000 shapes in 200 frames: rectangles, ellipses and text) and
-times building, a full-page render at 1x, 1920×1080 renders (zoomed in and zoom-to-fit), 10 000 hit
-tests, save/load, SVG export, `node.create` through the engine and select-all + move + undo. Use a
-release build for meaningful numbers.
+Builds synthetic documents of each size (default `1000,10000` layers: screens with an auto layout
+header, a card group, button instances and a grid of shapes and text) and prints a Markdown table of
+the hot paths: build + normalise, save/load, 1440×900 renders at 100% and zoomed to fit, hit testing
+and hover, single-layer edits through the engine (fill, move, text in auto layout, a main component
+with all its instances), undo/redo, a drag preview frame, `normalize` after a one-node edit,
+`document.inspect` and select-all + move. Use a release build for meaningful numbers;
+`cargo xtask bench` runs it at 1k/10k/50k layers together with the UI frame benchmarks.

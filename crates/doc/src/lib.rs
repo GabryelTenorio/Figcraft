@@ -193,6 +193,23 @@ impl Document {
         self.nodes.len()
     }
 
+    /// Ids of the nodes added, removed or changed (by value) since `before`, ascending, or `None`
+    /// when more than `limit` differ. Structure the two versions share is skipped, so comparing an
+    /// edit with the version it came from costs about the size of the edit, not of the document.
+    pub fn changed_ids(&self, before: &Document, limit: usize) -> Option<Vec<NodeId>> {
+        let mut out = Vec::new();
+        for d in before.nodes.diff(&self.nodes) {
+            if out.len() >= limit {
+                return None;
+            }
+            out.push(match d {
+                imbl::ordmap::DiffItem::Add(k, _) | imbl::ordmap::DiffItem::Remove(k, _) => *k,
+                imbl::ordmap::DiffItem::Update { new: (k, _), .. } => *k,
+            });
+        }
+        Some(out)
+    }
+
     /// Every node id (pages included), ascending.
     pub fn ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.nodes.keys().copied()
@@ -732,5 +749,7 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
     }
 }
 
+#[cfg(test)]
+mod diff_tests;
 #[cfg(test)]
 mod tests;

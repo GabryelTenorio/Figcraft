@@ -37,6 +37,9 @@ pub mod vector_panel;
 pub mod versions;
 pub mod widgets;
 
+#[cfg(test)]
+mod perf_tests;
+
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -430,7 +433,14 @@ impl FigApp {
             "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,
-            "canvas": {"rect": [self.canvas.rect.min.x, self.canvas.rect.min.y, self.canvas.rect.max.x, self.canvas.rect.max.y]},
+            "canvas": {
+                "rect": [self.canvas.rect.min.x, self.canvas.rect.min.y, self.canvas.rect.max.x, self.canvas.rect.max.y],
+                "renderWork": self.canvas.render_work.map(|w| match w {
+                    figcraft_render::Work::Reused => json!({"kind": "reused"}),
+                    figcraft_render::Work::Partial { pixels } => json!({"kind": "partial", "pixels": pixels}),
+                    figcraft_render::Work::Full => json!({"kind": "full"}),
+                }),
+            },
             "tool": self.session.tool_info(),
             "status": self.session.status(),
             "lastError": self.ui.last_error,

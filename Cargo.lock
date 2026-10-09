@@ -1307,6 +1307,7 @@ dependencies = [
  "figcraft-mcp",
  "figcraft-render",
  "figcraft-svg",
+ "figcraft-text",
  "serde_json",
 ]
 

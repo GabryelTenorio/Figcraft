@@ -1,10 +1,12 @@
 //! Canvas rendering off the UI thread (desktop) or inline (web). The latest request wins; the UI
 //! keeps showing the previous image, re-projected to the current view, until the new one arrives.
+//! The renderer keeps its last image ([`figcraft_render::Retained`]): a pan renders only the
+//! uncovered strips and an edit only the areas of the layers that changed.
 
 use std::sync::Arc;
 
 use figcraft_doc::{Document, NodeId};
-use figcraft_render::View;
+use figcraft_render::{Retained, View, Work};
 
 #[derive(Clone)]
 pub struct Job {
@@ -17,22 +19,26 @@ pub struct Job {
 }
 
 pub struct Done {
-    pub rgba: Vec<u8>,
+    /// The image, ready for a texture (converted off the UI thread).
+    pub image: egui::ColorImage,
+    /// The view the image shows (the requested one snapped outwards to whole device pixels).
     pub view: View,
     pub generation: u64,
     pub ms: f64,
+    pub work: Work,
 }
 
-fn run(job: &Job) -> Option<Done> {
+fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     #[cfg(not(target_arch = "wasm32"))]
     let t0 = std::time::Instant::now();
     let opts = figcraft_render::Options { outline_mode: job.outline, skip: job.skip.clone(), ..Default::default() };
-    let pix = figcraft_render::render_view(&job.doc, job.page, &job.view, &opts)?;
+    let (view, pix, work) = retained.render(&job.doc, job.page, &job.view, &opts)?;
+    let image = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
     #[cfg(not(target_arch = "wasm32"))]
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     #[cfg(target_arch = "wasm32")]
     let ms = 0.0;
-    Some(Done { rgba: pix.data().to_vec(), view: job.view.clone(), generation: job.generation, ms })
+    Some(Done { image, view, generation: job.generation, ms, work })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -48,13 +54,22 @@ impl Worker {
         let (tx, jobs) = std::sync::mpsc::channel::<Job>();
         let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
         let spawned = std::thread::Builder::new().name("figcraft-render".into()).spawn(move || {
+            let mut retained = Retained::default();
             while let Ok(mut job) = jobs.recv() {
                 // Skip to the newest queued job.
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
-                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&job)));
-                if let Ok(Some(d)) = res
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&job, &mut retained)));
+                let done = match res {
+                    Ok(d) => d,
+                    Err(_) => {
+                        // Don't build on an image a panic may have left half drawn.
+                        retained.clear();
+                        None
+                    }
+                };
+                if let Some(d) = done
                     && done_tx.send(d).is_err()
                 {
                     break;
@@ -89,13 +104,14 @@ impl Worker {
 #[cfg(target_arch = "wasm32")]
 pub struct Worker {
     pending: Option<Job>,
+    retained: Retained,
     pub in_flight: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Worker {
     pub fn new(_ctx: egui::Context) -> Self {
-        Self { pending: None, in_flight: false }
+        Self { pending: None, retained: Retained::default(), in_flight: false }
     }
     pub fn submit(&mut self, job: Job) {
         self.pending = Some(job);
@@ -104,11 +120,11 @@ impl Worker {
     pub fn poll(&mut self) -> Option<Done> {
         let job = self.pending.take()?;
         self.in_flight = false;
-        run(&job)
+        run(&job, &mut self.retained)
     }
 }
 
-/// Render synchronously (tests, screenshots).
+/// Render synchronously from scratch (tests, screenshots).
 pub fn render_now(job: &Job) -> Option<Done> {
-    run(job)
+    run(job, &mut Retained::default())
 }

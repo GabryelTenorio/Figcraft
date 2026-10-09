@@ -60,7 +60,9 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 ### `ui.inspect {}`
 
-UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings.
+UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings (`frameMs`,
+`renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
+the `pixels` re-rendered after a pan or an edit, or `reused`).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 

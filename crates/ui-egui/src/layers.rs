@@ -1,5 +1,8 @@
 //! The left panel: file header, File/Assets tabs, pages and the layers tree.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use serde_json::json;
@@ -240,13 +243,51 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     crate::widgets::separator(ui);
 }
 
-struct Row {
-    id: NodeId,
+#[derive(Clone)]
+pub(crate) struct Row {
+    pub(crate) id: NodeId,
     depth: usize,
     has_kids: bool,
 }
 
-fn collect(doc: &Document, id: NodeId, depth: usize, expanded: &std::collections::BTreeSet<NodeId>, out: &mut Vec<Row>) {
+/// The layer rows of the last frame and what they were built from, so a frame where neither the
+/// document, the page, the expanded set nor the filter changed doesn't walk the tree again.
+#[derive(Clone, Default)]
+struct RowCache {
+    doc: Option<Arc<Document>>,
+    page: Option<NodeId>,
+    expanded: u64,
+    filter: String,
+    rows: Arc<Vec<Row>>,
+}
+
+fn hash_expanded(expanded: &BTreeSet<NodeId>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    expanded.hash(&mut h);
+    h.finish()
+}
+
+/// The rows to list: the expanded tree, or the layers matching `filter` (lowercase).
+pub(crate) fn rows_for(ui: &Ui, doc: &Arc<Document>, page: NodeId, expanded: &BTreeSet<NodeId>, filter: &str) -> Arc<Vec<Row>> {
+    let ex = if filter.is_empty() { hash_expanded(expanded) } else { 0 };
+    ui.data_mut(|d| {
+        let c = d.get_temp_mut_or_default::<RowCache>(Id::new("layer_rows"));
+        let fresh = c.doc.as_ref().is_some_and(|d| Arc::ptr_eq(d, doc)) && c.page == Some(page) && c.expanded == ex && c.filter == filter;
+        if !fresh {
+            let mut rows = Vec::new();
+            if filter.is_empty() {
+                collect(doc, page, 0, expanded, &mut rows);
+            } else {
+                matching(doc, page, filter, &mut rows);
+            }
+            *c = RowCache { doc: Some(doc.clone()), page: Some(page), expanded: ex, filter: filter.to_string(), rows: Arc::new(rows) };
+        }
+        c.rows.clone()
+    })
+}
+
+fn collect(doc: &Document, id: NodeId, depth: usize, expanded: &BTreeSet<NodeId>, out: &mut Vec<Row>) {
     let Some(n) = doc.node(id) else { return };
     // Layers panel lists top of the stack first.
     for c in n.children.iter().rev() {
@@ -275,7 +316,7 @@ fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
 }
 
 /// Expand or collapse `id` and everything inside it (Alt-click on a disclosure triangle).
-fn set_expanded_deep(doc: &Document, id: NodeId, open: bool, expanded: &mut std::collections::BTreeSet<NodeId>) {
+fn set_expanded_deep(doc: &Document, id: NodeId, open: bool, expanded: &mut BTreeSet<NodeId>) {
     let mut stack = vec![id];
     while let Some(n) = stack.pop() {
         if open {
@@ -356,13 +397,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         app.ui.layers_seen_sel = sel.clone();
     }
     let filter = app.ui.layer_filter.trim().to_lowercase();
-    let mut rows = Vec::new();
-    if filter.is_empty() {
-        collect(&doc, page, 0, &app.ui.expanded, &mut rows);
-    } else {
-        matching(&doc, page, &filter, &mut rows);
-    }
-    let scroll_to = if reveal { sel.first().copied() } else { None };
+    let rows = rows_for(ui, &doc, page, &app.ui.expanded, &filter);
+    let scroll_to = if reveal { sel.first().and_then(|s| rows.iter().position(|r| r.id == *s)) } else { None };
     let mut clicked: Option<(NodeId, egui::Modifiers)> = None;
     let mut toggle: Option<NodeId> = None;
     let mut deep: Option<(NodeId, bool)> = None;
@@ -373,7 +409,15 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     let mut hovered_row: Option<NodeId> = None;
     let drag_id = Id::new("layer_drag");
     let mut drop: Option<(NodeId, i8)> = None;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+    // Only the rows in view are laid out and drawn; the rest is empty scroll space.
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
+        let pitch = ROW + ui.spacing().item_spacing.y;
+        let top = ui.max_rect().top();
+        let total = rows.len() as f32 * pitch;
+        ui.set_height(total.max(viewport.height()));
+        if let Some(i) = scroll_to {
+            ui.scroll_to_rect(Rect::from_min_size(pos2(ui.max_rect().left(), top + i as f32 * pitch), vec2(w, ROW)), None);
+        }
         if rows.is_empty() {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -383,12 +427,16 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             });
         }
         let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
-        for (ri, row) in rows.iter().enumerate() {
+        let first = ((viewport.min.y / pitch).floor().max(0.0) as usize).min(rows.len());
+        let last = ((viewport.max.y / pitch).ceil().max(0.0) as usize).saturating_add(1).min(rows.len());
+        let band = Rect::from_x_y_ranges(ui.max_rect().x_range(), (top + first as f32 * pitch)..=(top + last as f32 * pitch));
+        let mut band_ui = ui.new_child(egui::UiBuilder::new().max_rect(band));
+        // Stable widget ids for a row wherever the list is scrolled.
+        band_ui.skip_ahead_auto_ids(first);
+        let ui = &mut band_ui;
+        for (ri, row) in rows.iter().enumerate().take(last).skip(first) {
             let Some(n) = doc.node(row.id) else { continue };
             let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click_and_drag());
-            if scroll_to == Some(row.id) {
-                ui.scroll_to_rect(r, None);
-            }
             let selected = sel.contains(&row.id);
             let in_selected = !selected && doc.ancestors(row.id).iter().any(|a| sel.contains(a));
             let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. });
@@ -533,12 +581,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             }
         }
         // Empty space below clears selection.
-        let rest = ui.available_rect_before_wrap();
-        if rest.height() > 0.0 {
-            let resp = ui.allocate_rect(rest, Sense::click());
-            if resp.clicked() {
-                app.run("select.none", json!({}));
-            }
+        let rest = Rect::from_x_y_ranges(band.x_range(), (top + total)..=(top + total.max(viewport.max.y)));
+        if rest.height() > 0.0 && ui.interact(rest, Id::new("layers_empty_space"), Sense::click()).clicked() {
+            app.run("select.none", json!({}));
         }
     });
     if ui.input(|i| i.pointer.any_released()) {

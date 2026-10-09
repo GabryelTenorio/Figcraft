@@ -71,10 +71,14 @@ impl Args {
         }
     }
 
-    pub fn usize(&self, k: &str, default: usize) -> CliResult<usize> {
+    /// A comma-separated list of whole numbers (`--layers 1000,10_000`).
+    pub fn usizes(&self, k: &str, default: &[usize]) -> CliResult<Vec<usize>> {
         match self.values.get(k) {
-            None => Ok(default),
-            Some(s) => s.replace('_', "").parse::<usize>().map_err(|_| CliError::Usage(format!("--{k} must be a whole number, got `{s}`"))),
+            None => Ok(default.to_vec()),
+            Some(s) => s
+                .split(',')
+                .map(|v| v.trim().replace('_', "").parse::<usize>().map_err(|_| CliError::Usage(format!("--{k} must be whole numbers, got `{s}`"))))
+                .collect(),
         }
     }
 }

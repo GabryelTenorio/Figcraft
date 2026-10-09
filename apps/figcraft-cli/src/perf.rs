@@ -1,161 +1,269 @@
-//! `figcraft-cli perf`: a synthetic large document and timings of the hot paths.
+//! `figcraft-cli perf`: synthetic large documents and timings of the hot paths.
+//!
+//! The documents come from [`figcraft_engine::synthetic`] (screens with an auto layout header, a
+//! card group, button instances and a grid of shapes and text). Every row is the mean of several
+//! runs; use a release build for meaningful numbers (`cargo xtask bench`).
 
 use std::process::ExitCode;
 use std::time::Instant;
 
-use figcraft_doc::color::{Color, Paint};
 use figcraft_doc::geom::Point;
 use figcraft_doc::{Document, NodeId, NodeKind};
+use figcraft_engine::{PointerEvent, PointerKind, Session, ViewState};
 use serde_json::json;
 
 use crate::{CliError, CliResult};
 
-const FRAME_W: f64 = 400.0;
-const FRAME_H: f64 = 300.0;
-const GAP: f64 = 100.0;
-
-/// `shapes` layers spread over `frames` frames in a grid; every tenth layer is text.
-pub fn build(shapes: usize, frames: usize) -> CliResult<(Document, NodeId)> {
-    let mut doc = Document::new("Perf");
-    let page = doc.first_page().ok_or_else(|| CliError::Failed("new document has no page".into()))?;
-    let cols = (frames as f64).sqrt().ceil().max(1.0) as usize * 2;
-    let per = shapes.div_ceil(frames).max(1);
-    let grid = (per as f64).sqrt().ceil().max(1.0) as usize;
-    let (cw, ch) = (FRAME_W / grid as f64, FRAME_H / grid as f64);
-    let mut made = 0usize;
-    let err = |e: figcraft_doc::DocError| CliError::Failed(e.to_string());
-    for f in 0..frames {
-        let (fx, fy) = ((f % cols) as f64 * (FRAME_W + GAP), (f / cols) as f64 * (FRAME_H + GAP));
-        let frame = doc.create(page, NodeKind::Frame, &format!("Frame {}", f + 1), fx, fy, FRAME_W, FRAME_H).map_err(err)?;
-        if let Some(n) = doc.node_mut(frame) {
-            n.fills = vec![Paint::solid(Color::WHITE)];
-        }
-        for k in 0..per {
-            if made >= shapes {
-                break;
-            }
-            let (x, y) = ((k % grid) as f64 * cw + 2.0, (k / grid) as f64 * ch + 2.0);
-            let hue = (made % 360) as f32 / 360.0;
-            let (kind, name) = match made % 10 {
-                0 => {
-                    let (mut kind, _) = figcraft_engine::cmd::create::kind_for("text").ok_or_else(|| CliError::Failed("no text kind".into()))?;
-                    if let NodeKind::Text(t) = &mut kind {
-                        t.characters = format!("Item {made}");
-                    }
-                    (kind, "Text")
-                }
-                1 | 4 | 7 => (figcraft_engine::cmd::create::kind_for("ellipse").map(|k| k.0).unwrap_or(NodeKind::Rectangle), "Ellipse"),
-                _ => (NodeKind::Rectangle, "Rectangle"),
-            };
-            let id = doc.create(frame, kind, name, x, y, (cw - 4.0).max(1.0), (ch - 4.0).max(1.0)).map_err(err)?;
-            if let Some(n) = doc.node_mut(id)
-                && name != "Text"
-            {
-                n.fills = vec![Paint::solid(Color::new(hue, 0.5, 1.0 - hue, 1.0))];
-                n.corners.radii = [4.0; 4];
-            }
-            made += 1;
-        }
-    }
-    Ok((doc, page))
-}
+/// Canvas size of the measured viewport (a typical laptop window).
+const VIEW_W: u32 = 1440;
+const VIEW_H: u32 = 900;
 
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
 
-pub fn run(shapes: usize, frames: usize) -> CliResult<ExitCode> {
-    let mut rows: Vec<(String, f64, String)> = Vec::new();
-
+/// Mean milliseconds of `n` runs of `f`.
+fn mean(n: usize, mut f: impl FnMut(usize)) -> f64 {
     let t = Instant::now();
-    let (doc, page) = build(shapes, frames)?;
-    rows.push(("build document (doc API)".into(), ms(t), format!("{} nodes", doc.node_count())));
+    for i in 0..n {
+        f(i);
+    }
+    ms(t) / n.max(1) as f64
+}
 
-    let bounds = doc.page_content_bounds(page).ok_or_else(|| CliError::Failed("empty page".into()))?;
-    let t = Instant::now();
-    let full = crate::files::render_page(&doc, page, 1.0)?;
-    rows.push(("render full page @1x".into(), ms(t), format!("{}×{} px", full.width(), full.height())));
-    drop(full);
+/// Set when a measured command fails (the numbers would be meaningless).
+static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    let view = figcraft_render::View { origin: (bounds.x0 + 200.0, bounds.y0 + 150.0), scale: 2.0, width: 1920, height: 1080 };
-    let t = Instant::now();
-    let mut n = 0;
-    for _ in 0..5 {
-        if figcraft_render::render_view(&doc, page, &view, &Default::default()).is_some() {
-            n += 1;
+fn exec(s: &mut Session, id: &str, p: serde_json::Value) {
+    if let Err(e) = s.execute(id, &p) {
+        eprintln!("{id}: {e}");
+        FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+fn failed(e: impl std::fmt::Display) -> CliError {
+    CliError::Failed(e.to_string())
+}
+
+/// The `k`-th layer of `kind` among the descendants of `root` (pre-order).
+fn find(doc: &Document, root: NodeId, k: usize, pred: impl Fn(&figcraft_doc::Node) -> bool) -> Option<NodeId> {
+    doc.subtree(root).into_iter().filter(|i| doc.node(*i).is_some_and(&pred)).nth(k)
+}
+
+fn render(doc: &Document, page: NodeId, v: &ViewState) -> bool {
+    let (ox, oy) = v.origin();
+    let view = figcraft_render::View { origin: (ox, oy), scale: v.zoom, width: VIEW_W, height: VIEW_H };
+    figcraft_render::render_view(doc, page, &view, &Default::default()).is_some()
+}
+
+/// Render `v` panned right by `dx` page units through the retained renderer.
+fn retained(r: &mut figcraft_render::Retained, doc: &std::sync::Arc<Document>, page: NodeId, v: &ViewState, dx: f64) -> bool {
+    let (ox, oy) = v.origin();
+    let view = figcraft_render::View { origin: (ox + dx, oy), scale: v.zoom, width: VIEW_W, height: VIEW_H };
+    r.render(doc, page, &view, &Default::default()).is_some()
+}
+
+struct Table {
+    rows: Vec<(String, Vec<f64>)>,
+}
+
+impl Table {
+    fn put(&mut self, col: usize, name: &str, v: f64) {
+        let i = match self.rows.iter().position(|r| r.0 == name) {
+            Some(i) => i,
+            None => {
+                self.rows.push((name.to_string(), Vec::new()));
+                self.rows.len() - 1
+            }
+        };
+        if let Some(r) = self.rows.get_mut(i) {
+            r.1.resize(col + 1, f64::NAN);
+            if let Some(c) = r.1.get_mut(col) {
+                *c = v;
+            }
         }
     }
-    rows.push(("render 1920×1080 view @2x (avg of 5)".into(), ms(t) / f64::from(n.max(1)), "zoomed into the first frames".into()));
+}
 
-    let fit = figcraft_render::View {
-        origin: (bounds.x0, bounds.y0),
-        scale: (1920.0 / bounds.width()).min(1080.0 / bounds.height()),
-        width: 1920,
-        height: 1080,
-    };
+/// Measure one document size into column `col`.
+fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
     let t = Instant::now();
-    let _ = figcraft_render::render_view(&doc, page, &fit, &Default::default());
-    rows.push(("render 1920×1080 zoom-to-fit".into(), ms(t), format!("scale {:.3}", fit.scale)));
-
-    let hits = 10_000;
-    let mut found = 0;
-    let t = Instant::now();
-    for i in 0..hits {
-        let fx = (i * 7919 % 1000) as f64 / 1000.0;
-        let fy = (i * 104_729 % 1000) as f64 / 1000.0;
-        let p = Point::new(bounds.x0 + bounds.width() * fx, bounds.y0 + bounds.height() * fy);
-        if doc.hit_test(page, p, 1.0).is_some() {
-            found += 1;
-        }
-    }
-    let total = ms(t);
-    rows.push((format!("hit test ×{hits}"), total, format!("{:.1} µs each, {found} hits", total * 1000.0 / hits as f64)));
+    let (doc, page) = figcraft_engine::synthetic::large_document(layers).map_err(failed)?;
+    table.put(col, "build + normalize (like open)", ms(t));
 
     let t = Instant::now();
-    let bytes = figcraft_format::save_bytes(&doc, None).map_err(|e| CliError::Failed(e.to_string()))?;
-    rows.push(("save .figcraft".into(), ms(t), format!("{:.1} MB", bytes.len() as f64 / 1e6)));
+    let bytes = figcraft_format::save_bytes(&doc, None).map_err(failed)?;
+    table.put(col, "save .figcraft", ms(t));
     let t = Instant::now();
-    let (back, _) = figcraft_format::load_bytes(&bytes).map_err(|e| CliError::Failed(e.to_string()))?;
-    rows.push(("load .figcraft".into(), ms(t), format!("{} nodes", back.node_count())));
+    let (back, _) = figcraft_format::load_bytes(&bytes).map_err(failed)?;
+    table.put(col, "load .figcraft", ms(t));
     drop(back);
 
-    let kids = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
-    let t = Instant::now();
-    let svg = figcraft_svg::export_svg(&doc, &kids, &Default::default()).unwrap_or_default();
-    rows.push(("export page as SVG".into(), ms(t), format!("{:.1} MB", svg.len() as f64 / 1e6)));
-    drop(svg);
+    // Rendering a 1440×900 viewport: 100% on the first screen, and zoomed out to fit the page.
+    let bounds = doc.page_content_bounds(page).ok_or_else(|| failed("empty page"))?;
+    let mut at100 = ViewState { vw: f64::from(VIEW_W), vh: f64::from(VIEW_H), ..Default::default() };
+    at100.cx = f64::from(VIEW_W) / 2.0;
+    at100.cy = f64::from(VIEW_H) / 2.0;
+    table.put(col, "render 1440×900 @100%", mean(5, |_| _ = render(&doc, page, &at100)));
+    let mut fit = at100.clone();
+    fit.fit(bounds, 1.0);
+    table.put(col, "render 1440×900 zoomed to fit", mean(3, |_| _ = render(&doc, page, &fit)));
 
-    // Command throughput through the engine (undo snapshots included).
-    let mut s = figcraft_engine::Session::with_document(doc);
-    let first = kids.first().copied();
-    let t = Instant::now();
-    let cmds = 200;
-    let mut ok = 0;
-    for i in 0..cmds {
-        ok +=
-            usize::from(s.execute("node.create", &json!({"type": "rectangle", "parent": first, "x": i, "y": i, "width": 10, "height": 10})).is_ok());
+    // The canvas keeps its last image: a pan renders the uncovered strips, an edit the layers'
+    // areas.
+    let doc = std::sync::Arc::new(doc);
+    let pans = 10;
+    // Zoomed out, but with content right up to the edges (a fitted page has margins).
+    let mut out = fit.clone();
+    out.zoom *= 2.0;
+    table.put(col, "render 1440×900 zoomed out (2× fit)", mean(3, |_| _ = render(&doc, page, &out)));
+    for (name, v) in [("pan 40 px @100% (retained)", &at100), ("pan 40 px zoomed out (retained)", &out)] {
+        let mut r = figcraft_render::Retained::default();
+        let _ = retained(&mut r, &doc, page, v, 0.0);
+        table.put(col, name, mean(pans, |i| _ = retained(&mut r, &doc, page, v, if i % 2 == 0 { 40.0 / v.zoom } else { 0.0 })));
     }
-    let total = ms(t);
-    rows.push((format!("node.create ×{cmds} via Session::execute"), total, format!("{:.2} ms each, {ok} ok", total / f64::from(cmds))));
-    let _ = s.execute("select.none", &json!({}));
-    let t = Instant::now();
-    let _ = s.execute("select.all", &json!({}));
-    let _ = s.execute("transform.move", &json!({"dx": 10, "dy": 0}));
-    rows.push(("select all + move top-level frames".into(), ms(t), format!("{} selected", s.selection().len())));
-    let t = Instant::now();
-    let _ = s.undo();
-    rows.push(("undo".into(), ms(t), String::new()));
+    for (name, v) in [("move one layer, re-render @100% (retained)", &at100), ("move one layer, re-render zoomed out (retained)", &out)] {
+        // A shape in the screen nearest the view's centre.
+        let centre = Point::new(v.cx, v.cy);
+        let screens = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
+        let nearest =
+            screens.into_iter().filter_map(|c| doc.world_bounds(c).map(|b| (c, (b.center() - centre).hypot2()))).min_by(|a, b| a.1.total_cmp(&b.1));
+        let target = nearest.and_then(|(c, _)| doc.node(c)?.children.last().copied()).ok_or_else(|| failed("no screen to edit"))?;
+        let moved: Vec<std::sync::Arc<Document>> = (0..2)
+            .map(|k| {
+                let mut d = (*doc).clone();
+                if let Some(n) = d.node_mut(target) {
+                    n.transform = figcraft_doc::geom::Affine::translate((f64::from(k) * 6.0, 0.0)) * n.transform;
+                }
+                std::sync::Arc::new(d)
+            })
+            .collect();
+        let mut r = figcraft_render::Retained::default();
+        let _ = retained(&mut r, &doc, page, v, 0.0);
+        table.put(col, name, mean(10, |i| _ = moved.get(i % 2).map(|d| retained(&mut r, d, page, v, 0.0))));
+    }
+    let doc = std::sync::Arc::unwrap_or_clone(doc);
 
+    // Hit testing (a hover under the pointer).
+    let hits = 2000;
+    let pt = |i: usize| {
+        let (fx, fy) = ((i * 7919 % 1000) as f64 / 1000.0, (i * 104_729 % 1000) as f64 / 1000.0);
+        Point::new(bounds.x0 + bounds.width() * fx, bounds.y0 + bounds.height() * fy)
+    };
+    table.put(col, "hit test (µs each)", mean(hits, |i| _ = doc.hit_test(page, pt(i), 1.0)) * 1000.0);
+
+    let mut s = Session::with_document(doc);
+    let doc = s.doc().map_err(failed)?.clone();
+    let rect =
+        find(&doc, page, layers / 2 / 50, |n| matches!(n.kind, NodeKind::Rectangle) && n.name == "Rectangle").ok_or_else(|| failed("no rect"))?;
+    let title = find(&doc, page, 0, |n| n.name == "Title").ok_or_else(|| failed("no title"))?;
+    let button = find(&doc, page, 0, |n| matches!(n.kind, NodeKind::Component { .. })).ok_or_else(|| failed("no component"))?;
+    let button_bg = doc.node(button).and_then(|b| b.children.first().copied()).ok_or_else(|| failed("no button layers"))?;
+
+    // Hover with the Move tool: hit test + select target, as the canvas does per pointer move.
+    let zoom = at100.zoom;
+    table.put(
+        col,
+        "hover pointer move (µs each)",
+        mean(hits, |i| {
+            let p = pt(i);
+            let ev =
+                PointerEvent { kind: PointerKind::Hover, x: p.x, y: p.y, sx: 0.0, sy: 0.0, shift: false, alt: false, cmd: false, ctrl: false, zoom };
+            let _ = s.pointer(&ev);
+        }) * 1000.0,
+    );
+
+    // Single-layer edits through the engine (command + normalize + undo step).
+    let colors = ["#FF0000", "#00FF00"];
+    table.put(col, "node.set fill on one layer", mean(20, |i| exec(&mut s, "node.set", json!({"ids": [rect], "fill": colors[i % 2]}))));
+    exec(&mut s, "select.set", json!({"ids": [rect]}));
+    table.put(col, "transform.move one layer", mean(20, |i| exec(&mut s, "transform.move", json!({"dx": if i % 2 == 0 { 1 } else { -1 }, "dy": 0}))));
+    table.put(
+        col,
+        "edit text in an auto layout frame",
+        mean(20, |i| exec(&mut s, "node.set", json!({"ids": [title], "characters": format!("Title {i}")}))),
+    );
+    table.put(
+        col,
+        "edit main component (all instances follow)",
+        mean(5, |i| exec(&mut s, "node.set", json!({"ids": [button_bg], "fill": colors[i % 2]}))),
+    );
+    table.put(col, "undo", mean(10, |_| _ = s.undo()));
+    table.put(col, "redo", mean(10, |_| _ = s.redo()));
+
+    // A drag: every pointer move re-applies the move to the gesture's snapshot.
+    exec(&mut s, "select.set", json!({"ids": [rect]}));
+    let _ = s.begin_interaction("Move");
+    table.put(
+        col,
+        "drag preview frame (one layer)",
+        mean(20, |i| {
+            let _ = s.preview(|d, sel| {
+                for id in sel.iter() {
+                    if let Some(n) = d.node_mut(*id) {
+                        n.transform = figcraft_doc::geom::Affine::translate((i as f64, 0.0)) * n.transform;
+                    }
+                }
+                Ok(())
+            });
+        }),
+    );
+    let _ = s.commit_interaction();
+
+    // Raw normalisation after a one-node edit (no command machinery).
+    let before = s.doc().map_err(failed)?.clone();
+    table.put(
+        col,
+        "normalize after a one-node edit",
+        mean(50, |i| {
+            let mut d = before.clone();
+            if let Some(n) = d.node_mut(rect) {
+                n.opacity = if i % 2 == 0 { 0.5 } else { 1.0 };
+            }
+            figcraft_engine::normalize(&mut d, &before);
+        }),
+    );
+
+    table.put(col, "document.inspect (depth 8)", mean(3, |_| _ = figcraft_engine::inspect::document(&s, 8, false)));
+    exec(&mut s, "select.none", json!({}));
+    let t = Instant::now();
+    exec(&mut s, "select.all", json!({}));
+    exec(&mut s, "transform.move", json!({"dx": 10, "dy": 0}));
+    table.put(col, "select all + move every screen", ms(t));
+    Ok(())
+}
+
+/// Time the hot paths for each document size in `sizes` (layers) and print a table.
+pub fn run(sizes: &[usize]) -> CliResult<ExitCode> {
+    // Text renders with system fonts too, like the desktop app.
+    figcraft_text::scan_system_fonts();
+    let mut table = Table { rows: Vec::new() };
+    for (col, n) in sizes.iter().enumerate() {
+        eprintln!("measuring {n} layers…");
+        measure(&mut table, col, *n)?;
+    }
+    if FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(failed("a measured command failed"));
+    }
     println!(
-        "figcraft perf — {shapes} shapes in {frames} frames ({} {})",
+        "figcraft perf ({} {}; ms unless noted; mean of several runs)",
         std::env::consts::OS,
         if cfg!(debug_assertions) { "debug build" } else { "release build" }
     );
-    let w = rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(10);
-    println!("{:<w$}  {:>10}  notes", "operation", "ms");
-    println!("{}", "-".repeat(w + 30));
-    for (name, t, note) in rows {
-        println!("{name:<w$}  {t:>10.1}  {note}");
+    let w = table.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(10);
+    let mut head = format!("| {:<w$} |", "operation");
+    let mut rule = format!("|{}|", "-".repeat(w + 2));
+    for n in sizes {
+        head.push_str(&format!(" {:>10} |", format!("{n} layers")));
+        rule.push_str(&format!("{}:|", "-".repeat(11)));
+    }
+    println!("{head}\n{rule}");
+    for (name, vals) in &table.rows {
+        let mut line = format!("| {name:<w$} |");
+        for v in vals {
+            line.push_str(&format!(" {:>10} |", if v.is_finite() { format!("{v:.2}") } else { "-".into() }));
+        }
+        println!("{line}");
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -163,10 +271,21 @@ pub fn run(shapes: usize, frames: usize) -> CliResult<ExitCode> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn builds_the_requested_size() {
-        let (doc, page) = super::build(1000, 10).unwrap();
-        assert_eq!(doc.node(page).unwrap().children.len(), 10);
-        // page + 10 frames + 1000 shapes
-        assert_eq!(doc.node_count(), 1 + 10 + 1000);
+    fn layer_sizes_parse_as_a_list() {
+        use crate::args::Args;
+        let argv = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let a = Args::parse(&argv(&["--layers", "1000,10_000, 50000"]), &["layers"], &[]).unwrap();
+        assert_eq!(a.usizes("layers", &[1]).unwrap(), vec![1000, 10_000, 50_000]);
+        assert_eq!(Args::parse(&[], &["layers"], &[]).unwrap().usizes("layers", &[7]).unwrap(), vec![7]);
+        let bad = Args::parse(&argv(&["--layers", "10,x"]), &["layers"], &[]).unwrap();
+        assert!(bad.usizes("layers", &[1]).is_err());
+    }
+
+    #[test]
+    fn measures_a_small_document() {
+        let mut t = super::Table { rows: Vec::new() };
+        super::measure(&mut t, 0, 300).unwrap();
+        assert!(t.rows.len() > 10);
+        assert!(t.rows.iter().all(|r| r.1.len() == 1 && r.1[0].is_finite()), "{:?}", t.rows);
     }
 }

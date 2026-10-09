@@ -82,8 +82,15 @@ dimension measured side by side.
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel);
    previews on the canvas and autosave checkpoints are missing. Multiplayer and plugins are not
    started. 25–55 h.
-9. **Hardening and performance**: real-world file corpus, perf budgets at 50k layers (tile cache,
-   incremental re-render), Windows/Linux/browser QA, accessibility. 40–60 h.
+9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
+   pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
+   re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
+   in ~0.2 ms instead of ~8 ms (0.8 vs 24 ms at 50k zoomed out), a 40 px pan in ~0.7 ms instead of
+   ~7.5 ms. The layers panel lays out only the rows in view (every screen expanded at 50k: 39 →
+   0.6 ms a frame); text layouts are shared instead of re-formatted per lookup; overflowing text is
+   culled by its glyphs. At 10k: full 1440×900 renders 7–15 ms, single-layer edits ~10 µs, hit
+   tests ~26 µs. *Left:* zoomed-out renders at 50k (~40 ms: tiles or levels of detail), save/load
+   at 50k (~0.7 s each), a real-world file corpus, Windows/Linux/browser QA, accessibility. 40–60 h.
 
 ### Where we're going
 

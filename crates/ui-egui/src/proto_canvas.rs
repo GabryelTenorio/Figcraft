@@ -2,6 +2,8 @@
 //! act on, a "+" connection handle on selected layers that drags out a new Navigate interaction,
 //! and clicking a noodle to edit its interaction.
 
+use std::sync::Arc;
+
 use egui::{Color32, CornerRadius, Id, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
 use figcraft_doc::{Document, NodeId};
 use serde_json::{Value, json};
@@ -49,13 +51,30 @@ fn curve_between(a: Rect, b: Rect) -> [Pos2; 4] {
     [p0, p0 + vec2(dx, 0.0), p3 - vec2(dx, 0.0), p3]
 }
 
-fn noodles(app: &FigApp, doc: &Document, page: NodeId) -> Vec<Noodle> {
-    let mut out = Vec::new();
-    for id in doc.subtree(page) {
-        let Some(n) = doc.node(id) else { continue };
-        if n.interactions.is_empty() {
-            continue;
+/// The layers on `page` with interactions, in tree order, found once per document version (the
+/// tab redraws every frame; walking a large page each time would cost milliseconds).
+#[derive(Clone, Default)]
+struct Sources {
+    doc: Option<Arc<Document>>,
+    page: Option<NodeId>,
+    ids: Arc<Vec<NodeId>>,
+}
+
+pub(crate) fn sources(ctx: &egui::Context, doc: &Arc<Document>, page: NodeId) -> Arc<Vec<NodeId>> {
+    ctx.data_mut(|d| {
+        let c = d.get_temp_mut_or_default::<Sources>(Id::new("proto_canvas_sources"));
+        if !(c.doc.as_ref().is_some_and(|d| Arc::ptr_eq(d, doc)) && c.page == Some(page)) {
+            let ids = doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| !n.interactions.is_empty())).collect();
+            *c = Sources { doc: Some(doc.clone()), page: Some(page), ids: Arc::new(ids) };
         }
+        c.ids.clone()
+    })
+}
+
+fn noodles(app: &FigApp, ctx: &egui::Context, doc: &Arc<Document>, page: NodeId) -> Vec<Noodle> {
+    let mut out = Vec::new();
+    for &id in sources(ctx, doc, page).iter() {
+        let Some(n) = doc.node(id) else { continue };
         let Some(from) = screen_rect(app, doc, id) else { continue };
         for (k, it) in n.interactions.iter().enumerate() {
             let Some(dest) = it.actions.iter().find_map(|a| a.dest()) else { continue };
@@ -136,7 +155,7 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
     let open = crate::proto_panel::editor(ctx);
     let hover = ctx.input(|i| i.pointer.hover_pos());
     let dragging: Option<Drag> = ctx.data(|d| d.get_temp(drag_id()));
-    for nd in noodles(app, doc, page) {
+    for nd in noodles(app, ctx, doc, page) {
         let selected = sel.contains(&nd.source);
         let is_open = open == Some((nd.source, nd.index));
         let near = dragging.is_none() && hover.is_some_and(|q| bezier_distance(&nd.pts, q) < 5.0);
@@ -239,7 +258,7 @@ pub fn input(app: &mut FigApp, ui: &egui::Ui, resp: &egui::Response) -> bool {
         ctx.data_mut(|m| m.insert_temp(drag_id(), Drag { source, from, pos }));
         return true;
     }
-    let hit = noodles(app, &doc, page)
+    let hit = noodles(app, &ctx, &doc, page)
         .into_iter()
         .filter(|n| bezier_distance(&n.pts, pos) < 5.0)
         .min_by(|a, b| bezier_distance(&a.pts, pos).total_cmp(&bezier_distance(&b.pts, pos)));

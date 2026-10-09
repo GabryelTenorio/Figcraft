@@ -9,8 +9,10 @@ pub mod draw;
 pub mod fx;
 pub mod images;
 pub mod paint;
+pub mod retained;
 
-pub use draw::{node_outline, subtree_outline, ts_path};
+pub use draw::{node_outline, paint_bounds, subtree_outline, ts_path};
+pub use retained::{Retained, Work};
 pub use tiny_skia::{FillRule, Pixmap};
 
 use figcraft_color::Color;
@@ -53,18 +55,20 @@ fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
     Pixmap::new(w, h)
 }
 
-/// How far (device pixels) background blurs read their backdrop: an upper bound over the document.
-#[cfg(not(target_arch = "wasm32"))]
-fn backdrop_reach(doc: &Document, scale: f64) -> f64 {
-    let radius = doc
-        .nodes()
+/// The largest visible background blur radius in the document (0 without any).
+pub(crate) fn max_backdrop_blur(doc: &Document) -> f64 {
+    doc.nodes()
         .flat_map(|n| n.effects.iter())
         .filter(|e| e.visible)
         .filter_map(|e| match e.kind {
             figcraft_doc::EffectKind::BackgroundBlur { radius } if radius.is_finite() => Some(radius),
             _ => None,
         })
-        .fold(0.0, f64::max);
+        .fold(0.0, f64::max)
+}
+
+/// How far (device pixels) a background blur of `radius` reads its backdrop at `scale`.
+pub(crate) fn backdrop_reach(radius: f64, scale: f64) -> f64 {
     // The three box passes of a blur with sigma = radius / 2 reach at most 3 sigma + 3 pixels.
     if radius > 0.0 { radius * 1.5 * scale + 3.0 } else { 0.0 }
 }
@@ -93,7 +97,7 @@ pub fn render_view(doc: &Document, page: NodeId, view: &View, opts: &Options) ->
 fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands: u32) -> Option<Pixmap> {
     use rayon::prelude::*;
     let band_h = view.height.div_ceil(bands.max(1));
-    let overlap = backdrop_reach(doc, view.scale).ceil();
+    let overlap = backdrop_reach(max_backdrop_blur(doc), view.scale).ceil();
     if !overlap.is_finite() || overlap > f64::from(band_h) {
         return None;
     }
@@ -240,5 +244,7 @@ pub fn encode_webp(p: &Pixmap) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod band_tests;
+#[cfg(test)]
+mod retained_tests;
 #[cfg(test)]
 mod tests;

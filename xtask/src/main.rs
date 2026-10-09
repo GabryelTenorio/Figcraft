@@ -7,6 +7,7 @@
 //! - `version` print the version, or `version set X.Y.Z`
 //! - `icon`    regenerate the app icon PNGs/ICO from code (original artwork)
 //! - `wasm`    check the core crates and web app for wasm32
+//! - `bench`   release-build timings at 1k/10k/50k layers (`bench 1000,10000` for other sizes)
 
 mod icon;
 mod layers;
@@ -37,8 +38,9 @@ fn main() -> ExitCode {
         "version" => version(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
         "icon" => icon::generate(&root()),
         "wasm" => wasm(),
+        "bench" => bench(args.get(1).map_or("1000,10000,50000", String::as_str)),
         _ => {
-            eprintln!("tasks: ci, layers, assets, parity, version [set X.Y.Z], icon, wasm");
+            eprintln!("tasks: ci, layers, assets, parity, version [set X.Y.Z], icon, wasm, bench [SIZES]");
             task == "help"
         }
     };
@@ -56,6 +58,23 @@ fn ci() -> bool {
 
 fn wasm() -> bool {
     run(cargo().args(["check", "--target", "wasm32-unknown-unknown", "-p", "figcraft-engine", "-p", "figcraft-ui-egui", "-p", "figcraft-web"]))
+}
+
+/// Engine/render timings (`figcraft-cli perf`) and UI frame timings (an ignored test driving the
+/// whole UI headless), release builds, for each comma-separated document size in layers.
+fn bench(sizes: &str) -> bool {
+    run(cargo().args(["run", "--release", "-p", "figcraft-cli", "--", "perf", "--layers", sizes]))
+        && run(cargo().env("FIGCRAFT_BENCH_LAYERS", sizes).args([
+            "test",
+            "--release",
+            "-p",
+            "figcraft-ui-egui",
+            "--lib",
+            "perf_ui_frames",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ]))
 }
 
 /// Every asset file must be listed in ATTRIBUTION.md.

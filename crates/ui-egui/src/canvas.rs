@@ -19,6 +19,8 @@ pub struct CanvasState {
     tex_view: Option<figcraft_render::View>,
     submitted: Option<JobKey>,
     generation: u64,
+    /// What the last canvas render had to do (shown by `ui.inspect`).
+    pub render_work: Option<figcraft_render::Work>,
     dragging: bool,
     space_pan: bool,
     middle_pan: Option<(Pos2, f64, f64)>,
@@ -34,6 +36,7 @@ impl Default for CanvasState {
             tex_view: None,
             submitted: None,
             generation: 0,
+            render_work: None,
             dragging: false,
             space_pan: false,
             middle_pan: None,
@@ -89,6 +92,8 @@ struct JobKey {
     size: (u32, u32),
     outline: bool,
     skip: Vec<NodeId>,
+    /// Text lays out anew when fonts arrive (system fonts load in the background).
+    fonts: u64,
 }
 
 impl FigApp {
@@ -134,12 +139,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     if let Some(done) = worker.poll()
         && done.generation == app.canvas.generation
     {
-        let img = egui::ColorImage::from_rgba_premultiplied([done.view.width as usize, done.view.height as usize], &done.rgba);
         match &mut app.canvas.texture {
-            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", img, egui::TextureOptions::LINEAR)),
+            Some(t) => t.set(done.image, egui::TextureOptions::LINEAR),
+            None => app.canvas.texture = Some(ctx.load_texture("figcraft-canvas", done.image, egui::TextureOptions::LINEAR)),
         }
         app.canvas.tex_view = Some(done.view);
+        app.canvas.render_work = Some(done.work);
         app.ui.render_ms = done.ms;
     }
     let painter = ui.painter_at(rect);
@@ -216,6 +221,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         size: (w, h),
         outline: ds.view.outlines,
         skip: vec![],
+        fonts: figcraft_text::layout_generation(),
     };
     if app.canvas.submitted.as_ref() == Some(&key) {
         return;
@@ -469,6 +475,12 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         if !n.visible {
             continue;
         }
+        let Some(b) = doc.world_bounds(*c) else { continue };
+        // Off-screen frames draw neither grids nor a label (labels sit just above the frame).
+        let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand2(vec2(0.0, 20.0));
+        if !on_screen.intersects(app.canvas.rect) {
+            continue;
+        }
         if view.layout_grids && !n.grids.is_empty() {
             let w = doc.world_transform(*c);
             for g in n.grids.iter().filter(|g| g.visible) {
@@ -487,7 +499,6 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         }
         let labelled = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
         if labelled {
-            let Some(b) = doc.world_bounds(*c) else { continue };
             let tl = app.to_screen(b.x0, b.y0);
             let selected = sel.contains(c);
             let hovered = ds.hover == Some(*c);

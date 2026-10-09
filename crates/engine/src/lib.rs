@@ -17,6 +17,7 @@ pub mod inspect;
 pub mod measure;
 pub mod params;
 pub mod snap;
+pub mod synthetic;
 pub mod textedit;
 pub mod tools;
 pub mod vectoredit;
