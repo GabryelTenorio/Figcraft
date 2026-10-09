@@ -772,4 +772,6 @@ mod text_fill_tests;
 #[cfg(test)]
 mod variable_tests;
 #[cfg(test)]
+mod variables_editor_tests;
+#[cfg(test)]
 mod version_tests;

@@ -1,6 +1,6 @@
 //! Dialogs: About, Preferences, keyboard shortcuts, find & replace, variables, export.
 
-use egui::{Align2, Color32, Context, CornerRadius, Id, RichText, Sense, Stroke, vec2};
+use egui::{Align2, Color32, Context, CornerRadius, RichText, Sense, Stroke, vec2};
 use figcraft_engine::catalog::MENU;
 use serde_json::json;
 
@@ -153,69 +153,9 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         }
         app.ui.find = if open { Some((find, replace)) } else { None };
     }
-    if ctx.data(|d| d.get_temp::<bool>(Id::new("variables_open"))).unwrap_or(false) {
-        variables(app, ctx);
-    }
+    crate::variables_panel::show(app, ctx);
     if app.ui.export_preview {
         export_dialog(app, ctx);
-    }
-}
-
-fn variables(app: &mut FigApp, ctx: &Context) {
-    let t = Tokens::get(ctx);
-    let mut open = true;
-    let vars = app.session.doc().map(|d| d.variables.clone()).unwrap_or_default();
-    egui::Window::new("Local variables").open(&mut open).default_size(vec2(640.0, 360.0)).show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if ui.button("+ Collection").clicked() {
-                let n = vars.collections.len() + 1;
-                app.run("variable.createCollection", json!({"name": format!("Collection {n}"), "modes": ["Mode 1"]}));
-            }
-        });
-        for c in &vars.collections {
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&c.name).font(semibold(12.0)));
-                if ui.small_button("+ Mode").clicked() {
-                    app.run("variable.addMode", json!({"collection": c.id, "name": format!("Mode {}", c.modes.len() + 1)}));
-                }
-                for ty in ["color", "number", "string", "boolean"] {
-                    if ui.small_button(format!("+ {ty}")).clicked() {
-                        let n = vars.variables.len() + 1;
-                        app.run("variable.create", json!({"collection": c.id, "name": format!("{ty}-{n}"), "type": ty}));
-                    }
-                }
-            });
-            egui::Grid::new(("vars", c.id.as_str())).striped(true).show(ui, |ui| {
-                ui.label(RichText::new("Name").color(t.text_secondary));
-                for m in &c.modes {
-                    ui.label(RichText::new(&m.name).color(t.text_secondary));
-                }
-                ui.end_row();
-                for v in vars.variables.iter().filter(|v| v.collection == c.id) {
-                    ui.label(&v.name);
-                    for m in &c.modes {
-                        let cur = v.values.get(&m.id).map(|x| x.display()).unwrap_or_default();
-                        let id = Id::new(("varval", v.id.as_str(), m.id.as_str()));
-                        if let Some(new) = crate::widgets::text_field(ui, id, &cur, 110.0, "") {
-                            let val = match v.kind {
-                                figcraft_doc::VariableType::Number => new.parse::<f64>().map(|x| json!(x)).unwrap_or(json!(0)),
-                                figcraft_doc::VariableType::Boolean => json!(new.trim() == "true"),
-                                _ => json!(new),
-                            };
-                            app.run("variable.set", json!({"variable": v.id, "mode": m.id, "value": val}));
-                        }
-                    }
-                    ui.end_row();
-                }
-            });
-        }
-        if vars.collections.is_empty() {
-            ui.label(RichText::new("Variables store reusable values (colours, numbers, strings, booleans) with modes such as Light and Dark. Bind them to layer properties.").color(t.text_secondary));
-        }
-    });
-    if !open {
-        ctx.data_mut(|d| d.remove::<bool>(Id::new("variables_open")));
     }
 }
 

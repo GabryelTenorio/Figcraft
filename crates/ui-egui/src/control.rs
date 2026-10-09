@@ -240,6 +240,12 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     ids: app.session.selection(),
                 });
             }
+            // The Variables editor: true / a collection (id or name) opens it, false closes it.
+            match p.get("variables") {
+                Some(Value::Bool(open)) => app.ui.variables = open.then(Default::default),
+                Some(Value::String(c)) => app.ui.variables = Some(crate::variables_panel::Editor::on(Some(c.clone()))),
+                _ => {}
+            }
             // Layers panel search: a string opens it with that filter, null closes it.
             if let Some(v) = p.get("layerFilter") {
                 app.ui.layer_search = v.is_string();

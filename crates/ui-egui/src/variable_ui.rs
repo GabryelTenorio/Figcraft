@@ -1,9 +1,10 @@
 //! Binding variables to properties from the Design panel: number fields show a variable button on
 //! hover and the bound variable's name once bound; colour fills bind through the style picker. The
-//! picker popover lists the document's variables of the matching type, by collection.
+//! picker popover lists the document's variables of the matching type (and scope), by collection;
+//! the Variables editor uses it to pick alias targets too.
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
-use figcraft_doc::{Document, NodeId, VariableType};
+use figcraft_doc::{Document, ModeId, NodeId, VariableId, VariableType};
 use serde_json::json;
 
 use crate::FigApp;
@@ -11,11 +12,19 @@ use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, BindEvent, FieldEdit, Lead};
 
-/// The open variable picker: which layers and field it binds, the variable type, where it opens.
+/// What picking a variable does.
+#[derive(Clone)]
+enum Target {
+    /// Bind it to `field` of `ids`.
+    Bind { ids: Vec<NodeId>, field: String },
+    /// Make `variable`'s value in `mode` an alias of it.
+    Alias { variable: VariableId, mode: ModeId },
+}
+
+/// The open variable picker: what it does, the variable type, where it opens.
 #[derive(Clone)]
 struct Picker {
-    ids: Vec<NodeId>,
-    field: String,
+    target: Target,
     kind: VariableType,
     at: Pos2,
 }
@@ -36,7 +45,14 @@ pub fn bound_name(doc: &Document, ids: &[NodeId], field: &str) -> Option<String>
 
 /// Open the picker for `field` of `ids` at `at`.
 pub fn open(ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType, at: Pos2) {
-    ui.data_mut(|d| d.insert_temp(picker_id(), Picker { ids: ids.to_vec(), field: field.to_string(), kind, at }));
+    let target = Target::Bind { ids: ids.to_vec(), field: field.to_string() };
+    ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target, kind, at }));
+}
+
+/// Open the picker at `at` to alias `variable`'s value in `mode` to another variable.
+pub fn open_alias(ui: &Ui, variable: &str, mode: &str, kind: VariableType, at: Pos2) {
+    let target = Target::Alias { variable: variable.to_string(), mode: mode.to_string() };
+    ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target, kind, at }));
 }
 
 /// Open the picker for `field` of `ids` under the pointer (from a section header button).
@@ -89,7 +105,16 @@ pub fn bound_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kin
 /// The picker popover (call once per frame).
 pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     let Some(p) = ctx.data(|d| d.get_temp::<Picker>(picker_id())) else { return };
-    let Ok(doc) = app.session.doc().cloned() else { return };
+    let Ok(doc) = app.session.ds().map(|d| d.doc.clone()) else { return };
+    // Bindings offer variables scoped to the property; aliases, any that wouldn't loop.
+    let offered = |v: &figcraft_doc::Variable| match &p.target {
+        Target::Bind { ids, field } => {
+            ids.first().and_then(|id| figcraft_engine::cmd::variables::field_scope(&doc, *id, field)).is_none_or(|scope| v.in_scope(scope))
+        }
+        Target::Alias { variable, .. } => {
+            doc.variables.get(variable).is_some_and(|own| figcraft_engine::cmd::variables::alias_target(&doc.variables, own, &v.id).is_ok())
+        }
+    };
     let t = Tokens::get(ctx);
     let query_id = Id::new("variable_picker_query");
     let mut query: String = ctx.data(|d| d.get_temp(query_id)).unwrap_or_default();
@@ -115,7 +140,7 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
                         .variables
                         .variables
                         .iter()
-                        .filter(|v| v.collection == c.id && v.kind == p.kind && (q.is_empty() || v.name.to_lowercase().contains(&q)))
+                        .filter(|v| v.collection == c.id && v.kind == p.kind && (q.is_empty() || v.name.to_lowercase().contains(&q)) && offered(v))
                         .collect();
                     if vars.is_empty() {
                         continue;
@@ -158,9 +183,12 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
                     VariableType::String => "string",
                     VariableType::Boolean => "boolean",
                 };
-                ui.label(
-                    egui::RichText::new(format!("No {kind} variables yet. Create them in Local variables.")).font(regular(11.0)).color(t.menu_dim),
-                );
+                let msg = if doc.variables.variables.iter().any(|v| v.kind == p.kind) {
+                    format!("No {kind} variables fit here.")
+                } else {
+                    format!("No {kind} variables yet. Create them in Local variables.")
+                };
+                ui.label(egui::RichText::new(msg).font(regular(11.0)).color(t.menu_dim));
             }
         });
     });
@@ -176,7 +204,10 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
         close = true;
     }
     if let Some(var) = chosen {
-        app.run("variable.bind", json!({"ids": p.ids, "field": p.field, "variable": var}));
+        match &p.target {
+            Target::Bind { ids, field } => app.run("variable.bind", json!({"ids": ids, "field": field, "variable": var})),
+            Target::Alias { variable, mode } => app.run("variable.set", json!({"variable": variable, "mode": mode, "value": {"alias": var}})),
+        };
         close = true;
     }
     if close {

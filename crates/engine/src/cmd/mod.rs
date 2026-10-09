@@ -13,6 +13,7 @@ pub mod proto;
 pub mod structure;
 pub mod styles;
 pub mod text;
+pub mod variables;
 pub mod view;
 
 use std::collections::HashMap;
@@ -71,6 +72,7 @@ fn registry() -> &'static Registry {
         list.extend(view::specs());
         list.extend(text::specs());
         list.extend(styles::specs());
+        list.extend(variables::specs());
         list.extend(component::specs());
         list.extend(proto::specs());
         list.extend(comment::specs());

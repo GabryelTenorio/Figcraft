@@ -33,6 +33,7 @@ pub mod theme;
 pub mod toolbar;
 pub mod typography;
 pub mod variable_ui;
+pub mod variables_panel;
 pub mod vector_panel;
 pub mod versions;
 pub mod widgets;
@@ -100,6 +101,8 @@ pub struct UiState {
     pub rename_page: Option<(NodeId, String)>,
     pub main_menu: bool,
     pub palette: Option<String>,
+    /// The Variables editor, when open.
+    pub variables: Option<variables_panel::Editor>,
     pub about: bool,
     pub preferences: bool,
     pub shortcuts_panel: bool,
@@ -147,6 +150,7 @@ impl Default for UiState {
             rename_page: None,
             main_menu: false,
             palette: None,
+            variables: None,
             about: false,
             preferences: false,
             shortcuts_panel: false,
@@ -426,6 +430,7 @@ impl FigApp {
             "presenting": self.ui.present.is_some(),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
+            "variables": self.ui.variables.is_some(),
             "versionHistory": self.ui.versions.open,
             "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
             "frameMs": self.ui.frame_ms,

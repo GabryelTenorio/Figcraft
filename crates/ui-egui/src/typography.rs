@@ -279,7 +279,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
 
 /// Run `cmd` as a live preview while scrubbing; the gesture becomes one undo step when `done`.
 /// (While text is edited, run commands directly: the editing session already groups undo.)
-fn live(app: &mut FigApp, label: &str, cmd: &str, params: Value, done: bool) {
+pub(crate) fn live(app: &mut FigApp, label: &str, cmd: &str, params: Value, done: bool) {
     let _ = app.session.begin_interaction(label);
     if let Err(e) = app.session.execute(cmd, &params) {
         app.toast(e.to_string());

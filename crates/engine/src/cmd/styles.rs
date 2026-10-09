@@ -104,7 +104,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 .iter_mut()
                 .find(|x| x.id == c || x.name == c)
                 .ok_or_else(|| bad("variable.addMode", "no such collection"))?;
-            let mid = format!("{}/mode{}", coll.id, coll.modes.len() + 1);
+            // A fresh id: modes can be deleted, so the count alone may repeat one.
+            let mid =
+                (coll.modes.len() + 1..).map(|k| format!("{}/mode{k}", coll.id)).find(|m| !coll.modes.iter().any(|x| x.id == *m)).unwrap_or_default();
             let first = coll.modes.first().map(|m| m.id.clone());
             coll.modes.push(Mode { id: mid.clone(), name });
             let cid = coll.id.clone();
@@ -123,7 +125,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             var_create
         ),
-        spec!("variable.set", "Set variable value", "{variable, mode? (name or id; default first), value}", true, var_set),
+        spec!(
+            "variable.set",
+            "Set variable value",
+            "{variable, mode? (name or id; default first), value | {alias: variable} (same type, no loops)}",
+            true,
+            var_set
+        ),
         spec!("variable.delete", "Delete variable", "{variable}", true, |s, p| {
             let v = req_string("variable.delete", p, "variable")?;
             let doc = s.doc_mut()?;
@@ -417,6 +425,7 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         kind,
         values,
         description: string(p, "description").unwrap_or_default(),
+        scopes: None,
     });
     Ok(json!({"id": id}))
 }
@@ -431,7 +440,10 @@ fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
         Some(m) => coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?,
         None => coll.default_mode().cloned().ok_or_else(|| bad(cmd, "collection has no modes"))?,
     };
-    let val = get(p, "value").and_then(|x| var_value(var.kind, x)).ok_or_else(|| bad(cmd, "invalid value"))?;
+    let val = match get(p, "value").and_then(|x| var_value(var.kind, x)).ok_or_else(|| bad(cmd, "invalid value"))? {
+        VariableValue::Alias(a) => VariableValue::Alias(super::variables::alias_target(&doc.variables, &var, &a).map_err(|e| bad(cmd, e))?),
+        v => v,
+    };
     if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == var.id) {
         slot.values.insert(mode, val);
     }
@@ -472,7 +484,7 @@ pub fn apply_bindings(doc: &mut Document) {
 }
 
 /// `prefix:N` with N one more than the largest existing.
-fn unique_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
+pub(crate) fn unique_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
     let max = existing.filter_map(|e| e.strip_prefix(prefix)?.strip_prefix(':')?.parse::<u64>().ok()).max().unwrap_or(0);
     format!("{prefix}:{}", max + 1)
 }

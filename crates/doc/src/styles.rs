@@ -129,6 +129,57 @@ pub struct Variable {
     pub values: BTreeMap<ModeId, VariableValue>,
     #[serde(default)]
     pub description: String,
+    /// Properties pickers offer the variable for (scope ids from [`scopes_for`]); None = every
+    /// supported property, empty = none (hidden from pickers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+}
+
+impl Variable {
+    /// Whether pickers offer this variable for properties of `scope`.
+    pub fn in_scope(&self, scope: &str) -> bool {
+        self.scopes.as_ref().is_none_or(|list| list.iter().any(|s| s == scope || s == ALL_SCOPES || (s == "ALL_FILLS" && scope.ends_with("_FILL"))))
+    }
+}
+
+/// The scope id meaning "every supported property".
+pub const ALL_SCOPES: &str = "ALL_SCOPES";
+
+/// The scopes a variable of `kind` can be limited to: (id, label).
+pub fn scopes_for(kind: VariableType) -> &'static [(&'static str, &'static str)] {
+    match kind {
+        VariableType::Number => &[
+            ("CORNER_RADIUS", "Corner radius"),
+            ("WIDTH_HEIGHT", "Width and height"),
+            ("GAP", "Gap and padding"),
+            ("OPACITY", "Layer opacity"),
+            ("STROKE_FLOAT", "Stroke"),
+            ("EFFECT_FLOAT", "Effects"),
+            ("FONT_SIZE", "Font size"),
+            ("LINE_HEIGHT", "Line height"),
+            ("LETTER_SPACING", "Letter spacing"),
+        ],
+        VariableType::Color => &[
+            ("FRAME_FILL", "Frame fill"),
+            ("SHAPE_FILL", "Shape fill"),
+            ("TEXT_FILL", "Text fill"),
+            ("STROKE_COLOR", "Stroke"),
+            ("EFFECT_COLOR", "Effects"),
+        ],
+        VariableType::String => &[("TEXT_CONTENT", "Text content"), ("FONT_FAMILY", "Font family"), ("FONT_STYLE", "Font style")],
+        VariableType::Boolean => &[],
+    }
+}
+
+impl VariableType {
+    pub fn id(self) -> &'static str {
+        match self {
+            VariableType::Color => "color",
+            VariableType::Number => "number",
+            VariableType::String => "string",
+            VariableType::Boolean => "boolean",
+        }
+    }
 }
 
 /// All variables of a document.

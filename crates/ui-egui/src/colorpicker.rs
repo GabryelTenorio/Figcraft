@@ -29,6 +29,11 @@ pub enum PickerTarget {
         start: usize,
         end: usize,
     },
+    /// A colour variable's value in one mode.
+    Variable {
+        id: String,
+        mode: String,
+    },
 }
 
 /// The fills a text range paints with (its own, else the layer's).
@@ -55,6 +60,14 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             _ => None,
         },
         PickerTarget::TextRange { id, start, .. } => range_fills(doc, *id, *start)?.into_iter().next(),
+        PickerTarget::Variable { id, mode } => match doc.variables.get(id)?.values.get(mode)? {
+            figcraft_doc::VariableValue::Color(c) => {
+                let mut p = Paint::solid(c.with_alpha(1.0));
+                p.opacity = c.a;
+                Some(p)
+            }
+            _ => None,
+        },
     }
 }
 
@@ -82,6 +95,10 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         }
         PickerTarget::TextRange { id, start, end } => {
             app.session.execute("text.style", &json!({"id": id, "start": start, "end": end, "textFills": [paint]}))
+        }
+        PickerTarget::Variable { id, mode } => {
+            let c = paint.solid_color().unwrap_or(Color::BLACK);
+            app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.with_alpha(c.a * paint.opacity).to_css_hex()}))
         }
     };
     if let Err(e) = r {
@@ -356,7 +373,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 close_now = true;
             }
             // Paint type.
-            if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground) {
+            if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. }) {
                 let kinds = [
                     (Icon::Fill, "Solid"),
                     (Icon::LayoutH, "Linear"),

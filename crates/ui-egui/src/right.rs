@@ -268,7 +268,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         if r.clicked() {
             app.ui.preferences = false;
             app.ui.palette = None;
-            ui.data_mut(|d| d.insert_temp(Id::new("variables_open"), true));
+            app.ui.variables.get_or_insert_with(Default::default);
         }
     });
     widgets::separator(ui);
