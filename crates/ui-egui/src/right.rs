@@ -581,29 +581,18 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     let list = common(doc, sel, |n| if fills { n.fills.clone() } else { n.strokes.clone() });
     let title = if fills { "Fill" } else { "Stroke" };
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
-    let style_name = common(doc, sel, |n| if fills { n.styles.fill.clone() } else { n.styles.stroke.clone() })
-        .flatten()
-        .and_then(|s| doc.style(&s).map(|st| st.name.clone()));
+    let slot = if fills { StyleSlot::Fill } else { StyleSlot::Stroke };
     if let Some(i) =
         widgets::section_header(ui, title, &[(Icon::Styles, "Styles"), (Icon::Plus, if fills { "Add fill" } else { "Add stroke" })], empty)
     {
         if i == 1 {
             app.run(if fills { "fill.add" } else { "stroke.add" }, json!({"ids": ids}));
         } else {
-            ui.data_mut(|d| d.insert_temp(Id::new(("style_menu", fills)), true));
+            ui.data_mut(|d| d.insert_temp(slot.menu_id(), true));
         }
     }
-    style_picker(app, ui, doc, &ids, fills);
-    if let Some(name) = style_name {
-        row(ui, 32.0, |ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-            icons::paint(ui.painter(), r, Icon::Styles, t.icon_secondary);
-            widgets::label(ui, &name, t.text);
-            if icons::button(ui, Icon::Detach, 24.0, false, "Detach style").clicked() {
-                app.run("style.detach", json!({"ids": ids, "which": if fills { "fill" } else { "stroke" }}));
-            }
-        });
-    }
+    style_picker(app, ui, doc, &ids, slot);
+    style_chip(app, ui, doc, &ids, slot);
     match &list {
         None => row(ui, 32.0, |ui| widgets::label(ui, "Click + to replace mixed content", t.text_secondary)),
         Some(l) => {
@@ -757,43 +746,117 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
     });
 }
 
-fn style_picker(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], fills: bool) {
-    let key = Id::new(("style_menu", fills));
+/// A style slot on a layer: what a style picker lists and what a style chip shows.
+#[derive(Clone, Copy, PartialEq)]
+enum StyleSlot {
+    Fill,
+    Stroke,
+    Effect,
+    Grid,
+}
+
+impl StyleSlot {
+    /// The slot's name in `style.apply {target}` / `style.detach {which}`.
+    fn key(self) -> &'static str {
+        match self {
+            StyleSlot::Fill => "fill",
+            StyleSlot::Stroke => "stroke",
+            StyleSlot::Effect => "effect",
+            StyleSlot::Grid => "grid",
+        }
+    }
+    fn menu_id(self) -> Id {
+        Id::new(("style_menu", self.key()))
+    }
+    fn linked(self, n: &Node) -> Option<String> {
+        match self {
+            StyleSlot::Fill => n.styles.fill.clone(),
+            StyleSlot::Stroke => n.styles.stroke.clone(),
+            StyleSlot::Effect => n.styles.effect.clone(),
+            StyleSlot::Grid => n.styles.grid.clone(),
+        }
+    }
+    fn paints(self) -> bool {
+        matches!(self, StyleSlot::Fill | StyleSlot::Stroke)
+    }
+}
+
+/// The applied style's name with a detach button.
+fn style_chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot: StyleSlot) {
+    let t = Tokens::get(ui.ctx());
+    let Some(name) = common(doc, ids, |n| slot.linked(n)).flatten().and_then(|s| doc.style(&s).map(|st| st.name.clone())) else { return };
+    row(ui, 32.0, |ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+        icons::paint(ui.painter(), r, Icon::Styles, t.icon_secondary);
+        widgets::label(ui, &name, t.text);
+        if icons::button(ui, Icon::Detach, 24.0, false, "Detach style").clicked() {
+            app.run("style.detach", json!({"ids": ids, "which": slot.key()}));
+        }
+    });
+}
+
+/// The style list under a section header: the document's styles for `slot` (click to apply) and
+/// "Create style" from the first selected layer; paint slots also list colour variables.
+fn style_picker(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot: StyleSlot) {
+    let key = slot.menu_id();
     if !ui.data(|d| d.get_temp::<bool>(key)).unwrap_or(false) {
         return;
     }
     let t = Tokens::get(ui.ctx());
-    let styles: Vec<(String, String, Vec<Paint>)> = doc
+    let styles: Vec<(String, String, Option<Paint>)> = doc
         .styles
         .iter()
-        .filter_map(|s| match &s.kind {
-            StyleKind::Paint { paints } => Some((s.id.clone(), s.name.clone(), paints.clone())),
+        .filter_map(|s| match (&s.kind, slot) {
+            (StyleKind::Paint { paints }, StyleSlot::Fill | StyleSlot::Stroke) => Some((s.id.clone(), s.name.clone(), paints.first().cloned())),
+            (StyleKind::Effect { .. }, StyleSlot::Effect) | (StyleKind::Grid { .. }, StyleSlot::Grid) => Some((s.id.clone(), s.name.clone(), None)),
             _ => None,
         })
         .collect();
+    let (title, create_type, default_name) = match slot {
+        StyleSlot::Fill => ("Color styles", "paint", "Color"),
+        StyleSlot::Stroke => ("Color styles", "stroke", "Color"),
+        StyleSlot::Effect => ("Effect styles", "effect", "Effect"),
+        StyleSlot::Grid => ("Grid styles", "grid", "Grid"),
+    };
     let mut close = false;
     egui::Frame::NONE.fill(t.hover).inner_margin(egui::Margin::symmetric(16, 8)).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Color styles").font(semibold(11.0)));
+            ui.label(egui::RichText::new(title).font(semibold(11.0)));
             if ui.small_button("Create style").clicked() {
-                let n = doc.styles.len() + 1;
-                app.run("style.create", json!({"type": if fills { "paint" } else { "stroke" }, "name": format!("Color {n}"), "from": ids.first()}));
+                let n = styles.len() + 1;
+                app.run("style.create", json!({"type": create_type, "name": format!("{default_name} {n}"), "from": ids.first()}));
                 close = true;
             }
             if ui.small_button("Close").clicked() {
                 close = true;
             }
         });
-        for (id, name, paints) in &styles {
+        if styles.is_empty() {
+            ui.label(egui::RichText::new("No styles yet").font(regular(11.0)).color(t.text_secondary));
+        }
+        for (id, name, paint) in &styles {
             ui.horizontal(|ui| {
-                if let Some(p) = paints.first() {
-                    widgets::swatch(ui, p, 14.0);
+                match paint {
+                    Some(p) => {
+                        widgets::swatch(ui, p, 14.0);
+                    }
+                    None => {
+                        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                        icons::paint(ui.painter(), r, if slot == StyleSlot::Grid { Icon::Grid } else { Icon::Effects }, t.icon_secondary);
+                    }
                 }
                 if ui.selectable_label(false, name).clicked() {
-                    app.run("style.apply", json!({"ids": ids, "style": id, "target": if fills { "fill" } else { "stroke" }}));
+                    let mut q = json!({"ids": ids, "style": id});
+                    if slot.paints() {
+                        q["target"] = json!(slot.key());
+                    }
+                    app.run("style.apply", q);
                     close = true;
                 }
             });
+        }
+        if !slot.paints() {
+            return;
         }
         // Colour variables bind the first paint's colour.
         let modes = std::collections::BTreeMap::new();
@@ -814,7 +877,7 @@ fn style_picker(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], f
                 ui.horizontal(|ui| {
                     widgets::swatch(ui, &Paint::solid(*c), 14.0);
                     if ui.selectable_label(false, name).clicked() {
-                        app.run("variable.bind", json!({"ids": ids, "field": if fills { "fill" } else { "stroke" }, "variable": vid}));
+                        app.run("variable.bind", json!({"ids": ids, "field": slot.key(), "variable": vid}));
                         close = true;
                     }
                 });
@@ -831,9 +894,15 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.effects.clone());
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
-    if let Some(_i) = widgets::section_header(ui, "Effects", &[(Icon::Plus, "Add effect")], empty) {
-        app.run("effect.add", json!({"ids": ids, "type": "dropShadow"}));
+    if let Some(i) = widgets::section_header(ui, "Effects", &[(Icon::Styles, "Styles"), (Icon::Plus, "Add effect")], empty) {
+        if i == 1 {
+            app.run("effect.add", json!({"ids": ids, "type": "dropShadow"}));
+        } else {
+            ui.data_mut(|d| d.insert_temp(StyleSlot::Effect.menu_id(), true));
+        }
     }
+    style_picker(app, ui, doc, &ids, StyleSlot::Effect);
+    style_chip(app, ui, doc, &ids, StyleSlot::Effect);
     let Some(list) = list else { return };
     for (i, e) in list.iter().enumerate().rev() {
         let mut open = ui.data(|d| d.get_temp::<bool>(Id::new(("fx_open", i)))).unwrap_or(false);
@@ -981,9 +1050,15 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.grids.clone());
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
-    if widgets::section_header(ui, "Layout grid", &[(Icon::Plus, "Add layout grid")], empty).is_some() {
-        app.run("grid.add", json!({"ids": ids}));
+    if let Some(i) = widgets::section_header(ui, "Layout grid", &[(Icon::Styles, "Styles"), (Icon::Plus, "Add layout grid")], empty) {
+        if i == 1 {
+            app.run("grid.add", json!({"ids": ids}));
+        } else {
+            ui.data_mut(|d| d.insert_temp(StyleSlot::Grid.menu_id(), true));
+        }
     }
+    style_picker(app, ui, doc, &ids, StyleSlot::Grid);
+    style_chip(app, ui, doc, &ids, StyleSlot::Grid);
     let Some(list) = list else { return };
     for (i, g) in list.iter().enumerate() {
         row(ui, 32.0, |ui| {
