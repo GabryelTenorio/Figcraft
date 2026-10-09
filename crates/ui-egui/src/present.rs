@@ -516,7 +516,7 @@ impl Presenter {
         }
         let bounds = figcraft_render::export_bounds(doc, id)?;
         let pix = figcraft_render::render_node(doc, id, px_scale)?;
-        let img = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
+        let img = crate::render_worker::screen_image(&pix, doc.color_profile);
         let tex = ctx.load_texture(format!("present-{}", id.0), img, egui::TextureOptions::LINEAR);
         let ft = FrameTex { key, tex, bounds };
         self.textures.insert(id, ft.clone());
@@ -1244,7 +1244,7 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     let ctx = ui.ctx().clone();
     let bar = Rect::from_min_size(rect.min, vec2(rect.width(), chrome.bar_h));
     let area = Rect::from_min_max(pos2(rect.min.x, bar.max.y), rect.max);
-    let bg = crate::theme::c32(p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default().background);
+    let bg = crate::theme::doc_c32(ui.ctx(), p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default().background);
     let r = chrome.round;
     ui.painter().rect_filled(area, CornerRadius { nw: 0, ne: 0, sw: r, se: r }, bg);
     let action = top_bar(p, ui, bar, now, chrome);
@@ -1665,7 +1665,7 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
                 let tmp = smart_interpolate(&a.from_doc, a.from_frame, &l.disp, p.current, e);
                 let bounds = figcraft_render::export_bounds(&tmp, p.current);
                 if let (Some(b), Some(pix)) = (bounds, figcraft_render::render_node(&tmp, p.current, px)) {
-                    let img = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
+                    let img = crate::render_worker::screen_image(&pix, tmp.color_profile);
                     let tex = match &mut p.anim_tex {
                         Some(t) => {
                             t.set(img, egui::TextureOptions::LINEAR);
@@ -1739,7 +1739,7 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
             transition_frames(o.transition, e)
         };
         if let Some(bgc) = o.background {
-            let c = crate::theme::c32(bgc);
+            let c = crate::theme::doc_c32(ctx, bgc);
             on_screen.rect_filled(l.screen, CornerRadius::ZERO, c.gamma_multiply(raw as f32));
         }
         if let Some(tex) = p.texture(ctx, &l.disp, *id, px) {

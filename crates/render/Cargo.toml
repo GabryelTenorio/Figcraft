@@ -16,6 +16,7 @@ figcraft-text = { workspace = true }
 figcraft-pathops = { workspace = true }
 tiny-skia = { workspace = true }
 image = { workspace = true }
+crc32fast = { workspace = true }
 log = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -280,6 +280,21 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         app.run("page.setBackground", json!({"color": c.to_css_hex()}));
     }
     widgets::separator(ui);
+    widgets::section_header(ui, "Color profile", &[], false);
+    row(ui, 32.0, |ui| {
+        let resp = widgets::dropdown(ui, doc.color_profile.label(), 140.0, None);
+        egui::Popup::menu(&resp).show(|ui| {
+            for p in figcraft_color::ColorProfile::ALL {
+                if menu_item(ui, p.label(), "") {
+                    if p != doc.color_profile {
+                        app.ui.color_profile = Some(p);
+                    }
+                    ui.close();
+                }
+            }
+        });
+    });
+    widgets::separator(ui);
     // Local variables & styles.
     let vars = doc.variables.variables.len();
     widgets::section_header(ui, "Local variables", &[], vars == 0);

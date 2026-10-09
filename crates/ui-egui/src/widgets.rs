@@ -470,8 +470,8 @@ pub fn paint_swatch(painter: &egui::Painter, rect: Rect, paint: &figcraft_color:
     match &paint.kind {
         PaintKind::Solid { color } => {
             // Left half opaque, right half with alpha (like Figma's swatches).
-            let c = crate::theme::c32(color.with_alpha(color.a * paint.opacity));
-            let opaque = crate::theme::c32(color.with_alpha(1.0));
+            let c = crate::theme::doc_c32(painter.ctx(), color.with_alpha(color.a * paint.opacity));
+            let opaque = crate::theme::doc_c32(painter.ctx(), color.with_alpha(1.0));
             clip.rect_filled(Rect::from_min_max(rect.min, pos2(rect.center().x, rect.max.y)), CornerRadius::ZERO, opaque);
             clip.rect_filled(Rect::from_min_max(pos2(rect.center().x, rect.min.y), rect.max), CornerRadius::ZERO, c);
             if paint.opacity >= 0.999 && color.a >= 0.999 {
@@ -481,7 +481,7 @@ pub fn paint_swatch(painter: &egui::Painter, rect: Rect, paint: &figcraft_color:
         PaintKind::Gradient(g) => {
             let n = 16;
             for i in 0..n {
-                let c = crate::theme::c32(g.sample(i as f32 / (n - 1) as f32));
+                let c = crate::theme::doc_c32(painter.ctx(), g.sample(i as f32 / (n - 1) as f32));
                 let x0 = rect.min.x + rect.width() * i as f32 / n as f32;
                 let x1 = rect.min.x + rect.width() * (i + 1) as f32 / n as f32;
                 clip.rect_filled(Rect::from_min_max(pos2(x0, rect.min.y), pos2(x1, rect.max.y)), CornerRadius::ZERO, c);
@@ -507,6 +507,21 @@ pub fn checkbox(ui: &mut Ui, on: bool, label: &str) -> bool {
         ui.painter().rect_stroke(b, CornerRadius::same(3), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
     }
     ui.painter().text(pos2(b.max.x + 8.0, rect.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text);
+    resp.clicked()
+}
+
+/// A radio button with label; returns whether it was clicked.
+pub fn radio(ui: &mut Ui, on: bool, label: &str) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width().min(240.0), FIELD_H), Sense::click());
+    let c = pos2(rect.min.x + 7.0, rect.center().y);
+    if on {
+        ui.painter().circle_filled(c, 7.0, t.accent);
+        ui.painter().circle_filled(c, 2.5, Color32::WHITE);
+    } else {
+        ui.painter().circle_stroke(c, 6.5, Stroke::new(1.0, if resp.hovered() { t.accent } else { t.border_strong }));
+    }
+    ui.painter().text(pos2(rect.min.x + 22.0, rect.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text);
     resp.clicked()
 }
 

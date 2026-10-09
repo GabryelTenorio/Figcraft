@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::theme::{Tokens, c32, regular, semibold};
+use crate::theme::{Tokens, doc_c32, regular, semibold};
 use crate::widgets;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -244,14 +244,14 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<Color> {
     out
 }
 
-fn hue_color(h: f32) -> Color32 {
-    c32(Hsb { h, s: 1.0, b: 1.0 }.to_color())
+fn hue_color(ctx: &egui::Context, h: f32) -> Color32 {
+    doc_c32(ctx, Hsb { h, s: 1.0, b: 1.0 }.to_color())
 }
 
 fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     // White → hue horizontally, then transparent → black vertically.
     let mut m = Mesh::default();
-    let hc = hue_color(hsb.h);
+    let hc = hue_color(ui.ctx(), hsb.h);
     let corners = [(rect.left_top(), Color32::WHITE), (rect.right_top(), hc), (rect.right_bottom(), hc), (rect.left_bottom(), Color32::WHITE)];
     for (p, c) in corners {
         m.colored_vertex(p, c);
@@ -292,7 +292,7 @@ fn hue_slider(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     for i in 0..=n {
         let t = i as f32 / n as f32;
         let x = rect.min.x + t * rect.width();
-        let c = hue_color(t * 360.0);
+        let c = hue_color(ui.ctx(), t * 360.0);
         m.colored_vertex(pos2(x, rect.min.y), c);
         m.colored_vertex(pos2(x, rect.max.y), c);
         if i > 0 {
@@ -329,7 +329,7 @@ fn slider_knob(ui: &mut Ui, rect: Rect, t: f32, id: Id) -> Option<(f32, bool)> {
 fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     widgets::checker(&ui.painter().with_clip_rect(rect), rect, rect.height() / 2.0);
     let mut m = Mesh::default();
-    let opaque = c32(color.with_alpha(1.0));
+    let opaque = doc_c32(ui.ctx(), color.with_alpha(1.0));
     for (p, c) in [
         (rect.left_top(), Color32::TRANSPARENT),
         (rect.right_top(), opaque),
@@ -445,7 +445,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     let a = i as f32 / n as f32;
                     let b = (i + 1) as f32 / n as f32;
                     let r = Rect::from_min_max(pos2(bar.min.x + a * bar.width(), bar.min.y), pos2(bar.min.x + b * bar.width(), bar.max.y));
-                    ui.painter().rect_filled(r, CornerRadius::ZERO, c32(g.sample((a + b) / 2.0)));
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, doc_c32(ui.ctx(), g.sample((a + b) / 2.0)));
                 }
                 let mut changed = false;
                 let mut done = false;
@@ -453,7 +453,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     let x = bar.min.x + s.position * bar.width();
                     let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
                     let resp = ui.interact(r, Id::new(("cp_stopk", i)), Sense::click_and_drag());
-                    ui.painter().rect_filled(r, CornerRadius::same(3), c32(s.color.with_alpha(1.0)));
+                    ui.painter().rect_filled(r, CornerRadius::same(3), doc_c32(ui.ctx(), s.color.with_alpha(1.0)));
                     ui.painter().rect_stroke(
                         r,
                         CornerRadius::same(3),

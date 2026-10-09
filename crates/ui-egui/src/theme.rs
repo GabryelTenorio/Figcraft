@@ -229,3 +229,21 @@ pub fn c32(c: figcraft_color::Color) -> Color32 {
     let [r, g, b, a] = c.to_rgba8();
     Color32::from_rgba_unmultiplied(r, g, b, a)
 }
+
+fn screen_conversion_id() -> egui::Id {
+    egui::Id::new("figcraft_screen_conversion")
+}
+
+/// Remember the colour profile of the document on screen (once per frame): document colours drawn
+/// by the UI ([`doc_c32`]) go from it to the screen's sRGB.
+pub fn set_doc_profile(ctx: &Context, profile: figcraft_color::ColorProfile) {
+    let conv = profile.conversion_to(figcraft_color::ColorProfile::Srgb);
+    ctx.data_mut(|d| d.insert_temp(screen_conversion_id(), conv));
+}
+
+/// A document colour (a paint, swatch, background) for the screen: converted from the document's
+/// colour profile to sRGB. UI chrome colours use [`c32`].
+pub fn doc_c32(ctx: &Context, c: figcraft_color::Color) -> Color32 {
+    let conv = ctx.data(|d| d.get_temp::<figcraft_color::ProfileConversion>(screen_conversion_id()));
+    c32(conv.map_or(c, |k| k.apply(c)))
+}

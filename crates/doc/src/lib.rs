@@ -8,6 +8,7 @@
 //! live in higher crates.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod colors;
 pub mod comments;
 pub mod geometry;
 pub mod library;
@@ -19,6 +20,7 @@ pub mod text;
 pub mod vector;
 pub mod vector_faces;
 
+pub use colors::*;
 pub use comments::*;
 pub use figcraft_color as color;
 pub use figcraft_geom as geom;
@@ -30,7 +32,7 @@ pub use text::*;
 pub use vector::*;
 pub use vector_faces::Face;
 
-use figcraft_color::Color;
+use figcraft_color::{Color, ColorProfile};
 use figcraft_geom::{Affine, Point, Rect};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -122,6 +124,9 @@ pub struct Document {
     /// This file's published library; serialized separately by the format crate.
     #[serde(skip)]
     pub published: Option<Arc<PublishedLibrary>>,
+    /// The colour space colour values are in (sRGB unless the file says otherwise).
+    #[serde(default, skip_serializing_if = "ColorProfile::is_srgb")]
+    pub color_profile: ColorProfile,
 }
 
 impl Default for Document {
@@ -147,6 +152,7 @@ impl Document {
             comments: Vec::new(),
             libraries: Arc::default(),
             published: None,
+            color_profile: ColorProfile::Srgb,
         };
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);
@@ -765,6 +771,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
     }
 }
 
+#[cfg(test)]
+mod colors_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]

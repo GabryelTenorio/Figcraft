@@ -70,6 +70,13 @@ pub fn specs() -> Vec<CommandSpec> {
             s.doc_mut()?.name = name;
             ok()
         }),
+        spec!(
+            "file.colorProfile",
+            "Color profile",
+            "{profile?: srgb|displayP3, convert? (default true: convert colour values so colours keep their appearance; false: keep the values and reinterpret them)}  without `profile`, returns the current one (and the app opens the dialog). Returns {profile, changed}",
+            true,
+            color_profile
+        ),
         spec!("file.duplicate", "Duplicate file", "{}", false, |s, _| {
             let ds = s.ds()?;
             let mut d = (*ds.doc).clone();
@@ -546,6 +553,18 @@ pub fn file_bytes(ds: &DocState) -> Result<Vec<u8>> {
     figcraft_format::save_bytes_with_versions(&doc, thumb.as_deref(), &ds.versions).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.colorProfile";
+    let Some(name) = string(p, "profile") else {
+        s.request_ui("dialog.colorProfile", json!({}));
+        return Ok(json!({"profile": s.doc()?.color_profile.id(), "changed": false}));
+    };
+    let profile = figcraft_color::ColorProfile::parse(&name).ok_or_else(|| bad(cmd, "profile: srgb or displayP3"))?;
+    let convert = boolean(p, "convert").unwrap_or(true);
+    let changed = s.doc()?.color_profile != profile && s.doc_mut()?.set_color_profile(profile, convert);
+    Ok(json!({"profile": profile.id(), "changed": changed}))
+}
+
 fn save_to(s: &mut Session, path: String) -> Result<Value> {
     let ds = s.ds_mut()?;
     let bytes = file_bytes(ds)?;
@@ -590,10 +609,12 @@ pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale:
         return Err(EngineError::Disabled("file.export".into(), "nothing to export".into()));
     }
     match format {
-        ExportFormat::Svg => figcraft_svg::export_svg(doc, ids, &Default::default())
+        // SVG and PDF colours are sRGB: a Display P3 file exports converted (out-of-gamut colours clip).
+        ExportFormat::Svg => figcraft_svg::export_svg(&doc.in_srgb(), ids, &Default::default())
             .map(String::into_bytes)
             .ok_or_else(|| EngineError::Other("nothing to export".into())),
         ExportFormat::Pdf => {
+            let doc = &*doc.in_srgb();
             // Frames export one page each; anything else shares one page.
             let all_frames = ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
             let r = if all_frames {
@@ -622,12 +643,7 @@ pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale:
                 })
             };
             let pix = pix.ok_or_else(|| EngineError::Other("render failed (empty or too large)".into()))?;
-            match format {
-                ExportFormat::Jpg => figcraft_render::encode_jpeg(&pix, figcraft_color::Color::WHITE, 90),
-                ExportFormat::Webp => figcraft_render::encode_webp(&pix),
-                _ => figcraft_render::encode_png(&pix),
-            }
-            .map_err(EngineError::Other)
+            figcraft_render::encode_export(&pix, format, doc.color_profile).map_err(EngineError::Other)
         }
     }
 }

@@ -226,6 +226,53 @@ fn export_png_roundtrip() {
 }
 
 #[test]
+fn exports_carry_the_colour_profile() {
+    use figcraft_color::ColorProfile;
+    use figcraft_doc::ExportFormat;
+    use image::ImageDecoder;
+    let (d, _, r) = doc_with_rect(Color::from_hex("00FF00").unwrap());
+    let pix = render_node(&d, r, 1.0).unwrap();
+    for profile in ColorProfile::ALL {
+        let png = encode_export(&pix, ExportFormat::Png, profile).unwrap();
+        // The inserted chunk has a valid CRC: the decoder accepts the file and keeps the pixels.
+        let mut dec = image::codecs::png::PngDecoder::new(std::io::Cursor::new(&png)).unwrap();
+        let icc = dec.icc_profile().unwrap();
+        assert_eq!(icc.is_some(), !profile.is_srgb(), "{profile:?}");
+        assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(5, 5).0, [0, 255, 0, 255]);
+        for f in [ExportFormat::Jpg, ExportFormat::Webp] {
+            assert!(!encode_export(&pix, f, profile).unwrap().is_empty());
+        }
+        assert!(encode_export(&pix, ExportFormat::Svg, profile).is_err());
+    }
+    assert_eq!(png_insert_chunk(b"not a png".to_vec(), b"sRGB", &[0]), b"not a png");
+}
+
+#[test]
+fn images_are_managed_into_the_file_profile() {
+    use figcraft_color::{ColorProfile, ImageScaleMode, Paint};
+    let (mut d, _, r) = doc_with_rect(Color::WHITE);
+    let mut red = Pixmap::new(4, 4).unwrap();
+    red.fill(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+    d.images.insert("red".into(), figcraft_doc::ImageData { bytes: std::sync::Arc::new(encode_png(&red).unwrap()), width: 4, height: 4 });
+    d.get_mut(r).unwrap().fills = vec![Paint::image("red", ImageScaleMode::Fill)];
+    let center = |d: &Document| {
+        let pix = render_node(d, r, 1.0).unwrap();
+        let (x, y) = (pix.width() / 2, pix.height() / 2);
+        let px = pix.pixel(x, y).unwrap();
+        (pix, [px.red(), px.green(), px.blue()])
+    };
+    assert_eq!(center(&d).1, [255, 0, 0]);
+    // In a Display P3 file the (sRGB) image is converted into P3 values…
+    d.color_profile = ColorProfile::DisplayP3;
+    let (mut pix, rgb) = center(&d);
+    assert!(rgb[0].abs_diff(234) <= 1 && rgb[1].abs_diff(51) <= 1 && rgb[2].abs_diff(35) <= 1, "{rgb:?}");
+    // …and comes back to the screen unchanged.
+    to_srgb(&mut pix, d.color_profile);
+    let px = pix.pixel(pix.width() / 2, pix.height() / 2).unwrap();
+    assert!(px.red() >= 254 && px.green() <= 1 && px.blue() <= 1, "{px:?}");
+}
+
+#[test]
 fn hostile_sizes() {
     let (mut d, p, r) = doc_with_rect(Color::BLACK);
     let n = d.get_mut(r).unwrap();

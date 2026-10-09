@@ -1,13 +1,14 @@
-//! Decoded image cache (content hash + filters → premultiplied pixmap).
+//! Decoded image cache (content hash + filters + colour profile → premultiplied pixmap). Images
+//! are taken to be sRGB; a Display P3 document gets them converted into its space.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use figcraft_color::ImageFilters;
+use figcraft_color::{ColorProfile, ImageFilters};
 use figcraft_doc::ImageData;
 use tiny_skia::Pixmap;
 
-type Key = (String, [i32; 7]);
+type Key = (String, [i32; 7], ColorProfile);
 
 fn cache() -> &'static Mutex<HashMap<Key, Arc<Pixmap>>> {
     static C: OnceLock<Mutex<HashMap<Key, Arc<Pixmap>>>> = OnceLock::new();
@@ -41,9 +42,9 @@ pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
     Some(p)
 }
 
-/// The decoded (and filtered) image for `hash`, cached.
-pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters) -> Option<Arc<Pixmap>> {
-    let key = (hash.to_string(), fkey(filters));
+/// The decoded (and filtered) image for `hash` in the colour space `profile`, cached.
+pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile: ColorProfile) -> Option<Arc<Pixmap>> {
+    let key = (hash.to_string(), fkey(filters), profile);
     if let Some(p) = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Some(p.clone());
     }
@@ -52,6 +53,7 @@ pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters) -> Opti
     if !filters.is_identity() {
         apply_filters(&mut p, filters);
     }
+    ColorProfile::Srgb.conversion_to(profile).apply_pixels(p.data_mut());
     let p = Arc::new(p);
     let mut c = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if c.len() > 256 {
@@ -116,8 +118,8 @@ fn padded_cache() -> &'static Mutex<HashMap<Key, Arc<Pixmap>>> {
 }
 
 /// `pm` with a transparent 1-pixel border (cached).
-pub fn padded(hash: &str, filters: &ImageFilters, pm: &Pixmap) -> Option<Arc<Pixmap>> {
-    let key = (hash.to_string(), fkey(filters));
+pub fn padded(hash: &str, filters: &ImageFilters, profile: ColorProfile, pm: &Pixmap) -> Option<Arc<Pixmap>> {
+    let key = (hash.to_string(), fkey(filters), profile);
     if let Some(p) = padded_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Some(p.clone());
     }

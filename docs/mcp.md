@@ -82,6 +82,13 @@ Or in a project's `.mcp.json`:
   tools, `color` may also be a hex string and gradients can be written
   `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`; the server converts them to the
   engine's paint JSON.
+- **Colour profile**: colour values are in the file's profile, sRGB (default) or Display P3
+  (`inspect_document` reports `colorProfile`). `file.colorProfile {profile: srgb|displayP3,
+  convert?}` changes it: `convert` (default true) converts every colour value so colours keep their
+  appearance; `false` keeps the values and reinterprets them. Images are treated as sRGB and managed
+  into the file's space. PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
+  `cICP`), Display P3 JPG and WebP embed the ICC profile, and SVG and PDF export Display P3 files
+  converted to sRGB (out-of-gamut colours clip).
 - Text props (`fontFamily`, `fontStyle`, `fontSize`, `lineHeight`, `letterSpacing`, `textDecoration`,
   `textCase`, `textFills`, `fontVariations`…) apply to the whole layer, or to chars `start`..`end`
   when given (`text.style {id, start, end, …}` does the same). Styled ranges come back as

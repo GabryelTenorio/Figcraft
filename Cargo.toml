@@ -48,6 +48,7 @@ linesweeper = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 base64 = "0.22"
+crc32fast = "1"
 
 # ui
 egui = "0.36"

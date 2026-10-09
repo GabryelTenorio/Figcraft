@@ -46,7 +46,8 @@ Every command: `[{id, label, params, menu, shortcut, undoable}]`.
 
 The active document as JSON: name, path, dirty, currentPage, selection, pages (the current page's
 layer tree to `depth`, default 8; others summarised unless `allPages`), styles, variable count,
-images, the text being edited and the undo history.
+images, the colour profile (`colorProfile`: `srgb` or `displayP3`), the text being edited and the
+undo history.
 
 ### `node.get {id, depth?}`
 
@@ -93,7 +94,7 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `colorPicker`
@@ -103,7 +104,8 @@ open the layers search with that filter; `null` closes it), `collapseLayers` (tr
 layers tree), `exportPreview` (bool: the Design panel Export section's preview), `preview` (true or a
 frame id: open the prototype preview pane like `proto.preview`; false or `null` closes it),
 `presentScroll` (`[x, y]`: scroll the presented screen, the full window's else the pane's, clamped
-to what it can scroll). Returns `ui.inspect`.
+to what it can scroll), `colorProfileDialog` (`srgb|displayP3`: open File ▸ Color profile with that
+profile chosen; `null` closes it). Returns `ui.inspect`.
 
 ### `ui.screenshot {path}`
 

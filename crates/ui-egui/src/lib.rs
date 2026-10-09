@@ -145,6 +145,8 @@ pub struct UiState {
     pub quit: bool,
     /// The Export dialog is open.
     pub export_preview: bool,
+    /// The Color profile dialog is open, with this profile chosen.
+    pub color_profile: Option<figcraft_color::ColorProfile>,
     /// The Design panel's Export section shows its preview.
     pub export_thumb: bool,
     pub zoom_menu: bool,
@@ -198,6 +200,7 @@ impl Default for UiState {
             render_ms: 0.0,
             quit: false,
             export_preview: false,
+            color_profile: None,
             export_thumb: false,
             zoom_menu: false,
             find: None,
@@ -280,6 +283,7 @@ impl FigApp {
                 }
                 "home" => self.ui.home = true,
                 "dialog.saveAs" => self.save_as_dialog(),
+                "dialog.colorProfile" => self.ui.color_profile = self.session.doc().ok().map(|d| d.color_profile),
                 "present" => {
                     if let Some(start) = r.data.get("start").and_then(figcraft_engine::params::id_of) {
                         self.ui.present = Some(present::Presenter::new(start));
@@ -397,6 +401,7 @@ impl FigApp {
         let t = theme::Tokens::get(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
+        theme::set_doc_profile(&ctx, self.session.doc().map_or(figcraft_color::ColorProfile::Srgb, |d| d.color_profile));
         // The Inspect tab measures on hover without Alt.
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
         if self.ui.present.is_some() {
@@ -496,6 +501,7 @@ impl FigApp {
             "palette": self.ui.palette.is_some(),
             "variables": self.ui.variables.is_some(),
             "versionHistory": self.ui.versions.open,
+            "colorProfileDialog": self.ui.color_profile.map(|p| p.id()),
             "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,

@@ -1427,6 +1427,7 @@ dependencies = [
 name = "figcraft-render"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "figcraft-color",
  "figcraft-doc",
  "figcraft-geom",

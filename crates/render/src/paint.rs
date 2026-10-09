@@ -121,13 +121,13 @@ pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared
         }
         PaintKind::Image(img) => {
             let data = doc.images.get(&img.image);
-            let pm = crate::images::get(&img.image, data, &img.filters)?;
+            let pm = crate::images::get(&img.image, data, &img.filters, doc.color_profile)?;
             let transform = image_transform(img, f64::from(pm.width()), f64::from(pm.height()), w, h);
             if img.scale_mode == ImageScaleMode::Tile {
                 return Some(Prepared::Pattern { pixmap: pm, mode: SpreadMode::Repeat, quality: FilterQuality::Bicubic, opacity: op, transform });
             }
             // Fit/Fill/Crop: a transparent 1-px border so Pad spreads transparency, not edge pixels.
-            let padded = crate::images::padded(&img.image, &img.filters, &pm)?;
+            let padded = crate::images::padded(&img.image, &img.filters, doc.color_profile, &pm)?;
             let transform = Transform::from_translate(-1.0, -1.0).post_concat(transform);
             Some(Prepared::Pattern { pixmap: padded, mode: SpreadMode::Pad, quality: FilterQuality::Bicubic, opacity: op, transform })
         }

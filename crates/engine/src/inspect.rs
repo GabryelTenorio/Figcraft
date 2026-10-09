@@ -237,6 +237,7 @@ pub fn document(s: &Session, depth: usize, all_pages: bool) -> Value {
         "styles": doc.styles.iter().map(|st| json!({"id": st.id, "name": st.name, "type": st.kind.type_name()})).collect::<Vec<_>>(),
         "variables": doc.variables.variables.len(),
         "images": doc.images.len(),
+        "colorProfile": doc.color_profile.id(),
         "textEdit": ds.text_edit,
         "history": {"undo": ds.history.undo.iter().rev().take(20).map(|h| h.label.clone()).collect::<Vec<_>>(), "redo": ds.history.redo.len()},
     })

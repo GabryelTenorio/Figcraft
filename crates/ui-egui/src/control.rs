@@ -272,6 +272,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 };
                 player.ok_or("nothing is presented")?.scroll_to(at(0), at(1));
             }
+            // The Color profile dialog: a profile id opens it with that profile chosen, null closes it.
+            if let Some(v) = p.get("colorProfileDialog") {
+                app.ui.color_profile = v.as_str().and_then(figcraft_color::ColorProfile::parse);
+            }
             if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
                 app.ui.export_thumb = v;
             }

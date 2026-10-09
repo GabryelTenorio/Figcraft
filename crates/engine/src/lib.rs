@@ -887,6 +887,8 @@ mod import_export_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
+mod paint_tests;
+#[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
 mod rotated_select_tests;

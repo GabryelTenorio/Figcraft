@@ -2,15 +2,19 @@
 //!
 //! [`Color`] is non-premultiplied sRGB in `0..=1` floats (what a design panel shows as hex + opacity).
 //! [`Paint`] is one entry of a node's fill or stroke list: solid, the four gradient kinds or an
-//! image, each with its own opacity, visibility and blend mode.
+//! image, each with its own opacity, visibility and blend mode. [`ColorProfile`] says which RGB
+//! space (sRGB or Display P3) a document's values are in and converts between them.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use serde::{Deserialize, Serialize};
 
 mod blend;
 mod hsx;
+mod icc;
+mod profile;
 pub use blend::BlendMode;
 pub use hsx::*;
+pub use profile::{ColorProfile, ProfileConversion};
 
 /// A non-premultiplied sRGB colour with alpha, components in `0..=1`. Deserializes from
 /// `{r, g, b, a}`, `[r, g, b(, a)]`, or a CSS/hex string (`"#0D99FF"`, `"rgba(…)"`).
@@ -460,6 +464,15 @@ impl Paint {
         }
     }
 
+    /// Visit every colour of this paint (the solid colour or the gradient stops).
+    pub fn for_each_color_mut(&mut self, f: &mut dyn FnMut(&mut Color)) {
+        match &mut self.kind {
+            PaintKind::Solid { color } => f(color),
+            PaintKind::Gradient(g) => g.stops.iter_mut().for_each(|s| f(&mut s.color)),
+            PaintKind::Image(_) => {}
+        }
+    }
+
     /// A representative colour (for swatches and outlines).
     pub fn preview_color(&self) -> Color {
         match &self.kind {
@@ -470,5 +483,7 @@ impl Paint {
     }
 }
 
+#[cfg(test)]
+mod profile_tests;
 #[cfg(test)]
 mod tests;
