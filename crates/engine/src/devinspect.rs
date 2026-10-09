@@ -30,22 +30,67 @@ pub struct Prop {
     pub token: Option<String>,
 }
 
-pub fn specs() -> Vec<CommandSpec> {
-    vec![spec!(
-        "inspect.properties",
-        "Inspect properties",
-        "{id?} → {sections: [{title, rows: [{label, value, color?, token?}]}]}  layout (relative to the parent), auto layout, typography, fills, strokes and effects, with style and variable names",
-        false,
-        |s, p| {
-            let id = match id(p, "id") {
-                Some(i) => i,
-                None => s.selection().first().copied().ok_or_else(|| crate::bad("inspect.properties", "select a layer or pass `id`"))?,
-            };
-            let doc = s.doc()?;
-            doc.node(id).ok_or_else(|| crate::bad("inspect.properties", "no such layer"))?;
-            Ok(json!({"sections": serde_json::to_value(properties(doc, id)).unwrap_or(Value::Null)}))
+/// A layer in the inspected selection that has export settings.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Asset {
+    pub id: NodeId,
+    pub name: String,
+    /// Its export settings as shown ("PNG 2x", "SVG 1x"…).
+    pub exports: Vec<String>,
+}
+
+/// Most assets listed for one selection.
+const MAX_ASSETS: usize = 200;
+
+/// The layers in and under `ids` that have export settings, in layer order.
+pub fn assets(doc: &Document, ids: &[NodeId]) -> Vec<Asset> {
+    let mut out = Vec::new();
+    let mut stack: Vec<NodeId> = ids.iter().rev().copied().collect();
+    // Bounded: the Inspect tab asks every frame.
+    let mut visited = 0usize;
+    while let Some(id) = stack.pop() {
+        visited += 1;
+        if out.len() >= MAX_ASSETS || visited > 20_000 {
+            break;
         }
-    )]
+        let Some(n) = doc.node(id) else { continue };
+        if !n.exports.is_empty() && !out.iter().any(|a: &Asset| a.id == id) {
+            let exports = n.exports.iter().map(|e| format!("{} {}", e.format.label(), e.size.label())).collect();
+            out.push(Asset { id, name: n.name.clone(), exports });
+        }
+        stack.extend(n.children.iter().rev().copied());
+    }
+    out
+}
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        spec!(
+            "inspect.assets",
+            "Inspect assets",
+            "{ids? (default the selection)} → {assets: [{id, name, exports}]}  the layers in and under them with export settings (export them with `file.exportLayers`)",
+            false,
+            |s, p| {
+                let ids = targets(s, p);
+                Ok(json!({"assets": serde_json::to_value(assets(s.doc()?, &ids)).unwrap_or(Value::Null)}))
+            }
+        ),
+        spec!(
+            "inspect.properties",
+            "Inspect properties",
+            "{id?} → {sections: [{title, rows: [{label, value, color?, token?}]}]}  layout (relative to the parent), auto layout, typography, fills, strokes and effects, with style and variable names",
+            false,
+            |s, p| {
+                let id = match id(p, "id") {
+                    Some(i) => i,
+                    None => s.selection().first().copied().ok_or_else(|| crate::bad("inspect.properties", "select a layer or pass `id`"))?,
+                };
+                let doc = s.doc()?;
+                doc.node(id).ok_or_else(|| crate::bad("inspect.properties", "no such layer"))?;
+                Ok(json!({"sections": serde_json::to_value(properties(doc, id)).unwrap_or(Value::Null)}))
+            }
+        ),
+    ]
 }
 
 /// A number as a designer reads it: at most two decimals, no trailing zeros.

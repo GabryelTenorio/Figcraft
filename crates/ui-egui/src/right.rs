@@ -1344,6 +1344,43 @@ fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspec
     ui.add_space(4.0);
 }
 
+/// The selection's layers with export settings: click one to export it, or export them all.
+fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devinspect::Asset]) {
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    let all = widgets::section_header(ui, "Assets", if assets.is_empty() { &[] } else { &[(Icon::Export, "Export all")] }, false).is_some();
+    if assets.is_empty() {
+        row(ui, 28.0, |ui| widgets::label(ui, "No export settings. Add them in the Design tab.", t.text_secondary));
+        return;
+    }
+    let mut export: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
+    for a in assets {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+        let resp = resp.on_hover_text(format!("Export {}", a.name));
+        if resp.hovered() {
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - PAD - 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Export, t.icon);
+        }
+        let name_r = Rect::from_min_max(pos2(r.min.x + PAD, r.min.y), pos2(r.min.x + 96.0 - 4.0, r.max.y));
+        ui.painter().with_clip_rect(name_r).text(pos2(name_r.min.x, r.center().y), Align2::LEFT_CENTER, &a.name, regular(11.0), t.text);
+        let fmt_r = Rect::from_min_max(pos2(r.min.x + 96.0, r.min.y), pos2(r.max.x - PAD - 16.0, r.max.y));
+        ui.painter().with_clip_rect(fmt_r).text(
+            pos2(fmt_r.min.x, r.center().y),
+            Align2::LEFT_CENTER,
+            a.exports.join(", "),
+            regular(11.0),
+            t.text_secondary,
+        );
+        if resp.clicked() {
+            export = Some(vec![a.id]);
+        }
+    }
+    if let Some(ids) = export {
+        crate::export_panel::export_layers(app, &ids);
+    }
+    ui.add_space(4.0);
+}
+
 fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(ds) = app.session.ds() else { return };
@@ -1360,6 +1397,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     for s in figcraft_engine::devinspect::properties(&doc, first) {
         inspect_section(app, ui, &s);
     }
+    inspect_assets(app, ui, &figcraft_engine::devinspect::assets(&doc, &sel));
     use figcraft_engine::codegen::{CodeLang, code_for};
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();

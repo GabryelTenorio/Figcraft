@@ -82,3 +82,23 @@ fn redlines_measure_on_hover_without_alt() {
     s.tool.redlines = true;
     assert!(hover(&mut s) > 0, "Inspect measures on hover");
 }
+
+#[test]
+fn assets_list_layers_with_export_settings_under_the_selection() {
+    let mut s = Session::new();
+    let f = id(s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap());
+    let icon = id(s.execute("shape.ellipse", &json!({"x": 10, "y": 10, "width": 20, "height": 20, "parent": f})).unwrap());
+    s.execute("shape.rectangle", &json!({"x": 40, "y": 10, "width": 20, "height": 20, "parent": f})).unwrap();
+    s.execute("export.add", &json!({"ids": [icon]})).unwrap();
+    s.execute("export.add", &json!({"ids": [icon]})).unwrap();
+    let doc = s.doc().unwrap();
+    let a = crate::devinspect::assets(doc, &[f]);
+    assert_eq!(a.len(), 1, "only the layer with settings");
+    assert_eq!(a[0].id, icon);
+    assert_eq!(a[0].exports.len(), 2);
+    assert!(a[0].exports[0].ends_with("1x"), "{:?}", a[0].exports);
+    s.execute("select.set", &json!({"ids": [f]})).unwrap();
+    let out = s.execute("inspect.assets", &json!({})).unwrap();
+    assert_eq!(out["assets"][0]["name"], "Ellipse");
+    assert!(crate::devinspect::assets(s.doc().unwrap(), &[]).is_empty());
+}

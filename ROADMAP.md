@@ -164,7 +164,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
 | Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |
-| Dev mode / inspect | 2 | 65% | asset export list in Inspect, code for whole frames as components | 3–4 |
+| Dev mode / inspect | 2 | 72% | code for whole frames as components | 1–3 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 
 Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).
