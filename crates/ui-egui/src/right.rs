@@ -511,6 +511,22 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         ui.data_mut(|d| d.insert_temp(Id::new("blend_open"), !d.get_temp::<bool>(Id::new("blend_open")).unwrap_or(false)));
     }
     let col = widgets::col_width(ui.available_width());
+    // Masks: how they mask.
+    if sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.is_mask)) {
+        let mt = common(doc, sel, |n| n.mask_type);
+        widgets::sublabels(ui, "Mask", None);
+        row(ui, 32.0, |ui| {
+            let resp = widgets::dropdown(ui, mt.map(MaskType::label).unwrap_or("Mixed"), col * 2.0 + 8.0, Some(Icon::Mask));
+            egui::Popup::menu(&resp).show(|ui| {
+                for m in MaskType::ALL {
+                    if menu_item(ui, m.label(), "") {
+                        app.set_props(&ids, json!({"maskType": m.id()}));
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
     let op = common(doc, sel, |n| (f64::from(n.opacity) * 100.0).round());
     let radius_ok = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_corner_radius()));
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));

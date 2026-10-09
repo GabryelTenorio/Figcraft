@@ -103,6 +103,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
         if n.is_mask {
             o.insert("isMask".into(), json!(true));
+            o.insert("maskType".into(), json!(n.mask_type.id()));
         }
         if !n.grids.is_empty() {
             o.insert("grids".into(), camel(serde_json::to_value(&n.grids).unwrap_or(Value::Null)));

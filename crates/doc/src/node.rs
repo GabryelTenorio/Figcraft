@@ -113,6 +113,40 @@ fn tau() -> f64 {
     std::f64::consts::TAU
 }
 
+/// How a mask layer masks the layers above it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum MaskType {
+    /// The mask's rendered alpha (soft edges, gradients, opacity).
+    #[default]
+    Alpha,
+    /// The mask's outline geometry, fully opaque (fills and opacity don't matter).
+    Vector,
+    /// The mask's brightness: white shows, black hides.
+    Luminance,
+}
+
+impl MaskType {
+    pub const ALL: [MaskType; 3] = [MaskType::Alpha, MaskType::Vector, MaskType::Luminance];
+    pub fn is_alpha(&self) -> bool {
+        *self == MaskType::Alpha
+    }
+    pub fn id(self) -> &'static str {
+        match self {
+            MaskType::Alpha => "alpha",
+            MaskType::Vector => "vector",
+            MaskType::Luminance => "luminance",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            MaskType::Alpha => "Alpha",
+            MaskType::Vector => "Vector",
+            MaskType::Luminance => "Luminance",
+        }
+    }
+}
+
 /// A ruler guide on a page or frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
@@ -281,6 +315,9 @@ pub struct Node {
     /// This node masks the siblings above it.
     #[serde(default)]
     pub is_mask: bool,
+    /// How a mask masks: by its alpha, its outline, or its luminance.
+    #[serde(default, skip_serializing_if = "MaskType::is_alpha")]
+    pub mask_type: MaskType,
     #[serde(default)]
     pub grids: Vec<LayoutGrid>,
     #[serde(default)]
@@ -381,6 +418,7 @@ impl Node {
             child_layout: ChildLayout::default(),
             clip,
             is_mask: false,
+            mask_type: MaskType::Alpha,
             grids: Vec::new(),
             exports: Vec::new(),
             interactions: Vec::new(),

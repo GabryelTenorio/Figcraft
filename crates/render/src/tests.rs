@@ -142,6 +142,52 @@ fn mask_clips_siblings() {
 }
 
 #[test]
+fn luminance_and_vector_masks() {
+    let mut d = figcraft_doc::Document::new("t");
+    let p = d.first_page().unwrap();
+    let g = d.create(p, NodeKind::Group, "G", 0.0, 0.0, 100.0, 100.0).unwrap();
+    // The mask: white on the left half, black on the right.
+    let m = d.create(g, NodeKind::Rectangle, "M", 0.0, 0.0, 100.0, 100.0).unwrap();
+    let grad = figcraft_color::Gradient {
+        kind: figcraft_color::GradientKind::Linear,
+        stops: vec![
+            figcraft_color::ColorStop { position: 0.0, color: Color::WHITE },
+            figcraft_color::ColorStop { position: 0.49, color: Color::WHITE },
+            figcraft_color::ColorStop { position: 0.51, color: Color::BLACK },
+            figcraft_color::ColorStop { position: 1.0, color: Color::BLACK },
+        ],
+        from: (0.0, 0.5),
+        to: (1.0, 0.5),
+        width: (0.0, 1.0),
+    };
+    d.get_mut(m).unwrap().fills = vec![Paint::gradient(grad)];
+    d.get_mut(m).unwrap().is_mask = true;
+    let r = d.create(g, NodeKind::Rectangle, "R", 0.0, 0.0, 100.0, 100.0).unwrap();
+    d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::BLACK)];
+    // Alpha: the mask is opaque everywhere, so everything shows.
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 80, 50), [0, 0, 0, 255]);
+    // Luminance: only the white half shows.
+    d.get_mut(m).unwrap().mask_type = figcraft_doc::MaskType::Luminance;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 20, 50), [0, 0, 0, 255]);
+    assert_eq!(px(&pix, 80, 50)[0], 0xF5, "black hides");
+    // Vector: a fully transparent ellipse still masks by its outline.
+    let e = d.create(g, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "E", 0.0, 0.0, 50.0, 50.0).unwrap();
+    d.get_mut(e).unwrap().fills = vec![Paint::solid(Color::new(0.0, 0.0, 0.0, 0.0))];
+    d.get_mut(e).unwrap().is_mask = true;
+    d.get_mut(e).unwrap().mask_type = figcraft_doc::MaskType::Vector;
+    d.get_mut(g).unwrap().children = vec![e, r];
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 25, 25), [0, 0, 0, 255], "inside the outline");
+    assert_eq!(px(&pix, 80, 80)[0], 0xF5, "outside");
+    // As an alpha mask the transparent ellipse hides everything.
+    d.get_mut(e).unwrap().mask_type = figcraft_doc::MaskType::Alpha;
+    let pix = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
+    assert_eq!(px(&pix, 25, 25)[0], 0xF5);
+}
+
+#[test]
 fn boolean_subtract_renders_hole() {
     let mut d = figcraft_doc::Document::new("t");
     let p = d.first_page().unwrap();

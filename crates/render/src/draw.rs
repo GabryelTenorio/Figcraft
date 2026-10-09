@@ -565,12 +565,22 @@ fn draw_children(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize
 fn draw_masked(ctx: &Ctx, pix: &mut Pixmap, mask_id: NodeId, content: &[NodeId], xf: Affine, depth: usize) {
     let (w, h) = (pix.width(), pix.height());
     let Some(mut mask_px) = Pixmap::new(w, h) else { return };
-    // Draw the mask node as if it weren't a mask.
+    let mask_type = ctx.doc.node(mask_id).map(|m| m.mask_type).unwrap_or_default();
+    // Draw the mask node as if it weren't a mask (a vector mask: its outline, fully opaque).
     if let Some(m) = ctx.doc.node(mask_id) {
         let mut m2 = m.clone();
         m2.is_mask = false;
         let mxf = xf * m2.transform;
-        if needs_layer(&m2) {
+        if mask_type == figcraft_doc::MaskType::Vector {
+            if let Some((outline, rule)) = subtree_outline(ctx.doc, &m2, depth + 1)
+                && let Some(path) = ts_path(&outline)
+            {
+                let mut paint = tiny_skia::Paint::default();
+                paint.set_color_rgba8(255, 255, 255, 255);
+                paint.anti_alias = true;
+                mask_px.fill_path(&path, &paint, rule, ts_transform(mxf), None);
+            }
+        } else if needs_layer(&m2) {
             let paint = PixmapPaint { opacity: m2.opacity, ..Default::default() };
             let mut tmp = Pixmap::new(w, h);
             if let Some(tmp) = tmp.as_mut() {
@@ -585,7 +595,8 @@ fn draw_masked(ctx: &Ctx, pix: &mut Pixmap, mask_id: NodeId, content: &[NodeId],
     for c in content {
         draw_node(ctx, &mut layer, *c, xf, depth + 1);
     }
-    let mask = Mask::from_pixmap(mask_px.as_ref(), MaskType::Alpha);
+    let kind = if mask_type == figcraft_doc::MaskType::Luminance { MaskType::Luminance } else { MaskType::Alpha };
+    let mask = Mask::from_pixmap(mask_px.as_ref(), kind);
     pix.draw_pixmap(0, 0, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
 }
 

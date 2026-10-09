@@ -289,6 +289,10 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "effects" => doc.get_mut(id)?.effects = serde_json::from_value(snake(v)).map_err(|e| bad(cmd, format!("effects: {e}")))?,
             "clip" | "clipsContent" => doc.get_mut(id)?.clip = v.as_bool().ok_or_else(|| bad(cmd, "`clip` must be a boolean"))?,
             "isMask" => doc.get_mut(id)?.is_mask = v.as_bool().unwrap_or(false),
+            "maskType" => {
+                let t = v.as_str().and_then(|s| MaskType::ALL.into_iter().find(|m| m.id().eq_ignore_ascii_case(s)));
+                doc.get_mut(id)?.mask_type = t.ok_or_else(|| bad(cmd, "maskType: alpha|vector|luminance"))?;
+            }
             "layout" | "layoutMode" => {
                 let n = doc.get_mut(id)?;
                 if !n.kind.is_frame_like() {
