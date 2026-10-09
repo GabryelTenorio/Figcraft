@@ -185,13 +185,28 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let Ok(ds) = app.session.ds() else { return };
     let pages: Vec<(NodeId, String)> = ds.doc.pages.iter().filter_map(|p| ds.doc.node(*p).map(|n| (*p, n.name.clone()))).collect();
     let cur = ds.page;
+    let sel = ds.selection.clone();
     let mut select = None;
     let mut rename_done: Option<(NodeId, String)> = None;
+    // Layers dragged from the list onto another page move there.
+    let dragging: Option<NodeId> = ui.data(|d| d.get_temp(layer_drag_id()));
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut move_to: Option<(NodeId, String)> = None;
     for (id, name) in pages {
         let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
         let r = r.shrink2(vec2(8.0, 0.0));
         if resp.hovered() || id == cur {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        }
+        if dragging.is_some()
+            && id != cur
+            // The gap between rows counts too.
+            && pointer.is_some_and(|p| resp.interact_rect.expand2(vec2(0.0, 3.0)).contains(p))
+        {
+            ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
+            if ui.input(|i| i.pointer.any_released()) {
+                move_to = Some((id, name.clone()));
+            }
         }
         if app.ui.rename_page.as_ref().is_some_and(|(i, _)| *i == id) {
             let tr = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 4.0), pos2(r.max.x - 4.0, r.max.y - 4.0));
@@ -235,12 +250,32 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         app.ui.rename_page = None;
         app.run("page.rename", json!({"id": id, "name": new}));
     }
+    if let Some((page, name)) = move_to {
+        let ids = dragged_layers(dragging, &sel);
+        if app.run("object.moveToPage", json!({"ids": ids, "page": page})).is_some() {
+            app.toast(format!("Moved to {name}"));
+        }
+    }
     if let Some(p) = select
         && p != cur
     {
         app.run("page.select", json!({"id": p}));
     }
     crate::widgets::separator(ui);
+}
+
+/// The layer row being dragged in the panel (temp data).
+fn layer_drag_id() -> Id {
+    Id::new("layer_drag")
+}
+
+/// What a drag of row `dragging` moves: the selection when the row is in it, else the row.
+fn dragged_layers(dragging: Option<NodeId>, sel: &[NodeId]) -> Vec<NodeId> {
+    match dragging {
+        Some(dg) if sel.contains(&dg) => sel.to_vec(),
+        Some(dg) => vec![dg],
+        None => Vec::new(),
+    }
 }
 
 #[derive(Clone)]
@@ -407,18 +442,13 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     let mut lock: Option<NodeId> = None;
     let mut rename_done: Option<(NodeId, String)> = None;
     let mut hovered_row: Option<NodeId> = None;
-    let drag_id = Id::new("layer_drag");
+    let drag_id = layer_drag_id();
     // Escape cancels a drag.
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         ui.data_mut(|d| d.remove::<NodeId>(drag_id));
     }
     let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
-    // What a drag moves: the selection when the dragged row is in it.
-    let moving: Vec<NodeId> = match dragging {
-        Some(dg) if sel.contains(&dg) => sel.clone(),
-        Some(dg) => vec![dg],
-        None => Vec::new(),
-    };
+    let moving = dragged_layers(dragging, &sel);
     // A layer can't go into itself or its own descendants.
     let blocked = |id: NodeId| moving.contains(&id) || doc.ancestors(id).iter().any(|a| moving.contains(a));
     let mut drop: Option<(NodeId, i8)> = None;
