@@ -38,6 +38,10 @@ pub enum Icon {
     ComponentSet,
     Group,
     Vector,
+    Bend,
+    PaintBucket,
+    Lasso,
+    Cut,
     Boolean,
     Page,
     Check,
@@ -201,6 +205,43 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Slice => {
             p.line(3.0, 13.0, 13.0, 3.0);
             p.rect(2.5, 2.5, 13.5, 13.5, 0.0);
+        }
+        Bend => {
+            // A curve with a smooth point and its handle line.
+            let pts: Vec<(f32, f32)> = (0..=12)
+                .map(|i| {
+                    let t = i as f32 / 12.0;
+                    let u = 1.0 - t;
+                    (u * u * 2.5 + 2.0 * u * t * 8.0 + t * t * 13.5, u * u * 13.0 + 2.0 * u * t * 1.5 + t * t * 13.0)
+                })
+                .collect();
+            p.poly(&pts, false);
+            p.line(3.5, 7.25, 12.5, 7.25);
+            p.dot(3.5, 7.25, 1.2);
+            p.dot(12.5, 7.25, 1.2);
+            p.fill_rect(6.9, 6.15, 9.1, 8.35, 0.4);
+        }
+        PaintBucket => {
+            p.poly(&[(2.5, 8.0), (7.5, 3.0), (12.5, 8.0), (7.5, 13.0)], true);
+            p.line(4.0, 6.5, 11.0, 6.5);
+            p.line(7.5, 3.0, 5.5, 1.0);
+            p.dot(13.5, 11.8, 1.4);
+        }
+        Lasso => {
+            let pts: Vec<(f32, f32)> = (0..=20)
+                .map(|i| {
+                    let a = i as f32 / 20.0 * std::f32::consts::TAU;
+                    (8.5 + 5.5 * a.cos(), 6.0 + 3.5 * a.sin())
+                })
+                .collect();
+            p.poly(&pts, true);
+            p.poly(&[(5.0, 8.8), (4.6, 11.0), (5.6, 12.6), (4.2, 14.5)], false);
+        }
+        Cut => {
+            p.circle(4.5, 11.5, 2.2);
+            p.circle(11.5, 11.5, 2.2);
+            p.line(6.0, 9.8, 11.5, 2.5);
+            p.line(10.0, 9.8, 4.5, 2.5);
         }
         Rectangle => p.rect(3.0, 3.0, 13.0, 13.0, 0.5),
         Line => p.line(3.0, 13.0, 13.0, 3.0),

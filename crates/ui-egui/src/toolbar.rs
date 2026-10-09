@@ -2,6 +2,7 @@
 
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_engine::ToolId;
+use figcraft_engine::vectoredit::VTool;
 use serde_json::json;
 
 use crate::FigApp;
@@ -39,6 +40,11 @@ fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
+    // Vector edit mode swaps the tools for the edit tools.
+    if let Some(tool) = app.session.ds().ok().and_then(|d| d.vector_edit.as_ref()).map(|v| v.tool) {
+        edit_toolbar(app, ui, tool);
+        return;
+    }
     let cell = 32.0;
     let gap = 4.0;
     let width = GROUPS.len() as f32 * (cell + 4.0) + 4.0 * 10.0 + 2.0 * (cell + 4.0) + 16.0 + 4.0 * 34.0 + 24.0;
@@ -51,21 +57,6 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     }
     painter.rect_filled(rect, CornerRadius::same(13), t.panel);
     painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
-    // Vector edit mode: a contextual strip above the toolbar.
-    if app.session.ds().map(|d| d.vector_edit.is_some()).unwrap_or(false) {
-        let strip = Rect::from_center_size(pos2(rect.center().x, rect.min.y - 30.0), vec2(360.0, 40.0));
-        ui.painter().rect_filled(strip, CornerRadius::same(10), t.panel);
-        ui.painter().rect_stroke(strip, CornerRadius::same(10), Stroke::new(1.0, t.border), StrokeKind::Inside);
-        let hints = "Drag points · ⌘-drag bends · ⌥-click adds a point · ⌫ deletes";
-        ui.painter().text(pos2(strip.min.x + 12.0, strip.center().y), Align2::LEFT_CENTER, hints, regular(10.5), t.text_secondary);
-        let done = Rect::from_min_size(pos2(strip.max.x - 56.0, strip.center().y - 13.0), vec2(48.0, 26.0));
-        let dresp = ui.interact(done, ui.id().with("vdone"), Sense::click());
-        ui.painter().rect_filled(done, CornerRadius::same(6), if dresp.hovered() { t.accent_hover } else { ACCENT });
-        ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.0), Color32::WHITE);
-        if dresp.clicked() {
-            app.run("vector.edit.end", json!({}));
-        }
-    }
     let current = app.session.tool.tool;
     let mut x = rect.min.x + 8.0;
     let cy = rect.center().y;
@@ -179,6 +170,66 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// The pill shown in vector edit mode: the edit tools and Done.
+fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
+    let t = Tokens::get(ui.ctx());
+    let canvas = app.canvas.rect;
+    let cell = 32.0;
+    let done_w = 56.0;
+    let width = VTool::ALL.len() as f32 * (cell + 4.0) + 8.0 + 12.0 + done_w + 8.0;
+    let rect = Rect::from_center_size(pos2(canvas.center().x, canvas.max.y - 12.0 - 24.0), vec2(width, 48.0));
+    let painter = ui.painter();
+    for (i, a) in [(6.0, 10u8), (3.0, 16), (1.0, 24)] {
+        painter.rect_filled(rect.expand(i).translate(vec2(0.0, i * 0.5)), CornerRadius::same((13.0 + i) as u8), Color32::from_black_alpha(a));
+    }
+    painter.rect_filled(rect, CornerRadius::same(13), t.panel);
+    painter.rect_stroke(rect, CornerRadius::same(13), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    let cy = rect.center().y;
+    let mut x = rect.min.x + 8.0;
+    // Holding Cmd with the Move tool bends: show it.
+    let held = current == VTool::Move && ui.input(|i| i.modifiers.command);
+    for tool in VTool::ALL {
+        let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
+        let tip = if tool == VTool::Bend {
+            format!("{}  hold {}", tool.label(), pretty_shortcut(tool.shortcut()))
+        } else {
+            format!("{}  {}", tool.label(), pretty_shortcut(tool.shortcut()))
+        };
+        let resp = ui.interact(r, ui.id().with(("vtool", tool.id())), Sense::click()).on_hover_text(tip);
+        let active = tool == current && !held || held && tool == VTool::Bend;
+        let bg = if active {
+            ACCENT
+        } else if resp.hovered() {
+            t.hover
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(r, CornerRadius::same(5), bg);
+        let icon = match tool {
+            VTool::Move => Icon::Move,
+            VTool::Pen => Icon::Pen,
+            VTool::Bend => Icon::Bend,
+            VTool::Paint => Icon::PaintBucket,
+            VTool::Lasso => Icon::Lasso,
+            VTool::Cut => Icon::Cut,
+        };
+        icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
+        if resp.clicked() {
+            app.run("vector.edit.tool", json!({"tool": tool.id()}));
+        }
+        x += cell + 4.0;
+    }
+    ui.painter().line_segment([pos2(x + 2.0, cy - 14.0), pos2(x + 2.0, cy + 14.0)], Stroke::new(1.0, t.border));
+    x += 12.0;
+    let done = Rect::from_min_size(pos2(x, cy - 14.0), vec2(done_w, 28.0));
+    let dresp = ui.interact(done, ui.id().with("vdone"), Sense::click()).on_hover_text("Done editing  Esc");
+    ui.painter().rect_filled(done, CornerRadius::same(6), if dresp.hovered() { t.accent_hover } else { ACCENT });
+    ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.5), Color32::WHITE);
+    if dresp.clicked() {
+        app.run("vector.edit.end", json!({}));
+    }
 }
 
 fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {

@@ -606,7 +606,7 @@ impl TextLayout {
             let last_line = li + 1 == self.lines.len();
             let in_line = index >= line.char_start && (index < line.char_end || (last_line && index <= line.char_end));
             // A caret at the end of a soft-wrapped line belongs to the next line.
-            if !in_line && !(index == line.char_end && (line.para_end && !last_line)) {
+            if !(in_line || index == line.char_end && line.para_end && !last_line) {
                 continue;
             }
             if index == line.char_end && line.para_end && !last_line {

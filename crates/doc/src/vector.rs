@@ -4,6 +4,32 @@
 use figcraft_geom::{BezPath, Point};
 use serde::{Deserialize, Serialize};
 
+/// How a vertex's two bezier handles follow each other when one is dragged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum HandleMirroring {
+    /// Handles move independently (a corner).
+    #[default]
+    None,
+    /// The other handle stays opposite but keeps its own length.
+    Angle,
+    /// The other handle mirrors angle and length (a symmetric smooth point).
+    AngleAndLength,
+}
+
+impl HandleMirroring {
+    pub fn id(self) -> &'static str {
+        match self {
+            HandleMirroring::None => "none",
+            HandleMirroring::Angle => "angle",
+            HandleMirroring::AngleAndLength => "angleAndLength",
+        }
+    }
+    pub fn from_id(s: &str) -> Option<Self> {
+        [HandleMirroring::None, HandleMirroring::Angle, HandleMirroring::AngleAndLength].into_iter().find(|m| m.id().eq_ignore_ascii_case(s))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Vertex {
     pub x: f64,
@@ -11,11 +37,14 @@ pub struct Vertex {
     /// Per-vertex corner radius (0 = sharp).
     #[serde(default)]
     pub radius: f64,
+    /// Handle mirroring; `None` infers it from the handles (see [`VectorNetwork::mirroring`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<HandleMirroring>,
 }
 
 impl Vertex {
     pub fn new(x: f64, y: f64) -> Self {
-        Self { x, y, radius: 0.0 }
+        Self { x, y, radius: 0.0, mirror: None }
     }
     pub fn point(&self) -> Point {
         Point::new(self.x, self.y)
@@ -92,9 +121,27 @@ impl VectorNetwork {
             net.vertices.push(Vertex::new(p.x, p.y));
             net.vertices.len() - 1
         };
+        // A subpath that ends back on its start point without a ClosePath (e.g. ellipse outlines)
+        // is closed too, so it keeps its fill.
+        let close_open =
+            |net: &mut VectorNetwork, loop_segs: &mut Vec<usize>, all_loops: &mut Vec<Vec<usize>>, first_v: Option<usize>, cur_v: Option<usize>| {
+                let (Some(a), Some(f)) = (cur_v, first_v) else { return };
+                let (Some(pa), Some(pf)) = (net.vertices.get(a).map(Vertex::point), net.vertices.get(f).map(Vertex::point)) else { return };
+                if a == f || loop_segs.len() < 2 || (pa - pf).hypot() > 1e-6 || a + 1 != net.vertices.len() {
+                    return;
+                }
+                for s in net.segments.iter_mut() {
+                    if s.b == a {
+                        s.b = f;
+                    }
+                }
+                net.vertices.pop();
+                all_loops.push(std::mem::take(loop_segs));
+            };
         for el in path.elements() {
             match *el {
                 PathEl::MoveTo(p) => {
+                    close_open(&mut net, &mut loop_segs, &mut all_loops, first_v, cur_v);
                     loop_segs.clear();
                     let v = push_v(&mut net, p);
                     first_v = Some(v);
@@ -129,7 +176,9 @@ impl VectorNetwork {
                     let (Some(a), Some(f)) = (cur_v, first_v) else { continue };
                     let close_pt = net.vertices.get(a).map(Vertex::point);
                     let first_pt = net.vertices.get(f).map(Vertex::point);
-                    if close_pt.is_some() && close_pt == first_pt && a != f {
+                    // The end vertex lands on the start (up to float noise): merge them.
+                    let same = matches!((close_pt, first_pt), (Some(c), Some(f)) if (c - f).hypot() <= 1e-6);
+                    if same && a != f {
                         // Merge the duplicate end vertex into the first one.
                         for s in net.segments.iter_mut() {
                             if s.b == a {
@@ -150,10 +199,91 @@ impl VectorNetwork {
                 }
             }
         }
+        close_open(&mut net, &mut loop_segs, &mut all_loops, first_v, cur_v);
         if !all_loops.is_empty() {
             net.regions.push(Region { loops: all_loops, winding: WindingRule::NonZero });
         }
         net
+    }
+
+    /// Segments touching vertex `v`: (segment index, `true` when `v` is the segment's `a` end).
+    pub fn incident(&self, v: usize) -> Vec<(usize, bool)> {
+        self.segments
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                if s.a == v {
+                    Some((i, true))
+                } else if s.b == v {
+                    Some((i, false))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// The handle (relative to its vertex) at one end of a segment.
+    pub fn handle(&self, seg: usize, start: bool) -> Option<(f64, f64)> {
+        let s = self.segments.get(seg)?;
+        Some(if start { s.ta } else { s.tb })
+    }
+
+    pub fn set_handle(&mut self, seg: usize, start: bool, t: (f64, f64)) {
+        if let Some(s) = self.segments.get_mut(seg) {
+            if start {
+                s.ta = t;
+            } else {
+                s.tb = t;
+            }
+        }
+    }
+
+    /// The vertex's handle mirroring: its explicit setting, else inferred from its two handles
+    /// (opposite and equal → angle and length, opposite → angle, otherwise none).
+    pub fn mirroring(&self, v: usize) -> HandleMirroring {
+        if let Some(m) = self.vertices.get(v).and_then(|x| x.mirror) {
+            return m;
+        }
+        let inc = self.incident(v);
+        let [(s1, a1), (s2, a2)] = inc.as_slice() else { return HandleMirroring::None };
+        let (Some(h1), Some(h2)) = (self.handle(*s1, *a1), self.handle(*s2, *a2)) else { return HandleMirroring::None };
+        let (l1, l2) = (h1.0.hypot(h1.1), h2.0.hypot(h2.1));
+        if l1 < 1e-9 || l2 < 1e-9 {
+            return HandleMirroring::None;
+        }
+        // Opposite directions: the cross product is ~0 and the dot product negative.
+        let cross = (h1.0 * h2.1 - h1.1 * h2.0) / (l1 * l2);
+        let dot = (h1.0 * h2.0 + h1.1 * h2.1) / (l1 * l2);
+        if cross.abs() > 1e-3 || dot > -0.999 {
+            HandleMirroring::None
+        } else if (l1 - l2).abs() <= 1e-6 * l1.max(l2).max(1.0) {
+            HandleMirroring::AngleAndLength
+        } else {
+            HandleMirroring::Angle
+        }
+    }
+
+    /// Segment `i` as a cubic bezier.
+    pub fn cubic(&self, i: usize) -> Option<figcraft_geom::kurbo::CubicBez> {
+        let (a, c1, c2, b) = self.seg_points(self.segments.get(i)?)?;
+        Some(figcraft_geom::kurbo::CubicBez::new(a, c1, c2, b))
+    }
+
+    /// One closed loop of segments as a path.
+    pub fn loop_path(&self, lp: &[usize]) -> BezPath {
+        let mut path = BezPath::new();
+        self.append_loop(&mut path, lp);
+        path
+    }
+
+    /// Whether the rendered fill covers `p` (the renderer fills every region with one rule: even-odd
+    /// when any region asks for it).
+    pub fn fill_contains(&self, p: Point) -> bool {
+        use figcraft_geom::Shape;
+        let path = self.fill_path();
+        let w = path.winding(p);
+        if self.regions.iter().any(|r| r.winding == WindingRule::EvenOdd) { w % 2 != 0 } else { w != 0 }
     }
 
     fn seg_points(&self, s: &Segment) -> Option<(Point, Point, Point, Point)> {

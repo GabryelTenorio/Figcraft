@@ -27,6 +27,7 @@ pub mod tabs;
 pub mod theme;
 pub mod toolbar;
 pub mod typography;
+pub mod vector_panel;
 pub mod widgets;
 
 use std::collections::BTreeSet;

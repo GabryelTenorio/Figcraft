@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-09 (end of day 1: foundation, renderer, engine, UI3 shell)._
+_Last updated: 2026-10-10 (vector edit mode tools)._
 
 ## Where we are
 
@@ -38,8 +38,12 @@ dimension measured side by side.
 
 ### Where we're lacking (priority order)
 
-1. **Vector edit mode** (Enter on a vector): vertex/handle editing, bend, paint bucket, lasso,
-   cut/erase, vector networks with branching. 25–35 h.
+1. **Vector edit mode**: *landed:* edit-mode toolbar (move, pen, bend, paint bucket, lasso, cut),
+   pen that extends, branches and closes paths (vector networks), paint bucket fill/unfill of any
+   closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
+   length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
+   merge, delete vs delete-and-heal, nudging, one undo step per gesture. *Left:* eraser, variable
+   width strokes, shape builder, transform box for several points, point snapping. 12–18 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit.
    *Left:* inline IME preedit, variable font axes, visual QA. 8–12 h.
@@ -62,7 +66,8 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** vector edit mode (1) and text depth (2) in parallel with the fidelity pass (7).
+- **Next:** text depth (2) and auto layout depth (3) in parallel with the fidelity pass (7); the
+  rest of vector editing (1).
 - **Then:** auto layout/components/prototyping depth (3–5), interop (6).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -111,7 +116,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 60% | rulers/guides dragging, pixel preview, minimap-free perf at scale | 8–12 |
 | Selection & transform | 8 | 55% | rotated multi-select handles, scale tool polish, measure hover polish, nudge-resize | 12–18 |
 | Layers panel | 5 | 55% | search/filter, multi-select ranges, collapse all, thumbnails, drag polish | 8–12 |
-| Shapes & vector | 8 | 30% | vector edit mode, bend/paint bucket, live boolean editing, arc handles on canvas | 30–40 |
+| Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
 | Paint | 7 | 55% | gradient handles on canvas, image crop mode, document colours, colour models | 12–18 |
 | Strokes | 3 | 55% | arrowhead set, dash/gap UI, per-side UI, stroke styles | 5–8 |
 | Effects | 4 | 60% | effect styles UI, glass/texture fidelity, shadow spread on non-rects exactness | 6–10 |
@@ -125,7 +130,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **43%**.
+Weighted feature depth ≈ **45%**.
 
 ## Milestones
 
@@ -136,7 +141,7 @@ Weighted feature depth ≈ **43%**.
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~60% |
 | M2 Layout depth | ~45% |
 | M3 Components & styles depth | ~40% |
-| M4 Vector & text depth | ~30% |
+| M4 Vector & text depth | ~45% |
 | M5 Prototype & present | ~30% |
 | M6 Interop & dev mode | ~35% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |

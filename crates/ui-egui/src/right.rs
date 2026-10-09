@@ -178,13 +178,17 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     let Ok(ds) = app.session.ds() else { return };
     let doc = ds.doc.clone();
     let sel = ds.selection.clone();
+    let vector_edit = ds.vector_edit.clone();
     if sel.is_empty() {
         page_section(app, ui, &doc);
         return;
     }
     header(app, ui, &doc, &sel);
     widgets::separator(ui);
-    position(app, ui, &doc, &sel);
+    match vector_edit {
+        Some(ve) => crate::vector_panel::points(app, ui, &doc, &ve),
+        None => position(app, ui, &doc, &sel),
+    }
     widgets::separator(ui);
     layout(app, ui, &doc, &sel);
     widgets::separator(ui);

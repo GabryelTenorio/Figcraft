@@ -133,7 +133,7 @@ fn kjoin(j: StrokeJoin) -> Join {
 
 /// Plain centred stroke of `path` at `width`.
 pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath {
-    if !(width.is_finite() && width > 0.0) || !finite(path) {
+    if !(width.is_finite() && width > 0.0 && finite(path)) {
         return BezPath::new();
     }
     let mut style = kurbo::Stroke::new(width)

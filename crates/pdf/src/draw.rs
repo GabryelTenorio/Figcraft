@@ -443,7 +443,7 @@ impl<'a> Exporter<'a> {
     #[allow(clippy::too_many_arguments)]
     fn raster_paint(&mut self, s: &mut Surface, path: &BezPath, kp: &Path, r: FillRule, p: &Paint, w: f64, h: f64, xf: Affine) {
         let bb = path.bounding_box();
-        if !(bb.width() > 0.0 && bb.height() > 0.0) || !crate::rect_finite(bb) {
+        if !(bb.width() > 0.0 && bb.height() > 0.0 && crate::rect_finite(bb)) {
             return;
         }
         let page_scale = xf.determinant().abs().sqrt();

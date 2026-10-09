@@ -70,8 +70,12 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("vector.simplify", "Simplify vector", "{ids?, tolerance?}", true, simplify),
         spec!("vector.offset", "Offset path", "{ids?, offset}", true, offset_path),
-        spec!("vector.join", "Join selection", "{ids?}", true, join),
-        spec!("vector.smoothJoin", "Smooth join selection", "{ids?}", true, join),
+        spec!("vector.join", "Join selection", "{ids?} (in vector edit mode: joins the selected points)", true, |s, p| {
+            crate::vectoredit::join_in_edit_mode(s, false).unwrap_or_else(|| join(s, p))
+        }),
+        spec!("vector.smoothJoin", "Smooth join selection", "{ids?} (in vector edit mode: joins the selected points smoothly)", true, |s, p| {
+            crate::vectoredit::join_in_edit_mode(s, true).unwrap_or_else(|| join(s, p))
+        }),
     ]
 }
 

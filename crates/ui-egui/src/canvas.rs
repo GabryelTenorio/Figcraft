@@ -512,32 +512,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 2.0));
     }
     // Vector edit mode.
-    if let Some((vid, vsel)) = ds.vector_edit.clone()
-        && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, vid, &vsel)
+    if let Some(ve) = ds.vector_edit.clone()
+        && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, &ve)
     {
-        let pt = |v: &serde_json::Value| -> Option<Pos2> { Some(app.to_screen(v.get(0)?.as_f64()?, v.get(1)?.as_f64()?)) };
-        for seg in o["segments"].as_array().cloned().unwrap_or_default() {
-            let pts: Vec<Pos2> = seg.as_array().map(|a| a.iter().filter_map(pt).collect()).unwrap_or_default();
-            if let [a, b, c, d] = pts.as_slice() {
-                painter.add(egui::epaint::CubicBezierShape::from_points_stroke([*a, *b, *c, *d], false, Color32::TRANSPARENT, stroke(ACCENT, 1.5)));
-            }
-        }
-        for h in o["handles"].as_array().cloned().unwrap_or_default() {
-            let pts: Vec<Pos2> = h.as_array().map(|a| a.iter().filter_map(pt).collect()).unwrap_or_default();
-            if let [a, b] = pts.as_slice() {
-                painter.line_segment([*a, *b], stroke(ACCENT, 1.0));
-                painter.circle_filled(*b, 3.5, Color32::WHITE);
-                painter.circle_stroke(*b, 3.5, stroke(ACCENT, 1.0));
-            }
-        }
-        for (i, v) in o["vertices"].as_array().cloned().unwrap_or_default().iter().enumerate() {
-            if let Some(p) = pt(v) {
-                let r = Rect::from_center_size(p, vec2(7.0, 7.0));
-                let on = vsel.contains(&i);
-                painter.rect_filled(r, CornerRadius::same(4), if on { ACCENT } else { Color32::WHITE });
-                painter.rect_stroke(r, CornerRadius::same(4), stroke(ACCENT, 1.0), StrokeKind::Inside);
-            }
-        }
+        vector_overlay(app, painter, &o);
     }
     // Selection.
     let editing = ds.text_edit.clone();
@@ -658,10 +636,110 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             }
         }
     }
+    // Lasso (vector edit mode).
+    if ov.lasso.len() > 1 {
+        let mut pts: Vec<Pos2> = ov.lasso.iter().map(|[x, y]| app.to_screen(*x, *y)).collect();
+        if let Some(first) = pts.first().copied() {
+            pts.push(first);
+        }
+        painter.add(Shape::dashed_line(&pts, stroke(ACCENT, 1.0), 4.0, 3.0));
+    }
     // Rulers.
     if view.rulers {
         rulers(app, painter, t, &doc, &sel);
     }
+}
+
+/// Vector edit mode: the network's segments, handles and points, the hovered part, the closed
+/// area under the paint bucket and the pen's rubber band.
+fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::vectoredit::EditOverlay) {
+    use figcraft_engine::vectoredit::VHit;
+    let ov = &app.session.tool.overlay;
+    let sp = |p: &[f64; 2]| app.to_screen(p[0], p[1]);
+    // Paint bucket target: hatched like a fill to come.
+    if !ov.face.is_empty() {
+        let polys: Vec<Vec<Pos2>> = ov.face.iter().map(|poly| poly.iter().map(sp).collect()).collect();
+        for l in hatch(&polys, 5.0) {
+            painter.line_segment(l, stroke(ACCENT, 1.0));
+        }
+        for poly in &polys {
+            painter.add(Shape::closed_line(poly.clone(), stroke(ACCENT, 2.0)));
+        }
+    }
+    let hover_seg = match ov.vector_hover {
+        Some(VHit::Segment { seg, .. }) => Some(seg),
+        _ => None,
+    };
+    for (i, seg) in o.segments.iter().enumerate() {
+        let [a, b, c, d] = [sp(&seg[0]), sp(&seg[1]), sp(&seg[2]), sp(&seg[3])];
+        let w = if o.selected_segments.contains(&i) {
+            3.0
+        } else if hover_seg == Some(i) {
+            2.5
+        } else {
+            1.5
+        };
+        painter.add(egui::epaint::CubicBezierShape::from_points_stroke([a, b, c, d], false, Color32::TRANSPARENT, stroke(ACCENT, w)));
+    }
+    for h in &o.handles {
+        let (v, e) = (sp(&h.vertex), sp(&h.handle));
+        painter.line_segment([v, e], stroke(ACCENT, 1.0));
+        let hovered = ov.vector_hover == Some(VHit::Handle { seg: h.seg, start: h.start });
+        let r = if hovered { 4.5 } else { 3.5 };
+        painter.circle_filled(e, r, Color32::WHITE);
+        painter.circle_stroke(e, r, stroke(ACCENT, 1.0));
+    }
+    for (i, v) in o.vertices.iter().enumerate() {
+        let p = sp(v);
+        let hovered = matches!(ov.vector_hover, Some(VHit::Vertex { index }) if index == i);
+        let size = if hovered { 9.0 } else { 7.0 };
+        let r = Rect::from_center_size(p, vec2(size, size));
+        let on = o.selected_vertices.contains(&i);
+        painter.rect_filled(r, CornerRadius::same(5), if on { ACCENT } else { Color32::WHITE });
+        painter.rect_stroke(r, CornerRadius::same(5), stroke(ACCENT, 1.0), StrokeKind::Inside);
+        if o.anchor == Some(i) {
+            painter.circle_stroke(p, 7.5, stroke(ACCENT, 1.0));
+        }
+    }
+    if let Some([x0, y0, x1, y1]) = ov.rubber {
+        painter.add(Shape::dashed_line(&[app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 1.0), 4.0, 3.0));
+    }
+}
+
+/// 45° hatch lines `gap` apart inside polygons (even-odd), in screen space.
+fn hatch(polys: &[Vec<Pos2>], gap: f32) -> Vec<[Pos2; 2]> {
+    // Rotate so the hatch is horizontal, scan, rotate back.
+    let rot = |p: Pos2| pos2((p.x + p.y) * std::f32::consts::FRAC_1_SQRT_2, (p.y - p.x) * std::f32::consts::FRAC_1_SQRT_2);
+    let back = |x: f32, y: f32| pos2((x - y) * std::f32::consts::FRAC_1_SQRT_2, (x + y) * std::f32::consts::FRAC_1_SQRT_2);
+    let edges: Vec<(Pos2, Pos2)> = polys
+        .iter()
+        .flat_map(|poly| {
+            let pts: Vec<Pos2> = poly.iter().map(|p| rot(*p)).collect();
+            let n = pts.len();
+            (0..n).filter_map(move |k| Some((*pts.get(k)?, *pts.get((k + 1) % n)?)))
+        })
+        .collect();
+    let (y0, y1) = edges.iter().fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), (a, b)| (lo.min(a.y).min(b.y), hi.max(a.y).max(b.y)));
+    let mut out = Vec::new();
+    if !(y0.is_finite() && y1.is_finite()) || (y1 - y0) / gap > 4000.0 {
+        return out;
+    }
+    let mut y = (y0 / gap).ceil() * gap;
+    while y < y1 {
+        let mut xs: Vec<f32> = edges
+            .iter()
+            .filter(|(a, b)| (a.y <= y && y < b.y) || (b.y <= y && y < a.y))
+            .map(|(a, b)| a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y))
+            .collect();
+        xs.sort_by(f32::total_cmp);
+        for pair in xs.chunks_exact(2) {
+            if let [a, b] = pair {
+                out.push([back(*a, y), back(*b, y)]);
+            }
+        }
+        y += gap;
+    }
+    out
 }
 
 fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel: &[NodeId]) {

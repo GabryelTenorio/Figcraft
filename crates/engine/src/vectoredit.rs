@@ -1,21 +1,114 @@
-//! Vector edit mode: editing a vector network's vertices and bezier handles on the canvas.
+//! Vector edit mode: editing a vector network's points, segments and bezier handles on the canvas,
+//! with its own tools (move, pen, bend, paint bucket, lasso, cut).
 //!
 //! Entering edit mode on a non-vector shape converts it to a vector first (like the incumbent).
 //! Vertex coordinates are node-local; after each edit the node is re-fitted so its box wraps the
-//! network again.
+//! network again. The network edits themselves live in [`ops`]; pointer gestures in `pointer.rs`.
+
+pub mod ops;
+mod pointer;
+#[cfg(test)]
+mod tests;
 
 use figcraft_doc::*;
 use figcraft_geom::{Affine, Point, Rect, Vec2};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
+pub(crate) use pointer::VGesture;
+
+/// The edit-mode tools (the toolbar shown while editing a vector).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Default)]
+pub enum VTool {
+    #[default]
+    Move,
+    Pen,
+    Bend,
+    Paint,
+    Lasso,
+    Cut,
+}
+
+impl VTool {
+    pub const ALL: [VTool; 6] = [VTool::Move, VTool::Pen, VTool::Bend, VTool::Paint, VTool::Lasso, VTool::Cut];
+    pub fn id(self) -> &'static str {
+        match self {
+            VTool::Move => "move",
+            VTool::Pen => "pen",
+            VTool::Bend => "bend",
+            VTool::Paint => "paint",
+            VTool::Lasso => "lasso",
+            VTool::Cut => "cut",
+        }
+    }
+    pub fn from_id(s: &str) -> Option<VTool> {
+        VTool::ALL.into_iter().find(|t| t.id().eq_ignore_ascii_case(s))
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            VTool::Move => "Move",
+            VTool::Pen => "Pen",
+            VTool::Bend => "Bend",
+            VTool::Paint => "Paint bucket",
+            VTool::Lasso => "Lasso",
+            VTool::Cut => "Cut",
+        }
+    }
+    /// Catalog-style shortcut ("Shift+B"); the Bend tool is held with Cmd (Ctrl elsewhere).
+    pub fn shortcut(self) -> &'static str {
+        match self {
+            VTool::Move => "V",
+            VTool::Pen => "P",
+            VTool::Bend => "Cmd",
+            VTool::Paint => "Shift+B",
+            VTool::Lasso => "Q",
+            VTool::Cut => "X",
+        }
+    }
+}
+
+/// Vector edit mode state: the vector being edited, its selected points and segments, the active
+/// edit tool and the pen's open end.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VectorEdit {
+    pub id: NodeId,
+    pub vertices: Vec<usize>,
+    pub segments: Vec<usize>,
+    pub tool: VTool,
+    /// Pen: the point the next click continues from.
+    pub anchor: Option<usize>,
+    /// Pen: the outgoing handle dragged out of `anchor`, used by the next segment.
+    pub pen_out: Option<(f64, f64)>,
+}
+
+impl VectorEdit {
+    pub fn new(id: NodeId) -> Self {
+        Self { id, vertices: vec![], segments: vec![], tool: VTool::Move, anchor: None, pen_out: None }
+    }
+
+    /// Drop indices that no longer exist (after undo or an edit).
+    pub fn clamp(&mut self, net: &VectorNetwork) {
+        let (nv, ns) = (net.vertices.len(), net.segments.len());
+        self.vertices.retain(|v| *v < nv);
+        self.segments.retain(|s| *s < ns);
+        if self.anchor.is_some_and(|a| a >= nv) {
+            self.anchor = None;
+            self.pen_out = None;
+        }
+    }
+}
+
 /// What a pointer is over in edit mode.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
 pub enum VHit {
-    Vertex(usize),
+    Vertex {
+        index: usize,
+    },
     /// Handle of segment `seg`; `start` = the handle at the segment's `a` end.
     Handle {
         seg: usize,
@@ -25,6 +118,28 @@ pub enum VHit {
         seg: usize,
         t: f64,
     },
+}
+
+/// A visible handle in page coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct HandleLine {
+    pub seg: usize,
+    pub start: bool,
+    pub vertex: [f64; 2],
+    pub handle: [f64; 2],
+}
+
+/// Page-space geometry for drawing the edit overlay.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditOverlay {
+    /// Cubic control points per segment.
+    pub segments: Vec<[[f64; 2]; 4]>,
+    pub vertices: Vec<[f64; 2]>,
+    pub handles: Vec<HandleLine>,
+    pub selected_vertices: Vec<usize>,
+    pub selected_segments: Vec<usize>,
+    pub anchor: Option<usize>,
 }
 
 /// Convert a shape to an editable vector (keeps paints, transform and look).
@@ -62,7 +177,7 @@ pub fn refit(doc: &mut Document, id: NodeId) -> Result<()> {
     let n = doc.get_mut(id)?;
     let NodeKind::Vector { network } = &mut n.kind else { return Ok(()) };
     let Some(b) = network.bounds() else { return Ok(()) };
-    if !(b.x0.is_finite() && b.y0.is_finite()) {
+    if !(b.x0.is_finite() && b.y0.is_finite() && b.width().is_finite() && b.height().is_finite()) {
         return Ok(());
     }
     if b.x0.abs() > 1e-9 || b.y0.abs() > 1e-9 {
@@ -74,243 +189,75 @@ pub fn refit(doc: &mut Document, id: NodeId) -> Result<()> {
     Ok(())
 }
 
-fn network(doc: &Document, id: NodeId) -> Option<&VectorNetwork> {
+/// The network of vector `id`.
+pub fn network(doc: &Document, id: NodeId) -> Option<&VectorNetwork> {
     match &doc.node(id)?.kind {
         NodeKind::Vector { network } => Some(network),
         _ => None,
     }
 }
 
-fn network_mut(doc: &mut Document, id: NodeId) -> Option<&mut VectorNetwork> {
-    match &mut doc.node_mut(id)?.kind {
-        NodeKind::Vector { network } => Some(network),
-        _ => None,
+fn network_mut(doc: &mut Document, id: NodeId) -> Result<&mut VectorNetwork> {
+    match doc.node_mut(id).map(|n| &mut n.kind) {
+        Some(NodeKind::Vector { network }) => Ok(network),
+        _ => Err(EngineError::Other("not a vector".into())),
     }
 }
 
-/// Hit test in page coordinates with a tolerance in page units. Handles of selected vertices win,
-/// then vertices, then segments.
-pub fn hit(doc: &Document, id: NodeId, selected: &[usize], p: Point, tol: f64) -> Option<VHit> {
-    let net = network(doc, id)?;
-    let w = doc.world_transform(id);
+/// Edit the network of `id`, then re-fit the node.
+pub fn edit<T>(doc: &mut Document, id: NodeId, f: impl FnOnce(&mut VectorNetwork) -> T) -> Result<T> {
+    let out = f(network_mut(doc, id)?);
+    refit(doc, id)?;
+    Ok(out)
+}
+
+/// Handles drawn and hit-tested: at selected points, and at both ends of selected segments.
+fn visible_handles(net: &VectorNetwork, ve: &VectorEdit) -> Vec<(usize, bool)> {
+    let mut out = Vec::new();
+    for (si, s) in net.segments.iter().enumerate() {
+        let seg_on = ve.segments.contains(&si);
+        for (start, vi, t) in [(true, s.a, s.ta), (false, s.b, s.tb)] {
+            if t != (0.0, 0.0) && (seg_on || ve.vertices.contains(&vi)) {
+                out.push((si, start));
+            }
+        }
+    }
+    out
+}
+
+/// Hit test in page coordinates with a tolerance in page units. Visible handles win, then
+/// vertices, then segments.
+pub fn hit(doc: &Document, ve: &VectorEdit, p: Point, tol: f64) -> Option<VHit> {
+    let net = network(doc, ve.id)?;
+    let w = doc.world_transform(ve.id);
     let lp = w.inverse() * p;
     // Tolerance in local units (approximate for non-uniform scale).
     let s = (w.determinant().abs()).sqrt().max(1e-9);
     let tl = tol / s;
-    for (si, seg) in net.segments.iter().enumerate() {
-        for (start, vi, t) in [(true, seg.a, seg.ta), (false, seg.b, seg.tb)] {
-            if !selected.contains(&vi) || t == (0.0, 0.0) {
-                continue;
-            }
-            let Some(v) = net.vertices.get(vi) else { continue };
-            if (Point::new(v.x + t.0, v.y + t.1) - lp).hypot() <= tl {
-                return Some(VHit::Handle { seg: si, start });
-            }
+    if !(lp.x.is_finite() && lp.y.is_finite()) {
+        return None;
+    }
+    for (si, start) in visible_handles(net, ve) {
+        let (Some(seg), Some(t)) = (net.segments.get(si), net.handle(si, start)) else { continue };
+        let Some(v) = net.vertices.get(if start { seg.a } else { seg.b }) else { continue };
+        if (Point::new(v.x + t.0, v.y + t.1) - lp).hypot() <= tl {
+            return Some(VHit::Handle { seg: si, start });
         }
     }
-    for (vi, v) in net.vertices.iter().enumerate() {
-        if (v.point() - lp).hypot() <= tl {
-            return Some(VHit::Vertex(vi));
-        }
+    let nearest_vertex =
+        net.vertices.iter().enumerate().map(|(i, v)| (i, (v.point() - lp).hypot())).filter(|(_, d)| *d <= tl).min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((index, _)) = nearest_vertex {
+        return Some(VHit::Vertex { index });
     }
-    use figcraft_geom::kurbo::{CubicBez, ParamCurveNearest};
-    for (si, seg) in net.segments.iter().enumerate() {
-        let (Some(a), Some(b)) = (net.vertices.get(seg.a), net.vertices.get(seg.b)) else { continue };
-        let c = CubicBez::new(a.point(), Point::new(a.x + seg.ta.0, a.y + seg.ta.1), Point::new(b.x + seg.tb.0, b.y + seg.tb.1), b.point());
-        let near = c.nearest(lp, 0.01);
-        if near.distance_sq.sqrt() <= tl {
-            return Some(VHit::Segment { seg: si, t: near.t });
-        }
-    }
-    None
-}
-
-/// Move vertices by `d` (local units); their handles move with them.
-pub fn move_vertices(doc: &mut Document, id: NodeId, idx: &[usize], d: Vec2) -> Result<()> {
-    let net = network_mut(doc, id).ok_or_else(|| EngineError::Other("not a vector".into()))?;
-    for i in idx {
-        if let Some(v) = net.vertices.get_mut(*i) {
-            v.x += d.x;
-            v.y += d.y;
-        }
-    }
-    Ok(())
-}
-
-/// Set a handle to absolute local position `p`; the opposite handle at the same vertex mirrors
-/// (angle and length) unless `independent`.
-pub fn set_handle(doc: &mut Document, id: NodeId, seg: usize, start: bool, p: Point, independent: bool) -> Result<()> {
-    let net = network_mut(doc, id).ok_or_else(|| EngineError::Other("not a vector".into()))?;
-    let Some(s) = net.segments.get(seg).copied() else { return Err(EngineError::Other("no such segment".into())) };
-    let vi = if start { s.a } else { s.b };
-    let Some(v) = net.vertices.get(vi).copied() else { return Ok(()) };
-    let rel = (p.x - v.x, p.y - v.y);
-    if let Some(sm) = net.segments.get_mut(seg) {
-        if start {
-            sm.ta = rel;
-        } else {
-            sm.tb = rel;
-        }
-    }
-    if !independent {
-        // Mirror on the other segment meeting at this vertex (smooth node).
-        let others: Vec<(usize, bool)> = net
-            .segments
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != seg)
-            .filter_map(|(i, o)| {
-                if o.a == vi {
-                    Some((i, true))
-                } else if o.b == vi {
-                    Some((i, false))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if let [(oi, ostart)] = others.as_slice()
-            && let Some(o) = net.segments.get_mut(*oi)
-        {
-            let m = (-rel.0, -rel.1);
-            if *ostart {
-                o.ta = m;
-            } else {
-                o.tb = m;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Bend a segment so its curve passes through `p` at parameter `t` (the Bend tool).
-pub fn bend(doc: &mut Document, id: NodeId, seg: usize, t: f64, p: Point) -> Result<()> {
-    let net = network_mut(doc, id).ok_or_else(|| EngineError::Other("not a vector".into()))?;
-    let Some(s) = net.segments.get(seg).copied() else { return Ok(()) };
-    let (Some(a), Some(b)) = (net.vertices.get(s.a).copied(), net.vertices.get(s.b).copied()) else { return Ok(()) };
-    let t = t.clamp(0.05, 0.95);
-    // Controls at the chord's thirds plus a shared offset: B(t) = L(t) + 3t(1-t)·off.
-    let (a, b) = (a.point(), b.point());
-    let k = 3.0 * t * (1.0 - t);
-    let line = a.lerp(b, t);
-    let off = (p - line) / k;
-    let c1 = a + (b - a) / 3.0 + off;
-    let c2 = b + (a - b) / 3.0 + off;
-    if let Some(sm) = net.segments.get_mut(seg) {
-        sm.ta = (c1.x - a.x, c1.y - a.y);
-        sm.tb = (c2.x - b.x, c2.y - b.y);
-    }
-    Ok(())
-}
-
-/// Delete vertices, joining their neighbours where a vertex had exactly two segments ("heal").
-pub fn delete_vertices(doc: &mut Document, id: NodeId, idx: &[usize], heal: bool) -> Result<()> {
-    let net = network_mut(doc, id).ok_or_else(|| EngineError::Other("not a vector".into()))?;
-    let mut idx: Vec<usize> = idx.to_vec();
-    idx.sort_unstable();
-    idx.dedup();
-    for &vi in idx.iter().rev() {
-        if vi >= net.vertices.len() {
-            continue;
-        }
-        let touching: Vec<usize> = net.segments.iter().enumerate().filter(|(_, s)| s.a == vi || s.b == vi).map(|(i, _)| i).collect();
-        let mut new_seg = None;
-        if heal && let [s1, s2] = touching.as_slice() {
-            let (Some(x), Some(y)) = (net.segments.get(*s1).copied(), net.segments.get(*s2).copied()) else { continue };
-            let o1 = if x.a == vi { (x.b, x.tb) } else { (x.a, x.ta) };
-            let o2 = if y.a == vi { (y.b, y.tb) } else { (y.a, y.ta) };
-            new_seg = Some(Segment { a: o1.0, b: o2.0, ta: o1.1, tb: o2.1 });
-        }
-        // Remove touching segments (descending) and fix region loops.
-        let mut seg_map: Vec<Option<usize>> = (0..net.segments.len()).map(Some).collect();
-        for &si in touching.iter().rev() {
-            net.segments.remove(si);
-            if let Some(m) = seg_map.get_mut(si) {
-                *m = None;
-            }
-        }
-        for (k, m) in seg_map.iter_mut().flatten().enumerate() {
-            *m = k;
-        }
-        let healed_index = new_seg.map(|s| {
-            net.segments.push(s);
-            net.segments.len() - 1
-        });
-        for r in &mut net.regions {
-            for lp in &mut r.loops {
-                let mut out = Vec::new();
-                let mut inserted = false;
-                for si in lp.iter() {
-                    match seg_map.get(*si).copied().flatten() {
-                        Some(n) => out.push(n),
-                        None => {
-                            if let (Some(h), false) = (healed_index, inserted) {
-                                out.push(h);
-                                inserted = true;
-                            }
-                        }
-                    }
-                }
-                *lp = out;
-            }
-            r.loops.retain(|l| l.len() >= 2);
-        }
-        net.regions.retain(|r| !r.loops.is_empty());
-        // Remove the vertex and shift indices.
-        net.vertices.remove(vi);
-        for s in &mut net.segments {
-            if s.a > vi {
-                s.a -= 1;
-            }
-            if s.b > vi {
-                s.b -= 1;
-            }
-        }
-    }
-    net.sanitize();
-    Ok(())
-}
-
-/// Split segment `seg` at `t`, inserting a vertex; returns its index.
-pub fn split_segment(doc: &mut Document, id: NodeId, seg: usize, t: f64) -> Result<usize> {
-    use figcraft_geom::kurbo::{CubicBez, ParamCurve};
-    let net = network_mut(doc, id).ok_or_else(|| EngineError::Other("not a vector".into()))?;
-    let s = net.segments.get(seg).copied().ok_or_else(|| EngineError::Other("no such segment".into()))?;
-    let (Some(a), Some(b)) = (net.vertices.get(s.a).copied(), net.vertices.get(s.b).copied()) else {
-        return Err(EngineError::Other("bad segment".into()));
-    };
-    let c = CubicBez::new(a.point(), Point::new(a.x + s.ta.0, a.y + s.ta.1), Point::new(b.x + s.tb.0, b.y + s.tb.1), b.point());
-    let t = t.clamp(0.01, 0.99);
-    let l = c.subsegment(0.0..t);
-    let r = c.subsegment(t..1.0);
-    net.vertices.push(Vertex::new(l.p3.x, l.p3.y));
-    let mid = net.vertices.len() - 1;
-    let straight = s.is_straight();
-    if let Some(sm) = net.segments.get_mut(seg) {
-        sm.b = mid;
-        if straight {
-            sm.ta = (0.0, 0.0);
-            sm.tb = (0.0, 0.0);
-        } else {
-            sm.ta = (l.p1.x - l.p0.x, l.p1.y - l.p0.y);
-            sm.tb = (l.p2.x - l.p3.x, l.p2.y - l.p3.y);
-        }
-    }
-    let new_seg = if straight {
-        Segment::line(mid, s.b)
-    } else {
-        Segment { a: mid, b: s.b, ta: (r.p1.x - r.p0.x, r.p1.y - r.p0.y), tb: (r.p2.x - r.p3.x, r.p2.y - r.p3.y) }
-    };
-    net.segments.push(new_seg);
-    let ni = net.segments.len() - 1;
-    for reg in &mut net.regions {
-        for lp in &mut reg.loops {
-            if let Some(pos) = lp.iter().position(|x| *x == seg) {
-                lp.insert(pos + 1, ni);
-            }
-        }
-    }
-    Ok(mid)
+    use figcraft_geom::kurbo::ParamCurveNearest;
+    let nearest_seg = (0..net.segments.len())
+        .filter_map(|si| {
+            let near = net.cubic(si)?.nearest(lp, 0.01);
+            Some((si, near.t, near.distance_sq.sqrt()))
+        })
+        .filter(|(_, _, d)| *d <= tl)
+        .min_by(|a, b| a.2.total_cmp(&b.2));
+    nearest_seg.map(|(seg, t, _)| VHit::Segment { seg, t })
 }
 
 /// Vertices inside a page-space rectangle.
@@ -320,36 +267,41 @@ pub fn vertices_in(doc: &Document, id: NodeId, r: Rect) -> Vec<usize> {
     net.vertices.iter().enumerate().filter(|(_, v)| r.contains(w * v.point())).map(|(i, _)| i).collect()
 }
 
-/// Page-space geometry of the network for drawing the edit overlay: segments (as cubic control
-/// points), vertices, and handles of the selected vertices.
-pub fn overlay(doc: &Document, id: NodeId, selected: &[usize]) -> Option<Value> {
-    let net = network(doc, id)?;
+/// Vertices inside a page-space lasso polygon.
+pub fn vertices_in_polygon(doc: &Document, id: NodeId, poly: &[Point]) -> Vec<usize> {
+    let Some(net) = network(doc, id) else { return vec![] };
     let w = doc.world_transform(id);
-    let p = |x: f64, y: f64| {
-        let q = w * Point::new(x, y);
-        json!([q.x, q.y])
+    let pts: Vec<Point> = net.vertices.iter().map(|v| w * v.point()).collect();
+    ops::in_polygon(&pts, poly)
+}
+
+/// Page-space geometry of the network for drawing the edit overlay.
+pub fn overlay(doc: &Document, ve: &VectorEdit) -> Option<EditOverlay> {
+    let net = network(doc, ve.id)?;
+    let w = doc.world_transform(ve.id);
+    let p = |q: Point| {
+        let q = w * q;
+        [q.x, q.y]
     };
-    let segs: Vec<Value> = net
-        .segments
-        .iter()
-        .filter_map(|s| {
-            let (a, b) = (net.vertices.get(s.a)?, net.vertices.get(s.b)?);
-            Some(json!([p(a.x, a.y), p(a.x + s.ta.0, a.y + s.ta.1), p(b.x + s.tb.0, b.y + s.tb.1), p(b.x, b.y)]))
+    let segments = (0..net.segments.len()).filter_map(|i| net.cubic(i)).map(|c| [p(c.p0), p(c.p1), p(c.p2), p(c.p3)]).collect();
+    let vertices = net.vertices.iter().map(|v| p(v.point())).collect();
+    let handles = visible_handles(net, ve)
+        .into_iter()
+        .filter_map(|(si, start)| {
+            let s = net.segments.get(si)?;
+            let v = net.vertices.get(if start { s.a } else { s.b })?;
+            let t = net.handle(si, start)?;
+            Some(HandleLine { seg: si, start, vertex: p(v.point()), handle: p(Point::new(v.x + t.0, v.y + t.1)) })
         })
         .collect();
-    let verts: Vec<Value> = net.vertices.iter().map(|v| p(v.x, v.y)).collect();
-    let mut handles = Vec::new();
-    for s in &net.segments {
-        for (vi, t) in [(s.a, s.ta), (s.b, s.tb)] {
-            if selected.contains(&vi)
-                && t != (0.0, 0.0)
-                && let Some(v) = net.vertices.get(vi)
-            {
-                handles.push(json!([p(v.x, v.y), p(v.x + t.0, v.y + t.1)]));
-            }
-        }
-    }
-    Some(json!({"segments": segs, "vertices": verts, "handles": handles, "selected": selected}))
+    Some(EditOverlay {
+        segments,
+        vertices,
+        handles,
+        selected_vertices: ve.vertices.clone(),
+        selected_segments: ve.segments.clone(),
+        anchor: ve.anchor,
+    })
 }
 
 /// Start editing `id` as a vector.
@@ -364,7 +316,7 @@ pub fn begin(s: &mut Session, id: NodeId) -> Result<()> {
         ds.history.undo.push(crate::HistoryEntry { label: "Edit vector".into(), doc: before, selection: ds.selection.clone(), page: ds.page });
         ds.history.redo.clear();
     }
-    ds.vector_edit = Some((id, vec![]));
+    ds.vector_edit = Some(VectorEdit::new(id));
     ds.selection = vec![id];
     ds.text_edit = None;
     ds.revision += 1;
@@ -375,11 +327,177 @@ pub fn end(s: &mut Session) -> Result<()> {
     let ds = s.ds_mut()?;
     ds.vector_edit = None;
     ds.revision += 1;
+    s.tool.overlay = Default::default();
     Ok(())
 }
 
-fn editing(s: &Session) -> Result<(NodeId, Vec<usize>)> {
+pub fn editing(s: &Session) -> Result<VectorEdit> {
     s.ds()?.vector_edit.clone().ok_or_else(|| EngineError::Disabled("vector".into(), "not in vector edit mode".into()))
+}
+
+/// Replace the edit state (selection, tool, pen end) and repaint.
+pub(crate) fn set_state(s: &mut Session, f: impl FnOnce(&mut VectorEdit)) -> Result<()> {
+    let ds = s.ds_mut()?;
+    if let Some(ve) = ds.vector_edit.as_mut() {
+        f(ve);
+    }
+    ds.revision += 1;
+    Ok(())
+}
+
+pub fn set_tool(s: &mut Session, tool: VTool) -> Result<()> {
+    s.tool.overlay = Default::default();
+    set_state(s, |ve| {
+        ve.tool = tool;
+        if tool != VTool::Pen {
+            ve.anchor = None;
+            ve.pen_out = None;
+        }
+    })
+}
+
+/// Escape: end the pen's path first, then leave edit mode.
+pub fn escape(s: &mut Session) -> Result<()> {
+    let ve = editing(s)?;
+    if ve.anchor.is_some() {
+        s.tool.overlay.rubber = None;
+        return set_state(s, |ve| {
+            ve.anchor = None;
+            ve.pen_out = None;
+        });
+    }
+    end(s)
+}
+
+/// Parse `[i, ...]` from params.
+fn indices(p: &Value, key: &str) -> Option<Vec<usize>> {
+    match get(p, key) {
+        Some(Value::Array(a)) => Some(a.iter().filter_map(f64_of).filter(|x| *x >= 0.0 && *x < 1e9).map(|x| x as usize).collect()),
+        _ => None,
+    }
+}
+
+fn index(cmd: &str, p: &Value, key: &str) -> Result<usize> {
+    let v = req_num(cmd, p, key)?;
+    if !(0.0..1e9).contains(&v) {
+        return Err(bad(cmd, format!("`{key}` out of range")));
+    }
+    Ok(v as usize)
+}
+
+/// Delete the selected points and segments (`heal` keeps paths through deleted points closed).
+fn delete_selection(s: &mut Session, verts: Vec<usize>, segs: Vec<usize>, heal: bool) -> Result<()> {
+    let id = editing(s)?.id;
+    edit(s.doc_mut()?, id, |net| {
+        // Segments first (their indices refer to the network before points go).
+        let segs: Vec<usize> =
+            segs.into_iter().filter(|si| net.segments.get(*si).is_some_and(|x| !verts.contains(&x.a) && !verts.contains(&x.b))).collect();
+        let pts: Vec<Point> = verts.iter().filter_map(|v| net.vertices.get(*v)).map(|v| v.point()).collect();
+        ops::remove_segments(net, &segs);
+        // Point indices may have shifted: find them again by position.
+        let now: Vec<usize> = pts.iter().filter_map(|p| net.vertices.iter().position(|v| v.point() == *p)).collect();
+        ops::delete_vertices(net, &now, heal);
+    })?;
+    set_state(s, |ve| {
+        ve.vertices.clear();
+        ve.segments.clear();
+        ve.anchor = None;
+        ve.pen_out = None;
+    })
+}
+
+/// Selection bounds' top-left in the parent's coordinates (what the X/Y fields show).
+pub fn selection_position(doc: &Document, ve: &VectorEdit) -> Option<Point> {
+    let net = network(doc, ve.id)?;
+    let t = doc.node(ve.id)?.transform;
+    let pts: Vec<Point> = selected_points(net, ve).into_iter().filter_map(|v| net.vertices.get(v)).map(|v| t * v.point()).collect();
+    let x = pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let y = pts.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    (x.is_finite() && y.is_finite()).then(|| Point::new(x, y))
+}
+
+fn default_points(s: &Session, ve: &VectorEdit) -> Vec<usize> {
+    s.doc().ok().and_then(|d| network(d, ve.id)).map(|n| selected_points(n, ve)).unwrap_or_default()
+}
+
+/// Selected points plus the ends of selected segments.
+pub fn selected_points(net: &VectorNetwork, ve: &VectorEdit) -> Vec<usize> {
+    let mut v = ve.vertices.clone();
+    for s in ve.segments.iter().filter_map(|i| net.segments.get(*i)) {
+        v.extend([s.a, s.b]);
+    }
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Keyboard in edit mode. Returns whether the key was used (others fall through to shortcuts).
+pub fn key(s: &mut Session, name: &str, shift: bool, alt: bool, cmd: bool) -> Result<bool> {
+    let Ok(ve) = editing(s) else { return Ok(false) };
+    let nudge = |big: bool, s: &Session| if big { s.prefs.nudge_big } else { s.prefs.nudge_small };
+    let arrow = match name {
+        "Left" | "ArrowLeft" => Some((-1.0, 0.0)),
+        "Right" | "ArrowRight" => Some((1.0, 0.0)),
+        "Up" | "ArrowUp" => Some((0.0, -1.0)),
+        "Down" | "ArrowDown" => Some((0.0, 1.0)),
+        _ => None,
+    };
+    if let Some((dx, dy)) = arrow {
+        if cmd || alt {
+            return Ok(false);
+        }
+        let n = nudge(shift, s);
+        s.execute("vector.edit.nudge", &json!({"dx": dx * n, "dy": dy * n}))?;
+        return Ok(true);
+    }
+    match (name, shift, alt, cmd) {
+        ("Escape", ..) => escape(s)?,
+        ("Enter", ..) => {
+            if ve.anchor.is_some() {
+                escape(s)?;
+            } else {
+                end(s)?;
+            }
+        }
+        ("Backspace" | "Delete", heal, false, false) => {
+            s.execute(if heal { "vector.deleteHeal" } else { "vector.edit.delete" }, &json!({}))?;
+        }
+        ("A", false, false, true) => {
+            s.execute("vector.edit.selectAll", &json!({}))?;
+        }
+        ("J", smooth, false, true) => {
+            s.execute(if smooth { "vector.smoothJoin" } else { "vector.join" }, &json!({}))?;
+        }
+        ("V", false, false, false) => set_tool(s, VTool::Move)?,
+        ("P", false, false, false) => set_tool(s, VTool::Pen)?,
+        ("B", true, false, false) => set_tool(s, VTool::Paint)?,
+        ("Q", false, false, false) => set_tool(s, VTool::Lasso)?,
+        ("X", false, false, false) => set_tool(s, VTool::Cut)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn join_cmd(s: &mut Session, smooth: bool) -> Result<Value> {
+    let ve = editing(s)?;
+    let doc = s.doc()?;
+    let net = network(doc, ve.id).ok_or_else(|| bad("vector.join", "not a vector"))?;
+    let verts = selected_points(net, &ve);
+    let joins = edit(s.doc_mut()?, ve.id, |net| ops::join(net, &verts, smooth))?;
+    set_state(s, |ve| ve.segments.clear())?;
+    Ok(json!({"joins": joins}))
+}
+
+/// `vector.join` / `vector.smoothJoin` while editing: join the selected points.
+pub fn join_in_edit_mode(s: &mut Session, smooth: bool) -> Option<Result<Value>> {
+    editing(s).ok()?;
+    Some(join_cmd(s, smooth))
+}
+
+/// Page point → the edited node's local coordinates.
+fn local(s: &Session, id: NodeId, p: &Value, cmd: &str) -> Result<Point> {
+    let pt = Point::new(req_num(cmd, p, "x")?, req_num(cmd, p, "y")?);
+    Ok(s.doc()?.world_transform(id).inverse() * pt)
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -393,89 +511,252 @@ pub fn specs() -> Vec<CommandSpec> {
             end(s)?;
             Ok(json!({"ok": true}))
         }),
-        spec!("vector.edit.state", "Vector edit state", "{}", false, |s, _| {
-            let (id, sel) = editing(s)?;
-            Ok(overlay(s.doc()?, id, &sel).unwrap_or(Value::Null))
+        spec!("vector.edit.state", "Vector edit state", "{} → page-space overlay plus the local network", false, |s, _| {
+            let ve = editing(s)?;
+            let doc = s.doc()?;
+            let o = overlay(doc, &ve).map(|o| serde_json::to_value(o).unwrap_or(Value::Null)).unwrap_or(Value::Null);
+            let net = network(doc, ve.id).map(|n| serde_json::to_value(n).unwrap_or(Value::Null)).unwrap_or(Value::Null);
+            let mirroring: Vec<&str> = network(doc, ve.id).map(|n| (0..n.vertices.len()).map(|v| n.mirroring(v).id()).collect()).unwrap_or_default();
+            Ok(json!({"id": ve.id, "tool": ve.tool.id(), "overlay": o, "network": net, "mirroring": mirroring}))
         }),
-        spec!("vector.edit.select", "Select vertices", "{vertices: [i, ...]}", false, |s, p| {
-            let (id, _) = editing(s)?;
-            let v: Vec<usize> = match get(p, "vertices") {
-                Some(Value::Array(a)) => a.iter().filter_map(f64_of).map(|x| x.max(0.0) as usize).collect(),
-                _ => vec![],
-            };
-            let ds = s.ds_mut()?;
-            ds.vector_edit = Some((id, v));
-            ds.revision += 1;
-            Ok(json!({"ok": true}))
+        spec!("vector.edit.tool", "Vector edit tool", "{tool: move|pen|bend|paint|lasso|cut}", false, |s, p| {
+            editing(s)?;
+            let t = string(p, "tool").and_then(|t| VTool::from_id(&t)).ok_or_else(|| bad("vector.edit.tool", "unknown tool"))?;
+            set_tool(s, t)?;
+            Ok(json!({"tool": t.id()}))
         }),
-        spec!("vector.edit.moveVertices", "Move vertices", "{vertices?, dx, dy} (local units; default the selected vertices)", true, |s, p| {
-            let (id, sel) = editing(s)?;
-            let v: Vec<usize> = match get(p, "vertices") {
-                Some(Value::Array(a)) => a.iter().filter_map(f64_of).map(|x| x.max(0.0) as usize).collect(),
-                _ => sel,
-            };
-            let d = Vec2::new(num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
-            let doc = s.doc_mut()?;
-            move_vertices(doc, id, &v, d)?;
-            refit(doc, id)?;
-            Ok(json!({"ok": true}))
-        }),
-        spec!("vector.edit.setHandle", "Set handle", "{segment, start (bool), x, y (local), independent?}", true, |s, p| {
-            let (id, _) = editing(s)?;
-            let seg = req_num("vector.edit.setHandle", p, "segment")?.max(0.0) as usize;
-            let start = boolean(p, "start").unwrap_or(true);
-            let pt = Point::new(req_num("vector.edit.setHandle", p, "x")?, req_num("vector.edit.setHandle", p, "y")?);
-            let doc = s.doc_mut()?;
-            set_handle(doc, id, seg, start, pt, boolean(p, "independent").unwrap_or(false))?;
-            refit(doc, id)?;
-            Ok(json!({"ok": true}))
-        }),
-        spec!("vector.edit.addVertex", "Add point", "{segment, t (0..1)}", true, |s, p| {
-            let (id, _) = editing(s)?;
-            let seg = req_num("vector.edit.addVertex", p, "segment")?.max(0.0) as usize;
-            let t = num_or(p, "t", 0.5);
-            let v = split_segment(s.doc_mut()?, id, seg, t)?;
-            let ds = s.ds_mut()?;
-            ds.vector_edit = Some((id, vec![v]));
-            Ok(json!({"vertex": v}))
-        }),
-        spec!("vector.deleteHeal", "Delete and heal selection", "{vertices?}", true, |s, p| {
-            let (id, sel) = editing(s)?;
-            let v: Vec<usize> = match get(p, "vertices") {
-                Some(Value::Array(a)) => a.iter().filter_map(f64_of).map(|x| x.max(0.0) as usize).collect(),
-                _ => sel,
-            };
-            let doc = s.doc_mut()?;
-            delete_vertices(doc, id, &v, true)?;
-            refit(doc, id)?;
-            let ds = s.ds_mut()?;
-            ds.vector_edit = Some((id, vec![]));
-            Ok(json!({"ok": true}))
-        }),
-        spec!("vector.edit.delete", "Delete points", "{vertices?}", true, |s, p| {
-            let (id, sel) = editing(s)?;
-            let v: Vec<usize> = match get(p, "vertices") {
-                Some(Value::Array(a)) => a.iter().filter_map(f64_of).map(|x| x.max(0.0) as usize).collect(),
-                _ => sel,
-            };
-            let doc = s.doc_mut()?;
-            delete_vertices(doc, id, &v, false)?;
-            refit(doc, id)?;
-            let ds = s.ds_mut()?;
-            ds.vector_edit = Some((id, vec![]));
-            Ok(json!({"ok": true}))
-        }),
-        spec!("vector.edit.cornerRadius", "Point corner radius", "{radius, vertices?}", true, |s, p| {
-            let (id, sel) = editing(s)?;
-            let r = req_num("vector.edit.cornerRadius", p, "radius")?.max(0.0);
-            if let Some(net) = network_mut(s.doc_mut()?, id) {
-                for i in sel {
-                    if let Some(v) = net.vertices.get_mut(i) {
-                        v.radius = r;
-                    }
+        spec!("vector.edit.select", "Select points", "{vertices?: [i, ...], segments?: [i, ...], add?}", false, |s, p| {
+            editing(s)?;
+            let (v, sg, add) =
+                (indices(p, "vertices").unwrap_or_default(), indices(p, "segments").unwrap_or_default(), boolean(p, "add").unwrap_or(false));
+            set_state(s, |ve| {
+                if !add {
+                    ve.vertices.clear();
+                    ve.segments.clear();
                 }
+                ve.vertices.extend(v);
+                ve.segments.extend(sg);
+            })?;
+            let doc = s.doc()?.clone();
+            let ds = s.ds_mut()?;
+            if let Some(ve) = ds.vector_edit.as_mut()
+                && let Some(net) = network(&doc, ve.id)
+            {
+                ve.vertices.sort_unstable();
+                ve.vertices.dedup();
+                ve.segments.sort_unstable();
+                ve.segments.dedup();
+                ve.clamp(net);
             }
             Ok(json!({"ok": true}))
         }),
+        spec!("vector.edit.selectAll", "Select all points", "{}", false, |s, _| {
+            let ve = editing(s)?;
+            let n = network(s.doc()?, ve.id).map(|n| n.vertices.len()).unwrap_or(0);
+            set_state(s, |ve| {
+                ve.vertices = (0..n).collect();
+                ve.segments.clear();
+            })?;
+            Ok(json!({"count": n}))
+        }),
+        spec!("vector.edit.moveVertices", "Move points", "{vertices?, dx, dy} (local units; default the selected points)", true, |s, p| {
+            let ve = editing(s)?;
+            let v = indices(p, "vertices").unwrap_or_else(|| default_points(s, &ve));
+            let d = Vec2::new(num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
+            edit(s.doc_mut()?, ve.id, |net| ops::move_vertices(net, &v, d))?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.nudge", "Nudge points", "{dx, dy} (page units)", true, |s, p| {
+            let ve = editing(s)?;
+            let doc = s.doc()?;
+            let v = network(doc, ve.id).map(|n| selected_points(n, &ve)).unwrap_or_default();
+            let inv = doc.world_transform(ve.id).inverse();
+            let d = inv * (Point::ZERO + Vec2::new(num_or(p, "dx", 0.0), num_or(p, "dy", 0.0))) - inv * Point::ZERO;
+            edit(s.doc_mut()?, ve.id, |net| ops::move_vertices(net, &v, d))?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.position", "Point position", "{x?, y?} (the selected points' top-left, in the parent's coordinates)", true, |s, p| {
+            let ve = editing(s)?;
+            let doc = s.doc()?;
+            let cur = selection_position(doc, &ve).ok_or_else(|| bad("vector.edit.position", "select points"))?;
+            let target = Point::new(num_or(p, "x", cur.x), num_or(p, "y", cur.y));
+            let t = doc.node(ve.id).map(|n| n.transform).unwrap_or_default();
+            let inv = t.inverse();
+            let d = inv * target - inv * cur;
+            let v = network(doc, ve.id).map(|n| selected_points(n, &ve)).unwrap_or_default();
+            edit(s.doc_mut()?, ve.id, |net| ops::move_vertices(net, &v, d))?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.setHandle", "Set handle", "{segment, start (bool), x, y (local), independent?}", true, |s, p| {
+            let ve = editing(s)?;
+            let seg = index("vector.edit.setHandle", p, "segment")?;
+            let start = boolean(p, "start").unwrap_or(true);
+            let pt = Point::new(req_num("vector.edit.setHandle", p, "x")?, req_num("vector.edit.setHandle", p, "y")?);
+            let independent = boolean(p, "independent").unwrap_or(false);
+            edit(s.doc_mut()?, ve.id, |net| {
+                let Some(sg) = net.segments.get(seg).copied() else { return };
+                let Some(v) = net.vertices.get(if start { sg.a } else { sg.b }).copied() else { return };
+                ops::set_handle(net, seg, start, (pt.x - v.x, pt.y - v.y), independent);
+            })?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.mirroring", "Handle mirroring", "{mode: none|angle|angleAndLength, vertices?}", true, |s, p| {
+            let ve = editing(s)?;
+            let mode = string(p, "mode")
+                .and_then(|m| HandleMirroring::from_id(&m))
+                .ok_or_else(|| bad("vector.edit.mirroring", "mode: none, angle or angleAndLength"))?;
+            let v = indices(p, "vertices").unwrap_or_else(|| default_points(s, &ve));
+            edit(s.doc_mut()?, ve.id, |net| ops::set_mirroring(net, &v, mode))?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.smooth", "Smooth or sharpen points", "{vertices?, smooth? (default true)}", true, |s, p| {
+            let ve = editing(s)?;
+            let smooth = boolean(p, "smooth").unwrap_or(true);
+            let v = indices(p, "vertices").unwrap_or_else(|| ve.vertices.clone());
+            edit(s.doc_mut()?, ve.id, |net| {
+                for vi in v {
+                    if smooth {
+                        ops::auto_smooth(net, vi);
+                    } else {
+                        ops::make_sharp(net, vi);
+                    }
+                }
+            })?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.bend", "Bend segment", "{segment, t (0..1), x, y (page point the curve passes through)}", true, |s, p| {
+            let ve = editing(s)?;
+            let seg = index("vector.edit.bend", p, "segment")?;
+            let t = num_or(p, "t", 0.5);
+            let lp = local(s, ve.id, p, "vector.edit.bend")?;
+            edit(s.doc_mut()?, ve.id, |net| ops::bend(net, seg, t, lp))?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.addVertex", "Add point", "{segment, t (0..1)}", true, |s, p| {
+            let ve = editing(s)?;
+            let seg = index("vector.edit.addVertex", p, "segment")?;
+            let t = num_or(p, "t", 0.5);
+            let v =
+                edit(s.doc_mut()?, ve.id, |net| ops::split_segment(net, seg, t))?.ok_or_else(|| bad("vector.edit.addVertex", "no such segment"))?;
+            set_state(s, |ve| {
+                ve.vertices = vec![v];
+                ve.segments.clear();
+            })?;
+            Ok(json!({"vertex": v}))
+        }),
+        spec!("vector.deleteHeal", "Delete and heal selection", "{vertices?}", true, |s, p| {
+            let ve = editing(s)?;
+            delete_selection(s, indices(p, "vertices").unwrap_or(ve.vertices), vec![], true)?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.delete", "Delete points", "{vertices?, segments?} (default the selection)", true, |s, p| {
+            let ve = editing(s)?;
+            let (v, sg) = match (indices(p, "vertices"), indices(p, "segments")) {
+                (None, None) => (ve.vertices, ve.segments),
+                (v, sg) => (v.unwrap_or_default(), sg.unwrap_or_default()),
+            };
+            delete_selection(s, v, sg, false)?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.cornerRadius", "Point corner radius", "{radius, vertices?}", true, |s, p| {
+            let ve = editing(s)?;
+            let r = req_num("vector.edit.cornerRadius", p, "radius")?.clamp(0.0, 1e6);
+            let v = indices(p, "vertices").unwrap_or_else(|| default_points(s, &ve));
+            edit(s.doc_mut()?, ve.id, |net| {
+                for i in v {
+                    if let Some(x) = net.vertices.get_mut(i) {
+                        x.radius = r;
+                    }
+                }
+            })?;
+            Ok(json!({"ok": true}))
+        }),
+        spec!("vector.edit.paint", "Paint bucket", "{x, y} (page point: fills or unfills the closed area under it)", true, |s, p| {
+            let ve = editing(s)?;
+            let lp = local(s, ve.id, p, "vector.edit.paint")?;
+            let filled = paint(s.doc_mut()?, ve.id, lp)?;
+            Ok(json!({"filled": filled}))
+        }),
+        spec!("vector.edit.cut", "Cut path", "{segment, t?} | {vertex}", true, |s, p| {
+            let ve = editing(s)?;
+            let ends = if let Some(v) = num(p, "vertex") {
+                let v = if v >= 0.0 { v as usize } else { usize::MAX };
+                edit(s.doc_mut()?, ve.id, |net| ops::cut_vertex(net, v))?
+            } else {
+                let seg = index("vector.edit.cut", p, "segment")?;
+                let t = num_or(p, "t", 0.5);
+                edit(s.doc_mut()?, ve.id, |net| ops::cut_segment(net, seg, t))?.map(|(a, b)| vec![a, b]).unwrap_or_default()
+            };
+            if ends.is_empty() {
+                return Err(bad("vector.edit.cut", "nothing to cut there"));
+            }
+            set_state(s, |ve| {
+                ve.vertices = ends.clone();
+                ve.segments.clear();
+            })?;
+            Ok(json!({"vertices": ends}))
+        }),
+        spec!("vector.edit.connect", "Connect points", "{a, b} (adds a straight segment)", true, |s, p| {
+            let ve = editing(s)?;
+            let (a, b) = (index("vector.edit.connect", p, "a")?, index("vector.edit.connect", p, "b")?);
+            let seg = edit(s.doc_mut()?, ve.id, |net| ops::connect(net, a, b, (0.0, 0.0), (0.0, 0.0)))?
+                .ok_or_else(|| bad("vector.edit.connect", "can't connect those points"))?;
+            Ok(json!({"segment": seg}))
+        }),
+        spec!("vector.edit.lasso", "Lasso select", "{points: [[x, y], ...] (page), add?}", false, |s, p| {
+            let ve = editing(s)?;
+            let poly: Vec<Point> = match get(p, "points") {
+                Some(Value::Array(a)) => {
+                    a.iter().filter_map(|q| Some(Point::new(q.get(0).and_then(f64_of)?, q.get(1).and_then(f64_of)?))).take(100_000).collect()
+                }
+                _ => vec![],
+            };
+            let found = vertices_in_polygon(s.doc()?, ve.id, &poly);
+            let add = boolean(p, "add").unwrap_or(false);
+            set_state(s, |ve| {
+                if !add {
+                    ve.vertices.clear();
+                    ve.segments.clear();
+                }
+                for v in &found {
+                    if !ve.vertices.contains(v) {
+                        ve.vertices.push(*v);
+                    }
+                }
+            })?;
+            Ok(json!({"vertices": found}))
+        }),
+        spec!(
+            "vector.edit.pen",
+            "Pen point",
+            "{x, y (page), dx?, dy? (handle drag)} — continues from the pen's open end; clicking a point connects to it",
+            true,
+            |s, p| {
+                let ve = editing(s)?;
+                let pt = Point::new(req_num("vector.edit.pen", p, "x")?, req_num("vector.edit.pen", p, "y")?);
+                let drag = Vec2::new(num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
+                let v = s.pen_click(&ve, pt, drag, 1.0)?;
+                Ok(json!({"vertex": v}))
+            }
+        ),
+        spec!("vector.edit.penEnd", "End pen path", "{}", false, |s, _| {
+            editing(s)?;
+            set_state(s, |ve| {
+                ve.anchor = None;
+                ve.pen_out = None;
+            })?;
+            Ok(json!({"ok": true}))
+        }),
     ]
+}
+
+/// The paint bucket on node `id` at local point `lp`. A vector without fills gets the default
+/// fill so the painted area shows.
+pub fn paint(doc: &mut Document, id: NodeId, lp: Point) -> Result<bool> {
+    let filled = edit(doc, id, |net| net.paint(lp))?.ok_or_else(|| bad("vector.edit.paint", "click inside a closed area"))?;
+    let n = doc.get_mut(id)?;
+    if filled && n.fills.iter().all(|f| !f.visible) {
+        n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::DEFAULT_SHAPE)];
+    }
+    Ok(filled)
 }

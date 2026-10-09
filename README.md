@@ -88,7 +88,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Vectors without compromise</h3>
-      Real vector networks: the Pen and Pencil tools, vector edit mode with bend, split, heal-on-delete and handle mirroring, boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes and per-side strokes. Rectangles with smooth (squircle) corners, polygons, stars and arcs.
+      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes and per-side strokes. Rectangles with smooth (squircle) corners, polygons, stars and arcs.
     </td>
     <td width="50%" valign="top">
       <h3>Paints and effects</h3>

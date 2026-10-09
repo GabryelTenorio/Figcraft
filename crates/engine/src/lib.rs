@@ -205,8 +205,8 @@ pub struct DocState {
     pub text_edit: Option<TextEdit>,
     /// Hovered node (canvas hover outline).
     pub hover: Option<NodeId>,
-    /// Vector edit mode: the vector being edited and its selected vertices.
-    pub vector_edit: Option<(NodeId, Vec<usize>)>,
+    /// Vector edit mode: the vector being edited, its selected points and the edit tool.
+    pub vector_edit: Option<vectoredit::VectorEdit>,
     pub uid: u64,
 }
 
@@ -273,6 +273,15 @@ impl DocState {
             && !doc.contains(te.id)
         {
             self.text_edit = None;
+        }
+        // Vector edit mode ends when its layer is gone (or no longer a vector, e.g. undone).
+        match self.vector_edit.as_mut() {
+            Some(ve) if doc.page_of(ve.id) == Some(page) => match vectoredit::network(&doc, ve.id) {
+                Some(net) => ve.clamp(net),
+                None => self.vector_edit = None,
+            },
+            Some(_) => self.vector_edit = None,
+            None => {}
         }
     }
 }

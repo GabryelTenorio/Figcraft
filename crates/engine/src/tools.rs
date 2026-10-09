@@ -171,7 +171,7 @@ impl PointerEvent {
     pub fn at(kind: PointerKind, x: f64, y: f64, zoom: f64) -> Self {
         Self { kind, x, y, sx: x * zoom, sy: y * zoom, shift: false, alt: false, cmd: false, ctrl: false, zoom }
     }
-    fn p(&self) -> Point {
+    pub(crate) fn p(&self) -> Point {
         Point::new(self.x, self.y)
     }
     fn tol(&self) -> f64 {
@@ -218,10 +218,15 @@ pub struct Overlay {
     pub drop_target: Option<NodeId>,
     /// Auto layout insertion indicator (x0, y0, x1, y1).
     pub insert_line: Option<[f64; 4]>,
+    /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the
+    /// paint bucket would fill (page-space polygons).
+    pub vector_hover: Option<crate::vectoredit::VHit>,
+    pub lasso: Vec<[f64; 2]>,
+    pub face: Vec<Vec<[f64; 2]>>,
 }
 
 #[derive(Clone, Debug)]
-struct ResizeStart {
+pub(crate) struct ResizeStart {
     /// Node id → (world transform, w, h) at the start.
     nodes: Vec<(NodeId, Affine, f64, f64)>,
     /// Single node: its world transform and size; else the AABB.
@@ -231,7 +236,7 @@ struct ResizeStart {
 }
 
 #[derive(Clone, Debug, Default)]
-enum Gesture {
+pub(crate) enum Gesture {
     #[default]
     None,
     Marquee {
@@ -280,26 +285,8 @@ enum Gesture {
     PenDrag {
         anchor: Point,
     },
-    VertexDrag {
-        start: Point,
-        id: NodeId,
-        verts: Vec<usize>,
-    },
-    HandleDrag {
-        id: NodeId,
-        seg: usize,
-        start_end: bool,
-    },
-    Bend {
-        id: NodeId,
-        seg: usize,
-        t: f64,
-    },
-    VertexMarquee {
-        start: Point,
-        id: NodeId,
-        base: Vec<usize>,
-    },
+    /// Vector edit mode gestures (handled in `vectoredit`).
+    Vector(crate::vectoredit::VGesture),
 }
 
 /// The pen tool's in-progress path (page coordinates).
@@ -315,7 +302,7 @@ pub struct PenPath {
 #[derive(Clone, Debug, Default)]
 pub struct ToolState {
     pub tool: ToolId,
-    gesture: Gesture,
+    pub(crate) gesture: Gesture,
     pub overlay: Overlay,
     pub pen: Option<PenPath>,
     /// Tool to return to after a temporary tool (space → hand).
@@ -412,6 +399,9 @@ impl Session {
         if self.tool.tool == ToolId::Pen && t != ToolId::Pen {
             let _ = self.pen_finish();
         }
+        if !matches!(t, ToolId::Move | ToolId::Scale | ToolId::Hand) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) {
+            let _ = crate::vectoredit::end(self);
+        }
         self.tool.tool = t;
         self.tool.gesture = Gesture::None;
         self.tool.overlay = Overlay::default();
@@ -425,17 +415,9 @@ impl Session {
 
     /// Feed one pointer event to the current tool.
     pub fn pointer(&mut self, ev: &PointerEvent) -> Result<()> {
-        let tool = if ev.kind == PointerKind::Down && ev.ctrl && !ev.cmd && false { ToolId::Hand } else { self.tool.tool };
-        if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().map(|d| d.vector_edit.is_some()).unwrap_or(false) {
-            match ev.kind {
-                PointerKind::Down => return self.vector_down(ev),
-                PointerKind::DoubleClick => return crate::vectoredit::end(self),
-                PointerKind::Hover => {
-                    self.tool.overlay.cursor = Cursor::Pen;
-                    return Ok(());
-                }
-                _ => {}
-            }
+        let tool = self.tool.tool;
+        if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
+            return Ok(());
         }
         match ev.kind {
             PointerKind::Hover => self.hover(ev),
@@ -776,60 +758,7 @@ impl Session {
                 textedit::set_caret(self, idx, true)?;
                 Ok(())
             }
-            Gesture::VertexDrag { start, id, verts } => {
-                let (id, verts) = (*id, verts.clone());
-                let w = self.doc()?.world_transform(id);
-                let mut d = ev.p() - *start;
-                if ev.shift {
-                    if d.x.abs() > d.y.abs() {
-                        d.y = 0.0;
-                    } else {
-                        d.x = 0.0;
-                    }
-                }
-                // Page delta → local delta.
-                let inv = w.inverse();
-                let ld = inv * (Point::ZERO + d) - inv * Point::ZERO;
-                self.preview(|doc, _| {
-                    crate::vectoredit::move_vertices(doc, id, &verts, ld)?;
-                    crate::vectoredit::refit(doc, id)
-                })?;
-                Ok(())
-            }
-            Gesture::HandleDrag { id, seg, start_end } => {
-                let (id, seg, se) = (*id, *seg, *start_end);
-                let lp = self.doc()?.world_transform(id).inverse() * ev.p();
-                let alt = ev.alt;
-                self.preview(|doc, _| {
-                    crate::vectoredit::set_handle(doc, id, seg, se, lp, alt)?;
-                    crate::vectoredit::refit(doc, id)
-                })?;
-                Ok(())
-            }
-            Gesture::Bend { id, seg, t } => {
-                let (id, seg, t) = (*id, *seg, *t);
-                let lp = self.doc()?.world_transform(id).inverse() * ev.p();
-                self.preview(|doc, _| {
-                    crate::vectoredit::bend(doc, id, seg, t, lp)?;
-                    crate::vectoredit::refit(doc, id)
-                })?;
-                Ok(())
-            }
-            Gesture::VertexMarquee { start, id, base } => {
-                let r = Rect::from_points(*start, ev.p());
-                self.tool.overlay.marquee = Some([r.x0, r.y0, r.x1, r.y1]);
-                let mut v = base.clone();
-                for i in crate::vectoredit::vertices_in(self.doc()?, *id, r) {
-                    if !v.contains(&i) {
-                        v.push(i);
-                    }
-                }
-                let id = *id;
-                let ds = self.ds_mut()?;
-                ds.vector_edit = Some((id, v));
-                ds.revision += 1;
-                Ok(())
-            }
+            Gesture::Vector(_) => Ok(()),
             Gesture::PenDrag { anchor } => {
                 let out = ev.p() - *anchor;
                 if let Some(pen) = self.tool.pen.as_mut()
@@ -1238,8 +1167,7 @@ impl Session {
             }
             Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } => {}
-            Gesture::VertexDrag { .. } | Gesture::HandleDrag { .. } | Gesture::Bend { .. } => self.commit_interaction()?,
-            Gesture::VertexMarquee { .. } => {}
+            Gesture::Vector(_) => self.commit_interaction()?,
         }
         if let Ok(ds) = self.ds_mut() {
             ds.revision += 1;
@@ -1508,79 +1436,6 @@ impl Session {
         Ok(())
     }
 
-    fn vector_down(&mut self, ev: &PointerEvent) -> Result<()> {
-        let Some((id, sel)) = self.ds()?.vector_edit.clone() else { return Ok(()) };
-        let doc = self.doc()?.clone();
-        let tol = 6.0 / ev.zoom.max(1e-6);
-        match crate::vectoredit::hit(&doc, id, &sel, ev.p(), tol) {
-            Some(crate::vectoredit::VHit::Vertex(v)) => {
-                let verts = if ev.shift {
-                    let mut s2 = sel.clone();
-                    if let Some(i) = s2.iter().position(|x| *x == v) {
-                        s2.remove(i);
-                    } else {
-                        s2.push(v);
-                    }
-                    s2
-                } else if sel.contains(&v) {
-                    sel.clone()
-                } else {
-                    vec![v]
-                };
-                let ds = self.ds_mut()?;
-                ds.vector_edit = Some((id, verts.clone()));
-                self.begin_interaction("Move points")?;
-                self.tool.gesture = Gesture::VertexDrag { start: ev.p(), id, verts };
-            }
-            Some(crate::vectoredit::VHit::Handle { seg, start }) => {
-                self.begin_interaction("Edit handle")?;
-                self.tool.gesture = Gesture::HandleDrag { id, seg, start_end: start };
-            }
-            Some(crate::vectoredit::VHit::Segment { seg, t }) => {
-                if ev.cmd {
-                    self.begin_interaction("Bend")?;
-                    self.tool.gesture = Gesture::Bend { id, seg, t };
-                } else if ev.alt || ev.shift {
-                    // Add a point on the segment.
-                    self.begin_interaction("Add point")?;
-                    let mut v = 0;
-                    self.preview(|doc, _| {
-                        v = crate::vectoredit::split_segment(doc, id, seg, t)?;
-                        Ok(())
-                    })?;
-                    let ds = self.ds_mut()?;
-                    ds.vector_edit = Some((id, vec![v]));
-                    self.tool.gesture = Gesture::VertexDrag { start: ev.p(), id, verts: vec![v] };
-                } else {
-                    // Select the segment's end points and drag them together.
-                    let net_seg = match &doc.node(id).map(|n| &n.kind) {
-                        Some(NodeKind::Vector { network }) => network.segments.get(seg).copied(),
-                        _ => None,
-                    };
-                    let verts: Vec<usize> = net_seg.map(|s| vec![s.a, s.b]).unwrap_or_default();
-                    let ds = self.ds_mut()?;
-                    ds.vector_edit = Some((id, verts.clone()));
-                    self.begin_interaction("Move segment")?;
-                    self.tool.gesture = Gesture::VertexDrag { start: ev.p(), id, verts };
-                }
-            }
-            None => {
-                // Outside the shape entirely (and not shift): leave edit mode.
-                let inside = doc.world_render_bounds(id).is_some_and(|b| b.inflate(tol * 4.0, tol * 4.0).contains(ev.p()));
-                if !inside && !ev.shift {
-                    crate::vectoredit::end(self)?;
-                    return self.move_down(ev);
-                }
-                let base = if ev.shift { sel } else { vec![] };
-                let ds = self.ds_mut()?;
-                ds.vector_edit = Some((id, base.clone()));
-                ds.revision += 1;
-                self.tool.gesture = Gesture::VertexMarquee { start: ev.p(), id, base };
-            }
-        }
-        Ok(())
-    }
-
     /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect.
     pub fn escape(&mut self) -> Result<()> {
         if self.tool.pen.is_some() {
@@ -1595,7 +1450,7 @@ impl Session {
             return textedit::end(self);
         }
         if self.ds()?.vector_edit.is_some() {
-            return crate::vectoredit::end(self);
+            return crate::vectoredit::escape(self);
         }
         if self.tool.tool != ToolId::Move {
             self.set_tool(ToolId::Move);

@@ -245,7 +245,7 @@ fn collect(doc: &Document, id: NodeId, depth: usize, expanded: &std::collections
     // Layers panel lists top of the stack first.
     for c in n.children.iter().rev() {
         let Some(cn) = doc.node(*c) else { continue };
-        let has_kids = !cn.children.is_empty() && !matches!(cn.kind, NodeKind::BooleanOp { .. }) || matches!(cn.kind, NodeKind::BooleanOp { .. });
+        let has_kids = !cn.children.is_empty() || matches!(cn.kind, NodeKind::BooleanOp { .. });
         out.push(Row { id: *c, depth, has_kids });
         if expanded.contains(c) && depth < 64 {
             collect(doc, *c, depth + 1, expanded, out);

@@ -46,7 +46,7 @@ impl Exporter<'_> {
     /// [`MAX_RASTER_SIDE`] pixels a side.
     fn raster_view(&self, b: Rect) -> Option<View> {
         let b = b.intersect(self.page_rect);
-        if !(b.width() > 0.0 && b.height() > 0.0) || !crate::rect_finite(b) {
+        if !(b.width() > 0.0 && b.height() > 0.0 && crate::rect_finite(b)) {
             return None;
         }
         let mut k = self.raster_scale();

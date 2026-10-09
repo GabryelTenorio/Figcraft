@@ -86,6 +86,17 @@ pub fn handle(app: &mut FigApp, ctx: &Context) {
 }
 
 fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool) -> bool {
+    // Vector edit mode has its own keys (tools, nudging points, delete, join); the rest fall through.
+    if app.session.ds().is_ok_and(|d| d.vector_edit.is_some()) {
+        match figcraft_engine::vectoredit::key(&mut app.session, key.name(), m.shift, m.alt, m.command) {
+            Ok(true) => return true,
+            Ok(false) => {}
+            Err(e) => {
+                app.toast(e.to_string());
+                return true;
+            }
+        }
+    }
     // Catalog shortcuts (exact modifier match).
     for item in MENU.iter().filter(|i| !i.shortcut.is_empty()) {
         if let Some((want, k)) = parse(item.shortcut)
@@ -104,10 +115,6 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool) -> bool {
                     app.toast(e.to_string());
                 }
                 app.ui.context_menu = None;
-                return true;
-            }
-            if item.id == "edit.delete" && app.session.ds().map(|d| d.vector_edit.is_some()).unwrap_or(false) {
-                app.run("vector.deleteHeal", json!({}));
                 return true;
             }
             if item.id == "edit.delete" {

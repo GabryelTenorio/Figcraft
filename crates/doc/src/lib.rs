@@ -16,6 +16,7 @@ pub mod proto;
 pub mod styles;
 pub mod text;
 pub mod vector;
+pub mod vector_faces;
 
 pub use comments::*;
 pub use figcraft_color as color;
@@ -25,6 +26,7 @@ pub use props::*;
 pub use styles::*;
 pub use text::*;
 pub use vector::*;
+pub use vector_faces::Face;
 
 use figcraft_color::Color;
 use figcraft_geom::{Affine, Point, Rect};
