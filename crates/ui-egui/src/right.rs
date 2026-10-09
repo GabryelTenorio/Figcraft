@@ -1193,118 +1193,7 @@ fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     });
 }
 
-/// CSS for a node (Inspect / Copy as CSS).
-pub fn css_for(doc: &Document, id: NodeId) -> String {
-    let Some(n) = doc.node(id) else { return String::new() };
-    let mut out = format!("/* {} */\n", n.name);
-    out.push_str(&format!("width: {}px;\nheight: {}px;\n", crate::canvas::fmt(n.width), crate::canvas::fmt(n.height)));
-    if let Some(l) = &n.layout {
-        out.push_str("display: flex;\n");
-        out.push_str(&format!("flex-direction: {};\n", if l.mode == LayoutMode::Vertical { "column" } else { "row" }));
-        if l.wrap {
-            out.push_str("flex-wrap: wrap;\n");
-        }
-        out.push_str(&format!("gap: {}px;\n", crate::canvas::fmt(l.gap)));
-        let [pt, pr, pb, pl] = l.padding;
-        out.push_str(&format!(
-            "padding: {}px {}px {}px {}px;\n",
-            crate::canvas::fmt(pt),
-            crate::canvas::fmt(pr),
-            crate::canvas::fmt(pb),
-            crate::canvas::fmt(pl)
-        ));
-        out.push_str(&format!(
-            "justify-content: {};\nalign-items: {};\n",
-            match l.main_align {
-                MainAlign::Min => "flex-start",
-                MainAlign::Center => "center",
-                MainAlign::Max => "flex-end",
-                MainAlign::SpaceBetween => "space-between",
-            },
-            match l.cross_align {
-                CrossAlign::Min => "flex-start",
-                CrossAlign::Center => "center",
-                CrossAlign::Max => "flex-end",
-                CrossAlign::Baseline => "baseline",
-            }
-        ));
-    }
-    if let Some(r) = n.corners.uniform().filter(|r| *r > 0.0) {
-        out.push_str(&format!("border-radius: {}px;\n", crate::canvas::fmt(r)));
-    } else if n.corners.radii.iter().any(|r| *r > 0.0) {
-        let [a, b, c, d] = n.corners.radii;
-        out.push_str(&format!("border-radius: {}px {}px {}px {}px;\n", a, b, c, d));
-    }
-    if n.opacity < 1.0 {
-        out.push_str(&format!("opacity: {};\n", n.opacity));
-    }
-    for p in n.fills.iter().filter(|p| p.visible) {
-        match &p.kind {
-            PaintKind::Solid { color } => {
-                let key = if matches!(n.kind, NodeKind::Text(_)) { "color" } else { "background" };
-                out.push_str(&format!("{key}: {};\n", color.with_alpha(color.a * p.opacity).to_css()));
-            }
-            PaintKind::Gradient(g) => {
-                let stops: Vec<String> = g.sorted_stops().iter().map(|s| format!("{} {}%", s.color.to_css(), (s.position * 100.0).round())).collect();
-                out.push_str(&format!("background: linear-gradient({});\n", stops.join(", ")));
-            }
-            PaintKind::Image(_) => out.push_str("background: url(image.png) center / cover;\n"),
-        }
-    }
-    if n.has_visible_stroke()
-        && let Some(c) = n.strokes.first().and_then(|p| p.solid_color())
-    {
-        out.push_str(&format!("border: {}px solid {};\n", crate::canvas::fmt(n.stroke.weight), c.to_css()));
-    }
-    let shadows: Vec<String> = n
-        .effects
-        .iter()
-        .filter(|e| e.visible)
-        .filter_map(|e| match &e.kind {
-            EffectKind::DropShadow(s) => Some(format!("{}px {}px {}px {}px {}", s.offset.0, s.offset.1, s.radius, s.spread, s.color.to_css())),
-            EffectKind::InnerShadow(s) => Some(format!("inset {}px {}px {}px {}px {}", s.offset.0, s.offset.1, s.radius, s.spread, s.color.to_css())),
-            _ => None,
-        })
-        .collect();
-    if !shadows.is_empty() {
-        out.push_str(&format!("box-shadow: {};\n", shadows.join(", ")));
-    }
-    for e in n.effects.iter().filter(|e| e.visible) {
-        match e.kind {
-            EffectKind::LayerBlur { radius } => out.push_str(&format!("filter: blur({}px);\n", radius / 2.0)),
-            EffectKind::BackgroundBlur { radius } => out.push_str(&format!("backdrop-filter: blur({}px);\n", radius / 2.0)),
-            _ => {}
-        }
-    }
-    if let NodeKind::Text(t) = &n.kind {
-        out.push_str(&format!(
-            "font-family: \"{}\";\nfont-size: {}px;\nfont-weight: {};\n",
-            t.style.font_family,
-            t.style.font_size,
-            t.style.weight()
-        ));
-        if t.style.italic() {
-            out.push_str("font-style: italic;\n");
-        }
-        match t.style.line_height {
-            LineHeight::Pixels(v) => out.push_str(&format!("line-height: {v}px;\n")),
-            LineHeight::Percent(p) => out.push_str(&format!("line-height: {p}%;\n")),
-            LineHeight::Auto => {}
-        }
-        if let LetterSpacing::Pixels(v) = t.style.letter_spacing
-            && v != 0.0
-        {
-            out.push_str(&format!("letter-spacing: {v}px;\n"));
-        }
-        if let LetterSpacing::Percent(p) = t.style.letter_spacing
-            && p != 0.0
-        {
-            out.push_str(&format!("letter-spacing: {}em;\n", p / 100.0));
-        }
-    }
-    out
-}
-
+/// The Inspect tab: size and position, and code for the selected layer.
 fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(ds) = app.session.ds() else { return };
@@ -1331,21 +1220,37 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
         });
     }
     widgets::separator(ui);
-    widgets::section_header(ui, "CSS", &[(Icon::Export, "Copy")], false);
-    let css = css_for(&doc, first);
+    use figcraft_engine::codegen::{CodeLang, code_for};
+    let lang_id = Id::new("inspect_lang");
+    let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
+    let copy = widgets::section_header(ui, "Code", &[(Icon::Export, "Copy")], false).is_some();
+    row(ui, 32.0, |ui| {
+        let resp = widgets::dropdown(ui, lang.label(), 120.0, Some(Icon::Code));
+        egui::Popup::menu(&resp).show(|ui| {
+            for (i, l) in CodeLang::ALL.iter().enumerate() {
+                if menu_item(ui, l.label(), "") {
+                    ui.data_mut(|d| d.insert_temp(lang_id, i));
+                    ui.close();
+                }
+            }
+        });
+    });
+    let code = code_for(&doc, first, lang);
     egui::Frame::NONE
         .fill(t.field)
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::same(10))
         .outer_margin(egui::Margin::symmetric(16, 0))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(&css).monospace().color(t.text));
+            ui.label(egui::RichText::new(&code).monospace().color(t.text));
         });
     ui.add_space(8.0);
+    let mut copy_clicked = copy;
     row(ui, 32.0, |ui| {
-        if ui.button("Copy CSS").clicked() {
-            app.services.clipboard_set_text(&css);
-            app.toast("Copied CSS");
-        }
+        copy_clicked |= ui.button(format!("Copy {}", lang.label())).clicked();
     });
+    if copy_clicked {
+        app.services.clipboard_set_text(&code);
+        app.toast(format!("Copied {}", lang.label()));
+    }
 }

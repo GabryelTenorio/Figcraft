@@ -38,7 +38,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "edit.copyAsCss" => {
             let ids = app.session.selection();
             if let (Some(first), Ok(doc)) = (ids.first(), app.session.doc()) {
-                let css = crate::right::css_for(doc, *first);
+                let css = figcraft_engine::codegen::code_for(doc, *first, figcraft_engine::codegen::CodeLang::Css);
                 app.services.clipboard_set_text(&css);
                 app.toast("Copied as CSS");
             }

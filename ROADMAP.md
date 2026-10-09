@@ -142,7 +142,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
 | Prototyping | 6 | 60% | overlay close animation, multi-selection editing, scrolling inside device frames | 6–10 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
-| Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
+| Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
 Weighted feature depth ≈ **52%**.

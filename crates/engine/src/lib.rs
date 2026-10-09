@@ -9,6 +9,7 @@
 
 pub mod catalog;
 pub mod cmd;
+pub mod codegen;
 pub mod components;
 pub mod drop;
 pub mod guard;
