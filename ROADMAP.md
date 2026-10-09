@@ -129,7 +129,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
 | Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
-| Strokes | 3 | 55% | arrowhead set, dash/gap UI, per-side UI, stroke styles | 5–8 |
+| Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 60% | section tooling, mask types (luminance/outline) | 5–8 |
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |

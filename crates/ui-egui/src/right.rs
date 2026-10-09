@@ -626,40 +626,134 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
                     }
                 }
             });
-            let e = crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, half - 32.0);
+            let sided = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Rectangle)));
+            let weight_w = half - if sided { 60.0 } else { 32.0 };
+            let e = crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, weight_w);
             app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
-            let more = icons::button(ui, Icon::Dots, 24.0, false, "Advanced stroke");
-            egui::Popup::menu(&more).width(240.0).show(|ui| {
-                let st = sel.first().and_then(|i| doc.node(*i)).map(|n| n.stroke.clone()).unwrap_or_default();
-                ui.label(egui::RichText::new("Stroke style").font(semibold(11.0)));
-                if menu_item(ui, "Solid", "") {
-                    app.set_props(&ids, json!({"dashes": []}));
-                }
-                if menu_item(ui, "Dash", "") {
-                    app.set_props(&ids, json!({"dashes": [st.weight.max(1.0) * 4.0, st.weight.max(1.0) * 4.0]}));
-                }
-                ui.separator();
-                ui.label(egui::RichText::new("Join").font(semibold(11.0)));
-                for (l, v) in [("Miter", "miter"), ("Bevel", "bevel"), ("Round", "round")] {
-                    if menu_item(ui, l, "") {
-                        app.set_props(&ids, json!({"strokeJoin": v}));
+            if sided {
+                let sides_btn = icons::button(ui, Icon::IndependentCorners, 24.0, false, "Individual strokes");
+                egui::Popup::menu(&sides_btn).show(|ui| {
+                    let w = weight.unwrap_or(1.0);
+                    for (l, v) in [
+                        ("All", Value::Null),
+                        ("Top", json!([w, 0.0, 0.0, 0.0])),
+                        ("Right", json!([0.0, w, 0.0, 0.0])),
+                        ("Bottom", json!([0.0, 0.0, w, 0.0])),
+                        ("Left", json!([0.0, 0.0, 0.0, w])),
+                        ("Custom", json!([w, w, w, w])),
+                    ] {
+                        if menu_item(ui, l, "") {
+                            app.set_props(&ids, json!({"strokeSides": v}));
+                            ui.close();
+                        }
                     }
-                }
-                ui.separator();
-                ui.label(egui::RichText::new("Start / end point").font(semibold(11.0)));
-                for c in StrokeCap::ALL {
-                    if menu_item(ui, &format!("Start: {}", c.label()), "") {
-                        app.set_props(&ids, json!({"startCap": format!("{c:?}")}));
-                    }
-                }
-                for c in StrokeCap::ALL {
-                    if menu_item(ui, &format!("End: {}", c.label()), "") {
-                        app.set_props(&ids, json!({"endCap": format!("{c:?}")}));
-                    }
+                });
+            }
+            let adv_id = Id::new("stroke_adv");
+            let open = ui.data(|d| d.get_temp::<bool>(adv_id)).unwrap_or(false);
+            if icons::button(ui, Icon::Dots, 24.0, open, "Advanced stroke").clicked() {
+                ui.data_mut(|d| d.insert_temp(adv_id, !open));
+            }
+        });
+        // Per-side weights.
+        if let Some(sides) = common(doc, sel, |n| n.stroke.sides).flatten() {
+            let quarter = (ui.available_width() - PAD * 2.0 - 3.0 * 6.0) / 4.0;
+            row(ui, 32.0, |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (k, label) in ["T", "R", "B", "L"].iter().enumerate() {
+                    let v = sides.get(k).copied();
+                    let e = widgets::number_field(ui, Id::new(("stroke_side", k)), Lead::Text(label), v, "", quarter, 1.0);
+                    app.field(&ids, "strokeSides", e, |x| {
+                        let mut n = sides;
+                        if let Some(slot) = n.get_mut(k) {
+                            *slot = x.max(0.0);
+                        }
+                        json!(n)
+                    });
                 }
             });
+        }
+        if ui.data(|d| d.get_temp::<bool>(Id::new("stroke_adv"))).unwrap_or(false) {
+            stroke_settings(app, ui, doc, sel);
+        }
+    }
+}
+
+/// Advanced stroke settings: dash pattern, join and the end points of open paths.
+fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
+    let ids = sel.to_vec();
+    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
+    let st = common(doc, sel, |n| n.stroke.clone());
+    let dashes = st.as_ref().map(|s| s.dashes.clone());
+    let weight = st.as_ref().map(|s| s.weight).unwrap_or(1.0).max(1.0);
+    widgets::sublabels(ui, "Stroke style", None);
+    row(ui, 32.0, |ui| {
+        let dashed = dashes.as_ref().is_some_and(|d| !d.is_empty());
+        let resp = widgets::dropdown(ui, if dashed { "Dash" } else { "Solid" }, half, None);
+        egui::Popup::menu(&resp).show(|ui| {
+            if menu_item(ui, "Solid", "") {
+                app.set_props(&ids, json!({"dashes": []}));
+                ui.close();
+            }
+            if menu_item(ui, "Dash", "") {
+                app.set_props(&ids, json!({"dashes": [weight * 4.0, weight * 4.0]}));
+                ui.close();
+            }
+        });
+    });
+    if let Some(d) = dashes.filter(|d| !d.is_empty()) {
+        let (dash, gap) = (d.first().copied().unwrap_or(4.0), d.get(1).copied().unwrap_or_else(|| d.first().copied().unwrap_or(4.0)));
+        widgets::sublabels(ui, "Dash", Some("Gap"));
+        row(ui, 32.0, |ui| {
+            let e = widgets::number_field(ui, Id::new("stroke_dash"), Lead::None, Some(dash), "", half, 1.0);
+            app.field(&ids, "dashes", e, |v| json!([v.max(0.0), gap]));
+            let e = widgets::number_field(ui, Id::new("stroke_gap"), Lead::None, Some(gap), "", half, 1.0);
+            app.field(&ids, "dashes", e, |v| json!([dash, v.max(0.0)]));
         });
     }
+    let join = st.as_ref().map(|s| s.join);
+    widgets::sublabels(ui, "Join", (join == Some(StrokeJoin::Miter)).then_some("Miter angle"));
+    row(ui, 32.0, |ui| {
+        let label = match join {
+            Some(StrokeJoin::Miter) => "Miter",
+            Some(StrokeJoin::Bevel) => "Bevel",
+            Some(StrokeJoin::Round) => "Round",
+            None => "Mixed",
+        };
+        let resp = widgets::dropdown(ui, label, half, None);
+        egui::Popup::menu(&resp).show(|ui| {
+            for (l, v) in [("Miter", "miter"), ("Bevel", "bevel"), ("Round", "round")] {
+                if menu_item(ui, l, "") {
+                    app.set_props(&ids, json!({"strokeJoin": v}));
+                    ui.close();
+                }
+            }
+        });
+        if join == Some(StrokeJoin::Miter) {
+            let limit = st.as_ref().map(|s| s.miter_limit);
+            let e = widgets::number_field(ui, Id::new("stroke_miter"), Lead::None, limit, "", half, 0.5);
+            app.field(&ids, "miterLimit", e, |v| json!(v.clamp(1.0, 100.0)));
+        }
+    });
+    // End points only mean something on open paths.
+    let open_paths = sel.iter().all(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Line | NodeKind::Vector { .. })));
+    if open_paths {
+        widgets::sublabels(ui, "Start point", Some("End point"));
+        row(ui, 32.0, |ui| {
+            for (key, cap) in [("startCap", st.as_ref().map(|s| s.cap_start)), ("endCap", st.as_ref().map(|s| s.cap_end))] {
+                let resp = widgets::dropdown(ui, cap.map(StrokeCap::label).unwrap_or("Mixed"), half, None);
+                egui::Popup::menu(&resp).show(|ui| {
+                    for c in StrokeCap::ALL {
+                        if menu_item(ui, c.label(), "") {
+                            app.set_props(&ids, json!({key: format!("{c:?}")}));
+                            ui.close();
+                        }
+                    }
+                });
+            }
+        });
+    }
+    ui.add_space(4.0);
 }
 
 fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint, fills: bool) {
