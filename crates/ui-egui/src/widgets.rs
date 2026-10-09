@@ -34,11 +34,38 @@ fn fmt_num(v: f64) -> String {
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
 }
 
+/// What a number field's variable button did.
+pub enum BindEvent {
+    /// Open the variable picker below this point.
+    Open(egui::Pos2),
+    /// Detach the bound variable.
+    Detach,
+}
+
 /// A number field `width` wide. `value` None shows "Mixed". `suffix` (e.g. "%" or "°") is shown
 /// after the number. Typing supports simple math (`10+5`, `*2`).
 pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<FieldEdit> {
+    number_field_bindable(ui, id, lead, value, suffix, width, step, None).0
+}
+
+/// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
+/// a variable button on hover, `Some(Some(name))` = bound (shows the name; click to change, the
+/// detach button unbinds).
+pub fn number_field_bindable(
+    ui: &mut Ui,
+    id: Id,
+    lead: Lead,
+    value: Option<f64>,
+    suffix: &str,
+    width: f32,
+    step: f64,
+    binding: Option<Option<&str>>,
+) -> (Option<FieldEdit>, Option<BindEvent>) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    if let Some(Some(name)) = binding {
+        return (None, bound_field(ui, id, lead, rect, name));
+    }
     let lead_w = match lead {
         Lead::None => 6.0,
         Lead::Text(s) => (12.0 + s.chars().count() as f32 * 7.0).max(24.0),
@@ -150,7 +177,65 @@ pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix:
             ui.painter().text(pos2(edit_rect.min.x, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
         }
     }
-    out
+    // The variable button shows while the pointer is over a bindable field.
+    let mut bind = None;
+    if binding.is_some() && ui.data(|d| d.get_temp::<String>(editing_id)).is_none() {
+        let br = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
+        let bresp = ui.interact(br, id.with("bind"), Sense::click());
+        if rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or(egui::Pos2::new(f32::NAN, f32::NAN))) {
+            if bresp.hovered() {
+                ui.painter().rect_filled(br, CornerRadius::same(4), t.hover);
+            }
+            icons::paint(ui.painter(), br.shrink(3.0), Icon::Variable, t.icon_secondary);
+        }
+        let bresp = bresp.on_hover_text("Apply variable");
+        if bresp.clicked() {
+            bind = Some(BindEvent::Open(rect.left_bottom()));
+        }
+    }
+    (out, bind)
+}
+
+/// A field bound to a variable: the lead, then the variable's name in a chip; the chip opens the
+/// picker and the detach button unbinds.
+fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> Option<BindEvent> {
+    let t = Tokens::get(ui.ctx());
+    let resp = ui.interact(rect, id.with("bound"), Sense::click());
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    if resp.hovered() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    let lead_w = match lead {
+        Lead::None => 4.0,
+        Lead::Text(s) => {
+            ui.painter().text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), t.text_secondary);
+            (12.0 + s.chars().count() as f32 * 7.0).max(24.0)
+        }
+        Lead::Icon(i) => {
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.min.x + 13.0, rect.center().y), vec2(14.0, 14.0)), i, t.icon_secondary);
+            24.0
+        }
+    };
+    let dr = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
+    let chip = Rect::from_min_max(pos2(rect.min.x + lead_w - 2.0, rect.min.y + 3.0), pos2(dr.min.x - 2.0, rect.max.y - 3.0));
+    ui.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
+    ui.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    // Grouped names ("size/card") show their last part; the tooltip has the full name.
+    let short = name.rsplit('/').next().unwrap_or(name);
+    let galley = ui.painter().layout_no_wrap(short.to_string(), regular(11.0), t.text);
+    ui.painter().with_clip_rect(chip.shrink2(vec2(5.0, 0.0))).galley(pos2(chip.min.x + 5.0, chip.center().y - galley.size().y / 2.0), galley, t.text);
+    let dresp = ui.interact(dr, id.with("detach"), Sense::click()).on_hover_text("Detach variable");
+    if resp.hovered() || dresp.hovered() {
+        if dresp.hovered() {
+            ui.painter().rect_filled(dr, CornerRadius::same(4), t.hover);
+        }
+        icons::paint(ui.painter(), dr.shrink(3.0), Icon::Detach, t.icon_secondary);
+    }
+    if dresp.clicked() {
+        return Some(BindEvent::Detach);
+    }
+    let resp = resp.on_hover_text(name);
+    resp.clicked().then(|| BindEvent::Open(rect.left_bottom()))
 }
 
 /// Evaluate a typed number: plain, or simple arithmetic relative to `cur` ("+10", "*2", "50%").

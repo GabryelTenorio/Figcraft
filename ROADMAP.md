@@ -135,7 +135,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
 | Text | 8 | 55% | range fills in the Fill section, right-to-left/bidi, text style picker depth, axis hover preview | 10–16 |
 | Components & variants | 9 | 55% | nested overrides depth, libraries, slots, descriptions | 12–18 |
-| Styles & variables | 5 | 45% | style picker everywhere, variable binding UI, aliasing UI, scoping | 10–16 |
+| Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
 | Prototyping | 6 | 60% | overlay close animation, multi-selection editing, scrolling inside device frames | 6–10 |
 | Import/export | 6 | 45% | PDF (in progress), .fig import, export panel polish | 20–35 |
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |

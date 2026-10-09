@@ -111,6 +111,7 @@ pub enum Icon {
     Gap,
     Reset,
     Detach,
+    Variable,
     Swap,
     Link,
     Prototype,
@@ -635,6 +636,17 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Reset => {
             p.arc(8.0, 8.0, 5.0, -2.2, 2.6);
             p.poly(&[(2.8, 2.8), (3.3, 5.8), (6.3, 5.3)], false);
+        }
+        Variable => {
+            // A hexagon with a dot: an original mark for "bind a value".
+            let pts: Vec<(f32, f32)> = (0..6)
+                .map(|i| {
+                    let a = std::f32::consts::FRAC_PI_3 * i as f32 + std::f32::consts::FRAC_PI_6;
+                    (8.0 + 5.8 * a.cos(), 8.0 + 5.8 * a.sin())
+                })
+                .collect();
+            p.poly(&pts, true);
+            p.dot(8.0, 8.0, 1.6);
         }
         Detach => {
             p.poly(&[(8.0, 2.5), (13.5, 8.0), (8.0, 13.5), (2.5, 8.0)], true);

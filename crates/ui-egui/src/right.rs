@@ -508,7 +508,8 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         let e = widgets::number_field(ui, Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", col, 1.0);
         app.field(&ids, "opacity", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
         if radius_ok {
-            let e = widgets::number_field(ui, Id::new("ap_rad"), Lead::Icon(Icon::CornerRadius), r.flatten(), "", col, 1.0);
+            let e =
+                crate::variable_ui::number_field(app, ui, &ids, "cornerRadius", Id::new("ap_rad"), Lead::Icon(Icon::CornerRadius), r.flatten(), col);
             app.field(&ids, "cornerRadius", e, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
             if icons::button(ui, Icon::IndependentCorners, 24.0, open, "Individual corners").clicked() {
@@ -625,7 +626,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
                     }
                 }
             });
-            let e = widgets::number_field(ui, Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, "", half - 32.0, 1.0);
+            let e = crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, half - 32.0);
             app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
             let more = icons::button(ui, Icon::Dots, 24.0, false, "Advanced stroke");
             egui::Popup::menu(&more).width(240.0).show(|ui| {
@@ -677,7 +678,31 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         }
         let text_r = Rect::from_min_max(pos2(sw.max.x + 8.0, r.min.y), pos2(r.max.x - 52.0, r.max.y));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_r));
+        let bound = (i == 0)
+            .then(|| app.session.doc().ok().and_then(|d| crate::variable_ui::bound_name(d, &ids, if fills { "fill" } else { "stroke" })))
+            .flatten();
         match &p.kind {
+            PaintKind::Solid { .. } if bound.is_some() => {
+                let name = bound.clone().unwrap_or_default();
+                let chip = Rect::from_min_max(pos2(text_r.min.x - 2.0, r.min.y + 3.0), pos2(text_r.max.x - 20.0, r.max.y - 3.0));
+                child.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
+                child.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                let short = name.rsplit('/').next().unwrap_or(&name).to_string();
+                child.painter().with_clip_rect(chip.shrink2(vec2(5.0, 0.0))).text(
+                    pos2(chip.min.x + 5.0, r.center().y),
+                    Align2::LEFT_CENTER,
+                    short,
+                    regular(11.0),
+                    t.text,
+                );
+                let _ = ui.interact(chip, Id::new(("bound_paint", fills)), Sense::hover()).on_hover_text(&name);
+                let dr = Rect::from_center_size(pos2(text_r.max.x - 9.0, r.center().y), vec2(18.0, 18.0));
+                let dresp = ui.interact(dr, Id::new(("detach_paint", fills)), Sense::click()).on_hover_text("Detach variable");
+                icons::paint(ui.painter(), dr.shrink(3.0), Icon::Detach, t.icon_secondary);
+                if dresp.clicked() {
+                    app.run("variable.bind", json!({"ids": ids, "field": if fills { "fill" } else { "stroke" }, "variable": null}));
+                }
+            }
             PaintKind::Solid { color } => {
                 if let Some(h) =
                     widgets::text_field_inline(&mut child, Id::new(("hex", fills, i)), &color.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
@@ -758,6 +783,31 @@ fn style_picker(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], f
                     close = true;
                 }
             });
+        }
+        // Colour variables bind the first paint's colour.
+        let modes = std::collections::BTreeMap::new();
+        let colors: Vec<(String, String, figcraft_color::Color)> = doc
+            .variables
+            .variables
+            .iter()
+            .filter(|v| v.kind == VariableType::Color)
+            .filter_map(|v| match doc.variables.resolve(&v.id, &modes) {
+                Some(VariableValue::Color(c)) => Some((v.id.clone(), v.name.clone(), c)),
+                _ => None,
+            })
+            .collect();
+        if !colors.is_empty() {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Color variables").font(semibold(11.0)));
+            for (vid, name, c) in &colors {
+                ui.horizontal(|ui| {
+                    widgets::swatch(ui, &Paint::solid(*c), 14.0);
+                    if ui.selectable_label(false, name).clicked() {
+                        app.run("variable.bind", json!({"ids": ids, "field": if fills { "fill" } else { "stroke" }, "variable": vid}));
+                        close = true;
+                    }
+                });
+            }
         }
     });
     if close {

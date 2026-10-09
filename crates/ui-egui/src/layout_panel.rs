@@ -114,9 +114,9 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, "Dimensions", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("lay_w"), Lead::Text("W"), w, "", col, 1.0);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, col);
         app.field(&ids, "width", e, |v| json!(v.max(0.0)));
-        let e = widgets::number_field(ui, Id::new("lay_h"), Lead::Text("H"), h, "", col, 1.0);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, col);
         app.field(&ids, "height", e, |v| json!(v.max(0.0)));
         let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
         if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, "Constrain proportions").clicked() {
@@ -288,7 +288,16 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             }
             let auto = l.main_align == MainAlign::SpaceBetween;
             let gap_icon = if l.mode == LayoutMode::Vertical { Icon::DistributeV } else { Icon::Gap };
-            let e = widgets::number_field(ui, Id::new("al_gap"), Lead::Icon(gap_icon), if auto { None } else { Some(l.gap) }, "", 96.0, 1.0);
+            let e = crate::variable_ui::number_field(
+                app,
+                ui,
+                ids,
+                "gap",
+                Id::new("al_gap"),
+                Lead::Icon(gap_icon),
+                if auto { None } else { Some(l.gap) },
+                96.0,
+            );
             app.field(ids, "gap", e, |v| json!(v));
             ui.add_space(8.0);
             let resp = widgets::dropdown(ui, if auto { "Auto gap" } else { "Fixed gap" }, 96.0, None);
