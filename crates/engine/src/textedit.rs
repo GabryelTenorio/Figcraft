@@ -1,8 +1,8 @@
 //! On-canvas text editing: caret, selection, typing. A whole editing session is one undo step.
 
-use figcraft_doc::{NodeId, NodeKind, TextData};
+use figcraft_doc::{Document, NodeId, NodeKind, TextData};
 
-use crate::{EngineError, Result, Session, TextEdit};
+use crate::{EngineError, Preedit, Result, Session, TextEdit};
 
 fn text_of(s: &Session, id: NodeId) -> Result<TextData> {
     match &s.doc()?.get(id)?.kind {
@@ -21,7 +21,7 @@ pub fn begin(s: &mut Session, id: NodeId, caret: Option<usize>, created: bool) -
         Some(c) => (c.min(n), c.min(n)),
         None => (n, 0),
     };
-    ds.text_edit = Some(TextEdit { id, caret, anchor, created });
+    ds.text_edit = Some(TextEdit { id, caret, anchor, created, preedit: None });
     ds.selection = vec![id];
     ds.revision += 1;
     Ok(())
@@ -64,6 +64,8 @@ fn edit(s: &mut Session, f: impl FnOnce(&mut TextData, &mut TextEdit)) -> Result
     let n = doc.get_mut(te.id)?;
     let NodeKind::Text(t) = &mut n.kind else { return Err(EngineError::Other("not a text layer".into())) };
     f(t, &mut te);
+    // Any edit ends a composition (a commit replaces it with the final text).
+    te.preedit = None;
     let len = t.char_count();
     te.caret = te.caret.min(len);
     te.anchor = te.anchor.min(len);
@@ -212,26 +214,72 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
             }
             None => cur,
         },
-        "SelectAll" => {
-            let ds = s.ds_mut()?;
-            if let Some(te) = ds.text_edit.as_mut() {
-                te.anchor = 0;
-                te.caret = n;
-            }
-            ds.revision += 1;
-            return Ok(());
-        }
+        "SelectAll" => return select(s, 0, n),
         _ => return Ok(()),
     };
+    let anchor = if shift { te.anchor } else { next };
+    select(s, anchor, next)
+}
+
+/// Set the selection (`anchor`..`caret`, clamped to the text). Moving the caret abandons any
+/// composition in progress.
+fn select(s: &mut Session, anchor: usize, caret: usize) -> Result<()> {
+    let Some(id) = s.ds()?.text_edit.as_ref().map(|te| te.id) else { return Ok(()) };
+    let len = s.doc()?.node(id).and_then(|n| n.kind.text()).map_or(0, TextData::char_count);
     let ds = s.ds_mut()?;
     if let Some(te) = ds.text_edit.as_mut() {
-        te.caret = next;
-        if !shift {
-            te.anchor = next;
-        }
+        te.anchor = anchor.min(len);
+        te.caret = caret.min(len);
+        te.preedit = None;
     }
     ds.revision += 1;
     Ok(())
+}
+
+/// Show an IME composition inline at the caret (`cursor` = the IME's cursor inside it, in chars;
+/// default its end). The document doesn't change until the composition is committed with
+/// [`insert`]; an empty `text` cancels it. Starting to compose over a selection deletes it, as
+/// typing would.
+pub fn preedit(s: &mut Session, text: &str, cursor: Option<usize>) -> Result<()> {
+    let Some(te) = s.ds()?.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
+    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_PREEDIT).collect();
+    if text.is_empty() && te.preedit.is_none() {
+        return Ok(()); // IMEs send empty compositions when idle
+    }
+    if !text.is_empty() && te.preedit.is_none() && te.caret != te.anchor {
+        edit(s, |t, te| {
+            let (a, b) = range(te);
+            t.replace_range(a, b, "");
+            te.caret = a;
+            te.anchor = a;
+        })?;
+    }
+    let n = text.chars().count();
+    let ds = s.ds_mut()?;
+    if let Some(te) = ds.text_edit.as_mut() {
+        te.preedit = (n > 0).then(|| Preedit { text, cursor: cursor.unwrap_or(n).min(n) });
+    }
+    ds.revision += 1;
+    Ok(())
+}
+
+/// Longest composition shown (IMEs compose a phrase at a time).
+const MAX_PREEDIT: usize = 1000;
+
+/// The document as it looks while composing: the composition inserted at the caret, with text
+/// auto-size and layout applied. Also returns the composition's char range and the IME cursor's
+/// index in that document. `None` when nothing is being composed.
+pub fn preedit_doc(s: &Session) -> Option<(Document, (usize, usize), usize)> {
+    let ds = s.ds().ok()?;
+    let te = ds.text_edit.as_ref()?;
+    let pe = te.preedit.as_ref()?;
+    let mut doc = (*ds.doc).clone();
+    let NodeKind::Text(t) = &mut doc.get_mut(te.id).ok()?.kind else { return None };
+    let at = te.caret.min(t.char_count());
+    t.replace_range(at, at, &pe.text);
+    crate::normalize(&mut doc, &ds.doc);
+    let n = pe.text.chars().count();
+    Some((doc, (at, at + n), at + pe.cursor.min(n)))
 }
 
 fn line_start(chars: &[char], mut i: usize) -> usize {
@@ -250,20 +298,8 @@ fn line_end(chars: &[char], mut i: usize) -> usize {
 
 /// Place the caret (and optionally extend the selection) at char `index`.
 pub fn set_caret(s: &mut Session, index: usize, extend: bool) -> Result<()> {
-    let len = match s.ds()?.text_edit.as_ref() {
-        Some(te) => text_of(s, te.id).map(|t| t.char_count()).unwrap_or(0),
-        None => 0,
-    };
-    let index = index.min(len);
-    let ds = s.ds_mut()?;
-    if let Some(te) = ds.text_edit.as_mut() {
-        te.caret = index;
-        if !extend {
-            te.anchor = index;
-        }
-    }
-    ds.revision += 1;
-    Ok(())
+    let Some(te) = s.ds()?.text_edit.clone() else { return Ok(()) };
+    select(s, if extend { te.anchor } else { index }, index)
 }
 
 /// Select the word at `index` (double-click).
@@ -294,13 +330,7 @@ pub fn select_word(s: &mut Session, index: usize) -> Result<()> {
             b += 1;
         }
     }
-    let ds = s.ds_mut()?;
-    if let Some(te) = ds.text_edit.as_mut() {
-        te.anchor = a;
-        te.caret = b;
-    }
-    ds.revision += 1;
-    Ok(())
+    select(s, a, b)
 }
 
 /// Select the line (paragraph) containing `index` (triple-click).
@@ -308,14 +338,7 @@ pub fn select_line(s: &mut Session, index: usize) -> Result<()> {
     let Some(te) = s.ds()?.text_edit.clone() else { return Ok(()) };
     let chars: Vec<char> = text_of(s, te.id)?.characters.chars().collect();
     let i = index.min(chars.len());
-    let (a, b) = (line_start(&chars, i), line_end(&chars, i));
-    let ds = s.ds_mut()?;
-    if let Some(te) = ds.text_edit.as_mut() {
-        te.anchor = a;
-        te.caret = b;
-    }
-    ds.revision += 1;
-    Ok(())
+    select(s, line_start(&chars, i), line_end(&chars, i))
 }
 
 /// The selected text while editing (for copy).
@@ -565,9 +588,111 @@ mod tests {
         assert_eq!(data(&s, id).paragraph_indent, 4.0);
     }
 
+    fn preedit_state(s: &Session) -> Option<Preedit> {
+        s.ds().unwrap().text_edit.clone().unwrap().preedit
+    }
+
+    #[test]
+    fn ime_composition_is_shown_but_not_in_the_document_until_committed() {
+        let (mut s, id) = setup("Hello world");
+        let undo_before = s.ds().unwrap().history.undo.len();
+        begin(&mut s, id, Some(5), false).unwrap();
+        let doc_before = s.ds().unwrap().doc.clone();
+        s.execute("text.edit.preedit", &json!({"text": "にほ", "cursor": 1})).unwrap();
+        assert_eq!(preedit_state(&s), Some(Preedit { text: "にほ".into(), cursor: 1 }));
+        assert!(std::sync::Arc::ptr_eq(&doc_before, &s.ds().unwrap().doc), "composing leaves the document alone");
+        let (shown, range, cursor) = preedit_doc(&s).unwrap();
+        assert_eq!(shown.node(id).unwrap().kind.text().unwrap().characters, "Helloにほ world");
+        assert_eq!((range, cursor), ((5, 7), 6));
+        let info = s.execute("text.edit.selection", &json!({})).unwrap();
+        assert_eq!(info["preedit"]["text"], "にほ");
+        // Updating the composition replaces it; an empty one cancels it.
+        preedit(&mut s, "にほん", None).unwrap();
+        assert_eq!(preedit_doc(&s).unwrap().2, 8);
+        preedit(&mut s, "", None).unwrap();
+        assert!(preedit_state(&s).is_none() && preedit_doc(&s).is_none());
+        assert_eq!(data(&s, id).characters, "Hello world");
+        // Commit puts the final text at the caret.
+        preedit(&mut s, "にほん", None).unwrap();
+        s.execute("text.edit.insert", &json!({"text": "日本"})).unwrap();
+        assert!(preedit_state(&s).is_none());
+        assert_eq!(data(&s, id).characters, "Hello日本 world");
+        assert_eq!(sel(&s), (7, 7));
+        // Composing over a selection replaces it; moving the caret abandons the composition.
+        set_caret(&mut s, 7, false).unwrap();
+        set_caret(&mut s, 13, true).unwrap();
+        preedit(&mut s, "x", None).unwrap();
+        assert_eq!(data(&s, id).characters, "Hello日本");
+        set_caret(&mut s, 0, false).unwrap();
+        assert!(preedit_state(&s).is_none());
+        assert_eq!(data(&s, id).characters, "Hello日本");
+        // Ending the edit drops an uncommitted composition; the session stays one undo step.
+        preedit(&mut s, "zz", None).unwrap();
+        end(&mut s).unwrap();
+        assert_eq!(data(&s, id).characters, "Hello日本");
+        assert_eq!(s.ds().unwrap().history.undo.len(), undo_before + 1);
+        // Not editing: an error, not a crash.
+        assert!(preedit(&mut s, "a", None).is_err());
+    }
+
+    #[test]
+    fn variable_font_axes_as_commands_and_props() {
+        let (mut s, id) = setup("Hello world");
+        let ids = json!([id]);
+        s.execute("text.setVariations", &json!({"ids": ids, "variations": {"wght": 550, "wdth": 85}})).unwrap();
+        let st = data(&s, id).style;
+        assert_eq!((st.variations.get("wght"), st.variations.get("wdth")), (Some(&550.0), Some(&85.0)));
+        assert_eq!(st.weight(), 550);
+        // null removes one axis; replace clears the rest.
+        s.execute("text.setVariations", &json!({"ids": ids, "variations": {"wdth": null}})).unwrap();
+        assert_eq!(data(&s, id).style.variations.len(), 1);
+        s.execute("text.setVariations", &json!({"ids": ids, "variations": {"opsz": 14}, "replace": true})).unwrap();
+        assert_eq!(data(&s, id).style.variations.keys().collect::<Vec<_>>(), ["opsz"]);
+        // Undo restores the previous values.
+        s.undo().unwrap();
+        assert_eq!(data(&s, id).style.variations.keys().collect::<Vec<_>>(), ["wght"]);
+        // Junk is rejected.
+        assert!(s.execute("text.setVariations", &json!({"ids": ids, "variations": {"weight": 500}})).is_err());
+        assert!(s.execute("text.setVariations", &json!({"ids": ids, "variations": {"wght": "bold"}})).is_err());
+        assert!(s.execute("text.setVariations", &json!({"ids": ids})).is_err());
+        // node.set props (whole text or a range) replace the custom values.
+        s.execute("node.set", &json!({"id": id, "props": {"fontVariations": {"wght": 300}, "start": 6, "end": 11}})).unwrap();
+        let t = data(&s, id);
+        assert_eq!(t.style_at(0).variations.get("wght"), Some(&550.0));
+        assert_eq!(t.style_at(7).variations.get("wght"), Some(&300.0));
+        s.execute("node.set", &json!({"id": id, "props": {"variationSettings": null}})).unwrap();
+        assert!(data(&s, id).runs.is_empty() && data(&s, id).style.variations.is_empty());
+        // Picking a named style (Bold, weight steps) drops the custom weight but keeps width.
+        s.execute("text.setVariations", &json!({"ids": ids, "variations": {"wght": 650, "wdth": 90}})).unwrap();
+        s.execute("text.bold", &json!({"ids": ids})).unwrap();
+        let st = data(&s, id).style;
+        assert_eq!(st.font_style, "Bold", "650 is lighter than bold, so Bold applies");
+        assert!(!st.variations.contains_key("wght"));
+        assert_eq!(st.variations.get("wdth"), Some(&90.0));
+        // While editing, the command styles the selected range only.
+        begin(&mut s, id, Some(0), false).unwrap();
+        set_caret(&mut s, 5, true).unwrap();
+        s.execute("text.setVariations", &json!({"variations": {"wdth": 75}})).unwrap();
+        end(&mut s).unwrap();
+        let t = data(&s, id);
+        assert_eq!(t.style_at(0).variations.get("wdth"), Some(&75.0));
+        assert_eq!(t.style_at(8).variations.get("wdth"), Some(&90.0));
+        // The axes query answers without fonts too.
+        let r = s.execute("text.fonts", &json!({"family": "Inter", "axes": true})).unwrap();
+        assert!(r.is_null() || r["axes"].is_array());
+    }
+
     #[test]
     fn text_commands_survive_junk_while_editing() {
-        let junk = [json!({}), json!(null), json!({"index": -5, "features": {"": 1}}), json!({"index": 1e300, "style": 3, "case": null}), json!([1])];
+        let junk = [
+            json!({}),
+            json!(null),
+            json!({"index": -5, "features": {"": 1}}),
+            json!({"index": 1e300, "style": 3, "case": null}),
+            json!([1]),
+            json!({"variations": {"wght": "heavy", "toolong": 1}, "text": "\u{0}\u{7}", "cursor": 1e300}),
+            json!({"variations": {"wght": 1e300, "opsz": -1e300}, "replace": "yes", "text": "日本語", "cursor": -1}),
+        ];
         for spec in crate::cmd::all_commands().iter().filter(|c| c.id.starts_with("text.")) {
             for j in &junk {
                 let (mut s, id) = setup("Hi there\nyou");

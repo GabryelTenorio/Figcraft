@@ -257,3 +257,73 @@ fn vertical_alignment_in_fixed_box() {
     n.kind = figcraft_doc::NodeKind::Text(t);
     assert_eq!(layout_node(&n).unwrap().1, 0.0);
 }
+
+/// A variable font with a usable weight axis, if one is installed (craft-fonts or the system).
+fn variable_face() -> Option<std::sync::Arc<Face>> {
+    if !have_fonts() {
+        return None;
+    }
+    scan_system_fonts();
+    ["Inter", "Bahnschrift", "Segoe UI Variable", "Roboto Flex", "Noto Sans", "Cantarell", "Source Sans 3", "Open Sans", "Roboto"]
+        .into_iter()
+        .filter_map(|fam| find_face(fam, "Regular").filter(|f| f.family.eq_ignore_ascii_case(fam)))
+        .find(|f| f.axis("wght").is_some_and(|a| a.max - a.min >= 200.0))
+}
+
+#[test]
+fn variable_font_axes_change_shaping_and_outlines() {
+    let Some(face) = variable_face() else {
+        eprintln!("no variable font installed; skipping");
+        return;
+    };
+    let wght = face.axis("wght").cloned().unwrap();
+    let wi = face.axes.iter().position(|a| a.tag == "wght").unwrap();
+    let mut t = TextData::new("Hamburgefonts");
+    t.style.font_family = face.family.clone();
+    t.style.font_style = face.style.clone();
+    t.style.font_size = 40.0;
+    t.style.variations.insert("wght".into(), wght.min);
+    let light = layout(&t, None, None);
+    t.style.variations.insert("wght".into(), wght.max);
+    let heavy = layout(&t, None, None);
+    assert!(heavy.glyphs.iter().filter(|g| g.face.id == face.id).all(|g| !g.coords.is_empty()), "glyphs carry the instance");
+    let first = |l: &TextLayout| l.glyphs.first().map(|g| g.path().elements().to_vec());
+    assert_ne!(first(&light), first(&heavy), "the weight axis changes the outlines");
+    assert!(heavy.width >= light.width, "heavier is not narrower: {} < {}", heavy.width, light.width);
+    // Values clamp to the axis; unknown axes and junk are ignored.
+    t.style.variations.insert("wght".into(), 1e9);
+    t.style.variations.insert("ZZZZ".into(), 5.0);
+    t.style.variations.insert("wdth".into(), f64::NAN);
+    let v = face.axis_values(&t.style);
+    assert_eq!(v.len(), face.axes.len());
+    assert_eq!(v.get(wi).copied(), Some(wght.max));
+    assert!(v.iter().all(|x| x.is_finite()));
+    let _ = layout(&t, None, None);
+    // Without custom values, the style name implies the weight (or picks the named instance).
+    t.style.variations.clear();
+    t.style.font_style = "Bold".into();
+    let v = face.axis_values(&t.style);
+    let want = face.instance("Bold").and_then(|i| i.coords.get(wi).copied()).unwrap_or_else(|| wght.clamp(700.0));
+    assert_eq!(v.get(wi).copied(), Some(want));
+    // Named instances are offered as styles.
+    if face.instances.len() > 1 {
+        assert!(family_styles(&face.family).len() >= 2);
+    }
+    // The default instance needs no coordinates.
+    assert!(face.coords(&face.axes.iter().map(|a| a.default).collect::<Vec<_>>()).is_empty());
+}
+
+#[test]
+fn static_fonts_have_no_axes() {
+    if !have_fonts() {
+        return;
+    }
+    let Some(face) = db().write().unwrap().default_face() else { return };
+    if face.is_variable() {
+        return;
+    }
+    let mut st = figcraft_doc::TextStyle::default();
+    st.variations.insert("wght".into(), 900.0);
+    assert!(face.axis_values(&st).is_empty());
+    assert!(face.coords(&[700.0]).is_empty());
+}

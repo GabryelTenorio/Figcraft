@@ -118,7 +118,9 @@ fn glyph_runs(
     for line in &layout.lines {
         let mut run: Option<Run> = None;
         for g in layout.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]).iter().filter(|g| g.style == style) {
-            let has_source = g.char_end > g.char_start && g.char_end <= chars.len();
+            // Glyphs at a variable font instance other than the default are outlined (an
+            // embedded font draws its default instance).
+            let has_source = g.char_end > g.char_start && g.char_end <= chars.len() && g.coords.is_empty();
             let font = if has_source && g.size.is_finite() && g.size > 0.0 && g.x.is_finite() && g.y.is_finite() { ex.font(&g.face) } else { None };
             let Some(font) = font else {
                 // List markers, ellipses and unembeddable fonts: outlines.

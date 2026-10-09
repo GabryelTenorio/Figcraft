@@ -3,6 +3,7 @@
 use figcraft_doc::*;
 use serde_json::{Map, Value, json};
 
+use super::props::{styled_name, weight_name};
 use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{Result, Session, bad, spec, textedit};
@@ -76,31 +77,23 @@ fn toggle_bold(s: &mut Session, p: &Value) -> Result<Value> {
     let bold = all_have(s, p, |st| st.weight() >= 700);
     style(s, p, |st| {
         let italic = st.italic();
-        let base = if bold { "Regular" } else { "Bold" };
-        st.font_style = if italic { if base == "Regular" { "Italic".into() } else { format!("{base} Italic") } } else { base.into() };
+        st.set_font_style(styled_name(if bold { "Regular" } else { "Bold" }, italic));
     })
 }
 
 fn toggle_italic(s: &mut Session, p: &Value) -> Result<Value> {
     let italic = all_have(s, p, TextStyle::italic);
     style(s, p, |st| {
-        let w = super::props::weight_name(st.weight());
-        st.font_style = if italic {
-            w.to_string()
-        } else if w == "Regular" {
-            "Italic".into()
-        } else {
-            format!("{w} Italic")
-        };
+        let w = weight_name(st.weight());
+        st.set_font_style(styled_name(w, !italic));
     })
 }
 
 fn step_weight(s: &mut Session, p: &Value, up: bool) -> Result<Value> {
     style(s, p, |st| {
-        let w = st.weight() as i32 + if up { 100 } else { -100 };
-        let w = w.clamp(100, 900) as u16;
-        let name = super::props::weight_name(w);
-        st.font_style = if st.italic() { if name == "Regular" { "Italic".into() } else { format!("{name} Italic") } } else { name.into() };
+        let w = (i32::from(st.weight()) + if up { 100 } else { -100 }).clamp(100, 900) as u16;
+        let italic = st.italic();
+        st.set_font_style(styled_name(weight_name(w), italic));
     })
 }
 
@@ -219,6 +212,31 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
             }
         ),
+        spec!(
+            "text.setVariations",
+            "Variable font axes",
+            "{variations: {axis: number | null (style default)}, replace? (clear others first), id?/ids?}; while editing: the selected range",
+            true,
+            |s, p| {
+                let vars = super::props::variations_of("text.setVariations", get(p, "variations").unwrap_or(&Value::Bool(false)))?;
+                let replace = boolean(p, "replace").unwrap_or(false);
+                style(s, p, |st| {
+                    if replace {
+                        st.variations.clear();
+                    }
+                    for (k, v) in &vars {
+                        match v {
+                            Some(v) => {
+                                st.variations.insert(k.clone(), *v);
+                            }
+                            None => {
+                                st.variations.remove(k);
+                            }
+                        }
+                    }
+                })
+            }
+        ),
         spec!("text.set", "Set text", "{id?, characters}", true, |s, p| {
             let c = string(p, "characters").or_else(|| string(p, "text")).ok_or_else(|| bad("text.set", "`characters` required"))?;
             let ids = req_targets("text.set", s, p)?;
@@ -292,9 +310,23 @@ pub fn specs() -> Vec<CommandSpec> {
             textedit::select_line(s, i)?;
             ok()
         }),
+        spec!(
+            "text.edit.preedit",
+            "Compose text (IME)",
+            "{text (empty = cancel), cursor? (chars into text)}; shown at the caret, committed by text.edit.insert",
+            false,
+            |s, p| {
+                let cursor = num(p, "cursor").map(|c| c.max(0.0) as usize);
+                textedit::preedit(s, &string(p, "text").unwrap_or_default(), cursor)?;
+                ok()
+            }
+        ),
         spec!("text.edit.selection", "Text selection", "{}", false, |s, _| {
             Ok(match s.ds()?.text_edit.clone() {
-                Some(te) => json!({"id": te.id, "caret": te.caret, "anchor": te.anchor, "text": textedit::selected_text(s)}),
+                Some(te) => json!({
+                    "id": te.id, "caret": te.caret, "anchor": te.anchor, "text": textedit::selected_text(s),
+                    "preedit": te.preedit.map(|p| json!({"text": p.text, "cursor": p.cursor})),
+                }),
                 None => Value::Null,
             })
         }),
@@ -305,14 +337,25 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.fonts",
             "List fonts",
-            "{family? (list its styles), features? (with family+style: the face's OpenType features)}",
+            "{family? (list its styles), style?, features? (the face's OpenType features), axes? (the face's variation axes and named instances)}",
             false,
             |_, p| {
+                let face = |f: &str| figcraft_text::find_face(f, &string(p, "style").unwrap_or_else(|| "Regular".into()));
                 Ok(match string(p, "family") {
-                    Some(f) if boolean(p, "features").unwrap_or(false) => {
-                        let st = string(p, "style").unwrap_or_else(|| "Regular".into());
-                        json!(figcraft_text::find_face(&f, &st).map(|face| face.feature_tags()).unwrap_or_default())
-                    }
+                    Some(f) if boolean(p, "features").unwrap_or(false) => json!(face(&f).map(|face| face.feature_tags()).unwrap_or_default()),
+                    Some(f) if boolean(p, "axes").unwrap_or(false) => match face(&f) {
+                        Some(face) => json!({
+                            "family": face.family,
+                            "axes": face.axes.iter().map(|a| json!({
+                                "tag": a.tag, "name": a.name, "min": a.min, "default": a.default, "max": a.max, "hidden": a.hidden
+                            })).collect::<Vec<_>>(),
+                            "instances": face.instances.iter().map(|i| json!({
+                                "name": i.name,
+                                "variations": face.axes.iter().zip(&i.coords).map(|(a, c)| (a.tag.clone(), json!(c))).collect::<Map<String, Value>>()
+                            })).collect::<Vec<_>>(),
+                        }),
+                        None => Value::Null,
+                    },
                     Some(f) => json!(figcraft_text::family_styles(&f)),
                     None => json!(figcraft_text::family_names()),
                 })

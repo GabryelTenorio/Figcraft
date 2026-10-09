@@ -1,8 +1,9 @@
 //! Typography section of the Design panel: font family (searchable, previewed, recent first),
 //! style, size (with common sizes), line height, letter spacing, paragraph spacing, resizing,
-//! alignment, and the Type settings popover (decoration, case, lists, indent, truncation and
-//! OpenType features). While text is being edited with a range selected, character edits apply to
-//! the range (`text.style`); otherwise they apply to whole layers. Differing values show "Mixed".
+//! alignment, and the Type settings popover (decoration, case, lists, indent, truncation, OpenType
+//! features and variable font axes). While text is being edited with a range selected, character
+//! edits apply to the range (`text.style`, `text.setVariations`); otherwise they apply to whole
+//! layers. Differing values show "Mixed".
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -38,6 +39,31 @@ const FEATURES: [(&str, &str, bool); 12] = [
 ];
 
 const MIXED: &str = "Mixed";
+
+/// Horizontal space a dropdown takes besides its label (padding and chevron).
+const DROPDOWN_CHROME: f32 = 30.0;
+
+/// A dropdown whose label stays on one line: long names (variable font styles like "SemiBold
+/// SemiCondensed") end with an ellipsis and show in full on hover.
+fn elided_dropdown(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
+    let shown = elide(ui, label, width - DROPDOWN_CHROME);
+    let resp = widgets::dropdown(ui, &shown, width, None);
+    if shown != label { resp.on_hover_text(label) } else { resp }
+}
+
+/// `s` shortened with an ellipsis to fit `max_w` on one line.
+fn elide(ui: &Ui, s: &str, max_w: f32) -> String {
+    let fits = |s: &str| ui.painter().layout_no_wrap(s.to_string(), regular(11.0), Color32::WHITE).size().x <= max_w;
+    if fits(s) {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    (1..chars.len())
+        .rev()
+        .map(|n| format!("{}…", chars.iter().take(n).collect::<String>().trim_end()))
+        .find(|c| fits(c))
+        .unwrap_or_else(|| "…".into())
+}
 
 /// The value shared by every style, or None when they differ.
 fn uniform<T: PartialEq + Clone>(styles: &[TextStyle], f: impl Fn(&TextStyle) -> T) -> Option<T> {
@@ -102,7 +128,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     let fstyle = uniform(&styles, |s| s.font_style.clone());
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
-        let resp = widgets::dropdown(ui, family.as_deref().unwrap_or(MIXED), w, None);
+        let resp = elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
         egui::Popup::menu(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
                 remember_family(ui.ctx(), &f);
@@ -115,7 +141,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     // Style + size.
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     row(ui, 32.0, |ui| {
-        let resp = widgets::dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half, None);
+        let resp = elided_dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half);
         let fam = family.clone();
         egui::Popup::menu(&resp).width(200.0).show(|ui| match &fam {
             Some(fam) => {
@@ -143,11 +169,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
             // The text editing session already groups undo; just apply.
             Some(FieldEdit::Scrub(v, _)) if editing => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
             Some(FieldEdit::Scrub(v, done)) => {
-                let _ = app.session.begin_interaction("Font size");
-                let _ = app.session.execute("node.set", &json!({"ids": ids, "props": {"fontSize": v.clamp(1.0, 5000.0)}}));
-                if done {
-                    let _ = app.session.commit_interaction();
-                }
+                live(app, "Font size", "node.set", json!({"ids": ids, "props": {"fontSize": v.clamp(1.0, 5000.0)}}), done)
             }
             None => {}
         }
@@ -242,25 +264,47 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
             .id(open_id)
             .width(264.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| type_settings(app, ui, doc, &ids, &styles, &apply_style));
+            .show(|ui| type_settings(app, ui, doc, &ids, &styles, editing, &apply_style));
     });
 }
 
-/// The Type settings popover: Basics (decoration, case, list, indent, truncation) and Details
-/// (OpenType features).
+/// Run `cmd` as a live preview while scrubbing; the gesture becomes one undo step when `done`.
+/// (While text is edited, run commands directly: the editing session already groups undo.)
+fn live(app: &mut FigApp, label: &str, cmd: &str, params: Value, done: bool) {
+    let _ = app.session.begin_interaction(label);
+    if let Err(e) = app.session.execute(cmd, &params) {
+        app.toast(e.to_string());
+    }
+    if done {
+        let _ = app.session.commit_interaction();
+    }
+}
+
+/// The variable font the shown styles use (one family, one variable face), if any.
+fn variable_face(styles: &[TextStyle]) -> Option<Arc<figcraft_text::Face>> {
+    let family = uniform(styles, |s| s.font_family.clone())?;
+    let face = figcraft_text::find_face(&family, &styles.first()?.font_style)?;
+    (face.is_variable() && face.family.eq_ignore_ascii_case(&family)).then_some(face)
+}
+
+/// The Type settings popover: Basics (decoration, case, list, indent, truncation), Details
+/// (OpenType features) and, for variable fonts, Variable (axis sliders).
 fn type_settings(
     app: &mut FigApp,
     ui: &mut Ui,
     doc: &Document,
     ids: &[NodeId],
     styles: &[TextStyle],
+    editing: bool,
     apply_style: &dyn Fn(&mut FigApp, &str, Value),
 ) {
     let t = Tokens::get(ui.ctx());
     let tab_id = Id::new("ty_settings_tab");
-    let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).unwrap_or(0);
+    let vf = variable_face(styles);
+    let tabs: &[&str] = if vf.is_some() { &["Basics", "Details", "Variable"] } else { &["Basics", "Details"] };
+    let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).filter(|i| *i < tabs.len()).unwrap_or(0);
     ui.horizontal(|ui| {
-        for (i, l) in ["Basics", "Details"].iter().enumerate() {
+        for (i, l) in tabs.iter().enumerate() {
             let col = if tab == i { t.text } else { t.text_secondary };
             let r = ui.add(egui::Label::new(egui::RichText::new(*l).font(semibold(11.5)).color(col)).sense(Sense::click()));
             if r.clicked() {
@@ -336,6 +380,8 @@ fn type_settings(
                 app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
             }
         });
+    } else if let (2, Some(face)) = (tab, &vf) {
+        variable_axes(app, ui, ids, styles, face, editing);
     } else {
         // Which features the font has (first style shown).
         let face = uniform(styles, |s| (s.font_family.clone(), s.font_style.clone())).and_then(|(f, s)| figcraft_text::find_face(&f, &s));
@@ -355,6 +401,112 @@ fn type_settings(
             }
         });
     }
+}
+
+/// Type settings ▸ Variable: a slider and a field per visible axis of the variable font (values
+/// the style name implies show until changed; "Mixed" when the shown styles differ).
+fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle], face: &figcraft_text::Face, editing: bool) {
+    let t = Tokens::get(ui.ctx());
+    widgets::label(ui, &face.family, t.text_secondary);
+    // Each style's axis values; a style drawn by another face (e.g. a separate italic file) is mixed.
+    let per_style: Vec<Option<Vec<f64>>> = styles
+        .iter()
+        .map(|s| figcraft_text::find_face(&s.font_family, &s.font_style).filter(|f| f.id == face.id).map(|_| face.axis_values(s)))
+        .collect();
+    let w = ui.available_width();
+    let field_w = 52.0;
+    let label_w = 84.0;
+    let slider_w = (w - label_w - field_w - 12.0).max(40.0);
+    for (i, axis) in face.axes.iter().enumerate().filter(|(_, a)| !a.hidden) {
+        let first = per_style.first().cloned().flatten().and_then(|v| v.get(i).copied());
+        let value = first.filter(|v0| per_style.iter().all(|vs| vs.as_ref().and_then(|v| v.get(i)).is_some_and(|v| (v - v0).abs() < 1e-9)));
+        let value = value.map(|v| round_axis(axis, v));
+        // (value, gesture ended, live preview while dragging)
+        let mut set: Option<(Value, bool, bool)> = None;
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let (lr, _) = ui.allocate_exact_size(vec2(label_w, FIELD_H), Sense::hover());
+            let name = ui.painter().layout(axis.name.clone(), regular(11.0), t.text, label_w);
+            let tip = format!(
+                "{} ({}): {} – {}, default {}. Double-click the slider to go back to the style's value.",
+                axis.name,
+                axis.tag,
+                trim_num(axis.min),
+                trim_num(axis.max),
+                trim_num(axis.default)
+            );
+            ui.interact(lr, Id::new(("ty_axis_label", &axis.tag)), Sense::hover()).on_hover_text(tip);
+            ui.painter().galley(pos2(lr.min.x, lr.center().y - name.size().y / 2.0), name, t.text);
+            match axis_slider(ui, Id::new(("ty_axis_slider", &axis.tag)), axis, value, slider_w) {
+                Some((Some(v), done)) => set = Some((json!(round_axis(axis, v)), done, true)),
+                Some((None, _)) => set = Some((Value::Null, true, false)),
+                None => {}
+            }
+            let step = if axis.max - axis.min > 20.0 { 1.0 } else { 0.1 };
+            match widgets::number_field(ui, Id::new(("ty_axis_field", &axis.tag)), Lead::None, value, "", field_w, step) {
+                Some(FieldEdit::Set(v)) => set = Some((json!(axis.clamp(round_axis(axis, v))), true, false)),
+                Some(FieldEdit::Scrub(v, done)) => set = Some((json!(axis.clamp(round_axis(axis, v))), done, true)),
+                None => {}
+            }
+        });
+        if let Some((v, done, preview)) = set {
+            let params = json!({"ids": ids, "variations": {axis.tag.clone(): v}});
+            if preview && !editing {
+                live(app, "Variable font axis", "text.setVariations", params, done);
+            } else {
+                app.run("text.setVariations", params);
+            }
+        }
+    }
+    if styles.iter().any(|s| !s.variations.is_empty()) {
+        ui.add_space(8.0);
+        let r = ui.add(egui::Label::new(egui::RichText::new("Reset to style").font(regular(11.0)).color(t.accent)).sense(Sense::click()));
+        if r.on_hover_text("Back to the values the font style implies").clicked() {
+            app.run("text.setVariations", json!({"ids": ids, "variations": {}, "replace": true}));
+        }
+    }
+}
+
+/// Axis values snap to whole numbers on wide axes (weight, width…) and tenths on narrow ones.
+fn round_axis(axis: &figcraft_text::Axis, v: f64) -> f64 {
+    if axis.max - axis.min > 20.0 { v.round() } else { (v * 10.0).round() / 10.0 }
+}
+
+/// A horizontal slider over an axis's range with a tick at its default. `value` None = mixed.
+/// Returns the new value (None = double-click: back to the style's value) and whether the
+/// gesture ended.
+fn axis_slider(ui: &mut Ui, id: Id, axis: &figcraft_text::Axis, value: Option<f64>, width: f32) -> Option<(Option<f64>, bool)> {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
+    let track = Rect::from_center_size(rect.center(), vec2(width - 12.0, 4.0));
+    let span = (axis.max - axis.min).max(1e-9);
+    let x_of = |v: f64| track.min.x + ((v - axis.min) / span).clamp(0.0, 1.0) as f32 * track.width();
+    let p = ui.painter();
+    p.rect_filled(track, CornerRadius::same(2), t.border);
+    let dx = x_of(axis.default);
+    p.line_segment([pos2(dx, track.min.y - 3.0), pos2(dx, track.max.y + 3.0)], Stroke::new(1.0, t.border_strong));
+    if let Some(v) = value {
+        let x = x_of(v);
+        p.rect_filled(Rect::from_min_max(track.min, pos2(x, track.max.y)), CornerRadius::same(2), t.accent);
+        p.circle_filled(pos2(x, track.center().y), 6.0, Color32::WHITE);
+        let ring = if resp.hovered() || resp.dragged() { t.accent } else { t.border_strong };
+        p.circle_stroke(pos2(x, track.center().y), 6.0, Stroke::new(1.0, ring));
+    }
+    if resp.double_clicked() {
+        return Some((None, true));
+    }
+    if (resp.dragged() || resp.clicked() || resp.drag_started())
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let f = f64::from(((pos.x - track.min.x) / track.width().max(1.0)).clamp(0.0, 1.0));
+        return Some((Some(axis.min + f * span), resp.drag_stopped() || resp.clicked()));
+    }
+    if resp.drag_stopped() {
+        return value.map(|v| (Some(v), true));
+    }
+    None
 }
 
 fn caption(ui: &mut Ui, s: &str) {
@@ -741,6 +893,14 @@ mod tests {
         assert_eq!(parse_letter_spacing("-1", None), Some(json!("-1%")));
         assert_eq!(parse_letter_spacing("3", Some(LetterSpacing::Pixels(1.0))), Some(json!(3.0)));
         assert_eq!(parse_letter_spacing("x", Some(LetterSpacing::Percent(0.0))), None);
+    }
+
+    #[test]
+    fn axis_values_round_by_axis_width() {
+        let axis = |min: f64, max: f64| figcraft_text::Axis { tag: "test".into(), name: "Test".into(), min, default: min, max, hidden: false };
+        assert_eq!(round_axis(&axis(100.0, 900.0), 456.6), 457.0);
+        assert_eq!(round_axis(&axis(-10.0, 0.0), -4.26), -4.3);
+        assert_eq!(round_axis(&axis(0.0, 1.0), 0.04), 0.0);
     }
 
     #[test]

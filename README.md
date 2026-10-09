@@ -98,7 +98,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Type that sets beautifully</h3>
-      Text edited in place on the canvas, mixed styles within a paragraph, auto width and auto height, line height, letter and paragraph spacing, decoration, case and text styles, shaped with HarfRust and the open fonts from craft-fonts plus your system fonts.
+      Text edited in place on the canvas (with inline IME composition), mixed styles within a paragraph, auto width and auto height, line height, letter and paragraph spacing, decoration, case, lists, OpenType features, variable font axes and text styles, shaped with HarfRust and the open fonts from craft-fonts plus your system fonts.
     </td>
     <td width="50%" valign="top">
       <h3>Prototype and hand off</h3>

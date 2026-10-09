@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId, NodeKind};
+use figcraft_engine::Preedit;
 use figcraft_engine::tools::{Cursor, PointerEvent, PointerKind, ToolId, selection_box};
 use figcraft_geom::Point;
 use serde_json::json;
@@ -22,6 +23,7 @@ pub struct CanvasState {
     space_pan: bool,
     middle_pan: Option<(Pos2, f64, f64)>,
     pub last_pointer: Option<Point>,
+    preedit: Option<PreeditView>,
 }
 
 impl Default for CanvasState {
@@ -36,7 +38,45 @@ impl Default for CanvasState {
             space_pan: false,
             middle_pan: None,
             last_pointer: None,
+            preedit: None,
         }
+    }
+}
+
+/// What the canvas shows while an IME composition is in progress: the document with the
+/// composition inserted at the caret (the real document only gets it on commit).
+pub struct PreeditView {
+    /// The document, composition and caret it was built from.
+    key: (Arc<Document>, Preedit, usize),
+    pub doc: Arc<Document>,
+    /// The composition's char range, and the IME cursor, in `doc`'s edited text.
+    pub range: (usize, usize),
+    pub cursor: usize,
+}
+
+impl FigApp {
+    fn preedit_key(&self) -> Option<(Arc<Document>, Preedit, usize)> {
+        let ds = self.session.ds().ok()?;
+        let te = ds.text_edit.as_ref()?;
+        Some((ds.doc.clone(), te.preedit.clone()?, te.caret))
+    }
+
+    /// Rebuild the composition view when the document or composition changed.
+    pub fn sync_preedit(&mut self) {
+        if self.preedit_view().is_some() {
+            return;
+        }
+        self.canvas.preedit = self.preedit_key().and_then(|key| {
+            let (doc, range, cursor) = figcraft_engine::textedit::preedit_doc(&self.session)?;
+            Some(PreeditView { key, doc: Arc::new(doc), range, cursor })
+        });
+    }
+
+    /// The composition view, when it matches the current state.
+    pub fn preedit_view(&self) -> Option<&PreeditView> {
+        let p = self.canvas.preedit.as_ref()?;
+        let (doc, pe, caret) = self.preedit_key()?;
+        (Arc::ptr_eq(&p.key.0, &doc) && p.key.1 == pe && p.key.2 == caret).then_some(p)
     }
 }
 
@@ -89,6 +129,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     input(app, ui, &resp);
+    app.sync_preedit();
     request_render(app, worker, ppp);
     if let Some(done) = worker.poll()
         && done.generation == app.canvas.generation
@@ -165,9 +206,10 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let (ox, oy) = ds.view.origin();
     let w = (rect.width() * ppp).ceil().max(1.0) as u32;
     let h = (rect.height() * ppp).ceil().max(1.0) as u32;
-    // Skip the text being edited? No: Figma draws it live; the caret is an overlay.
+    // The edited text is drawn live (an IME composition included); the caret is an overlay.
+    let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
     let key = JobKey {
-        doc: Arc::as_ptr(&ds.doc) as usize,
+        doc: Arc::as_ptr(&doc) as usize,
         page: ds.page,
         origin: ((ox * 1000.0) as i64, (oy * 1000.0) as i64),
         scale: (scale * 10000.0) as i64,
@@ -180,7 +222,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     }
     app.canvas.generation += 1;
     let job = Job {
-        doc: ds.doc.clone(),
+        doc,
         page: ds.page,
         view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
         outline: ds.view.outlines,
@@ -571,27 +613,46 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             }
         }
     }
-    // Text editing: caret and selection.
+    // Text editing: caret and selection, or the IME composition underlined at the caret.
+    let preedit = app.preedit_view();
+    let edoc: &Document = preedit.map(|p| &*p.doc).unwrap_or(&doc);
     if let Some(te) = editing
-        && let Some(n) = doc.node(te.id)
+        && let Some(n) = edoc.node(te.id)
         && let Some((layout, dy)) = figcraft_text::layout_node(n)
     {
-        let w = doc.world_transform(te.id);
+        let w = edoc.world_transform(te.id);
         let to = |x: f64, y: f64| {
             let p = w * Point::new(x, y + dy);
             app.to_screen(p.x, p.y)
         };
-        if let Some(q) = node_quad(app, &doc, te.id) {
+        if let Some(q) = node_quad(app, edoc, te.id) {
             quad(painter, q, stroke(ACCENT, 1.0));
         }
         let (a, b) = (te.caret.min(te.anchor), te.caret.max(te.anchor));
-        if a != b {
+        if a != b && preedit.is_none() {
             for r in layout.selection_rects(a, b) {
                 let qq = [to(r.x0, r.y0), to(r.x1, r.y0), to(r.x1, r.y1), to(r.x0, r.y1)];
                 painter.add(Shape::convex_polygon(qq.to_vec(), ACCENT.gamma_multiply(0.3), Stroke::NONE));
             }
         }
-        let (cx, li) = layout.caret(te.caret);
+        if let Some(p) = preedit {
+            for r in layout.selection_rects(p.range.0, p.range.1) {
+                // Underline just below the baseline, across the composed chars only.
+                let Some(line) = layout.lines.iter().find(|l| (l.top - r.y0).abs() < 1e-6) else { continue };
+                let x1 = layout
+                    .glyphs
+                    .get(line.glyph_start..line.glyph_end)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|g| g.char_end > g.char_start && g.char_start >= p.range.0 && g.char_end <= p.range.1)
+                    .map(|g| g.x + g.advance)
+                    .fold(r.x0, f64::max);
+                let y = line.baseline + (line.top + line.height - line.baseline) * 0.35;
+                painter.line_segment([to(r.x0, y), to(x1, y)], stroke(t.text, 1.0));
+            }
+        }
+        let caret = preedit.map(|p| p.cursor).unwrap_or(te.caret);
+        let (cx, li) = layout.caret(caret);
         if let Some(line) = layout.lines.get(li).or(layout.lines.last()) {
             let blink = (painter.ctx().input(|i| i.time) * 2.0) as i64 % 2 == 0;
             if blink || a != b {

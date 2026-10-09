@@ -249,7 +249,14 @@ fn pointer_draw_move_resize() {
 fn every_command_survives_junk_params() {
     // A junk-parameter sweep: no command may panic (guard turns panics into Internal errors,
     // which would fail this test).
-    let junk = [json!({}), json!(null), json!({"ids": ["x", -1, 99999]}), json!({"id": "nope", "x": "NaN", "props": 5}), json!([1, 2, 3])];
+    let junk = [
+        json!({}),
+        json!(null),
+        json!({"ids": ["x", -1, 99999]}),
+        json!({"id": "nope", "x": "NaN", "props": 5}),
+        json!([1, 2, 3]),
+        json!({"variations": {"wght": 1e308, "": "x", "slnt": null}, "props": {"fontVariations": [1], "variationSettings": {"wdth": "-1e9"}}, "text": 7, "cursor": -3}),
+    ];
     for spec in all_commands() {
         if matches!(
             spec.id,

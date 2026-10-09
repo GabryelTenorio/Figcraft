@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use figcraft_geom::BezPath;
-use skrifa::instance::{LocationRef, Size};
+use skrifa::instance::{LocationRef, NormalizedCoord, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::raw::{FileRef, TableProvider};
 use skrifa::string::StringId;
@@ -37,6 +37,48 @@ impl FontBytes {
 
 static NEXT_FACE: AtomicU32 = AtomicU32::new(1);
 
+/// One variation axis of a variable font (user-space values).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Axis {
+    /// The 4-char OpenType tag (`wght`, `wdth`, `slnt`, `ital`, `opsz`, or a custom one).
+    pub tag: String,
+    /// The axis name from the font (falls back to a readable name for registered tags).
+    pub name: String,
+    pub min: f64,
+    pub default: f64,
+    pub max: f64,
+    /// The font asks apps not to show this axis.
+    pub hidden: bool,
+}
+
+impl Axis {
+    pub fn clamp(&self, v: f64) -> f64 {
+        if v.is_finite() { v.clamp(self.min, self.max) } else { self.default }
+    }
+}
+
+/// A named instance of a variable font ("Semi Bold", "Condensed Light"…): one user value per axis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NamedInstance {
+    pub name: String,
+    pub coords: Vec<f64>,
+}
+
+/// Normalized variation coordinates to draw a glyph with (empty = the font's default instance).
+pub type Coords = Arc<[NormalizedCoord]>;
+
+/// Readable names for the registered axes (used when the font doesn't name them).
+pub fn axis_label(tag: &str) -> &str {
+    match tag {
+        "wght" => "Weight",
+        "wdth" => "Width",
+        "slnt" => "Slant",
+        "ital" => "Italic",
+        "opsz" => "Optical size",
+        other => other,
+    }
+}
+
 /// One loaded font face.
 pub struct Face {
     pub id: u32,
@@ -59,9 +101,12 @@ pub struct Face {
     pub shaper: harfrust::ShaperData,
     /// OpenType GSUB feature tags the face provides (e.g. `smcp`).
     gsub_features: Vec<[u8; 4]>,
+    /// Variation axes (empty for static fonts) and named instances.
+    pub axes: Vec<Axis>,
+    pub instances: Vec<NamedInstance>,
     charmap: HashMap<u32, u32>,
-    outlines: Mutex<HashMap<u32, Arc<BezPath>>>,
-    advances: Mutex<HashMap<u32, f64>>,
+    outlines: Mutex<HashMap<(u32, Coords), Arc<BezPath>>>,
+    advances: Mutex<HashMap<(u32, Coords), f64>>,
 }
 
 impl std::fmt::Debug for Face {
@@ -93,6 +138,7 @@ impl Face {
         gsub_features.sort_unstable();
         gsub_features.dedup();
         let charmap: HashMap<u32, u32> = f.charmap().mappings().map(|(c, g)| (c, g.to_u32())).collect();
+        let (axes, instances) = variation_info(&f);
         let under = m.underline.map(|d| (f64::from(d.offset), f64::from(d.thickness))).unwrap_or((-upem * 0.1, upem * 0.06));
         let strike = m.strikeout.map(|d| f64::from(d.offset)).unwrap_or(ascent * 0.3);
         let weight = {
@@ -117,6 +163,8 @@ impl Face {
             strike_pos: strike,
             shaper,
             gsub_features,
+            axes,
+            instances,
             charmap,
             bytes,
             outlines: Mutex::new(HashMap::new()),
@@ -146,45 +194,162 @@ impl Face {
         harfrust::FontRef::from_index(self.bytes.data(), self.index).ok()
     }
 
-    /// Glyph outline in font units, y down.
+    /// Glyph outline in font units, y down, at the default instance.
     pub fn outline(&self, gid: u32) -> Arc<BezPath> {
-        {
-            let cache = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(p) = cache.get(&gid) {
-                return p.clone();
-            }
+        self.outline_at(gid, &no_coords())
+    }
+
+    /// Glyph outline in font units, y down, at variation `coords`.
+    pub fn outline_at(&self, gid: u32, coords: &Coords) -> Arc<BezPath> {
+        let key = (gid, coords.clone());
+        if let Some(p) = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+            return p.clone();
         }
         let mut pen = FlipPen(BezPath::new());
         if let Ok(f) = skrifa::FontRef::from_index(self.bytes.data(), self.index)
             && let Some(g) = f.outline_glyphs().get(GlyphId::new(gid))
         {
-            let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut pen);
+            let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::new(coords)), &mut pen);
         }
         let p = Arc::new(pen.0);
         let mut cache = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if cache.len() > 20_000 {
             cache.clear();
         }
-        cache.insert(gid, p.clone());
+        cache.insert(key, p.clone());
         p
     }
 
-    /// Horizontal advance in font units.
+    /// Horizontal advance in font units at the default instance.
     pub fn advance(&self, gid: u32) -> f64 {
-        {
-            let cache = self.advances.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(a) = cache.get(&gid) {
-                return *a;
-            }
+        self.advance_at(gid, &no_coords())
+    }
+
+    /// Horizontal advance in font units at variation `coords`.
+    pub fn advance_at(&self, gid: u32, coords: &Coords) -> f64 {
+        let key = (gid, coords.clone());
+        if let Some(a) = self.advances.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+            return *a;
         }
         let adv = skrifa::FontRef::from_index(self.bytes.data(), self.index)
             .ok()
-            .and_then(|f| f.glyph_metrics(Size::unscaled(), LocationRef::default()).advance_width(GlyphId::new(gid)))
+            .and_then(|f| f.glyph_metrics(Size::unscaled(), LocationRef::new(coords)).advance_width(GlyphId::new(gid)))
             .map(f64::from)
+            .filter(|a| a.is_finite())
             .unwrap_or(self.upem * 0.5);
-        self.advances.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(gid, adv);
+        let mut cache = self.advances.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cache.len() > 50_000 {
+            cache.clear();
+        }
+        cache.insert(key, adv);
         adv
     }
+
+    /// Whether the face is a variable font.
+    pub fn is_variable(&self) -> bool {
+        !self.axes.is_empty()
+    }
+
+    pub fn axis(&self, tag: &str) -> Option<&Axis> {
+        self.axes.iter().find(|a| a.tag == tag)
+    }
+
+    /// The named instance called `style` (case, spaces and hyphens ignored).
+    pub fn instance(&self, style: &str) -> Option<&NamedInstance> {
+        let want = norm_style(style);
+        self.instances.iter().find(|i| norm_style(&i.name) == want)
+    }
+
+    /// The user-space axis values `style` asks of this face, one per axis in axis order (empty for
+    /// static fonts). Starts from the named instance matching the style name (else the weight and
+    /// italic the name implies, with an optical size that follows the font size), then applies the
+    /// style's custom values; every value is clamped to its axis.
+    pub fn axis_values(&self, style: &figcraft_doc::TextStyle) -> Vec<f64> {
+        if self.axes.is_empty() {
+            return Vec::new();
+        }
+        let mut v: Vec<f64> = self.axes.iter().map(|a| a.default).collect();
+        if let Some(inst) = self.instance(&style.font_style) {
+            for (slot, c) in v.iter_mut().zip(&inst.coords) {
+                *slot = *c;
+            }
+        } else {
+            let own_style = norm_style(&self.style) == norm_style(&style.font_style);
+            let italic = style.font_style.to_ascii_lowercase().contains("italic") && !self.italic;
+            for (slot, a) in v.iter_mut().zip(&self.axes) {
+                match a.tag.as_str() {
+                    "wght" if !own_style => *slot = f64::from(figcraft_doc::style_weight(&style.font_style)),
+                    "ital" if italic => *slot = 1.0,
+                    "slnt" if italic => *slot = a.min,
+                    "opsz" if style.font_size.is_finite() => *slot = style.font_size,
+                    _ => {}
+                }
+            }
+        }
+        for (slot, a) in v.iter_mut().zip(&self.axes) {
+            if let Some(x) = style.variations.get(&a.tag) {
+                *slot = *x;
+            }
+            *slot = a.clamp(*slot);
+        }
+        v
+    }
+
+    /// Normalized coordinates for user-space `values` (one per axis; empty = default instance).
+    pub fn coords(&self, values: &[f64]) -> Coords {
+        if self.axes.is_empty() || values.len() != self.axes.len() {
+            return no_coords();
+        }
+        let Ok(f) = skrifa::FontRef::from_index(self.bytes.data(), self.index) else { return no_coords() };
+        let settings: Vec<(skrifa::Tag, f32)> = self.axes.iter().zip(values).filter_map(|(a, v)| Some((tag_of(&a.tag)?, *v as f32))).collect();
+        let loc = f.axes().location(settings);
+        let c = loc.coords();
+        if c.iter().all(|x| *x == NormalizedCoord::ZERO) { no_coords() } else { Coords::from(c) }
+    }
+}
+
+/// The default instance's coordinates.
+pub fn no_coords() -> Coords {
+    Coords::from([])
+}
+
+fn tag_of(s: &str) -> Option<skrifa::Tag> {
+    <[u8; 4]>::try_from(s.as_bytes()).ok().map(|b| skrifa::Tag::new(&b))
+}
+
+fn norm_style(s: &str) -> String {
+    s.to_lowercase().replace([' ', '-', '_'], "")
+}
+
+/// The axes (user-space ranges) and named instances of a variable font.
+fn variation_info(f: &skrifa::FontRef) -> (Vec<Axis>, Vec<NamedInstance>) {
+    let all = f.axes();
+    let axes: Vec<Axis> = all
+        .iter()
+        .filter_map(|a| {
+            let tag = String::from_utf8(a.tag().to_be_bytes().to_vec()).ok().filter(|t| figcraft_doc::valid_axis_tag(t))?;
+            let (min, default, max) = (f64::from(a.min_value()), f64::from(a.default_value()), f64::from(a.max_value()));
+            if !(min.is_finite() && default.is_finite() && max.is_finite()) || min > max {
+                return None;
+            }
+            let name = name_string(f, a.name_id()).unwrap_or_else(|| axis_label(&tag).to_string());
+            Some(Axis { tag, name, min, default: default.clamp(min, max), max, hidden: a.is_hidden() })
+        })
+        .collect();
+    // A dropped axis would misalign instance coordinates: expose no variations then.
+    if axes.len() != all.len() {
+        return (Vec::new(), Vec::new());
+    }
+    let mut instances: Vec<NamedInstance> = Vec::new();
+    for inst in f.named_instances().iter().take(512) {
+        let Some(name) = name_string(f, inst.subfamily_name_id()) else { continue };
+        let coords: Vec<f64> = inst.user_coords().map(f64::from).collect();
+        if coords.len() != axes.len() || coords.iter().any(|c| !c.is_finite()) || instances.iter().any(|i| norm_style(&i.name) == norm_style(&name)) {
+            continue;
+        }
+        instances.push(NamedInstance { name, coords });
+    }
+    (axes, instances)
 }
 
 struct FlipPen(BezPath);
@@ -292,10 +457,24 @@ impl FontDb {
     pub fn styles(&mut self, family: &str) -> Vec<String> {
         self.load_family(family);
         let Some((_, idx)) = self.families.get(&family.to_lowercase()) else { return vec![] };
-        let mut v: Vec<(u16, bool, String)> = idx.iter().filter_map(|i| self.faces.get(*i)).map(|f| (f.weight, f.italic, f.style.clone())).collect();
+        // (weight, italic, order in the font, name): named instances keep the font's order.
+        let mut v: Vec<(u16, bool, usize, String)> = Vec::new();
+        for f in idx.iter().filter_map(|i| self.faces.get(*i)) {
+            if f.instances.is_empty() {
+                v.push((f.weight, f.italic, 0, f.style.clone()));
+                continue;
+            }
+            // A variable font offers its named instances as styles.
+            let wght = f.axes.iter().position(|a| a.tag == "wght");
+            for (k, inst) in f.instances.iter().enumerate() {
+                let w = wght.and_then(|i| inst.coords.get(i)).map(|w| w.round().clamp(1.0, 1000.0) as u16).unwrap_or(f.weight);
+                v.push((w, f.italic || inst.name.to_lowercase().contains("italic"), k, inst.name.clone()));
+            }
+        }
         v.sort();
-        v.dedup_by(|a, b| a.2 == b.2);
-        v.into_iter().map(|(_, _, s)| s).collect()
+        let mut seen = std::collections::HashSet::new();
+        v.retain(|x| seen.insert(norm_style(&x.3)));
+        v.into_iter().map(|x| x.3).collect()
     }
 
     pub fn has_family(&self, family: &str) -> bool {
@@ -330,13 +509,26 @@ impl FontDb {
         self.load_family(family);
         let (_, idx) = self.families.get(&family.to_lowercase())?;
         let faces: Vec<&Arc<Face>> = idx.iter().filter_map(|i| self.faces.get(*i)).collect();
-        let norm = |s: &str| s.to_lowercase().replace([' ', '-'], "");
-        if let Some(f) = faces.iter().find(|f| norm(&f.style) == norm(style)) {
+        let want = norm_style(style);
+        if let Some(f) = faces.iter().find(|f| norm_style(&f.style) == want).or_else(|| faces.iter().find(|f| f.instance(style).is_some())) {
             return Some((*f).clone());
         }
         let want_w = i32::from(figcraft_doc::style_weight(style));
         let want_i = style.to_lowercase().contains("italic");
-        faces.into_iter().min_by_key(|f| (i32::from(f.weight) - want_w).abs() + if f.italic == want_i { 0 } else { 1000 }).cloned()
+        // A variable face covers its whole weight range, and an italic or slant axis can slant it.
+        let cost = |f: &Arc<Face>| {
+            let w = f.axis("wght").map(|a| a.clamp(f64::from(want_w)).round() as i32).unwrap_or(i32::from(f.weight));
+            let slants = f.axis("ital").is_some() || f.axis("slnt").is_some_and(|a| a.min < 0.0);
+            let style_cost = if f.italic == want_i {
+                0
+            } else if want_i && slants {
+                500
+            } else {
+                1000
+            };
+            (w - want_w).abs() + style_cost
+        };
+        faces.into_iter().min_by_key(|f| cost(f)).cloned()
     }
 
     /// The default face (Inter Regular if embedded, else any system sans).

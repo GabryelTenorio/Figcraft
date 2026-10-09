@@ -9,7 +9,9 @@
 pub mod fontdb;
 mod layout;
 
-pub use fontdb::{CRAFT_FONTS, Face, FontDb, db, family_names, family_styles, find_face, scan_system_fonts};
+pub use fontdb::{
+    Axis, CRAFT_FONTS, Coords, Face, FontDb, NamedInstance, axis_label, db, family_names, family_styles, find_face, no_coords, scan_system_fonts,
+};
 pub use layout::{Decoration, Glyph, Line, TextLayout, layout};
 
 use figcraft_doc::{Node, NodeKind, TextAlignV, TextAutoResize};

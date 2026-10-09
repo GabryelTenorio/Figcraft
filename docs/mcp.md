@@ -77,6 +77,14 @@ Or in a project's `.mcp.json`:
   tools, `color` may also be a hex string and gradients can be written
   `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`; the server converts them to the
   engine's paint JSON.
+- Text props (`fontFamily`, `fontStyle`, `fontSize`, `lineHeight`, `letterSpacing`, `textDecoration`,
+  `textCase`, `textFills`, `fontVariations`…) apply to the whole layer, or to chars `start`..`end`
+  when given (`text.style {id, start, end, …}` does the same). Styled ranges come back as
+  `styledRuns`. Variable fonts: `fontVariations` (alias `variationSettings`) sets axis values in
+  user units, e.g. `{"wght": 550, "wdth": 85}` (`null` = back to what the style name implies);
+  `text.setVariations {variations, replace?}` merges instead. `text.fonts {family, style?, axes: true}`
+  lists a font's axes and named instances (named instances are also valid `fontStyle` values).
+  OpenType features: `features {"liga": false, "tnum": true}`.
 - Every mutation is one undo step (`batch` makes several one step). A failing command leaves the
   document as it was.
 - Programmatic calls never open dialogs.

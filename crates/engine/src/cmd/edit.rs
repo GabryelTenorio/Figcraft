@@ -550,6 +550,7 @@ fn copy_props_of(doc: &Document, id: NodeId) -> Value {
         v["fontFamily"] = json!(t.style.font_family);
         v["fontStyle"] = json!(t.style.font_style);
         v["fontSize"] = json!(t.style.font_size);
+        v["fontVariations"] = json!(t.style.variations);
         v["lineHeight"] = serde_json::to_value(t.style.line_height).unwrap_or(Value::Null);
         v["letterSpacing"] = serde_json::to_value(t.style.letter_spacing).unwrap_or(Value::Null);
     }

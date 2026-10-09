@@ -129,6 +129,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("fontFamily".into(), json!(t.style.font_family));
             o.insert("fontStyle".into(), json!(t.style.font_style));
             o.insert("fontSize".into(), json!(t.style.font_size));
+            if !t.style.variations.is_empty() {
+                o.insert("fontVariations".into(), json!(t.style.variations));
+            }
             o.insert("lineHeight".into(), json!(t.style.line_height.label()));
             o.insert("letterSpacing".into(), json!(t.style.letter_spacing.label()));
             o.insert("textAlign".into(), json!(t.align_h));

@@ -4,14 +4,16 @@ use std::sync::Arc;
 
 use figcraft_doc::{LineHeight, ListStyle, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, valid_feature_tag};
 use figcraft_geom::{Affine, BezPath, Rect};
-use harfrust::{Direction, Feature, ShapeOptions, Tag, UnicodeBuffer};
+use harfrust::{Direction, Feature, ShapeOptions, ShaperInstance, Tag, UnicodeBuffer, Variation};
 
-use crate::fontdb::{Face, db};
+use crate::fontdb::{Coords, Face, db, no_coords};
 
 /// A positioned glyph (pen position on the baseline, layout coordinates, y down).
 #[derive(Clone, Debug)]
 pub struct Glyph {
     pub face: Arc<Face>,
+    /// Variable font coordinates (empty = the face's default instance).
+    pub coords: Coords,
     pub gid: u32,
     pub x: f64,
     pub y: f64,
@@ -28,7 +30,7 @@ impl Glyph {
     /// The glyph outline placed in layout coordinates.
     pub fn path(&self) -> BezPath {
         let s = self.size / self.face.upem;
-        let mut p = (*self.face.outline(self.gid)).clone();
+        let mut p = (*self.face.outline_at(self.gid, &self.coords)).clone();
         p.apply_affine(Affine::new([s, 0.0, 0.0, s, self.x, self.y]));
         p
     }
@@ -78,6 +80,7 @@ fn natural_ratio(face: &Face) -> f64 {
 
 struct Item {
     face: Arc<Face>,
+    coords: Coords,
     /// Glyph scale relative to the style's size (synthesised small caps).
     scale: f64,
     gid: u32,
@@ -162,6 +165,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             if first == '\n' {
                 items.push(Item {
                     face: face.clone(),
+                    coords: no_coords(),
                     scale: 1.0,
                     gid: 0,
                     adv: 0.0,
@@ -300,17 +304,22 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             };
             let st_idx = items.get(*s).map(|it| it.style).unwrap_or(0);
             let at = items.get(*s).map(|it| it.char_start).unwrap_or(chars.len());
-            if let (Some(st), Some(face)) = (styles.get(st_idx), items.get(*s).map(|it| it.face.clone()).or_else(|| default_face.clone())) {
+            let marker_face = items.get(*s).map(|it| (it.face.clone(), it.coords.clone())).or_else(|| default_face.clone().map(|f| (f, no_coords())));
+            if let (Some(st), Some((face, coords))) = (styles.get(st_idx), marker_face) {
                 let size = sanitize_size(st.font_size);
                 let k = size / face.upem;
                 // Numbers end at the same x; bullets start at the gutter's left edge.
-                let mut mx =
-                    if text.list == ListStyle::Numbered { (marker_width - size * 0.5 - marker_advance(&face, &marker, size)).max(0.0) } else { 0.0 };
+                let mut mx = if text.list == ListStyle::Numbered {
+                    (marker_width - size * 0.5 - marker_advance(&face, &coords, &marker, size)).max(0.0)
+                } else {
+                    0.0
+                };
                 for c in marker.chars() {
                     let gid = face.glyph_for(c);
-                    let adv = face.advance(gid) * k;
+                    let adv = face.advance_at(gid, &coords) * k;
                     out.glyphs.push(Glyph {
                         face: face.clone(),
+                        coords: coords.clone(),
                         gid,
                         x: mx,
                         y: baseline,
@@ -332,6 +341,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             if it.gid != 0 || !it.is_space() {
                 out.glyphs.push(Glyph {
                     face: it.face.clone(),
+                    coords: it.coords.clone(),
                     gid: it.gid,
                     x: pen + it.dx,
                     y: baseline - it.dy,
@@ -455,15 +465,17 @@ fn list_gutter(list: ListStyle, chars: &[char], style: Option<&TextStyle>, face:
         ListStyle::Bulleted => size * 1.5,
         ListStyle::Numbered => {
             let paras = chars.iter().filter(|c| **c == '\n').count() + 1;
-            let widest = face.map(|f| marker_advance(f, &format!("{paras}."), size)).unwrap_or(size * 0.6 * (paras.to_string().len() + 1) as f64);
+            let widest = face
+                .map(|f| marker_advance(f, &no_coords(), &format!("{paras}."), size))
+                .unwrap_or(size * 0.6 * (paras.to_string().len() + 1) as f64);
             (widest + size * 0.5).max(size * 1.5)
         }
     }
 }
 
-fn marker_advance(face: &Face, s: &str, size: f64) -> f64 {
+fn marker_advance(face: &Face, coords: &Coords, s: &str, size: f64) -> f64 {
     let k = size / face.upem;
-    s.chars().map(|c| face.advance(face.glyph_for(c)) * k).sum()
+    s.chars().map(|c| face.advance_at(face.glyph_for(c), coords) * k).sum()
 }
 
 fn count_paragraphs_before(chars: &[char], pos: usize) -> usize {
@@ -477,7 +489,7 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
     let gid = face.glyph_for('…');
     let gid = if gid == 0 { face.glyph_for('.') } else { gid };
     let k = last.size / face.upem;
-    let adv = face.advance(gid) * k;
+    let adv = face.advance_at(gid, &last.coords) * k;
     let limit = wrap.unwrap_or(f64::INFINITY);
     // Drop glyphs until the ellipsis fits, then any trailing spaces ("word…", not "word …").
     while out.glyphs.len() > line.glyph_start && out.glyphs.last().is_some_and(|g| g.x + g.advance + adv > limit) {
@@ -489,6 +501,7 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
     let x = out.glyphs.last().filter(|_| out.glyphs.len() > line.glyph_start).map(|g| g.x + g.advance).unwrap_or(0.0);
     out.glyphs.push(Glyph {
         face,
+        coords: last.coords.clone(),
         gid,
         x,
         y: line.baseline,
@@ -555,9 +568,20 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
     if native_smcp {
         feats.push(Feature::new(Tag::new(b"smcp"), 1, ..));
     }
+    // Variable fonts: the axis values the style asks for (named instance, implied weight, custom).
+    let values = face.axis_values(style);
+    let coords = face.coords(&values);
     let mut raw: Vec<(u32, u32, i32, i32, i32)> = Vec::new();
     if let Some(hb) = face.hb() {
-        let shaper = face.shaper.shaper(&hb).build();
+        let instance = (!coords.is_empty()).then(|| {
+            let vars = face
+                .axes
+                .iter()
+                .zip(&values)
+                .filter_map(|(a, v)| <[u8; 4]>::try_from(a.tag.as_bytes()).ok().map(|t| Variation { tag: Tag::new(&t), value: *v as f32 }));
+            ShaperInstance::from_variations(&hb, vars)
+        });
+        let shaper = face.shaper.shaper(&hb).instance(instance.as_ref()).build();
         let mut buf = UnicodeBuffer::new();
         for (u, src, _) in &mapped {
             buf.add(*u, *src as u32);
@@ -571,7 +595,7 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
     } else {
         for (u, src, _) in &mapped {
             let gid = face.glyph_for(*u);
-            raw.push((gid, *src as u32, face.advance(gid) as i32, 0, 0));
+            raw.push((gid, *src as u32, face.advance_at(gid, &coords) as i32, 0, 0));
         }
     }
     let n = raw.len();
@@ -586,6 +610,7 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
         let adv = f64::from(xa) * k * scale + if last_in_cluster { seg.spacing * (cend - cl) as f64 } else { 0.0 };
         items.push(Item {
             face: face.clone(),
+            coords: coords.clone(),
             scale,
             gid,
             adv,

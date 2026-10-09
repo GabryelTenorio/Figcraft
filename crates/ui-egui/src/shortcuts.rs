@@ -223,6 +223,13 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
                     app.toast(e.to_string());
                 }
             }
+            // The composition shows inline at the caret; the document gets it on Commit.
+            Event::Ime(egui::ImeEvent::Preedit { text, active_range_chars }) => {
+                let cursor = active_range_chars.as_ref().map(|r| r.start);
+                if let Err(e) = figcraft_engine::textedit::preedit(&mut app.session, text, cursor) {
+                    app.toast(e.to_string());
+                }
+            }
             Event::Paste(t) => {
                 // Plain text only: the engine normalises line endings and drops control chars.
                 if let Err(e) = figcraft_engine::textedit::insert(&mut app.session, t) {
@@ -285,6 +292,7 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
             app.run("text.edit.selectLine", json!({"index": idx}));
         }
     }
+    app.sync_preedit();
     ime_output(app, ctx);
 }
 
@@ -302,14 +310,16 @@ fn text_shortcut(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
     false
 }
 
-/// Tell the platform where the caret is so IME candidate windows open next to it.
+/// Tell the platform where the caret is (inside the composition while composing) so IME
+/// candidate windows open next to it.
 fn ime_output(app: &FigApp, ctx: &Context) {
     let Some(te) = app.session.ds().ok().and_then(|d| d.text_edit.clone()) else { return };
-    let Some(doc) = app.session.doc().ok() else { return };
+    let preedit = app.preedit_view();
+    let Some(doc) = preedit.map(|p| &*p.doc).or_else(|| app.session.doc().ok()) else { return };
     let Some(node) = doc.node(te.id) else { return };
     let Some((layout, dy)) = figcraft_text::layout_node(node) else { return };
     let w = doc.world_transform(te.id);
-    let (cx, li) = layout.caret(te.caret);
+    let (cx, li) = layout.caret(preedit.map(|p| p.cursor).unwrap_or(te.caret));
     let (top, h) = layout.lines.get(li).map(|l| (l.top, l.height)).unwrap_or((0.0, 14.0));
     let p0 = w * figcraft_geom::Point::new(cx, top + dy);
     let p1 = w * figcraft_geom::Point::new(cx, top + h + dy);

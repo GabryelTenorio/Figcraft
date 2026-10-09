@@ -19,7 +19,8 @@ gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRow
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
-listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), pointCount, innerRadius, arcStart, arcSweep, \
+listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
+fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}; null = none), pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, constrainProportions, description, interactions, overflow, pluginData {k: v}";
 
 /// camelCase object keys → snake_case (accept the inspect/camel forms for serde-backed values).
@@ -449,7 +450,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 n.overrides.insert("characters".into());
             }
             "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "textDecoration" | "textCase" | "hyperlink"
-            | "textFills" => {
+            | "textFills" | "fontVariations" | "variationSettings" => {
                 let n = doc.get_mut(id)?;
                 let t = text_mut(cmd, n)?;
                 let (start, end) = range_of(props, t.char_count());
@@ -609,7 +610,7 @@ pub fn override_group(k: &str) -> &'static str {
         "visible" => "visible",
         "name" => "name",
         "characters" | "text" => "characters",
-        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "maxLines" => "textStyle",
+        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "maxLines" | "variationSettings" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
         k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => {
@@ -652,13 +653,26 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
         }
         "fontStyle" => {
             let st = string_val(v).ok_or_else(|| bad(cmd, "`fontStyle` must be a string"))?;
-            t.restyle(start, end, |s| s.font_style = st.clone());
+            t.restyle(start, end, |s| s.set_font_style(st.clone()));
         }
         "fontWeight" => {
             let w = f64_of(v).ok_or_else(|| bad(cmd, "`fontWeight` must be a number"))?;
-            let name = weight_name(w as u16);
+            let name = weight_name(w.clamp(1.0, 1000.0) as u16);
             t.restyle(start, end, |s| {
-                s.font_style = if s.italic() { format!("{name} Italic").replace("Regular Italic", "Italic") } else { name.to_string() }
+                let italic = s.italic();
+                s.set_font_style(styled_name(name, italic));
+            });
+        }
+        "fontVariations" | "variationSettings" => {
+            // Replaces the custom axis values (null or {} = back to what the style name implies).
+            let vars = variations_of(cmd, v)?;
+            t.restyle(start, end, |s| {
+                s.variations.clear();
+                for (k, val) in &vars {
+                    if let Some(val) = val {
+                        s.variations.insert(k.clone(), *val);
+                    }
+                }
             });
         }
         "fontSize" => {
@@ -710,6 +724,37 @@ pub fn features_of(cmd: &str, v: &Value) -> Result<Vec<(String, Option<bool>)>> 
         out.push((k.clone(), on));
     }
     Ok(out)
+}
+
+/// Variable font axis values from `{tag: number | null}` (null = back to what the style implies).
+/// `null` alone means "no custom values".
+pub fn variations_of(cmd: &str, v: &Value) -> Result<Vec<(String, Option<f64>)>> {
+    let m = match v {
+        Value::Null => return Ok(Vec::new()),
+        Value::Object(m) => m,
+        _ => return Err(bad(cmd, "variations: {axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}")),
+    };
+    let mut out = Vec::with_capacity(m.len());
+    for (k, val) in m {
+        if !valid_axis_tag(k) {
+            return Err(bad(cmd, format!("`{k}` is not a 4-character OpenType axis tag")));
+        }
+        let val = match val {
+            Value::Null => None,
+            other => Some(f64_of(other).filter(|x| x.abs() <= 1e6).ok_or_else(|| bad(cmd, format!("axis `{k}` must be a number or null")))?),
+        };
+        out.push((k.clone(), val));
+    }
+    Ok(out)
+}
+
+/// "Bold" + italic → "Bold Italic"; "Regular" + italic → "Italic".
+pub fn styled_name(weight: &str, italic: bool) -> String {
+    match (italic, weight) {
+        (false, w) => w.to_string(),
+        (true, "Regular") => "Italic".into(),
+        (true, w) => format!("{w} Italic"),
+    }
 }
 
 pub fn weight_name(w: u16) -> &'static str {

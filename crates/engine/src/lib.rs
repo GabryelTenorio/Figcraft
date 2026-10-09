@@ -189,6 +189,16 @@ pub struct TextEdit {
     pub anchor: usize,
     /// The node was created by this edit (deleted if left empty).
     pub created: bool,
+    /// An IME composition in progress, shown inline at the caret; the document gets it on commit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preedit: Option<Preedit>,
+}
+
+/// IME composition text (not yet in the document) and the IME's cursor inside it (chars).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Preedit {
+    pub text: String,
+    pub cursor: usize,
 }
 
 /// Per-document editing state.

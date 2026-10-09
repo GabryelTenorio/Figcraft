@@ -183,6 +183,10 @@ pub struct TextStyle {
     pub fills: Option<Vec<Paint>>,
     /// Hyperlink.
     pub link: Option<String>,
+    /// Variable font axis values in user space, keyed by 4-char OpenType axis tag (e.g. `wght`:
+    /// 550, `wdth`: 85). Empty = what the style name implies; axes the face lacks are ignored.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub variations: std::collections::BTreeMap<String, f64>,
 }
 
 impl Default for TextStyle {
@@ -197,17 +201,34 @@ impl Default for TextStyle {
             case: TextCase::Original,
             fills: None,
             link: None,
+            variations: std::collections::BTreeMap::new(),
         }
     }
 }
 
+/// Axes a style name implies (weight, italic, slant): picking a named style clears their custom values.
+pub const STYLE_AXES: [&str; 3] = ["wght", "ital", "slnt"];
+
 impl TextStyle {
-    /// Numeric weight implied by the style name.
+    /// Numeric weight: a custom `wght` axis value, else the one implied by the style name.
     pub fn weight(&self) -> u16 {
-        style_weight(&self.font_style)
+        match self.variations.get("wght") {
+            Some(w) if w.is_finite() => w.round().clamp(1.0, 1000.0) as u16,
+            _ => style_weight(&self.font_style),
+        }
     }
     pub fn italic(&self) -> bool {
         self.font_style.to_ascii_lowercase().contains("italic")
+            || self.variations.get("ital").is_some_and(|v| *v >= 0.5)
+            || self.variations.get("slnt").is_some_and(|v| *v != 0.0)
+    }
+
+    /// Switch to the named style, dropping custom values of the axes the name implies.
+    pub fn set_font_style(&mut self, name: impl Into<String>) {
+        self.font_style = name.into();
+        for tag in STYLE_AXES {
+            self.variations.remove(tag);
+        }
     }
 }
 
@@ -271,6 +292,11 @@ pub struct TextData {
 /// Whether `tag` is a valid OpenType feature tag (four printable ASCII chars).
 pub fn valid_feature_tag(tag: &str) -> bool {
     tag.len() == 4 && tag.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+/// Whether `tag` is a valid OpenType variation axis tag (same shape as a feature tag).
+pub fn valid_axis_tag(tag: &str) -> bool {
+    valid_feature_tag(tag)
 }
 
 impl TextData {
@@ -410,5 +436,28 @@ mod case_tests {
         assert_eq!(TextCase::Upper.apply_after("ß", Some('a')), "SS");
         assert!(valid_feature_tag("liga") && valid_feature_tag("ss01"));
         assert!(!valid_feature_tag("lig") && !valid_feature_tag("ligatures") && !valid_feature_tag("li\u{e9}"));
+    }
+
+    #[test]
+    fn variations_are_backward_compatible_and_imply_weight() {
+        // Files written before variable fonts load with no custom axes, and stay byte-identical.
+        let old = r#"{"font_family":"Inter","font_style":"Bold","font_size":12.0}"#;
+        let st: TextStyle = serde_json::from_str(old).unwrap();
+        assert!(st.variations.is_empty());
+        assert!(!serde_json::to_string(&st).unwrap().contains("variations"));
+        let mut st = TextStyle { font_style: "Regular".into(), ..Default::default() };
+        st.variations.insert("wght".into(), 640.0);
+        st.variations.insert("wdth".into(), 80.0);
+        assert_eq!(st.weight(), 640);
+        assert!(!st.italic());
+        st.variations.insert("slnt".into(), -8.0);
+        assert!(st.italic());
+        let round: TextStyle = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
+        assert_eq!(round, st);
+        // Picking a named style drops the axes its name implies, keeps the others.
+        st.set_font_style("Bold");
+        assert_eq!(st.weight(), 700);
+        assert_eq!(st.variations.keys().collect::<Vec<_>>(), ["wdth"]);
+        assert!(valid_axis_tag("wght") && !valid_axis_tag("weight"));
     }
 }
