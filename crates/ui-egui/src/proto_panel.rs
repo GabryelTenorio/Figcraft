@@ -179,8 +179,18 @@ fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Optio
     })
 }
 
+/// The layers an edit of `node`'s interactions applies to: the whole selection when it includes
+/// `node` and every selected layer has the same interactions, else just `node`.
+fn targets_for(app: &FigApp, node: NodeId) -> Vec<NodeId> {
+    let Ok(ds) = app.session.ds() else { return vec![node] };
+    let sel = &ds.selection;
+    let first = ds.doc.node(node).map(|n| &n.interactions);
+    let same = sel.len() > 1 && sel.contains(&node) && sel.iter().all(|i| ds.doc.node(*i).map(|n| &n.interactions) == first);
+    if same { sel.clone() } else { vec![node] }
+}
+
 fn patch(app: &mut FigApp, node: NodeId, index: usize, fields: Value) {
-    let mut p = json!({"ids": [node], "index": index});
+    let mut p = json!({"ids": targets_for(app, node), "index": index});
     if let (Some(o), Value::Object(f)) = (p.as_object_mut(), fields) {
         o.extend(f);
     }
@@ -211,9 +221,38 @@ pub fn prototype(app: &mut FigApp, ui: &mut Ui) {
         flow_section(app, ui, &doc, page, first);
         widgets::separator(ui);
     }
-    interactions(app, ui, &doc, page, &node);
+    let mixed = sel.iter().any(|i| doc.node(*i).map(|n| &n.interactions) != Some(&node.interactions));
+    if mixed {
+        mixed_interactions(app, ui, &doc, page, &sel);
+    } else {
+        interactions(app, ui, &doc, page, &node);
+    }
     widgets::separator(ui);
     scroll_section(app, ui, &doc, &sel, &node);
+}
+
+/// Several layers with different interactions: "+" replaces them all with one click interaction
+/// (one undo step); "Remove all" clears them.
+fn mixed_interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, sel: &[NodeId]) {
+    let t = Tokens::get(ui.ctx());
+    if widgets::section_header(ui, "Interactions", &[(Icon::Plus, "Replace with a new interaction")], false).is_some() {
+        let first = sel.first().copied().unwrap_or(NodeId(0));
+        let action = action_of("Navigate to", doc, page, first, None).unwrap_or(Action::Back);
+        let steps = json!([
+            {"command": "proto.interaction.clear", "params": {"ids": sel}},
+            {"command": "proto.interaction.add", "params": {"ids": sel, "trigger": {"type": "onClick"}, "action": action}},
+        ]);
+        app.run("command.batch", json!({"label": "Replace interactions", "commands": steps}));
+        open_editor(ui.ctx(), Some((first, 0)));
+    }
+    row(ui, 32.0, |ui| {
+        widgets::label(ui, "Mixed interactions: click + to replace them", t.text_secondary);
+    });
+    row(ui, 28.0, |ui| {
+        if ui.add(egui::Button::new(egui::RichText::new("Remove all").font(regular(11.0)))).clicked() {
+            app.run("proto.interaction.clear", json!({"ids": sel}));
+        }
+    });
 }
 
 fn flows_of(doc: &Document, page: NodeId) -> Vec<proto::Flow> {
@@ -327,7 +366,7 @@ fn interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, nod
     if widgets::section_header(ui, "Interactions", &[(Icon::Plus, "Add interaction")], list.is_empty()).is_some() {
         // Click → navigate to the next frame (or Back when there's nowhere to go).
         let action = action_of("Navigate to", doc, page, id, None).unwrap_or(Action::Back);
-        if let Some(r) = app.run("proto.interaction.add", json!({"ids": [id], "trigger": {"type": "onClick"}, "action": action})) {
+        if let Some(r) = app.run("proto.interaction.add", json!({"ids": targets_for(app, id), "trigger": {"type": "onClick"}, "action": action})) {
             let k = r.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
             open_editor(ui.ctx(), Some((id, k)));
         }
@@ -366,7 +405,7 @@ fn interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, nod
         icons::paint(ui.painter(), rm.shrink(5.0), Icon::Minus, t.icon);
         if rresp.clicked() {
             open_editor(ui.ctx(), None);
-            app.run("proto.interaction.remove", json!({"ids": [id], "index": i}));
+            app.run("proto.interaction.remove", json!({"ids": targets_for(app, id), "index": i}));
             return;
         }
     }
@@ -748,9 +787,10 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
                     }
                     FieldEdit::Scrub(v, done) => {
                         let _ = app.session.begin_interaction("Edit");
-                        let _ = app
-                            .session
-                            .execute("proto.interaction.set", &json!({"ids": [node], "index": k, "durationMs": v.clamp(1.0, 10_000.0).round()}));
+                        let _ = app.session.execute(
+                            "proto.interaction.set",
+                            &json!({"ids": targets_for(app, node), "index": k, "durationMs": v.clamp(1.0, 10_000.0).round()}),
+                        );
                         if done {
                             let _ = app.session.commit_interaction();
                         }
@@ -811,7 +851,7 @@ fn custom_easing_fields(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, e
                 let eased = make(nv);
                 if scrub {
                     let _ = app.session.begin_interaction("Edit");
-                    let _ = app.session.execute("proto.interaction.set", &json!({"ids": [node], "index": k, "easing": eased}));
+                    let _ = app.session.execute("proto.interaction.set", &json!({"ids": targets_for(app, node), "index": k, "easing": eased}));
                     if done {
                         let _ = app.session.commit_interaction();
                     }

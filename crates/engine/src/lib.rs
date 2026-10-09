@@ -756,6 +756,8 @@ mod frame_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
+mod proto_multi_tests;
+#[cfg(test)]
 mod section_tests;
 #[cfg(test)]
 mod style_tests;

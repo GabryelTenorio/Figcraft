@@ -17,6 +17,14 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             add
         ),
+        spec!("proto.interaction.clear", "Remove all interactions", "{ids?}", true, |s, p| {
+            let ids = req_targets("proto.interaction.clear", s, p)?;
+            let doc = s.doc_mut()?;
+            for i in ids {
+                doc.get_mut(i)?.interactions.clear();
+            }
+            ok()
+        }),
         spec!("proto.interaction.remove", "Remove interaction", "{id?, index}", true, |s, p| {
             let cmd = "proto.interaction.remove";
             let k = req_num(cmd, p, "index")?;
