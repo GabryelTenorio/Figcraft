@@ -1,6 +1,6 @@
 //! The right panel: Design, Prototype and Inspect tabs.
 
-use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -228,7 +228,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         grids(app, ui, &doc, &sel);
         widgets::separator(ui);
     }
-    export(app, ui, &doc, &sel);
+    crate::export_panel::section(app, ui, &doc, &sel);
 }
 
 fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
@@ -289,17 +289,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         });
     }
     widgets::separator(ui);
-    let all: Vec<NodeId> = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
-    widgets::section_header(ui, "Export", &[(Icon::Plus, "Export page")], false);
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
-        ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, "Export page as PNG", regular(11.0), t.text);
-        if resp.clicked() {
-            export_now(app, &all, "png", 1.0);
-        }
-    });
+    crate::export_panel::page_section(app, ui, doc, page);
 }
 
 fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
@@ -1306,100 +1296,6 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
     }
-}
-
-fn export_now(app: &mut FigApp, ids: &[NodeId], format: &str, scale: f64) {
-    let name = ids.first().and_then(|i| app.session.doc().ok()?.node(*i).map(|n| n.name.clone())).unwrap_or_else(|| "Export".into());
-    let suffix = if (scale - 1.0).abs() > 1e-9 && format != "svg" && format != "pdf" { format!("@{scale}x") } else { String::new() };
-    if let Some(p) = app.services.pick_save("Export", &format!("{name}{suffix}.{format}"), &[format]) {
-        let ps = p.to_string_lossy().to_string();
-        if app.run("file.export", json!({"ids": ids, "format": format, "scale": scale, "path": ps})).is_some() {
-            app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
-        }
-    }
-}
-
-fn export(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
-    let ids = sel.to_vec();
-    let list = common(doc, sel, |n| n.exports.clone()).unwrap_or_default();
-    if widgets::section_header(ui, "Export", &[(Icon::Plus, "Add export setting")], list.is_empty()).is_some() {
-        let next = match list.last().map(|e| e.size) {
-            Some(ExportSize::Scale { value }) => {
-                ExportSetting { size: ExportSize::Scale { value: value + 1.0 }, suffix: format!("@{}x", value + 1.0), format: ExportFormat::Png }
-            }
-            _ => ExportSetting::default(),
-        };
-        app.run("export.add", json!({"ids": ids, "setting": next}));
-    }
-    for (i, e) in list.iter().enumerate() {
-        row(ui, 32.0, |ui| {
-            let scale = match e.size {
-                ExportSize::Scale { value } => format!("{value}x"),
-                ExportSize::Width { value } => format!("{value}w"),
-                ExportSize::Height { value } => format!("{value}h"),
-            };
-            let resp = widgets::dropdown(ui, &scale, 64.0, None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for s in [0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0] {
-                    if menu_item(ui, &format!("{s}x"), "") {
-                        let mut l = list.clone();
-                        if let Some(slot) = l.get_mut(i) {
-                            slot.size = ExportSize::Scale { value: s };
-                        }
-                        app.set_props(&ids, json!({"exports": l}));
-                        ui.close();
-                    }
-                }
-            });
-            if let Some(sfx) = widgets::text_field(ui, Id::new(("exp_sfx", i)), &e.suffix, 64.0, "Suffix") {
-                let mut l = list.clone();
-                if let Some(slot) = l.get_mut(i) {
-                    slot.suffix = sfx;
-                }
-                app.set_props(&ids, json!({"exports": l}));
-            }
-            let resp = widgets::dropdown(ui, &e.format.ext().to_uppercase(), 56.0, None);
-            egui::Popup::menu(&resp).show(|ui| {
-                for f in [ExportFormat::Png, ExportFormat::Jpg, ExportFormat::Svg, ExportFormat::Webp] {
-                    if menu_item(ui, &f.ext().to_uppercase(), "") {
-                        let mut l = list.clone();
-                        if let Some(slot) = l.get_mut(i) {
-                            slot.format = f;
-                        }
-                        app.set_props(&ids, json!({"exports": l}));
-                        ui.close();
-                    }
-                }
-            });
-            if icons::button(ui, Icon::Minus, 24.0, false, "Remove").clicked() {
-                app.run("export.remove", json!({"ids": ids, "index": i}));
-            }
-        });
-    }
-    let name = if sel.len() == 1 {
-        sel.first().and_then(|i| doc.node(*i)).map(|n| n.name.clone()).unwrap_or_default()
-    } else {
-        format!("{} layers", sel.len())
-    };
-    row(ui, 32.0, |ui| {
-        let w = ui.available_width();
-        let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
-        ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
-        if resp.hovered() {
-            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-        }
-        let galley = ui.painter().layout(format!("Export {name}"), regular(11.0), t.text, w - 16.0);
-        ui.painter().galley(r.center() - galley.size() / 2.0, galley, t.text);
-        if resp.clicked() {
-            let e = list.first().cloned().unwrap_or_default();
-            let scale = match e.size {
-                ExportSize::Scale { value } => value,
-                _ => 1.0,
-            };
-            export_now(app, &ids, e.format.ext(), scale);
-        }
-    });
 }
 
 /// The Inspect tab: size and position, and code for the selected layer.

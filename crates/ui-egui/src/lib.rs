@@ -13,6 +13,7 @@ pub mod component_panel;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod export_panel;
 pub mod frame_presets;
 pub mod guides;
 pub mod handles;
@@ -58,6 +59,10 @@ pub trait Services {
         None
     }
     fn pick_save(&mut self, _title: &str, _name: &str, _exts: &[&str]) -> Option<PathBuf> {
+        None
+    }
+    /// A folder to write several files into.
+    fn pick_folder(&mut self, _title: &str) -> Option<PathBuf> {
         None
     }
     fn clipboard_set_text(&mut self, _s: &str) {}
@@ -133,7 +138,10 @@ pub struct UiState {
     pub frame_ms: f64,
     pub render_ms: f64,
     pub quit: bool,
+    /// The Export dialog is open.
     pub export_preview: bool,
+    /// The Design panel's Export section shows its preview.
+    pub export_thumb: bool,
     pub zoom_menu: bool,
     pub find: Option<(String, String)>,
     pub left_collapsed: bool,
@@ -184,6 +192,7 @@ impl Default for UiState {
             render_ms: 0.0,
             quit: false,
             export_preview: false,
+            export_thumb: false,
             zoom_menu: false,
             find: None,
             left_collapsed: false,

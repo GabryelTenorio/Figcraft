@@ -239,12 +239,35 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "export.add",
             "Add export setting",
-            "{ids?, setting? {size:{by:scale,value:2}, suffix, format: png|jpg|svg|pdf|webp}}",
+            "{ids?, setting? {size: 2x|512w|512h|{by: scale|width|height, value}, suffix?, format?: png|jpg|svg|pdf|webp}} (without a setting: 1x, then one scale step up with an \"@2x\"-style suffix)",
             true,
             |s, p| {
-                let e: ExportSetting = parse("export.add", p, "setting")?.unwrap_or_default();
-                for id in req_targets("export.add", s, p)? {
-                    s.doc_mut()?.get_mut(id)?.exports.push(e.clone());
+                let cmd = "export.add";
+                let setting = get(p, "setting").filter(|v| !v.is_null());
+                // Check the setting once before touching any layer.
+                let given = setting.map(|v| super::file::export_setting(cmd, ExportSetting::default(), v)).transpose()?;
+                for id in req_targets(cmd, s, p)? {
+                    let n = s.doc_mut()?.get_mut(id)?;
+                    let e = given.clone().unwrap_or_else(|| ExportSetting::next_after(n.exports.last()));
+                    n.exports.push(e);
+                }
+                ok()
+            }
+        ),
+        spec!(
+            "export.update",
+            "Edit export setting",
+            "{ids?, index, size? (2x|512w|512h|{by, value}), suffix?, format? (png|jpg|svg|pdf|webp)}",
+            true,
+            |s, p| {
+                let cmd = "export.update";
+                let i = req_num(cmd, p, "index")? as usize;
+                super::file::export_setting(cmd, ExportSetting::default(), p)?;
+                for id in req_targets(cmd, s, p)? {
+                    let n = s.doc_mut()?.get_mut(id)?;
+                    if let Some(e) = n.exports.get_mut(i) {
+                        *e = super::file::export_setting(cmd, e.clone(), p)?;
+                    }
                 }
                 ok()
             }

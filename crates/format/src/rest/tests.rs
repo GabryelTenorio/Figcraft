@@ -526,7 +526,7 @@ fn nodes_response_flows_and_detection() {
     let NodeKind::Page { flows, .. } = &doc.node(doc.pages[0]).unwrap().kind else { panic!() };
     assert_eq!(flows.len(), 1);
     assert_eq!((flows[0].name.as_str(), flows[0].start), ("Onboarding", named(&doc, "Home").id));
-    assert!(warnings.iter().any(|w| w.contains("interactions")) && warnings.iter().any(|w| w.contains("variable bindings")), "{warnings:?}");
+    assert!(warnings.iter().any(|w| w.contains("interactions")) && warnings.iter().any(|w| w.contains("variables bound to")), "{warnings:?}");
 
     // Native FigCraft JSON and other text are left to the other loaders.
     let native = serde_json::to_vec(&crate::to_json(&Document::new("x")).unwrap()).unwrap();
@@ -557,7 +557,7 @@ fn unknown_types_and_missing_fields_warn() {
 // ---- robustness ----
 
 /// Every value of `v` (depth first), as JSON pointers.
-fn pointers(v: &Value, at: String, out: &mut Vec<String>) {
+pub(super) fn pointers(v: &Value, at: String, out: &mut Vec<String>) {
     out.push(at.clone());
     match v {
         Value::Object(m) => m.iter().for_each(|(k, c)| pointers(c, format!("{at}/{}", k.replace('~', "~0").replace('/', "~1")), out)),

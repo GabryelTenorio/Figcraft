@@ -4,7 +4,9 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::proto::{Action, Direction, Easing, Interaction, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{
+    Action, Direction, Easing, Interaction, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
@@ -321,7 +323,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, &device, ui.available_width(), None);
         egui::Popup::menu(&resp).show(|ui| {
-            for d in ["None", "iPhone 16", "iPhone 16 Pro Max", "Android Compact", "iPad mini", "MacBook Air", "Desktop"] {
+            for d in PrototypeSettings::DEVICES {
                 if menu_item(ui, d, "") {
                     app.run("proto.settings", json!({"device": d}));
                     ui.close();
