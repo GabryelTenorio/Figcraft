@@ -16,6 +16,7 @@ pub mod handles;
 pub mod home;
 pub mod icons;
 pub mod layers;
+pub mod layout_panel;
 pub mod menus;
 pub mod present;
 pub mod proto_canvas;

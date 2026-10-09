@@ -265,6 +265,19 @@ fn serde_roundtrip_and_repair() {
 }
 
 #[test]
+fn auto_layout_loads_files_without_grid_tracks() {
+    // Saved before grid tracks, cells and spans existed.
+    let al: AutoLayout = serde_json::from_str(r#"{"mode":"grid","gap":4,"grid_columns":3,"grid_rows":2}"#).unwrap();
+    assert_eq!((al.grid_columns, al.column_tracks.len(), al.row_tracks.len()), (3, 0, 0));
+    let cl: ChildLayout = serde_json::from_str(r#"{"sizing_h":"fill","absolute":true,"min_w":10}"#).unwrap();
+    assert_eq!((cl.grid_column, cl.grid_row, cl.column_span(), cl.row_span()), (None, None, 1, 1));
+    // Tracks round-trip; a track missing its value reads as the default kind's value.
+    let t: GridTrack = serde_json::from_str(r#"{"sizing":"fixed","value":120}"#).unwrap();
+    assert_eq!(t, GridTrack::fixed(120.0));
+    assert_eq!(serde_json::from_str::<GridTrack>("{}").unwrap(), GridTrack::fill(1.0));
+}
+
+#[test]
 fn node_id_parse() {
     assert_eq!("12".parse::<NodeId>().unwrap(), NodeId(12));
     assert_eq!("0:12".parse::<NodeId>().unwrap(), NodeId(12));

@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (vector edit mode tools)._
+_Last updated: 2026-10-10 (vector edit mode tools, auto layout depth)._
 
 ## Where we are
 
@@ -47,8 +47,11 @@ dimension measured side by side.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit.
    *Left:* inline IME preedit, variable font axes, visual QA. 8–12 h.
-3. **Auto layout depth**: *landed:* on-canvas padding/gap handles. *Left:* drag-reorder polish, min/max UI, baseline
-   alignment, absolute positioning UI, grid tracks (fr/fixed), wrap polish. 15–25 h.
+3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
+   column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
+   wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
+   alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI. *Left:*
+   grid/wrap-aware drag-reorder and drag-to-cell, nested hug/fill edge cases. 6–10 h.
 4. **Components depth**: *landed (engine):* component properties (edit/delete/bind), add variant,
    reset override, restore main, instance structure protection. *Left:* properties panel UI, instance
    swap UI, nested overrides, slots, local libraries, Assets drag-to-canvas. 14–20 h.
@@ -121,7 +124,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Strokes | 3 | 55% | arrowhead set, dash/gap UI, per-side UI, stroke styles | 5–8 |
 | Effects | 4 | 60% | effect styles UI, glass/texture fidelity, shadow spread on non-rects exactness | 6–10 |
 | Frames, groups, sections, masks | 5 | 55% | section tooling, mask types (luminance/outline), frame presets UI | 6–10 |
-| Auto layout & constraints | 9 | 45% | canvas handles, baseline, grid tracks, nested hug/fill edge cases | 15–25 |
+| Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
 | Text | 8 | 35% | in-text mouse selection, styled ranges UI, lists, OpenType, variable fonts | 20–30 |
 | Components & variants | 9 | 40% | properties UI, swap UI, nested overrides, libraries, slots | 20–30 |
 | Styles & variables | 5 | 45% | style picker everywhere, variable binding UI, aliasing UI, scoping | 10–16 |
@@ -130,7 +133,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |
 
-Weighted feature depth ≈ **45%**.
+Weighted feature depth ≈ **47%**.
 
 ## Milestones
 
@@ -139,7 +142,7 @@ Weighted feature depth ≈ **45%**.
 | M0 Foundation: workspace, model, renderer, engine, UI shell, app, control channel | done (2026-10-09) |
 | M0.9 CLI + MCP, web build, release packaging, PDF export | in progress |
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~60% |
-| M2 Layout depth | ~45% |
+| M2 Layout depth | ~60% |
 | M3 Components & styles depth | ~40% |
 | M4 Vector & text depth | ~45% |
 | M5 Prototype & present | ~30% |

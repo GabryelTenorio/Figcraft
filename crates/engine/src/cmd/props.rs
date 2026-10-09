@@ -13,8 +13,10 @@ pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (paren
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], \
 strokeCap / startCap / endCap, strokeJoin, dashes [..], cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
-mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline), wrap, gridColumns, gridRows, sizingH / sizingV (fixed|hug|fill), \
-absolute, minWidth, maxWidth, minHeight, maxHeight, constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
+mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap, \
+columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
+gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, sizingH / sizingV (fixed|hug|fill), \
+absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
 listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), pointCount, innerRadius, arcStart, arcSweep, \
@@ -73,7 +75,7 @@ pub(crate) fn enum_of<T: serde::de::DeserializeOwned>(v: &Value) -> Option<T> {
     serde_json::from_value(Value::String(norm)).ok()
 }
 
-fn sizing(v: &Value) -> Option<Sizing> {
+pub(crate) fn sizing(v: &Value) -> Option<Sizing> {
     match v.as_str()?.to_ascii_lowercase().as_str() {
         "fixed" => Some(Sizing::Fixed),
         "hug" | "auto" | "hug contents" => Some(Sizing::Hug),
@@ -111,6 +113,53 @@ fn four(v: &Value) -> Option<[f64; 4]> {
             }
         }
         other => f64_of(other).map(|x| [x; 4]),
+    }
+}
+
+const TRACK_HELP: &str = "tracks: [px | \"120px\" | \"1fr\" | \"auto\" (hug) | {sizing: fixed|hug|fill, value}]";
+
+/// One grid track from `120` / `"120px"` (fixed), `"2fr"` / `"fill"` (fill), `"auto"` / `"hug"`,
+/// or `{sizing, value}`.
+pub fn track_of(v: &Value) -> Option<GridTrack> {
+    match v {
+        Value::Number(_) => f64_of(v).map(|px| GridTrack::fixed(px.clamp(0.0, 1e6))),
+        Value::String(s) => {
+            let s = s.trim().to_ascii_lowercase();
+            match s.as_str() {
+                "auto" | "hug" => Some(GridTrack::hug()),
+                "fill" => Some(GridTrack::fill(1.0)),
+                _ => match s.strip_suffix("fr") {
+                    Some(fr) => fr.trim().parse::<f64>().ok().filter(|f| f.is_finite()).map(|f| GridTrack::fill(f.clamp(0.0, 1e4))),
+                    None => f64_of(&Value::String(s)).map(|px| GridTrack::fixed(px.clamp(0.0, 1e6))),
+                },
+            }
+        }
+        Value::Object(o) => {
+            let s = o.get("sizing").or_else(|| o.get("type")).and_then(sizing)?;
+            let val = o.get("value").or_else(|| o.get("size")).and_then(f64_of);
+            Some(match s {
+                Sizing::Fixed => GridTrack::fixed(val?.clamp(0.0, 1e6)),
+                Sizing::Hug => GridTrack::hug(),
+                Sizing::Fill => GridTrack::fill(val.unwrap_or(1.0).clamp(0.0, 1e4)),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Set one min/max limit (`None` removes it), keeping min ≤ max by moving the other limit.
+pub fn set_limit(cl: &mut ChildLayout, key: &str, val: Option<f64>) {
+    let (target, other, is_min) = match key {
+        "minWidth" => (&mut cl.min_w, &mut cl.max_w, true),
+        "maxWidth" => (&mut cl.max_w, &mut cl.min_w, false),
+        "minHeight" => (&mut cl.min_h, &mut cl.max_h, true),
+        _ => (&mut cl.max_h, &mut cl.min_h, false),
+    };
+    *target = val;
+    if let (Some(v), Some(o)) = (val, *other)
+        && (is_min && o < v || !is_min && o > v)
+    {
+        *other = Some(v);
     }
 }
 
@@ -260,9 +309,11 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     _ => return Err(bad(cmd, "layout: none|horizontal|vertical|grid|{...}")),
                 }
             }
-            "gap" | "itemSpacing" => ensure_layout(doc.get_mut(id)?).gap = f64_of(v).ok_or_else(|| bad(cmd, "`gap` must be a number"))?,
-            "crossGap" | "counterAxisSpacing" => {
-                ensure_layout(doc.get_mut(id)?).cross_gap = f64_of(v).ok_or_else(|| bad(cmd, "`crossGap` must be a number"))?
+            "gap" | "itemSpacing" | "columnGap" => {
+                ensure_layout(doc.get_mut(id)?).gap = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?
+            }
+            "crossGap" | "counterAxisSpacing" | "rowGap" => {
+                ensure_layout(doc.get_mut(id)?).cross_gap = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?
             }
             "padding" => {
                 let p = four(v).ok_or_else(|| bad(cmd, "padding: n or [t,r,b,l]"))?;
@@ -294,8 +345,15 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 ensure_layout(doc.get_mut(id)?).cross_align = enum_of(v).ok_or_else(|| bad(cmd, "crossAlign: min|center|max|baseline"))?
             }
             "wrap" => ensure_layout(doc.get_mut(id)?).wrap = v.as_bool().unwrap_or(false),
-            "gridColumns" => ensure_layout(doc.get_mut(id)?).grid_columns = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
-            "gridRows" => ensure_layout(doc.get_mut(id)?).grid_rows = f64_of(v).unwrap_or(2.0).clamp(1.0, 1000.0) as u32,
+            "gridColumns" | "gridRows" => {
+                let count = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.clamp(1.0, 1000.0) as u32;
+                let l = ensure_layout(doc.get_mut(id)?);
+                // Tracks past the new count go away (new tracks are 1fr).
+                let (n, tracks) =
+                    if k == "gridColumns" { (&mut l.grid_columns, &mut l.column_tracks) } else { (&mut l.grid_rows, &mut l.row_tracks) };
+                *n = count;
+                tracks.truncate(count as usize);
+            }
             "strokesIncluded" => ensure_layout(doc.get_mut(id)?).strokes_included = v.as_bool().unwrap_or(false),
             "reverseZ" => ensure_layout(doc.get_mut(id)?).reverse_z = v.as_bool().unwrap_or(false),
             "sizingH" | "layoutSizingHorizontal" => {
@@ -306,11 +364,63 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
                 set_sizing(cmd, doc, id, s, false)?;
             }
-            "absolute" => doc.get_mut(id)?.child_layout.absolute = v.as_bool().unwrap_or(false),
-            "minWidth" => doc.get_mut(id)?.child_layout.min_w = f64_of(v),
-            "maxWidth" => doc.get_mut(id)?.child_layout.max_w = f64_of(v),
-            "minHeight" => doc.get_mut(id)?.child_layout.min_h = f64_of(v),
-            "maxHeight" => doc.get_mut(id)?.child_layout.max_h = f64_of(v),
+            "absolute" | "ignoreAutoLayout" => {
+                let on = bool_of(v).ok_or_else(|| bad(cmd, "`absolute` must be a boolean"))?;
+                let cl = &mut doc.get_mut(id)?.child_layout;
+                cl.absolute = on;
+                // An absolute child can't fill: it keeps its current size.
+                if on {
+                    for s in [&mut cl.sizing_h, &mut cl.sizing_v] {
+                        if *s == Sizing::Fill {
+                            *s = Sizing::Fixed;
+                        }
+                    }
+                }
+            }
+            "minWidth" | "maxWidth" | "minHeight" | "maxHeight" => {
+                let val = match v {
+                    Value::Null => None,
+                    other => Some(f64_of(other).ok_or_else(|| bad(cmd, format!("`{k}` must be a number or null")))?.clamp(0.0, 1e7)),
+                };
+                set_limit(&mut doc.get_mut(id)?.child_layout, k, val);
+            }
+            "columnTracks" | "gridColumnTracks" | "rowTracks" | "gridRowTracks" => {
+                let a = v.as_array().ok_or_else(|| bad(cmd, format!("`{k}` must be an array of tracks")))?;
+                let tracks = a.iter().map(track_of).collect::<Option<Vec<_>>>().ok_or_else(|| bad(cmd, TRACK_HELP))?;
+                let l = ensure_layout(doc.get_mut(id)?);
+                if k.contains("olumn") {
+                    l.grid_columns = (tracks.len() as u32).clamp(1, 1000);
+                    l.column_tracks = tracks;
+                } else {
+                    l.grid_rows = (tracks.len() as u32).clamp(1, 1000);
+                    l.row_tracks = tracks;
+                }
+            }
+            "gridColumn" | "gridColumnAnchorIndex" | "gridRow" | "gridRowAnchorIndex" => {
+                let val = match v {
+                    Value::Null => None,
+                    Value::String(s) if s.eq_ignore_ascii_case("auto") => None,
+                    other => {
+                        Some(f64_of(other).ok_or_else(|| bad(cmd, format!("`{k}` must be a 0-based index, \"auto\" or null")))?.clamp(0.0, 999.0)
+                            as u32)
+                    }
+                };
+                let cl = &mut doc.get_mut(id)?.child_layout;
+                if k.starts_with("gridColumn") {
+                    cl.grid_column = val;
+                } else {
+                    cl.grid_row = val;
+                }
+            }
+            "gridColumnSpan" | "gridRowSpan" => {
+                let span = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.clamp(1.0, 1000.0) as u32;
+                let cl = &mut doc.get_mut(id)?.child_layout;
+                if k == "gridColumnSpan" {
+                    cl.grid_column_span = span;
+                } else {
+                    cl.grid_row_span = span;
+                }
+            }
             "constraints" => {
                 let n = doc.get_mut(id)?;
                 if let Some(h) = v.get("horizontal") {
@@ -649,7 +759,8 @@ pub fn resize_node(doc: &mut Document, id: NodeId, w: f64, h: f64) -> Result<()>
         let kx = if ow > 1e-9 { w / ow } else { 1.0 };
         let ky = if oh > 1e-9 { h / oh } else { 1.0 };
         figcraft_layout::scale_group_children(doc, id, kx, ky);
-    } else if doc.get(id)?.layout.is_none() {
+    } else {
+        // In an auto layout frame this moves only the children that ignore auto layout.
         figcraft_layout::apply_constraints(doc, id, ow, oh);
     }
     Ok(())

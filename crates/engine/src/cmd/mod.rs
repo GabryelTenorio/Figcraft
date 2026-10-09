@@ -6,6 +6,7 @@ pub mod component;
 pub mod create;
 pub mod edit;
 pub mod file;
+pub mod layout;
 pub mod page;
 pub mod props;
 pub mod proto;
@@ -64,6 +65,7 @@ fn registry() -> &'static Registry {
         list.extend(edit::specs());
         list.extend(arrange::specs());
         list.extend(structure::specs());
+        list.extend(layout::specs());
         list.extend(file::specs());
         list.extend(page::specs());
         list.extend(view::specs());

@@ -28,11 +28,21 @@ impl FigApp {
 
     /// Apply a field edit: scrubs are live previews committed as one step.
     pub fn field(&mut self, ids: &[NodeId], key: &str, edit: Option<FieldEdit>, map: impl Fn(f64) -> Value) {
+        if ids.is_empty() {
+            return;
+        }
+        self.field_run(edit, "node.set", |v| json!({"ids": ids, "props": { key: map(v) }}));
+    }
+
+    /// Apply a field edit through any command: `params` builds the command's params from the value.
+    pub fn field_run(&mut self, edit: Option<FieldEdit>, cmd: &str, params: impl Fn(f64) -> Value) {
         match edit {
-            Some(FieldEdit::Set(v)) => self.set_props(ids, json!({ key: map(v) })),
+            Some(FieldEdit::Set(v)) => {
+                self.run(cmd, params(v));
+            }
             Some(FieldEdit::Scrub(v, done)) => {
                 let _ = self.session.begin_interaction("Edit");
-                let _ = self.session.execute("node.set", &json!({"ids": ids, "props": { key: map(v) }}));
+                let _ = self.session.execute(cmd, &params(v));
                 if done {
                     let _ = self.session.commit_interaction();
                 }
@@ -165,11 +175,16 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
 }
 
 pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
+    block(ui, h, (h - FIELD_H) / 2.0, add);
+}
+
+/// A panel row `h` tall whose content is inset `inset_y` from its top and bottom (for content
+/// taller than one field).
+pub(crate) fn block(ui: &mut Ui, h: f32, inset_y: f32, add: impl FnOnce(&mut Ui)) {
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
-    let mut child = ui.new_child(
-        egui::UiBuilder::new().max_rect(r.shrink2(vec2(PAD, (h - FIELD_H) / 2.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
-    );
+    let mut child =
+        ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(PAD, inset_y))).layout(egui::Layout::left_to_right(egui::Align::Center)));
     child.spacing_mut().item_spacing = vec2(8.0, 0.0);
     add(&mut child);
 }
@@ -190,7 +205,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         None => position(app, ui, &doc, &sel),
     }
     widgets::separator(ui);
-    layout(app, ui, &doc, &sel);
+    crate::layout_panel::layout_section(app, ui, &doc, &sel);
     widgets::separator(ui);
     appearance(app, ui, &doc, &sel);
     widgets::separator(ui);
@@ -399,12 +414,23 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let x = common(doc, sel, |n| (n.transform.as_coeffs()[4] * 100.0).round() / 100.0);
     let y = common(doc, sel, |n| (n.transform.as_coeffs()[5] * 100.0).round() / 100.0);
     let rot = common(doc, sel, |n| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0);
+    let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
+    let absolute = common(doc, sel, |n| n.child_layout.absolute);
     widgets::sublabels(ui, "Position", None);
     row(ui, 32.0, |ui| {
         let e = widgets::number_field(ui, Id::new("pos_x"), Lead::Text("X"), x, "", col, 1.0);
         app.field(&ids, "x", e, |v| json!(v));
         let e = widgets::number_field(ui, Id::new("pos_y"), Lead::Text("Y"), y, "", col, 1.0);
         app.field(&ids, "y", e, |v| json!(v));
+        // Children of auto layout frames can ignore the layout (absolute position).
+        if parent_al {
+            let on = absolute.unwrap_or(false);
+            if icons::button(ui, Icon::AbsolutePosition, 24.0, on, if on { "Use auto layout" } else { "Ignore auto layout (absolute position)" })
+                .clicked()
+            {
+                app.set_props(&ids, json!({"absolute": !on}));
+            }
+        }
     });
     widgets::sublabels(ui, "Rotation", None);
     row(ui, 32.0, |ui| {
@@ -415,10 +441,12 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             app.run(["object.rotateRight", "object.flipH", "object.flipV"][i], json!({"ids": ids}));
         }
     });
-    // Constraints (children of non-auto-layout frames).
-    let in_frame = sel
-        .iter()
-        .all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && p.layout.is_none()));
+    // Constraints (children of frames without auto layout, or ignoring it).
+    let in_frame = sel.iter().all(|i| {
+        doc.node(*i).is_some_and(|n| {
+            n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && (p.layout.is_none() || n.child_layout.absolute))
+        })
+    });
     if in_frame {
         let c = common(doc, sel, |n| n.constraints);
         widgets::sublabels(ui, "Constraints", None);
@@ -453,191 +481,6 @@ fn pretty(s: &str) -> String {
         "LeftRight" => "Left & right".into(),
         "TopBottom" => "Top & bottom".into(),
         other => other.to_string(),
-    }
-}
-
-fn layout(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
-    let ids = sel.to_vec();
-    let frames = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
-    let al = common(doc, sel, |n| n.layout.clone());
-    let has_al = matches!(al, Some(Some(_)));
-    let title = if has_al { "Auto layout" } else { "Layout" };
-    let btns: Vec<(Icon, &str)> = if frames && !has_al {
-        vec![(Icon::Plus, "Add auto layout  ⇧A")]
-    } else if has_al {
-        vec![(Icon::Minus, "Remove auto layout  ⌥⇧A")]
-    } else {
-        vec![]
-    };
-    if let Some(_b) = widgets::section_header(ui, title, &btns, false) {
-        app.run(if has_al { "layout.remove" } else { "layout.add" }, json!({"ids": ids}));
-    }
-    if let Some(Some(l)) = &al {
-        // Direction.
-        row(ui, 32.0, |ui| {
-            let items = [(Icon::LayoutV, "Vertical"), (Icon::LayoutH, "Horizontal"), (Icon::LayoutWrap, "Wrap"), (Icon::LayoutGrid, "Grid")];
-            let active = match (l.mode, l.wrap) {
-                (LayoutMode::Vertical, _) => 0,
-                (LayoutMode::Horizontal, false) => 1,
-                (LayoutMode::Horizontal, true) => 2,
-                (LayoutMode::Grid, _) => 3,
-            };
-            if let Some(i) = widgets::segmented(ui, &items, Some(active), 32.0) {
-                let p = match i {
-                    0 => json!({"layout": "vertical", "wrap": false}),
-                    1 => json!({"layout": "horizontal", "wrap": false}),
-                    2 => json!({"layout": "horizontal", "wrap": true}),
-                    _ => json!({"layout": "grid"}),
-                };
-                app.set_props(&ids, p);
-            }
-        });
-    }
-    // W / H with the proportion lock.
-    let w = common(doc, sel, |n| (n.width * 100.0).round() / 100.0);
-    let h = common(doc, sel, |n| (n.height * 100.0).round() / 100.0);
-    let col = widgets::col_width(ui.available_width());
-    let half = col;
-    widgets::sublabels(ui, "Dimensions", None);
-    row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("lay_w"), Lead::Text("W"), w, "", col, 1.0);
-        app.field(&ids, "width", e, |v| json!(v.max(0.0)));
-        let e = widgets::number_field(ui, Id::new("lay_h"), Lead::Text("H"), h, "", col, 1.0);
-        app.field(&ids, "height", e, |v| json!(v.max(0.0)));
-        let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
-        if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, "Constrain proportions").clicked() {
-            app.set_props(&ids, json!({"constrainProportions": !locked}));
-        }
-    });
-    let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
-    let is_text = sel.iter().all(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_))));
-    if has_al || parent_al || is_text {
-        let sh = common(doc, sel, |n| n.child_layout.sizing_h);
-        let sv = common(doc, sel, |n| n.child_layout.sizing_v);
-        row(ui, 32.0, |ui| {
-            for (cur, key) in [(sh, "sizingH"), (sv, "sizingV")] {
-                let label = cur.map(|s| s.label()).unwrap_or("Mixed");
-                let resp = widgets::dropdown(
-                    ui,
-                    label,
-                    half,
-                    Some(match cur {
-                        Some(Sizing::Hug) => Icon::Hug,
-                        Some(Sizing::Fill) => Icon::FillContainer,
-                        _ => Icon::Fixed,
-                    }),
-                );
-                let ids2 = ids.clone();
-                egui::Popup::menu(&resp).show(|ui| {
-                    let mut opts = vec![("Fixed", "fixed")];
-                    if has_al || is_text {
-                        opts.push(("Hug contents", "hug"));
-                    }
-                    if parent_al {
-                        opts.push(("Fill container", "fill"));
-                    }
-                    for (l, v) in opts {
-                        if menu_item(ui, l, "") {
-                            app.set_props(&ids2, json!({key: v}));
-                            ui.close();
-                        }
-                    }
-                });
-            }
-        });
-    }
-    if let Some(Some(l)) = &al {
-        // Alignment grid + gap.
-        row(ui, 72.0, |ui| {
-            let (grid, _) = ui.allocate_exact_size(vec2(72.0, 64.0), Sense::hover());
-            ui.painter().rect_filled(grid, CornerRadius::same(5), t.field);
-            let horizontal = l.mode != LayoutMode::Vertical;
-            for yi in 0..3 {
-                for xi in 0..3 {
-                    let c = pos2(grid.min.x + 12.0 + xi as f32 * 24.0, grid.min.y + 10.0 + yi as f32 * 22.0);
-                    let r = Rect::from_center_size(c, vec2(22.0, 20.0));
-                    let resp = ui.interact(r, Id::new(("al_grid", xi, yi)), Sense::click());
-                    let (main_i, cross_i) = if horizontal { (xi, yi) } else { (yi, xi) };
-                    let cur_main = match l.main_align {
-                        MainAlign::Min => 0,
-                        MainAlign::Center => 1,
-                        MainAlign::Max => 2,
-                        MainAlign::SpaceBetween => 9,
-                    };
-                    let cur_cross = match l.cross_align {
-                        CrossAlign::Min | CrossAlign::Baseline => 0,
-                        CrossAlign::Center => 1,
-                        CrossAlign::Max => 2,
-                    };
-                    let on = (cur_main == main_i || cur_main == 9) && cur_cross == cross_i;
-                    if on {
-                        ui.painter().rect_filled(
-                            Rect::from_center_size(c, vec2(if horizontal { 4.0 } else { 12.0 }, if horizontal { 12.0 } else { 4.0 })),
-                            CornerRadius::same(1),
-                            ACCENT,
-                        );
-                    } else {
-                        ui.painter().circle_filled(c, if resp.hovered() { 2.5 } else { 1.5 }, if resp.hovered() { ACCENT } else { t.text_tertiary });
-                    }
-                    if resp.clicked() {
-                        let m = ["min", "center", "max"][main_i];
-                        let cr = ["min", "center", "max"][cross_i];
-                        let main = if l.main_align == MainAlign::SpaceBetween { "spaceBetween" } else { m };
-                        app.set_props(&ids, json!({"mainAlign": main, "crossAlign": cr}));
-                    }
-                }
-            }
-            ui.vertical(|ui| {
-                let auto = l.main_align == MainAlign::SpaceBetween;
-                let e = widgets::number_field(ui, Id::new("al_gap"), Lead::Icon(Icon::Gap), if auto { None } else { Some(l.gap) }, "", 96.0, 1.0);
-                app.field(&ids, "gap", e, |v| json!(v));
-                ui.add_space(8.0);
-                let resp = widgets::dropdown(ui, if auto { "Auto gap" } else { "Fixed gap" }, 96.0, None);
-                egui::Popup::menu(&resp).show(|ui| {
-                    if menu_item(ui, "Fixed", "") {
-                        app.set_props(&ids, json!({"mainAlign": "min"}));
-                        ui.close();
-                    }
-                    if menu_item(ui, "Auto (space between)", "") {
-                        app.set_props(&ids, json!({"mainAlign": "spaceBetween"}));
-                        ui.close();
-                    }
-                });
-            });
-        });
-        // Padding.
-        let [pt, pr, pb, pl] = l.padding;
-        row(ui, 32.0, |ui| {
-            let e = widgets::number_field(ui, Id::new("al_padh"), Lead::Icon(Icon::PaddingH), if pl == pr { Some(pl) } else { None }, "", half, 1.0);
-            app.field(&ids, "paddingHorizontal", e, |v| json!(v.max(0.0)));
-            let e = widgets::number_field(ui, Id::new("al_padv"), Lead::Icon(Icon::PaddingV), if pt == pb { Some(pt) } else { None }, "", half, 1.0);
-            app.field(&ids, "paddingVertical", e, |v| json!(v.max(0.0)));
-        });
-        if l.mode == LayoutMode::Grid {
-            row(ui, 32.0, |ui| {
-                let e = widgets::number_field(ui, Id::new("al_cols"), Lead::Text("Cols"), Some(f64::from(l.grid_columns)), "", half, 1.0);
-                app.field(&ids, "gridColumns", e, |v| json!(v.max(1.0)));
-                let e = widgets::number_field(ui, Id::new("al_rows"), Lead::Text("Rows"), Some(f64::from(l.grid_rows)), "", half, 1.0);
-                app.field(&ids, "gridRows", e, |v| json!(v.max(1.0)));
-            });
-        }
-    }
-    if frames {
-        let clip = common(doc, sel, |n| n.clip);
-        row(ui, 32.0, |ui| {
-            if widgets::checkbox(ui, clip.unwrap_or(false), "Clip content") {
-                app.set_props(&ids, json!({"clip": !clip.unwrap_or(false)}));
-            }
-        });
-    }
-    if parent_al {
-        let abs = common(doc, sel, |n| n.child_layout.absolute);
-        row(ui, 32.0, |ui| {
-            if widgets::checkbox(ui, abs.unwrap_or(false), "Ignore auto layout (absolute position)") {
-                app.set_props(&ids, json!({"absolute": !abs.unwrap_or(false)}));
-            }
-        });
     }
 }
 

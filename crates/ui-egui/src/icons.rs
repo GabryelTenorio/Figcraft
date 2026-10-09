@@ -116,6 +116,8 @@ pub enum Icon {
     Prototype,
     Section2,
     Logo,
+    /// Ignore auto layout: a layer pinned at an offset inside its frame.
+    AbsolutePosition,
 }
 
 struct P<'a> {
@@ -646,6 +648,13 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.circle(4.5, 11.5, 2.0);
             p.poly(&[(6.0, 10.0), (9.0, 6.0), (12.5, 4.0)], false);
             p.poly(&[(10.0, 3.0), (12.8, 3.8), (12.0, 6.6)], false);
+        }
+        AbsolutePosition => {
+            // The frame, a small layer near its top-right corner, and the two offsets pinning it.
+            p.rect(2.5, 2.5, 13.5, 13.5, 1.5);
+            p.fill_rect(7.0, 6.0, 10.5, 9.5, 0.5);
+            p.line(10.5, 7.75, 13.5, 7.75);
+            p.line(8.75, 2.5, 8.75, 6.0);
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

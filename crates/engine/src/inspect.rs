@@ -75,10 +75,27 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if n.layout.is_some() || parent_al || matches!(n.kind, NodeKind::Text(_)) {
             o.insert("sizing".into(), json!({"horizontal": n.child_layout.sizing_h, "vertical": n.child_layout.sizing_v}));
         }
-        if n.child_layout.absolute {
+        let cl = &n.child_layout;
+        if cl.absolute {
             o.insert("absolute".into(), json!(true));
         }
-        if !parent_al && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like()) {
+        for (k, v) in [("minWidth", cl.min_w), ("maxWidth", cl.max_w), ("minHeight", cl.min_h), ("maxHeight", cl.max_h)] {
+            if let Some(v) = v {
+                o.insert(k.into(), json!(v));
+            }
+        }
+        if let Some(cell) = parent_al
+            .then(|| n.parent.and_then(|p| figcraft_layout::grid_geometry(doc, p)))
+            .flatten()
+            .and_then(|g| g.cells.into_iter().find(|c| c.id == n.id))
+        {
+            o.insert(
+                "gridCell".into(),
+                json!({"column": cell.column, "row": cell.row, "columnSpan": cell.column_span, "rowSpan": cell.row_span,
+                       "anchored": cl.grid_column.is_some() || cl.grid_row.is_some()}),
+            );
+        }
+        if (!parent_al || cl.absolute) && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like()) {
             o.insert("constraints".into(), serde_json::to_value(n.constraints).unwrap_or(Value::Null));
         }
         if n.kind.is_frame_like() {

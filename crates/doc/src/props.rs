@@ -298,9 +298,13 @@ pub struct AutoLayout {
     pub padding: [f64; 4],
     pub main_align: MainAlign,
     pub cross_align: CrossAlign,
-    /// Grid mode: column and row counts.
+    /// Grid mode: column and row counts (rows grow to fit the children).
     pub grid_columns: u32,
     pub grid_rows: u32,
+    /// Grid mode: column track sizes (missing tracks are `1fr`).
+    pub column_tracks: Vec<GridTrack>,
+    /// Grid mode: row track sizes (missing tracks are `1fr`).
+    pub row_tracks: Vec<GridTrack>,
     /// Include strokes in layout sizes.
     pub strokes_included: bool,
     /// Last item on top (canvas stacking).
@@ -319,6 +323,8 @@ impl Default for AutoLayout {
             cross_align: CrossAlign::Min,
             grid_columns: 2,
             grid_rows: 2,
+            column_tracks: Vec::new(),
+            row_tracks: Vec::new(),
             strokes_included: false,
             reverse_z: false,
         }
@@ -347,6 +353,34 @@ impl Sizing {
     }
 }
 
+/// One grid auto layout track (a column or a row): a fixed size in px, hugging its contents, or
+/// filling a share of the free space (`value` fractional units, like CSS `fr`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GridTrack {
+    pub sizing: Sizing,
+    /// Fixed: the size in px. Fill: the fractional units. Hug: unused.
+    pub value: f64,
+}
+
+impl Default for GridTrack {
+    fn default() -> Self {
+        Self { sizing: Sizing::Fill, value: 1.0 }
+    }
+}
+
+impl GridTrack {
+    pub fn fixed(px: f64) -> Self {
+        Self { sizing: Sizing::Fixed, value: px }
+    }
+    pub fn hug() -> Self {
+        Self { sizing: Sizing::Hug, value: 0.0 }
+    }
+    pub fn fill(fr: f64) -> Self {
+        Self { sizing: Sizing::Fill, value: fr }
+    }
+}
+
 /// Layout properties a node has as a child (of an auto layout frame) or as a resizable box.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -359,6 +393,23 @@ pub struct ChildLayout {
     pub max_w: Option<f64>,
     pub min_h: Option<f64>,
     pub max_h: Option<f64>,
+    /// Grid auto layout: anchor column / row (0-based); `None` = placed automatically.
+    pub grid_column: Option<u32>,
+    pub grid_row: Option<u32>,
+    /// Grid auto layout: how many columns / rows the child spans (0 is read as 1).
+    pub grid_column_span: u32,
+    pub grid_row_span: u32,
+}
+
+impl ChildLayout {
+    /// Column span, at least 1.
+    pub fn column_span(&self) -> u32 {
+        self.grid_column_span.max(1)
+    }
+    /// Row span, at least 1.
+    pub fn row_span(&self) -> u32 {
+        self.grid_row_span.max(1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

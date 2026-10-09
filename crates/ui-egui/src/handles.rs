@@ -1,6 +1,7 @@
 //! On-canvas editing handles that sit above the pointer tools: gradient handles (while a
 //! gradient fill is open in the colour picker), image crop handles (while a Crop-mode image
-//! fill is open) and auto layout padding/gap handles.
+//! fill is open) and auto layout padding/gap handles (item gaps, wrapped row gaps, grid column
+//! and row gaps, with the grid's tracks outlined).
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
 use figcraft_color::{ImagePaint, ImageScaleMode, Paint, PaintKind};
@@ -17,34 +18,13 @@ const PINK: Color32 = Color32::from_rgb(0xF2, 0x48, 0x8C);
 #[derive(Clone, Debug)]
 enum Drag {
     /// Gradient handle 0 = from, 1 = to, 2 = width.
-    Gradient {
-        id: NodeId,
-        fills: bool,
-        index: usize,
-        which: usize,
-    },
+    Gradient { id: NodeId, fills: bool, index: usize, which: usize },
     /// Padding side 0 top, 1 right, 2 bottom, 3 left.
-    Padding {
-        id: NodeId,
-        side: usize,
-        start: Pos2,
-        value: f64,
-    },
-    Gap {
-        id: NodeId,
-        start: Pos2,
-        value: f64,
-        vertical: bool,
-    },
+    Padding { id: NodeId, side: usize, start: Pos2, value: f64 },
+    /// A gap band: `key` is the prop it edits (`gap` or `crossGap`), `vertical` the drag axis.
+    Gap { id: NodeId, start: Pos2, value: f64, vertical: bool, key: &'static str },
     /// Image crop: corner 0..4 (tl, tr, br, bl) scales about the opposite corner, 4 moves.
-    Crop {
-        id: NodeId,
-        fills: bool,
-        index: usize,
-        which: usize,
-        start: (f64, f64),
-        rect: (f64, f64, f64, f64),
-    },
+    Crop { id: NodeId, fills: bool, index: usize, which: usize, start: (f64, f64), rect: (f64, f64, f64, f64) },
 }
 
 /// The Crop-mode image being edited: (node, fills, index, paint, image rect in the unit box).
@@ -111,9 +91,25 @@ fn screen_to_unit(app: &FigApp, id: NodeId, s: Pos2) -> Option<(f64, f64)> {
     Some((l.x / n.width.max(1e-9), l.y / n.height.max(1e-9)))
 }
 
-/// Auto layout zones of a single selected AL frame, in screen space: padding bands and gaps.
-/// (frame, padding bands (side, rect, value), gap rects, gap, vertical)
-type Zones = (NodeId, Vec<(usize, Rect, f64)>, Vec<Rect>, f64, bool);
+/// A gap band between auto layout items (screen space): the prop it edits, its value and the
+/// drag axis.
+#[derive(Clone, Copy)]
+struct GapZone {
+    rect: Rect,
+    key: &'static str,
+    value: f64,
+    vertical: bool,
+}
+
+/// Auto layout zones of a single selected AL frame, in screen space.
+struct Zones {
+    id: NodeId,
+    /// Padding bands: (side, rect, value).
+    bands: Vec<(usize, Rect, f64)>,
+    gaps: Vec<GapZone>,
+    /// Grid frames: the track boundaries to outline (screen-space segments).
+    tracks: Vec<[Pos2; 2]>,
+}
 
 fn al_zones(app: &FigApp) -> Option<Zones> {
     let ds = app.session.ds().ok()?;
@@ -133,30 +129,73 @@ fn al_zones(app: &FigApp) -> Option<Zones> {
         let p = w * Point::new(x, y);
         app.to_screen(p.x, p.y)
     };
+    let band = |x0: f64, y0: f64, x1: f64, y1: f64| Rect::from_two_pos(to(x0, y0), to(x1, y1));
     let [pt, pr, pb, pl] = al.padding;
     let (fw, fh) = (n.width, n.height);
     let bands = vec![
-        (0, Rect::from_two_pos(to(0.0, 0.0), to(fw, pt.max(4.0))), pt),
-        (1, Rect::from_two_pos(to(fw - pr.max(4.0), 0.0), to(fw, fh)), pr),
-        (2, Rect::from_two_pos(to(0.0, fh - pb.max(4.0)), to(fw, fh)), pb),
-        (3, Rect::from_two_pos(to(0.0, 0.0), to(pl.max(4.0), fh)), pl),
+        (0, band(0.0, 0.0, fw, pt.max(4.0)), pt),
+        (1, band(fw - pr.max(4.0), 0.0, fw, fh), pr),
+        (2, band(0.0, fh - pb.max(4.0), fw, fh), pb),
+        (3, band(0.0, 0.0, pl.max(4.0), fh), pl),
     ];
-    let vertical = al.mode == LayoutMode::Vertical;
+    let main = |rect: Rect, vertical: bool| GapZone { rect, key: "gap", value: al.gap, vertical };
+    let cross = |rect: Rect, vertical: bool| GapZone { rect, key: "crossGap", value: al.cross_gap, vertical };
     let mut gaps = Vec::new();
-    if al.mode != LayoutMode::Grid && !al.wrap {
-        let kids: Vec<_> = n.children.iter().filter_map(|c| doc.node(*c)).filter(|c| c.visible && !c.child_layout.absolute).collect();
-        for pair in kids.windows(2) {
-            let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else { continue };
-            let ra = figcraft_geom::transform_rect_bbox(a.transform, a.local_rect());
-            let rb = figcraft_geom::transform_rect_bbox(b.transform, b.local_rect());
-            let r =
-                if vertical { Rect::from_two_pos(to(pl, ra.y1), to(fw - pr, rb.y0)) } else { Rect::from_two_pos(to(ra.x1, pt), to(rb.x0, fh - pb)) };
-            if r.width() > 0.5 && r.height() > 0.5 {
-                gaps.push(r);
+    let mut tracks = Vec::new();
+    if let Some(g) = figcraft_layout::grid_geometry(doc, id) {
+        // Grid: bands between columns (column gap) and between rows (row gap), and the tracks.
+        let (top, bottom) = (g.rows.first().map(|r| r.0).unwrap_or(pt), g.rows.last().map(|r| r.1).unwrap_or(fh - pb));
+        let (left, right) = (g.columns.first().map(|c| c.0).unwrap_or(pl), g.columns.last().map(|c| c.1).unwrap_or(fw - pr));
+        for pair in g.columns.windows(2) {
+            if let [a, b] = pair {
+                gaps.push(main(band(a.1, top, b.0, bottom), false));
+            }
+        }
+        for pair in g.rows.windows(2) {
+            if let [a, b] = pair {
+                gaps.push(cross(band(left, a.1, right, b.0), true));
+            }
+        }
+        for c in &g.columns {
+            tracks.push([to(c.0, top), to(c.0, bottom)]);
+            tracks.push([to(c.1, top), to(c.1, bottom)]);
+        }
+        for r in &g.rows {
+            tracks.push([to(left, r.0), to(right, r.0)]);
+            tracks.push([to(left, r.1), to(right, r.1)]);
+        }
+    } else {
+        let vertical = al.mode == LayoutMode::Vertical;
+        let boxes: Vec<figcraft_geom::Rect> = figcraft_layout::flow_children(doc, id)
+            .into_iter()
+            .filter_map(|c| doc.node(c))
+            .map(|c| figcraft_geom::transform_rect_bbox(c.transform, c.local_rect()))
+            .collect();
+        // Lines: a wrapped item starts left of the previous one.
+        let mut lines: Vec<Vec<figcraft_geom::Rect>> = Vec::new();
+        for b in boxes {
+            match lines.last_mut() {
+                Some(line) if vertical || !al.wrap || line.last().is_some_and(|a| b.x0 >= a.x1 - 1e-6) => line.push(b),
+                _ => lines.push(vec![b]),
+            }
+        }
+        let span = |line: &[figcraft_geom::Rect]| line.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| (a.min(r.y0), b.max(r.y1)));
+        for line in &lines {
+            let (y0, y1) = if al.wrap { span(line) } else { (pt, fh - pb) };
+            for pair in line.windows(2) {
+                if let [ra, rb] = pair {
+                    gaps.push(main(if vertical { band(pl, ra.y1, fw - pr, rb.y0) } else { band(ra.x1, y0, rb.x0, y1) }, vertical));
+                }
+            }
+        }
+        for pair in lines.windows(2) {
+            if let [a, b] = pair {
+                gaps.push(cross(band(pl, span(a).1, fw - pr, span(b).0), true));
             }
         }
     }
-    Some((id, bands, gaps, al.gap, vertical))
+    gaps.retain(|g| g.rect.width() > 0.5 && g.rect.height() > 0.5);
+    Some(Zones { id, bands, gaps, tracks })
 }
 
 /// Draw the handles.
@@ -203,12 +242,15 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
     if !tool_move && dragging.is_none() {
         return;
     }
-    let Some((_, bands, gaps, gap, _)) = al_zones(app) else { return };
+    let Some(z) = al_zones(app) else { return };
     let active_side = match &dragging {
         Some(Drag::Padding { side, .. }) => Some(*side),
         _ => None,
     };
-    for (side, r, v) in &bands {
+    for seg in &z.tracks {
+        painter.add(Shape::dashed_line(seg, Stroke::new(1.0, PINK.gamma_multiply(0.6)), 3.0, 3.0));
+    }
+    for (side, r, v) in &z.bands {
         let hot = hover.is_some_and(|h| r.contains(h)) || active_side == Some(*side);
         if hot {
             painter.rect_filled(*r, CornerRadius::ZERO, PINK.gamma_multiply(0.25));
@@ -219,14 +261,18 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
             painter.galley(lr.min + vec2(4.0, 2.0), galley, Color32::WHITE);
         }
     }
-    let gap_drag = matches!(dragging, Some(Drag::Gap { .. }));
-    for r in &gaps {
-        let hot = hover.is_some_and(|h| r.contains(h)) || gap_drag;
+    let drag_key = match &dragging {
+        Some(Drag::Gap { key, .. }) => Some(*key),
+        _ => None,
+    };
+    for g in &z.gaps {
+        let r = g.rect;
+        let hot = hover.is_some_and(|h| r.contains(h)) || drag_key == Some(g.key);
         if hot {
-            painter.rect_filled(*r, CornerRadius::ZERO, PINK.gamma_multiply(0.3));
+            painter.rect_filled(r, CornerRadius::ZERO, PINK.gamma_multiply(0.3));
             let c = r.center();
             painter.line_segment([pos2(c.x - 3.0, c.y), pos2(c.x + 3.0, c.y)], Stroke::new(1.0, PINK));
-            let galley = painter.layout_no_wrap(crate::canvas::fmt(gap), semibold(10.0), Color32::WHITE);
+            let galley = painter.layout_no_wrap(crate::canvas::fmt(g.value), semibold(10.0), Color32::WHITE);
             let lr = Rect::from_center_size(c, galley.size() + vec2(8.0, 4.0));
             painter.rect_filled(lr, CornerRadius::same(3), PINK);
             painter.galley(lr.min + vec2(4.0, 2.0), galley, Color32::WHITE);
@@ -303,7 +349,7 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
     if app.session.tool.tool != figcraft_engine::ToolId::Move || app.session.tool.busy() {
         return false;
     }
-    let Some((id, bands, gaps, gap, vertical)) = al_zones(app) else { return false };
+    let Some(Zones { id, bands, gaps, .. }) = al_zones(app) else { return false };
     for (side, r, v) in bands {
         if r.contains(pos) {
             ctx.set_cursor_icon(if side % 2 == 0 { egui::CursorIcon::ResizeVertical } else { egui::CursorIcon::ResizeHorizontal });
@@ -315,12 +361,12 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
             return false;
         }
     }
-    for r in gaps {
-        if r.contains(pos) {
-            ctx.set_cursor_icon(if vertical { egui::CursorIcon::ResizeVertical } else { egui::CursorIcon::ResizeHorizontal });
+    for g in gaps {
+        if g.rect.contains(pos) {
+            ctx.set_cursor_icon(if g.vertical { egui::CursorIcon::ResizeVertical } else { egui::CursorIcon::ResizeHorizontal });
             if pressed {
                 let _ = app.session.begin_interaction("Gap");
-                ctx.data_mut(|d| d.insert_temp(drag_id(), Drag::Gap { id, start: pos, value: gap, vertical }));
+                ctx.data_mut(|d| d.insert_temp(drag_id(), Drag::Gap { id, start: pos, value: g.value, vertical: g.vertical, key: g.key }));
                 return true;
             }
             return false;
@@ -396,10 +442,10 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
             let cmd = if *fills { "fill.set" } else { "stroke.set" };
             let _ = app.session.execute(cmd, &json!({"ids": [id], "index": index, "paint": paint}));
         }
-        Drag::Gap { id, start, value, vertical } => {
+        Drag::Gap { id, start, value, vertical, key } => {
             let d = f64::from(if *vertical { pos.y - start.y } else { pos.x - start.x }) / zoom;
             let v = (value + d).round().max(0.0);
-            let _ = app.session.execute("node.set", &json!({"ids": [id], "props": {"gap": v}}));
+            let _ = app.session.execute("node.set", &json!({"ids": [id], "props": { *key: v }}));
         }
     }
 }

@@ -46,7 +46,12 @@ pub fn req_string(cmd: &str, p: &Value, key: &str) -> Result<String> {
 }
 
 pub fn boolean(p: &Value, key: &str) -> Option<bool> {
-    match get(p, key)? {
+    bool_of(get(p, key)?)
+}
+
+/// A lenient boolean: `true`, `1`, `"yes"`, `"on"`…
+pub fn bool_of(v: &Value) -> Option<bool> {
+    match v {
         Value::Bool(b) => Some(*b),
         Value::Number(n) => n.as_f64().map(|f| f != 0.0),
         Value::String(s) => match s.to_ascii_lowercase().as_str() {

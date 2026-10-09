@@ -1,9 +1,11 @@
 //! FigCraft layout.
 //!
 //! - [`layout_page`] / [`layout_frame`]: Figma-style auto layout. Children of an auto layout frame
-//!   are stacked horizontally or vertically (optionally wrapping) or placed on a grid, with gap,
-//!   padding and alignment; each child is Fixed, Hug (its own content) or Fill (shares the free
-//!   space). A Hug container sizes to its children. Absolute children are left alone.
+//!   are stacked horizontally or vertically (optionally wrapping, optionally aligned on their first
+//!   text baseline) or placed on a grid with fixed / hug / `fr` tracks and cells that span, with
+//!   gap, padding and alignment; each child is Fixed, Hug (its own content) or Fill (shares the
+//!   free space), within its min/max size. A Hug container sizes to its children. Absolute
+//!   children (ignoring auto layout) are not placed; they follow their constraints instead.
 //! - [`apply_constraints`]: children of a regular frame follow their constraints when it resizes.
 //! - [`grid_lines`]: the column/row rectangles of a layout grid, for drawing and snapping.
 //!
@@ -20,8 +22,13 @@ use figcraft_geom::{Affine, Point, Rect};
 pub trait Measure {
     /// The height a text node needs at `width`.
     fn text_height(&self, doc: &Document, id: NodeId, width: f64) -> Option<f64>;
-    /// Natural (auto width) size of a text node.
+    /// Natural (auto width, unwrapped) size of a text node, whatever its resize mode.
     fn text_size(&self, doc: &Document, id: NodeId) -> Option<(f64, f64)>;
+    /// Distance from the top of a text node's box to its first line's baseline (for baseline
+    /// alignment). `None` when unknown (non-text, no fonts); the item then aligns to the top.
+    fn text_baseline(&self, _doc: &Document, _id: NodeId) -> Option<f64> {
+        None
+    }
 }
 
 /// A measurer that never changes text sizes.
@@ -36,7 +43,8 @@ impl Measure for NoMeasure {
     }
 }
 
-fn clamp_size(v: f64, min: Option<f64>, max: Option<f64>) -> f64 {
+/// Clamp a size to `[min, max]` (non-finite or negative sizes become 0; when min > max, min wins).
+pub fn clamp_size(v: f64, min: Option<f64>, max: Option<f64>) -> f64 {
     let mut v = if v.is_finite() { v.max(0.0) } else { 0.0 };
     if let Some(m) = max.filter(|m| m.is_finite()) {
         v = v.min(m);
@@ -45,6 +53,10 @@ fn clamp_size(v: f64, min: Option<f64>, max: Option<f64>) -> f64 {
         v = v.max(m);
     }
     v
+}
+
+fn finite_or_zero(v: f64) -> f64 {
+    if v.is_finite() { v } else { 0.0 }
 }
 
 /// The child's box size as seen by the parent (rotation → bounding box).
@@ -108,6 +120,88 @@ pub fn layout_up(doc: &mut Document, id: NodeId, m: &dyn Measure) {
     }
 }
 
+/// The children an auto layout frame places: visible and not ignoring auto layout.
+pub fn flow_children(doc: &Document, frame: NodeId) -> Vec<NodeId> {
+    let Some(f) = doc.node(frame) else { return Vec::new() };
+    f.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|n| n.visible && !n.child_layout.absolute)).collect()
+}
+
+/// Padding `(top, right, bottom, left)` of an auto layout frame, sanitised, plus the stroke weight
+/// when strokes are included in the layout.
+fn insets(f: &figcraft_doc::Node, al: &AutoLayout) -> (f64, f64, f64, f64) {
+    let stroke_pad = if al.strokes_included && f.has_visible_stroke() { finite_or_zero(f.stroke.weight).max(0.0) } else { 0.0 };
+    let [pt, pr, pb, pl] = al.padding.map(|p| if p.is_finite() { p.max(0.0) } else { 0.0 });
+    (pt + stroke_pad, pr + stroke_pad, pb + stroke_pad, pl + stroke_pad)
+}
+
+/// Text that hugs its width: refresh its natural size, honouring min/max width by wrapping (a
+/// hugging text wider than its max width wraps at the max; narrower than its min width gets the min).
+fn fit_hug_text(doc: &mut Document, id: NodeId, m: &dyn Measure) {
+    let Some(n) = doc.node(id) else { return };
+    let NodeKind::Text(t) = &n.kind else { return };
+    let cl = &n.child_layout;
+    let auto_width = t.auto_resize == TextAutoResize::WidthAndHeight;
+    // A hugging text that wrapped at its max width earlier is auto height now.
+    let wrapped_hug = cl.sizing_h == Sizing::Hug && t.auto_resize == TextAutoResize::Height;
+    if !auto_width && !wrapped_hug {
+        return;
+    }
+    let (min_w, max_w) = (cl.min_w, cl.max_w);
+    let Some((nw, nh)) = m.text_size(doc, id) else { return };
+    let w = clamp_size(nw, min_w, max_w);
+    let limited = (w - nw).abs() > 1e-6;
+    let h = if limited { m.text_height(doc, id, w).unwrap_or(nh) } else { nh };
+    if let Some(n) = doc.node_mut(id)
+        && let NodeKind::Text(t) = &mut n.kind
+    {
+        let mode = if limited { TextAutoResize::Height } else { TextAutoResize::WidthAndHeight };
+        if t.auto_resize != mode {
+            t.auto_resize = mode;
+        }
+    }
+    set_size(doc, id, w, h);
+}
+
+/// Clamp an in-flow child's own size to its min/max (fill axes are clamped when distributed).
+fn enforce_limits(doc: &mut Document, id: NodeId, m: &dyn Measure) {
+    let Some(n) = doc.node(id) else { return };
+    let cl = &n.child_layout;
+    if cl.min_w.is_none() && cl.max_w.is_none() && cl.min_h.is_none() && cl.max_h.is_none() {
+        return;
+    }
+    let (w, h) = (n.width, n.height);
+    let (nw, nh) = (clamp_size(w, cl.min_w, cl.max_w), clamp_size(h, cl.min_h, cl.max_h));
+    if (nw - w).abs() < 1e-9 && (nh - h).abs() < 1e-9 {
+        return;
+    }
+    if matches!(n.kind, NodeKind::Text(_)) {
+        // Keep the text's resize mode (hugging width was handled by `fit_hug_text`).
+        set_size(doc, id, nw, nh);
+    } else {
+        resize_child(doc, id, nw, nh, m);
+    }
+}
+
+/// Distance from the top of a child's box to its first text baseline: text measures it, an auto
+/// layout frame uses its first placed child's baseline. `None` for other layers and rotated ones.
+fn item_baseline(doc: &Document, id: NodeId, m: &dyn Measure, depth: usize) -> Option<f64> {
+    let n = doc.node(id)?;
+    let c = n.transform.as_coeffs();
+    if c[1].abs() > 1e-9 || c[2].abs() > 1e-9 || c[0] < 0.0 || c[3] < 0.0 {
+        return None;
+    }
+    match &n.kind {
+        NodeKind::Text(_) => m.text_baseline(doc, id).filter(|b| b.is_finite()),
+        _ if n.layout.is_some() && n.kind.is_frame_like() && depth < 32 => flow_children(doc, id).into_iter().find_map(|k| {
+            let b = item_baseline(doc, k, m, depth + 1)?;
+            let kn = doc.node(k)?;
+            let top = figcraft_geom::transform_rect_bbox(kn.transform, kn.local_rect()).y0;
+            Some(top + b)
+        }),
+        _ => None,
+    }
+}
+
 struct Item {
     id: NodeId,
     main: f64,
@@ -118,6 +212,10 @@ struct Item {
     max_main: Option<f64>,
     min_cross: Option<f64>,
     max_cross: Option<f64>,
+    /// Baseline alignment: distance from the item's top to its first baseline.
+    baseline: Option<f64>,
+    /// Baseline alignment: offset from the line's top (computed per line).
+    base_off: f64,
 }
 
 /// Lay out one auto layout frame's children and size the frame if it hugs.
@@ -126,32 +224,28 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     let Some(al) = f.layout.clone() else { return };
     let horizontal = matches!(al.mode, LayoutMode::Horizontal);
     let (hug_w, hug_h) = (f.child_layout.sizing_h == Sizing::Hug, f.child_layout.sizing_v == Sizing::Hug);
-    let (fw, fh) = (f.width, f.height);
-    let stroke_pad = if al.strokes_included && f.has_visible_stroke() { f.stroke.weight } else { 0.0 };
-    let [pt, pr, pb, pl] = al.padding.map(|p| if p.is_finite() { p.max(0.0) } else { 0.0 });
-    let (pt, pr, pb, pl) = (pt + stroke_pad, pr + stroke_pad, pb + stroke_pad, pl + stroke_pad);
-    let kids: Vec<NodeId> = f.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|n| n.visible && !n.child_layout.absolute)).collect();
+    let (ow, oh) = (f.width, f.height);
+    // The frame's own min/max apply whatever its sizing.
+    let fcl = f.child_layout.clone();
+    let (fw, fh) = (clamp_size(ow, fcl.min_w, fcl.max_w), clamp_size(oh, fcl.min_h, fcl.max_h));
+    let (pt, pr, pb, pl) = insets(f, &al);
+    let kids = flow_children(doc, frame);
 
-    // Text children: refresh their natural size first.
+    // Text children refresh their natural size, then every child honours its min/max.
     for c in &kids {
-        if let Some(n) = doc.node(*c)
-            && let NodeKind::Text(t) = &n.kind
-            && t.auto_resize == TextAutoResize::WidthAndHeight
-            && let Some((w, h)) = m.text_size(doc, *c)
-        {
-            set_size(doc, *c, w, h);
-        }
+        fit_hug_text(doc, *c, m);
+        enforce_limits(doc, *c, m);
     }
 
     if matches!(al.mode, LayoutMode::Grid) {
-        layout_grid(doc, frame, &al, &kids, (pt, pr, pb, pl), m);
+        layout_grid(doc, frame, &al, m);
         return;
     }
 
     let inner_main_fixed = if horizontal { fw - pl - pr } else { fh - pt - pb };
-    let inner_cross_fixed = if horizontal { fh - pt - pb } else { fw - pl - pr };
     let hug_main = if horizontal { hug_w } else { hug_h };
     let hug_cross = if horizontal { hug_h } else { hug_w };
+    let baseline = horizontal && al.cross_align == CrossAlign::Baseline;
 
     let mut items: Vec<Item> = Vec::with_capacity(kids.len());
     for c in &kids {
@@ -161,20 +255,23 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         let (sm, sc) = if horizontal { (cl.sizing_h, cl.sizing_v) } else { (cl.sizing_v, cl.sizing_h) };
         let (min_main, max_main, min_cross, max_cross) =
             if horizontal { (cl.min_w, cl.max_w, cl.min_h, cl.max_h) } else { (cl.min_h, cl.max_h, cl.min_w, cl.max_w) };
+        let fill_cross = sc == Sizing::Fill && !hug_cross;
         items.push(Item {
             id: *c,
             main: if horizontal { w } else { h },
             cross: if horizontal { h } else { w },
             fill_main: sm == Sizing::Fill && !hug_main,
-            fill_cross: sc == Sizing::Fill && !hug_cross,
+            fill_cross,
             min_main,
             max_main,
             min_cross,
             max_cross,
+            baseline: if baseline && !fill_cross { item_baseline(doc, *c, m, 0) } else { None },
+            base_off: 0.0,
         });
     }
 
-    let gap = if al.gap.is_finite() { al.gap } else { 0.0 };
+    let gap = finite_or_zero(al.gap);
     let between = al.main_align == MainAlign::SpaceBetween;
 
     // Split into lines (wrap only on the main axis of a horizontal layout, like Figma).
@@ -234,23 +331,29 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
                 open = still;
             }
         }
+        // Baseline alignment: the line's baseline sits at the deepest first baseline.
+        let line_base = line.iter().filter_map(|i| items.get(*i)).filter_map(|it| it.baseline).fold(0.0, f64::max);
+        for i in line {
+            if let Some(it) = items.get_mut(*i) {
+                it.base_off = it.baseline.map(|b| line_base - b).unwrap_or(0.0);
+            }
+        }
         let main_used: f64 = line.iter().filter_map(|i| items.get(*i)).map(|it| it.main).sum::<f64>() + gaps;
-        let cross: f64 = line.iter().filter_map(|i| items.get(*i)).filter(|it| !it.fill_cross).map(|it| it.cross).fold(0.0, f64::max);
+        let cross: f64 = line.iter().filter_map(|i| items.get(*i)).filter(|it| !it.fill_cross).map(|it| it.base_off + it.cross).fold(0.0, f64::max);
         line_extents.push((main_used, cross));
     }
 
     // Container size.
     let content_main = line_extents.iter().map(|l| l.0).fold(0.0, f64::max);
-    let cross_gap = if al.cross_gap.is_finite() { al.cross_gap } else { 0.0 };
+    let cross_gap = finite_or_zero(al.cross_gap);
     let content_cross: f64 = line_extents.iter().map(|l| l.1).sum::<f64>() + cross_gap * lines.len().saturating_sub(1) as f64;
     let (mut nw, mut nh) = (fw, fh);
-    let fcl = doc.node(frame).map(|n| n.child_layout.clone()).unwrap_or_default();
     if hug_main {
         let v = content_main + if horizontal { pl + pr } else { pt + pb };
         if horizontal {
-            nw = clamp_size(v, fcl.min_w, fcl.max_w);
+            nw = v;
         } else {
-            nh = clamp_size(v, fcl.min_h, fcl.max_h);
+            nh = v;
         }
     }
     if hug_cross {
@@ -259,15 +362,16 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         let cc = if lines.len() <= 1 { content_cross.max(max_fill_cross) } else { content_cross };
         let v = cc + if horizontal { pt + pb } else { pl + pr };
         if horizontal {
-            nh = clamp_size(v, fcl.min_h, fcl.max_h);
+            nh = v;
         } else {
-            nw = clamp_size(v, fcl.min_w, fcl.max_w);
+            nw = v;
         }
     }
+    let (nw, nh) = (clamp_size(nw, fcl.min_w, fcl.max_w), clamp_size(nh, fcl.min_h, fcl.max_h));
     set_size(doc, frame, nw, nh);
+    apply_constraints(doc, frame, ow, oh);
     let inner_main = if horizontal { nw - pl - pr } else { nh - pt - pb };
     let inner_cross = if horizontal { nh - pt - pb } else { nw - pl - pr };
-    let _ = inner_cross_fixed;
 
     // Position.
     let mut cross_pos = if horizontal { pt } else { pl };
@@ -290,7 +394,9 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
             let Some(it) = items.get(*i) else { continue };
             let cross_size = if it.fill_cross { clamp_size(line_cross, it.min_cross, it.max_cross) } else { it.cross };
             let off = match al.cross_align {
-                CrossAlign::Min | CrossAlign::Baseline => 0.0,
+                CrossAlign::Min => 0.0,
+                // Baseline applies to horizontal layouts; elsewhere it reads as top/left.
+                CrossAlign::Baseline => it.base_off,
                 CrossAlign::Center => (line_cross - cross_size) / 2.0,
                 CrossAlign::Max => line_cross - cross_size,
             };
@@ -305,8 +411,6 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         }
         cross_pos += line_cross + cross_gap;
     }
-    // Hugging after fill-cross text re-wrapped: heights may have changed; one more pass is cheap.
-    let _ = AutoLayout::default();
 }
 
 fn resize_child(doc: &mut Document, id: NodeId, w: f64, h: f64, m: &dyn Measure) {
@@ -326,81 +430,303 @@ fn resize_child(doc: &mut Document, id: NodeId, w: f64, h: f64, m: &dyn Measure)
         let old = doc.node(id).map(|n| (n.width, n.height));
         set_size(doc, id, w, h);
         if let Some((ow, oh)) = old
-            && doc.node(id).is_some_and(|n| n.layout.is_none() && n.kind.is_frame_like())
+            && doc.node(id).is_some_and(|n| n.kind.is_frame_like())
         {
             apply_constraints(doc, id, ow, oh);
-        } else if doc.node(id).is_some_and(|n| n.layout.is_some()) {
+        }
+        if doc.node(id).is_some_and(|n| n.layout.is_some()) {
             layout_frame(doc, id, m);
         }
     }
 }
 
-fn layout_grid(doc: &mut Document, frame: NodeId, al: &AutoLayout, kids: &[NodeId], pad: (f64, f64, f64, f64), m: &dyn Measure) {
-    let (pt, pr, pb, pl) = pad;
-    let Some(f) = doc.node(frame) else { return };
-    let cols = al.grid_columns.clamp(1, 1000) as usize;
-    let rows_needed = kids.len().div_ceil(cols).max(al.grid_rows.clamp(1, 1000) as usize);
-    let (fw, fh) = (f.width, f.height);
-    let gx = if al.gap.is_finite() { al.gap.max(0.0) } else { 0.0 };
-    let gy = if al.cross_gap.is_finite() { al.cross_gap.max(0.0) } else { 0.0 };
-    let hug_w = f.child_layout.sizing_h == Sizing::Hug;
-    let hug_h = f.child_layout.sizing_v == Sizing::Hug;
-    // Track sizes: equal (1fr) unless hugging, then the max child per track.
-    let mut col_w = vec![0.0f64; cols];
-    let mut row_h = vec![0.0f64; rows_needed];
-    for (i, c) in kids.iter().enumerate() {
-        let (w, h) = outer_size(doc, *c);
-        if let Some(cw) = col_w.get_mut(i % cols) {
-            *cw = cw.max(w);
-        }
-        if let Some(rh) = row_h.get_mut(i / cols) {
-            *rh = rh.max(h);
-        }
-    }
-    let total_w = if hug_w { col_w.iter().sum::<f64>() + gx * (cols - 1) as f64 + pl + pr } else { fw };
-    let total_h = if hug_h { row_h.iter().sum::<f64>() + gy * (rows_needed - 1) as f64 + pt + pb } else { fh };
-    set_size(doc, frame, total_w, total_h);
-    if !hug_w {
-        let cw = ((total_w - pl - pr - gx * (cols - 1) as f64) / cols as f64).max(0.0);
-        col_w = vec![cw; cols];
-    }
-    if !hug_h {
-        let rh = ((total_h - pt - pb - gy * (rows_needed - 1) as f64) / rows_needed as f64).max(0.0);
-        row_h = vec![rh; rows_needed];
-    }
-    for (i, c) in kids.iter().enumerate() {
-        let (ci, ri) = (i % cols, i / cols);
-        let x = pl + col_w.iter().take(ci).sum::<f64>() + gx * ci as f64;
-        let y = pt + row_h.iter().take(ri).sum::<f64>() + gy * ri as f64;
-        let (cw, rh) = (col_w.get(ci).copied().unwrap_or(0.0), row_h.get(ri).copied().unwrap_or(0.0));
-        let Some(n) = doc.node(*c) else { continue };
-        let (fill_w, fill_h) = (n.child_layout.sizing_h == Sizing::Fill, n.child_layout.sizing_v == Sizing::Fill);
-        let (w, h) = outer_size(doc, *c);
-        let (nw, nh) = (if fill_w { cw } else { w }, if fill_h { rh } else { h });
-        if fill_w || fill_h {
-            resize_child(doc, *c, nw, nh, m);
-        }
-        let ox = match al.main_align {
-            MainAlign::Center => (cw - nw) / 2.0,
-            MainAlign::Max => cw - nw,
-            _ => 0.0,
-        };
-        let oy = match al.cross_align {
-            CrossAlign::Center => (rh - nh) / 2.0,
-            CrossAlign::Max => rh - nh,
-            _ => 0.0,
-        };
-        place(doc, *c, x + ox, y + oy);
+/// Largest grid (cells) the layout handles; rows beyond it overlap the last row.
+const MAX_GRID_CELLS: usize = 1_000_000;
+const MAX_TRACKS: usize = 1000;
+
+/// A grid auto layout child's cell (0-based anchor column/row and spans, clamped to the grid).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridCell {
+    pub id: NodeId,
+    pub column: usize,
+    pub row: usize,
+    pub column_span: usize,
+    pub row_span: usize,
+}
+
+/// A grid auto layout frame's resolved geometry (frame-local): column x ranges, row y ranges,
+/// each placed child's cell, and the frame size the grid wants.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridGeometry {
+    pub columns: Vec<(f64, f64)>,
+    pub rows: Vec<(f64, f64)>,
+    pub cells: Vec<GridCell>,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl GridGeometry {
+    /// The frame-local rectangle a cell (with its spans) covers.
+    pub fn cell_rect(&self, c: &GridCell) -> Rect {
+        let x0 = self.columns.get(c.column).map(|t| t.0).unwrap_or(0.0);
+        let x1 = self.columns.get(c.column + c.column_span - 1).map(|t| t.1).unwrap_or(x0);
+        let y0 = self.rows.get(c.row).map(|t| t.0).unwrap_or(0.0);
+        let y1 = self.rows.get(c.row + c.row_span - 1).map(|t| t.1).unwrap_or(y0);
+        Rect::new(x0, y0, x1.max(x0), y1.max(y0))
     }
 }
 
-/// After frame `id` (without auto layout) changed size from `(ow, oh)`, move/resize its children
-/// per their constraints (recursively for children frames that resize).
+/// Place grid children in cells: children with an anchor column and row go there first; the rest
+/// flow left to right, top to bottom into the next free cells that fit their spans. Returns the
+/// cells (in child order) and the row count (at least the frame's row count).
+pub fn grid_place(doc: &Document, al: &AutoLayout, kids: &[NodeId]) -> (Vec<GridCell>, usize) {
+    let cols = (al.grid_columns as usize).clamp(1, MAX_TRACKS);
+    let max_rows = (MAX_GRID_CELLS / cols).clamp(1, MAX_TRACKS);
+    let mut occ: Vec<Vec<bool>> = Vec::new();
+    let free = |occ: &Vec<Vec<bool>>, c: usize, r: usize, cs: usize, rs: usize| {
+        (r..r + rs).all(|ri| occ.get(ri).is_none_or(|row| (c..c + cs).all(|ci| !row.get(ci).copied().unwrap_or(false))))
+    };
+    let mark = |occ: &mut Vec<Vec<bool>>, c: usize, r: usize, cs: usize, rs: usize| {
+        while occ.len() < r + rs {
+            occ.push(vec![false; cols]);
+        }
+        for row in occ.iter_mut().skip(r).take(rs) {
+            for cell in row.iter_mut().skip(c).take(cs) {
+                *cell = true;
+            }
+        }
+    };
+    let spans = |id: NodeId| {
+        let cl = doc.node(id).map(|n| n.child_layout.clone()).unwrap_or_default();
+        let cs = (cl.column_span() as usize).min(cols);
+        let rs = (cl.row_span() as usize).min(max_rows);
+        (cl.grid_column.map(|c| (c as usize).min(cols - cs)), cl.grid_row.map(|r| (r as usize).min(max_rows - rs)), cs, rs)
+    };
+    let mut placed: Vec<Option<GridCell>> = vec![None; kids.len()];
+    // 1. Fully anchored children.
+    for (i, id) in kids.iter().enumerate() {
+        if let (Some(c), Some(r), cs, rs) = spans(*id) {
+            mark(&mut occ, c, r, cs, rs);
+            if let Some(slot) = placed.get_mut(i) {
+                *slot = Some(GridCell { id: *id, column: c, row: r, column_span: cs, row_span: rs });
+            }
+        }
+    }
+    // 2. The rest, in order (a cursor keeps auto-placed children in reading order).
+    let mut cursor = (0usize, 0usize); // (row, column)
+    for (i, id) in kids.iter().enumerate() {
+        if placed.get(i).is_some_and(Option::is_some) {
+            continue;
+        }
+        let (col, row, cs, rs) = spans(*id);
+        let last_row = max_rows - rs;
+        let (c, r) = match (col, row) {
+            (Some(c), _) => (0..=last_row).find(|r| free(&occ, c, *r, cs, rs)).map(|r| (c, r)).unwrap_or((c, last_row)),
+            (None, Some(r)) => (0..=cols - cs).find(|c| free(&occ, *c, r, cs, rs)).map(|c| (c, r)).unwrap_or((0, r)),
+            (None, None) => {
+                let mut found = None;
+                let (mut r, mut c) = cursor;
+                while r <= last_row {
+                    if c + cs <= cols && free(&occ, c, r, cs, rs) {
+                        found = Some((c, r));
+                        break;
+                    }
+                    c += 1;
+                    if c + cs > cols {
+                        c = 0;
+                        r += 1;
+                    }
+                }
+                let (c, r) = found.unwrap_or((0, last_row));
+                cursor = (r, c + cs);
+                (c, r)
+            }
+        };
+        mark(&mut occ, c, r, cs, rs);
+        if let Some(slot) = placed.get_mut(i) {
+            *slot = Some(GridCell { id: *id, column: c, row: r, column_span: cs, row_span: rs });
+        }
+    }
+    let cells: Vec<GridCell> = placed.into_iter().flatten().collect();
+    let rows = cells.iter().map(|c| c.row + c.row_span).max().unwrap_or(0).max((al.grid_rows as usize).clamp(1, MAX_TRACKS));
+    (cells, rows)
+}
+
+/// Track `i`'s sizing and sanitised value (missing tracks are `1fr`).
+fn track_spec(specs: &[figcraft_doc::GridTrack], i: usize) -> (Sizing, f64) {
+    let t = specs.get(i).copied().unwrap_or_default();
+    let v = if t.value.is_finite() { t.value.clamp(0.0, 1e6) } else { 0.0 };
+    (t.sizing, v)
+}
+
+/// Resolve track sizes: fixed tracks keep their size, hug tracks fit their content, fill tracks
+/// share what is left by their fractional units. `avail` is None when the frame hugs that axis
+/// (fill tracks then hug their content too).
+fn resolve_tracks(specs: &[figcraft_doc::GridTrack], content: &[f64], avail: Option<f64>) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::with_capacity(content.len());
+    let mut total_fr = 0.0;
+    let mut used = 0.0;
+    for (i, c) in content.iter().enumerate() {
+        let size = match track_spec(specs, i) {
+            (Sizing::Fixed, v) => v,
+            (Sizing::Fill, v) if avail.is_some() => {
+                total_fr += v;
+                0.0
+            }
+            _ => *c,
+        };
+        used += size;
+        out.push(size);
+    }
+    if let Some(a) = avail
+        && total_fr > 1e-12
+    {
+        let free = (a - used).max(0.0);
+        for (i, s) in out.iter_mut().enumerate() {
+            if let (Sizing::Fill, v) = track_spec(specs, i) {
+                *s = free * v / total_fr;
+            }
+        }
+    }
+    out
+}
+
+/// Content size per track (`hug`: the frame hugs this axis, so fill tracks size to content too):
+/// the largest single-span child; a spanning child that needs more than its tracks give it grows
+/// the content-sized tracks it spans (unless a flexible track can absorb it).
+fn track_content(cells: &[GridCell], sizes: &[f64], specs: &[figcraft_doc::GridTrack], n: usize, gap: f64, columns: bool, hug: bool) -> Vec<f64> {
+    let by_content = |i: usize| match track_spec(specs, i).0 {
+        Sizing::Hug => true,
+        Sizing::Fill => hug,
+        Sizing::Fixed => false,
+    };
+    let mut content: Vec<f64> = (0..n).map(|i| if let (Sizing::Fixed, v) = track_spec(specs, i) { v } else { 0.0 }).collect();
+    let span = |c: &GridCell| if columns { (c.column, c.column_span) } else { (c.row, c.row_span) };
+    for (c, s) in cells.iter().zip(sizes) {
+        let (start, len) = span(c);
+        if len == 1
+            && by_content(start)
+            && let Some(t) = content.get_mut(start)
+        {
+            *t = t.max(*s);
+        }
+    }
+    for (c, s) in cells.iter().zip(sizes) {
+        let (start, len) = span(c);
+        if len < 2 || (!hug && (start..start + len).any(|i| track_spec(specs, i).0 == Sizing::Fill)) {
+            continue;
+        }
+        let have: f64 = content.iter().skip(start).take(len).sum::<f64>() + gap * (len - 1) as f64;
+        let grow: Vec<usize> = (start..start + len).filter(|i| by_content(*i)).collect();
+        if *s > have && !grow.is_empty() {
+            let extra = (*s - have) / grow.len() as f64;
+            for i in grow {
+                if let Some(t) = content.get_mut(i) {
+                    *t += extra;
+                }
+            }
+        }
+    }
+    content
+}
+
+fn track_ranges(start: f64, sizes: &[f64], gap: f64) -> Vec<(f64, f64)> {
+    let mut x = start;
+    sizes
+        .iter()
+        .map(|s| {
+            let r = (x, x + s);
+            x += s + gap;
+            r
+        })
+        .collect()
+}
+
+/// Resolve a grid auto layout frame's tracks and cells from its children's current sizes.
+pub fn grid_geometry(doc: &Document, frame: NodeId) -> Option<GridGeometry> {
+    let f = doc.node(frame)?;
+    let al = f.layout.as_ref()?;
+    if al.mode != LayoutMode::Grid {
+        return None;
+    }
+    let (pt, pr, pb, pl) = insets(f, al);
+    let kids = flow_children(doc, frame);
+    let (cells, rows) = grid_place(doc, al, &kids);
+    let cols = (al.grid_columns as usize).clamp(1, MAX_TRACKS);
+    let gx = finite_or_zero(al.gap).max(0.0);
+    let gy = finite_or_zero(al.cross_gap).max(0.0);
+    let hug_w = f.child_layout.sizing_h == Sizing::Hug;
+    let hug_h = f.child_layout.sizing_v == Sizing::Hug;
+    // What each child asks of its tracks: its size, or (filling a non-hugging axis) its minimum.
+    let (mut ws, mut hs) = (Vec::with_capacity(cells.len()), Vec::with_capacity(cells.len()));
+    for c in &cells {
+        let (w, h) = outer_size(doc, c.id);
+        let cl = doc.node(c.id).map(|n| n.child_layout.clone()).unwrap_or_default();
+        ws.push(if cl.sizing_h == Sizing::Fill && !hug_w { cl.min_w.unwrap_or(0.0) } else { w });
+        hs.push(if cl.sizing_v == Sizing::Fill && !hug_h { cl.min_h.unwrap_or(0.0) } else { h });
+    }
+    let col_content = track_content(&cells, &ws, &al.column_tracks, cols, gx, true, hug_w);
+    let row_content = track_content(&cells, &hs, &al.row_tracks, rows, gy, false, hug_h);
+    let gaps_w = gx * cols.saturating_sub(1) as f64;
+    let gaps_h = gy * rows.saturating_sub(1) as f64;
+    let avail_w = (!hug_w).then_some(f.width - pl - pr - gaps_w);
+    let avail_h = (!hug_h).then_some(f.height - pt - pb - gaps_h);
+    let col_w = resolve_tracks(&al.column_tracks, &col_content, avail_w);
+    let row_h = resolve_tracks(&al.row_tracks, &row_content, avail_h);
+    let cl = &f.child_layout;
+    let width = if hug_w { col_w.iter().sum::<f64>() + gaps_w + pl + pr } else { f.width };
+    let height = if hug_h { row_h.iter().sum::<f64>() + gaps_h + pt + pb } else { f.height };
+    Some(GridGeometry {
+        columns: track_ranges(pl, &col_w, gx),
+        rows: track_ranges(pt, &row_h, gy),
+        cells,
+        width: clamp_size(width, cl.min_w, cl.max_w),
+        height: clamp_size(height, cl.min_h, cl.max_h),
+    })
+}
+
+fn layout_grid(doc: &mut Document, frame: NodeId, al: &AutoLayout, m: &dyn Measure) {
+    let Some(f) = doc.node(frame) else { return };
+    let (fw, fh) = (f.width, f.height);
+    let (hug_w, hug_h) = (f.child_layout.sizing_h == Sizing::Hug, f.child_layout.sizing_v == Sizing::Hug);
+    let Some(g) = grid_geometry(doc, frame) else { return };
+    set_size(doc, frame, g.width, g.height);
+    apply_constraints(doc, frame, fw, fh);
+    // A fixed frame resized by its own min/max: tracks follow the clamped size.
+    let g = if (g.width - fw).abs() > 1e-9 && !hug_w || (g.height - fh).abs() > 1e-9 && !hug_h { grid_geometry(doc, frame).unwrap_or(g) } else { g };
+    for c in &g.cells {
+        let cell = g.cell_rect(c);
+        let Some(n) = doc.node(c.id) else { continue };
+        let cl = n.child_layout.clone();
+        let fill_w = cl.sizing_h == Sizing::Fill && !hug_w;
+        let fill_h = cl.sizing_v == Sizing::Fill && !hug_h;
+        let (w, h) = outer_size(doc, c.id);
+        let nw = if fill_w { clamp_size(cell.width(), cl.min_w, cl.max_w) } else { w };
+        let nh = if fill_h { clamp_size(cell.height(), cl.min_h, cl.max_h) } else { h };
+        if fill_w || fill_h {
+            resize_child(doc, c.id, nw, nh, m);
+        }
+        let (nw, nh) = outer_size(doc, c.id);
+        let ox = match al.main_align {
+            MainAlign::Center => (cell.width() - nw) / 2.0,
+            MainAlign::Max => cell.width() - nw,
+            _ => 0.0,
+        };
+        let oy = match al.cross_align {
+            CrossAlign::Center => (cell.height() - nh) / 2.0,
+            CrossAlign::Max => cell.height() - nh,
+            _ => 0.0,
+        };
+        place(doc, c.id, cell.x0 + ox, cell.y0 + oy);
+    }
+}
+
+/// After frame `id` changed size from `(ow, oh)`, move/resize its children per their constraints
+/// (recursively for children frames that resize). In an auto layout frame only the children that
+/// ignore auto layout (absolute position) follow constraints; the layout places the others.
 pub fn apply_constraints(doc: &mut Document, id: NodeId, ow: f64, oh: f64) {
     let Some(f) = doc.node(id) else { return };
-    if f.layout.is_some() {
-        return;
-    }
+    let absolute_only = f.layout.is_some();
     let (nw, nh) = (f.width, f.height);
     if (nw - ow).abs() < 1e-9 && (nh - oh).abs() < 1e-9 {
         return;
@@ -414,6 +740,9 @@ pub fn apply_constraints(doc: &mut Document, id: NodeId, ow: f64, oh: f64) {
     }
     for c in kids {
         let Some(n) = doc.node(c) else { continue };
+        if absolute_only && !n.child_layout.absolute {
+            continue;
+        }
         let lin = linear(n.transform);
         let b = figcraft_geom::transform_rect_bbox(n.transform, n.local_rect());
         let (cw, ch) = (n.width, n.height);
