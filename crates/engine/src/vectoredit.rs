@@ -31,10 +31,11 @@ pub enum VTool {
     Paint,
     Lasso,
     Cut,
+    Eraser,
 }
 
 impl VTool {
-    pub const ALL: [VTool; 6] = [VTool::Move, VTool::Pen, VTool::Bend, VTool::Paint, VTool::Lasso, VTool::Cut];
+    pub const ALL: [VTool; 7] = [VTool::Move, VTool::Pen, VTool::Bend, VTool::Paint, VTool::Lasso, VTool::Cut, VTool::Eraser];
     pub fn id(self) -> &'static str {
         match self {
             VTool::Move => "move",
@@ -43,6 +44,7 @@ impl VTool {
             VTool::Paint => "paint",
             VTool::Lasso => "lasso",
             VTool::Cut => "cut",
+            VTool::Eraser => "eraser",
         }
     }
     pub fn from_id(s: &str) -> Option<VTool> {
@@ -56,6 +58,7 @@ impl VTool {
             VTool::Paint => "Paint bucket",
             VTool::Lasso => "Lasso",
             VTool::Cut => "Cut",
+            VTool::Eraser => "Eraser",
         }
     }
     /// Catalog-style shortcut ("Shift+B"); the Bend tool is held with Cmd (Ctrl elsewhere).
@@ -67,6 +70,7 @@ impl VTool {
             VTool::Paint => "Shift+B",
             VTool::Lasso => "Q",
             VTool::Cut => "X",
+            VTool::Eraser => "Shift+E",
         }
     }
 }
@@ -473,6 +477,7 @@ pub fn key(s: &mut Session, name: &str, shift: bool, alt: bool, cmd: bool) -> Re
         ("B", true, false, false) => set_tool(s, VTool::Paint)?,
         ("Q", false, false, false) => set_tool(s, VTool::Lasso)?,
         ("X", false, false, false) => set_tool(s, VTool::Cut)?,
+        ("E", true, false, false) => set_tool(s, VTool::Eraser)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -696,6 +701,31 @@ pub fn specs() -> Vec<CommandSpec> {
             })?;
             Ok(json!({"vertices": ends}))
         }),
+        spec!(
+            "vector.edit.erase",
+            "Erase",
+            "{points: [[x, y], ...] (page), radius? (page units, default 8)} — removes the parts of paths the brush passes over",
+            true,
+            |s, p| {
+                let ve = editing(s)?;
+                let w = s.doc()?.world_transform(ve.id);
+                let inv = w.inverse();
+                let scale = w.determinant().abs().sqrt().max(1e-9);
+                let r = num_or(p, "radius", 8.0).clamp(0.01, 1e5) / scale;
+                let pts: Vec<Point> = match get(p, "points") {
+                    Some(Value::Array(a)) => {
+                        a.iter().filter_map(|q| Some(inv * Point::new(q.get(0).and_then(f64_of)?, q.get(1).and_then(f64_of)?))).take(10_000).collect()
+                    }
+                    _ => vec![],
+                };
+                let changed = edit(s.doc_mut()?, ve.id, |net| pts.iter().fold(false, |acc, c| ops::erase(net, *c, r) | acc))?;
+                set_state(s, |ve| {
+                    ve.vertices.clear();
+                    ve.segments.clear();
+                })?;
+                Ok(json!({"changed": changed}))
+            }
+        ),
         spec!("vector.edit.connect", "Connect points", "{a, b} (adds a straight segment)", true, |s, p| {
             let ve = editing(s)?;
             let (a, b) = (index("vector.edit.connect", p, "a")?, index("vector.edit.connect", p, "b")?);

@@ -222,6 +222,8 @@ pub struct Overlay {
     /// paint bucket would fill (page-space polygons).
     pub vector_hover: Option<crate::vectoredit::VHit>,
     pub lasso: Vec<[f64; 2]>,
+    /// The eraser brush under the pointer (x, y, radius in page units).
+    pub brush: Option<[f64; 3]>,
     pub face: Vec<Vec<[f64; 2]>>,
 }
 

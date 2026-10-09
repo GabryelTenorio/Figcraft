@@ -214,6 +214,7 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
             VTool::Paint => Icon::PaintBucket,
             VTool::Lasso => Icon::Lasso,
             VTool::Cut => Icon::Cut,
+            VTool::Eraser => Icon::Eraser,
         };
         icons::paint(ui.painter(), r.shrink(7.0), icon, if active { Color32::WHITE } else { t.icon });
         if resp.clicked() {

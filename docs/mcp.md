@@ -115,14 +115,15 @@ Or in a project's `.mcp.json`:
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id}` (converts shapes to vectors), `vector.edit.state` (page-space overlay, the
-local network and each point's handle mirroring), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut}`,
+local network and each point's handle mirroring), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser}`,
 `vector.edit.select {vertices?, segments?, add?}`, `vector.edit.selectAll`, `vector.edit.moveVertices`,
 `vector.edit.nudge`, `vector.edit.position {x?, y?}`, `vector.edit.setHandle`, `vector.edit.mirroring
 {mode: none|angle|angleAndLength}`, `vector.edit.smooth {smooth?}`, `vector.edit.bend`,
 `vector.edit.addVertex`, `vector.edit.connect {a, b}`, `vector.edit.pen {x, y, dx?, dy?}` (continues
 from the pen's open end; clicking a point connects or branches), `vector.edit.penEnd`,
 `vector.edit.paint {x, y}` (paint bucket: fills or unfills the closed area under a page point),
-`vector.edit.cut {segment, t} | {vertex}`, `vector.edit.lasso {points}`, `vector.edit.delete`,
+`vector.edit.cut {segment, t} | {vertex}`, `vector.edit.erase {points, radius?}` (the eraser),
+`vector.edit.lasso {points}`, `vector.edit.delete`,
 `vector.deleteHeal`, `vector.join` / `vector.smoothJoin` (join the selected points while editing),
 `vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
 `vector.edit.state`; local coordinates are the layer's own.

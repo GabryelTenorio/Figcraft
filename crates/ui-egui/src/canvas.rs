@@ -700,6 +700,13 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             }
         }
     }
+    // Eraser brush (vector edit mode).
+    if let Some([x, y, r]) = ov.brush {
+        let c = app.to_screen(x, y);
+        let rs = (r * app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0)) as f32;
+        painter.circle_stroke(c, rs, stroke(Color32::WHITE, 3.0));
+        painter.circle_stroke(c, rs, stroke(ACCENT, 1.5));
+    }
     // Lasso (vector edit mode).
     if ov.lasso.len() > 1 {
         let mut pts: Vec<Pos2> = ov.lasso.iter().map(|[x, y]| app.to_screen(*x, *y)).collect();

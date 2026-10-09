@@ -112,6 +112,7 @@ pub enum Icon {
     Reset,
     Detach,
     Variable,
+    Eraser,
     Swap,
     Link,
     Prototype,
@@ -636,6 +637,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Reset => {
             p.arc(8.0, 8.0, 5.0, -2.2, 2.6);
             p.poly(&[(2.8, 2.8), (3.3, 5.8), (6.3, 5.3)], false);
+        }
+        Eraser => {
+            // A tilted block with a band near its tip, over a short trace line.
+            p.poly(&[(3.0, 10.0), (9.5, 3.5), (13.0, 7.0), (6.5, 13.5)], true);
+            p.line(6.2, 6.8, 9.7, 10.3);
+            p.line(6.5, 13.5, 13.5, 13.5);
         }
         Variable => {
             // A hexagon with a dot: an original mark for "bind a value".

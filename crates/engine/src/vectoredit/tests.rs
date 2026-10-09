@@ -319,3 +319,25 @@ fn every_command_survives_junk_params_while_editing() {
         }
     }
 }
+
+#[test]
+fn eraser_strokes_cut_paths_in_one_step() {
+    let mut s = Session::new();
+    let id = rect(&mut s);
+    ex(&mut s, "vector.edit.tool", json!({"tool": "eraser"}));
+    s.pointer(&ev(PointerKind::Hover, 50.0, 0.0)).unwrap();
+    assert!(s.tool.overlay.brush.is_some(), "the brush shows");
+    // A stroke across the top edge.
+    drag(&mut s, (50.0, -5.0), (50.0, 5.0));
+    let n = net(&s, id);
+    assert_eq!(n.segments.len(), 5, "the top edge is split into two with a gap");
+    assert!(n.vertices.iter().all(|v| (v.point() - pt(50.0, 0.0)).hypot() >= 7.9), "nothing left under the brush");
+    s.undo().unwrap();
+    assert_eq!(net(&s, id).segments.len(), 4);
+    assert_eq!(net(&s, id).vertices.len(), 4, "one undo step restores the square");
+    // The command does the same with an explicit radius.
+    let r = ex(&mut s, "vector.edit.erase", json!({"points": [[100, 50]], "radius": 5}));
+    assert_eq!(r["changed"], json!(true));
+    assert!(key(&mut s, "E", true, false, false).unwrap());
+    assert_eq!(ve(&s).tool, VTool::Eraser);
+}

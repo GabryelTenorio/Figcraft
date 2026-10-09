@@ -47,6 +47,18 @@ pub(crate) enum VGesture {
         origin: Point,
         out: Option<(f64, f64)>,
     },
+    /// Eraser strokes so far (local points) and the brush radius (local units).
+    Erase {
+        stamps: Vec<Point>,
+        radius: f64,
+    },
+}
+
+/// Eraser brush radius in screen pixels.
+const ERASER_PX: f64 = 8.0;
+
+fn erase_all(net: &mut VectorNetwork, stamps: &[Point], radius: f64) -> bool {
+    stamps.iter().fold(false, |acc, c| ops::erase(net, *c, radius) | acc)
 }
 
 /// What a pen click does (replayed against the snapshot while the handle is dragged).
@@ -137,6 +149,7 @@ impl Session {
         ov.vector_hover = h;
         ov.face.clear();
         ov.rubber = None;
+        ov.brush = (ve.tool == VTool::Eraser).then(|| [ev.x, ev.y, ERASER_PX / ev.zoom.max(1e-6)]);
         ov.cursor = match ve.tool {
             VTool::Move if ev.cmd => Cursor::Crosshair,
             VTool::Move => Cursor::Default,
@@ -325,6 +338,19 @@ impl Session {
                 } else {
                     self.cancel_interaction()?;
                 }
+            }
+            VTool::Eraser => {
+                let scale = w.determinant().abs().sqrt().max(1e-9);
+                let radius = ERASER_PX / ev.zoom.max(1e-6) / scale;
+                let stamps = vec![w.inverse() * ev.p()];
+                self.begin_interaction("Eraser")?;
+                let st = stamps.clone();
+                self.preview(|doc, _| edit(doc, id, |net| erase_all(net, &st, radius)).map(|_| ()))?;
+                set_state(self, |e| {
+                    e.vertices.clear();
+                    e.segments.clear();
+                })?;
+                self.vgesture(VGesture::Erase { stamps, radius });
             }
             VTool::Lasso => {
                 let base = if ev.shift { ve.vertices.clone() } else { vec![] };
@@ -517,6 +543,22 @@ impl Session {
                 })?;
                 self.vgesture(VGesture::Lasso { points, base });
             }
+            VGesture::Erase { mut stamps, radius } => {
+                self.tool.overlay.brush = Some([ev.x, ev.y, ERASER_PX / ev.zoom.max(1e-6)]);
+                // Stamps a third of the brush apart, filling gaps on fast strokes.
+                let to = lp;
+                let from = stamps.last().copied().unwrap_or(to);
+                let step = (radius / 3.0).max(1e-6);
+                let n = ((to - from).hypot() / step).floor().min(500.0) as usize;
+                for k in 1..=n {
+                    stamps.push(from.lerp(to, k as f64 / n as f64));
+                }
+                if n > 0 && stamps.len() < 20_000 {
+                    let st = stamps.clone();
+                    self.preview(|doc, _| edit(doc, id, |net| erase_all(net, &st, radius)).map(|_| ()))?;
+                }
+                self.vgesture(VGesture::Erase { stamps, radius });
+            }
             VGesture::Pen { plan, origin, out, .. } => {
                 let d = to_local(ev.p() - origin);
                 if (ev.p() - origin).hypot() * ev.zoom < 2.0 {
@@ -560,6 +602,7 @@ impl Session {
             }
             VGesture::Handle { .. } | VGesture::BendSegment { .. } | VGesture::Pen { .. } => self.commit_interaction()?,
             VGesture::Marquee { .. } | VGesture::Lasso { .. } => {}
+            VGesture::Erase { .. } => self.commit_interaction()?,
         }
         if let Ok(ds) = self.ds_mut() {
             ds.revision += 1;

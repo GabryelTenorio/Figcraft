@@ -570,6 +570,83 @@ pub fn in_polygon(points: &[Point], poly: &[Point]) -> Vec<usize> {
         .collect()
 }
 
+/// The parameter ranges of segment `seg` inside a circle (sampled, edges refined).
+fn inside_ranges(net: &VectorNetwork, seg: usize, c: Point, r: f64) -> Vec<(f64, f64)> {
+    let Some(cb) = net.cubic(seg) else { return vec![] };
+    // Strictly inside, so points exactly on the circle (earlier cuts) count as outside.
+    let inside = |t: f64| (cb.eval(t) - c).hypot() < r * (1.0 - 1e-9) - 1e-9;
+    // Bisect the boundary between an inside and an outside parameter; return the outside end.
+    let edge = |mut a: f64, mut b: f64| {
+        let ia = inside(a);
+        for _ in 0..30 {
+            let m = (a + b) / 2.0;
+            if inside(m) == ia {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        if ia { b } else { a }
+    };
+    let n = 64;
+    let mut out = Vec::new();
+    let mut start: Option<f64> = if inside(0.0) { Some(0.0) } else { None };
+    let mut prev = 0.0;
+    for i in 1..=n {
+        let t = f64::from(i) / f64::from(n);
+        match (start, inside(t)) {
+            (None, true) => start = Some(edge(prev, t)),
+            (Some(s0), false) => {
+                out.push((s0, edge(prev, t)));
+                start = None;
+            }
+            _ => {}
+        }
+        prev = t;
+    }
+    if let Some(s0) = start {
+        out.push((s0, 1.0));
+    }
+    out
+}
+
+/// The Eraser: remove every part of the network inside the circle at `c` with radius `r`,
+/// splitting segments where the circle crosses them. Returns whether anything changed.
+pub fn erase(net: &mut VectorNetwork, c: Point, r: f64) -> bool {
+    if !(c.x.is_finite() && c.y.is_finite() && r.is_finite() && r > 0.0) {
+        return false;
+    }
+    let mut changed = false;
+    // One cut at a time: indices shift as pieces are added and removed, so re-scan after each.
+    // (`split_segment` clamps to 1%..99%, so ranges within 1% of an end count as reaching it.)
+    const EPS: f64 = 0.01;
+    for _ in 0..10_000 {
+        let hit = (0..net.segments.len()).find_map(|si| inside_ranges(net, si, c, r).first().copied().map(|rg| (si, rg)));
+        let Some((si, (t0, t1))) = hit else { break };
+        changed = true;
+        if t0 <= EPS && t1 >= 1.0 - EPS {
+            remove_segments(net, &[si]);
+        } else if t0 <= EPS {
+            // The start is inside: cut where the circle ends and drop the first piece.
+            if split_segment(net, si, t1).is_none() {
+                break;
+            }
+            remove_segments(net, &[si]);
+        } else if t1 >= 1.0 - EPS {
+            // The end is inside: cut where the circle starts and drop the second piece.
+            if split_segment(net, si, t0).is_none() {
+                break;
+            }
+            let last = net.segments.len() - 1;
+            remove_segments(net, &[last]);
+        } else if split_segment(net, si, t0).is_none() {
+            // The middle is inside: cut where it starts; the second piece then starts inside.
+            break;
+        }
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,5 +794,32 @@ mod tests {
         let poly = [Point::new(0.0, 0.0), Point::new(20.0, 0.0), Point::new(20.0, 20.0), Point::new(0.0, 20.0)];
         assert_eq!(in_polygon(&pts, &poly), vec![0, 2]);
         assert!(in_polygon(&pts, &poly[..2]).is_empty());
+    }
+
+    #[test]
+    fn eraser_cuts_through_and_removes() {
+        // A straight line from 0 to 100: erasing around 50 leaves two pieces with a gap.
+        let mut n = VectorNetwork::from_points(&[Point::new(0.0, 0.0), Point::new(100.0, 0.0)], false);
+        assert!(erase(&mut n, Point::new(50.0, 0.0), 10.0));
+        assert_eq!(n.segments.len(), 2);
+        let ends: Vec<f64> = n.vertices.iter().map(|v| v.x).collect();
+        assert!(ends.iter().any(|x| (x - 40.0).abs() < 0.01) && ends.iter().any(|x| (x - 60.0).abs() < 0.01), "{ends:?}");
+        // Erasing an end shortens it; erasing everything removes it all.
+        assert!(erase(&mut n, Point::new(0.0, 0.0), 5.0));
+        assert!(n.vertices.iter().all(|v| v.x >= 4.99), "start shortened");
+        assert!(erase(&mut n, Point::new(50.0, 0.0), 200.0));
+        assert!(n.segments.is_empty() && n.vertices.is_empty());
+        // Missing everything changes nothing.
+        let mut m = square();
+        let before = m.clone();
+        assert!(!erase(&mut m, Point::new(500.0, 500.0), 5.0));
+        assert_eq!(m, before);
+        // Through a closed square's corner: the loop opens, the fill stays implied.
+        assert!(erase(&mut m, Point::new(100.0, 0.0), 10.0));
+        assert!(m.segments.len() >= 4);
+        assert!(m.fill_contains(Point::new(50.0, 50.0)));
+        // Junk.
+        assert!(!erase(&mut m, Point::new(f64::NAN, 0.0), 5.0));
+        assert!(!erase(&mut m, Point::new(0.0, 0.0), -1.0));
     }
 }

@@ -42,7 +42,7 @@ dimension measured side by side.
    pen that extends, branches and closes paths (vector networks), paint bucket fill/unfill of any
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
-   merge, delete vs delete-and-heal, nudging, one undo step per gesture. *Left:* eraser, variable
+   merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E). *Left:* variable
    width strokes, shape builder, transform box for several points, point snapping. 12–18 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
@@ -133,7 +133,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 65% | pixel preview, frame guides, perf at scale | 6–10 |
 | Selection & transform | 8 | 60% | rotated multi-select handles, scale tool polish, measure hover polish | 10–15 |
 | Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
-| Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |
+| Shapes & vector | 8 | 60% | variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 12–18 |
 | Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
