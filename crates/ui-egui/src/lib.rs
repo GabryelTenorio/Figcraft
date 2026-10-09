@@ -13,6 +13,7 @@ pub mod component_panel;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod guides;
 pub mod handles;
 pub mod home;
 pub mod icons;

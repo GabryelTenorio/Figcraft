@@ -118,7 +118,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 60% | rulers/guides dragging, pixel preview, minimap-free perf at scale | 8–12 |
+| Canvas & navigation | 6 | 65% | pixel preview, frame guides, perf at scale | 6–10 |
 | Selection & transform | 8 | 60% | rotated multi-select handles, scale tool polish, measure hover polish | 10–15 |
 | Layers panel | 5 | 70% | drag polish (auto-scroll while dragging, drop into collapsed groups), keyboard row navigation | 4–6 |
 | Shapes & vector | 8 | 55% | eraser, variable width, shape builder, multi-point transform box, point snapping, live boolean editing, arc handles on canvas | 15–22 |

@@ -259,6 +259,9 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     if !app.canvas.dragging && resp.hovered() && crate::comments::input(app, &ctx, pos) {
         return;
     }
+    if !app.canvas.dragging && resp.hovered() && crate::guides::input(app, &ctx, pos) {
+        return;
+    }
     if !app.canvas.dragging && resp.hovered() && crate::handles::input(app, &ctx, pos) {
         return;
     }
@@ -644,6 +647,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         }
         painter.add(Shape::dashed_line(&pts, stroke(ACCENT, 1.0), 4.0, 3.0));
     }
+    // Guides (under the rulers).
+    crate::guides::draw(app, painter);
     // Rulers.
     if view.rulers {
         rulers(app, painter, t, &doc, &sel);

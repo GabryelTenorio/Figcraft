@@ -107,23 +107,57 @@ pub fn specs() -> Vec<CommandSpec> {
                     .collect(),
             ))
         }),
-        spec!("guide.add", "Add guide", "{vertical (bool), offset, page?}", true, |s, p| {
+        spec!("guide.add", "Add guide", "{vertical (bool), offset, page?} → {index}", true, |s, p| {
             let id = id(p, "page").unwrap_or(s.page()?);
-            let g = Guide { vertical: boolean(p, "vertical").unwrap_or(true), offset: req_num("guide.add", p, "offset")? };
-            if let NodeKind::Page { guides, .. } = &mut s.doc_mut()?.get_mut(id)?.kind {
-                guides.push(g);
+            let offset = req_num("guide.add", p, "offset")?.clamp(-1e7, 1e7);
+            let g = Guide { vertical: boolean(p, "vertical").unwrap_or(true), offset };
+            match &mut s.doc_mut()?.get_mut(id)?.kind {
+                NodeKind::Page { guides, .. } if guides.len() < 10_000 => {
+                    guides.push(g);
+                    Ok(json!({"index": guides.len() - 1}))
+                }
+                NodeKind::Page { .. } => Err(bad("guide.add", "too many guides")),
+                _ => Err(bad("guide.add", "`page` must be a page")),
             }
-            ok()
+        }),
+        spec!("guide.move", "Move guide", "{index, offset, page?}", true, |s, p| {
+            let id = id(p, "page").unwrap_or(s.page()?);
+            let k = guide_index("guide.move", p)?;
+            let offset = req_num("guide.move", p, "offset")?.clamp(-1e7, 1e7);
+            match &mut s.doc_mut()?.get_mut(id)?.kind {
+                NodeKind::Page { guides, .. } => {
+                    guides.get_mut(k).ok_or_else(|| bad("guide.move", "no such guide"))?.offset = offset;
+                    ok()
+                }
+                _ => Err(bad("guide.move", "`page` must be a page")),
+            }
         }),
         spec!("guide.remove", "Remove guide", "{index, page?}", true, |s, p| {
             let id = id(p, "page").unwrap_or(s.page()?);
-            let k = req_num("guide.remove", p, "index")? as usize;
-            if let NodeKind::Page { guides, .. } = &mut s.doc_mut()?.get_mut(id)?.kind
-                && k < guides.len()
-            {
-                guides.remove(k);
+            let k = guide_index("guide.remove", p)?;
+            match &mut s.doc_mut()?.get_mut(id)?.kind {
+                NodeKind::Page { guides, .. } if k < guides.len() => {
+                    guides.remove(k);
+                    ok()
+                }
+                _ => Err(bad("guide.remove", "no such guide")),
+            }
+        }),
+        spec!("guide.clear", "Remove all guides", "{page?}", true, |s, p| {
+            let id = id(p, "page").unwrap_or(s.page()?);
+            if let NodeKind::Page { guides, .. } = &mut s.doc_mut()?.get_mut(id)?.kind {
+                guides.clear();
             }
             ok()
         }),
     ]
+}
+
+/// A guide index from params (never negative).
+fn guide_index(cmd: &str, p: &Value) -> crate::Result<usize> {
+    let k = req_num(cmd, p, "index")?;
+    if !(0.0..1e9).contains(&k) {
+        return Err(bad(cmd, "`index` out of range"));
+    }
+    Ok(k as usize)
 }

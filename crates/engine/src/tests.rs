@@ -403,3 +403,28 @@ fn document_colors_are_counted_per_page() {
     let v = s.execute("paint.documentColors", &json!({})).unwrap();
     assert!(v["colors"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn guides_add_move_remove() {
+    let mut s = sess();
+    let guides = |s: &Session| match &s.doc().unwrap().node(s.page().unwrap()).unwrap().kind {
+        NodeKind::Page { guides, .. } => guides.clone(),
+        _ => vec![],
+    };
+    let r = s.execute("guide.add", &json!({"vertical": true, "offset": 120})).unwrap();
+    assert_eq!(r["index"], json!(0));
+    s.execute("guide.add", &json!({"vertical": false, "offset": 40.5})).unwrap();
+    s.execute("guide.move", &json!({"index": 0, "offset": 150})).unwrap();
+    assert_eq!(guides(&s)[0].offset, 150.0);
+    s.undo().unwrap();
+    assert_eq!(guides(&s)[0].offset, 120.0);
+    s.execute("guide.remove", &json!({"index": 1})).unwrap();
+    assert_eq!(guides(&s).len(), 1);
+    for j in [json!({"index": -1}), json!({"index": 5, "offset": 1}), json!({"index": "x"}), json!({"offset": "NaN"})] {
+        assert!(s.execute("guide.remove", &j).is_err() || guides(&s).len() == 1, "{j}");
+        let _ = s.execute("guide.move", &j);
+    }
+    assert_eq!(guides(&s).len(), 1, "junk never removes the first guide");
+    s.execute("guide.clear", &json!({})).unwrap();
+    assert!(guides(&s).is_empty());
+}
