@@ -575,7 +575,64 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     ui.add_space(8.0);
 }
 
+/// While a range of text is selected, the Fill section edits that range's colour.
+fn range_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, start: usize, end: usize) {
+    let t = Tokens::get(ui.ctx());
+    widgets::section_header(ui, "Fill", &[], false);
+    // The fills over the range, if every character shares them.
+    let fills: Option<Vec<Paint>> = doc.node(id).and_then(|n| n.kind.text().map(|tx| (n, tx))).and_then(|(n, tx)| {
+        let mut it =
+            tx.spans().into_iter().filter(|(s, e, _)| *s < end && *e > start).map(|(_, _, st)| st.fills.clone().unwrap_or_else(|| n.fills.clone()));
+        let first = it.next()?;
+        it.all(|f| f == first).then_some(first)
+    });
+    row(ui, 32.0, |ui| {
+        let w = ui.available_width() - 28.0;
+        let (r, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
+        let sw = Rect::from_min_size(pos2(r.min.x + 4.0, r.center().y - 8.0), vec2(16.0, 16.0));
+        let text_r = Rect::from_min_max(pos2(sw.max.x + 8.0, r.min.y), pos2(r.max.x - 4.0, r.max.y));
+        match fills.as_ref().and_then(|f| f.first()) {
+            Some(p) => {
+                widgets::paint_swatch(ui.painter(), sw, p);
+                if ui.interact(sw.expand(2.0), Id::new("range_swatch"), Sense::click()).clicked() {
+                    app.ui.picker = Some(crate::colorpicker::PickerTarget::TextRange { id, start, end });
+                }
+                if let Some(c) = p.solid_color() {
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_r));
+                    if let Some(h) =
+                        widgets::text_field_inline(&mut child, Id::new("range_hex"), &c.to_hex(), text_r.shrink2(vec2(0.0, 4.0)), regular(11.0))
+                        && let Some(nc) = figcraft_color::Color::from_hex(&h)
+                    {
+                        app.run("text.style", json!({"id": id, "start": start, "end": end, "textFills": [nc.to_css_hex()]}));
+                    }
+                } else {
+                    ui.painter().text(pos2(text_r.min.x, r.center().y), Align2::LEFT_CENTER, "Gradient", regular(11.0), t.text);
+                }
+            }
+            None => {
+                ui.painter().text(pos2(text_r.min.x, r.center().y), Align2::LEFT_CENTER, "Mixed", regular(11.0), t.text_secondary);
+                if ui.interact(r, Id::new("range_mixed"), Sense::click()).clicked() {
+                    app.ui.picker = Some(crate::colorpicker::PickerTarget::TextRange { id, start, end });
+                }
+            }
+        }
+        // Back to the layer's fill.
+        if icons::button(ui, Icon::Detach, 24.0, false, "Use the layer's fill").clicked() {
+            app.run("text.style", json!({"id": id, "start": start, "end": end, "textFills": null}));
+        }
+    });
+}
+
 fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: bool) {
+    if fills
+        && let Some((id, a, b)) = figcraft_engine::textedit::selected_range(&app.session)
+        && a < b
+        && sel.contains(&id)
+    {
+        range_fill(app, ui, doc, id, a, b);
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| if fills { n.fills.clone() } else { n.strokes.clone() });

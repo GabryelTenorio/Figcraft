@@ -738,4 +738,6 @@ mod style_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod text_fill_tests;
+#[cfg(test)]
 mod variable_tests;

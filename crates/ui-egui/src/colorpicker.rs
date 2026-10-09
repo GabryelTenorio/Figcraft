@@ -14,8 +14,28 @@ use crate::widgets;
 #[derive(Clone, Debug, PartialEq)]
 pub enum PickerTarget {
     PageBackground,
-    Paint { fills: bool, index: usize, ids: Vec<NodeId> },
-    Effect { ids: Vec<NodeId>, index: usize },
+    Paint {
+        fills: bool,
+        index: usize,
+        ids: Vec<NodeId>,
+    },
+    Effect {
+        ids: Vec<NodeId>,
+        index: usize,
+    },
+    /// The fill of a character range of a text layer being edited.
+    TextRange {
+        id: NodeId,
+        start: usize,
+        end: usize,
+    },
+}
+
+/// The fills a text range paints with (its own, else the layer's).
+pub fn range_fills(doc: &figcraft_doc::Document, id: NodeId, start: usize) -> Option<Vec<Paint>> {
+    let n = doc.node(id)?;
+    let t = n.kind.text()?;
+    Some(t.style_at(start).fills.clone().unwrap_or_else(|| n.fills.clone()))
 }
 
 fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
@@ -34,6 +54,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) => Some(Paint::solid(s.color)),
             _ => None,
         },
+        PickerTarget::TextRange { id, start, .. } => range_fills(doc, *id, *start)?.into_iter().next(),
     }
 }
 
@@ -58,6 +79,9 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
                 s.color = c;
             }
             app.session.execute("effect.set", &json!({"ids": ids, "index": index, "effect": e2}))
+        }
+        PickerTarget::TextRange { id, start, end } => {
+            app.session.execute("text.style", &json!({"id": id, "start": start, "end": end, "textFills": [paint]}))
         }
     };
     if let Err(e) = r {

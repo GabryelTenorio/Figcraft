@@ -49,8 +49,8 @@ dimension measured side by side.
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
    document only gets the committed text), variable fonts (axes and named instances read from the
    font, named instances as styles, Type settings ▸ Variable sliders, per-range axis values applied
-   to shaping, outlines and PDF), range-aware Typography panel with "Mixed". *Left:* range fills in
-   the Fill section, axis hover preview, right-to-left/bidi text, visual QA. 6–10 h.
+   to shaping, outlines and PDF), range-aware Typography panel with "Mixed". Range fills in the Fill
+   section. *Left:* axis hover preview, right-to-left/bidi text, visual QA. 6–10 h.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
@@ -137,7 +137,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 60% | section tooling, mask types (luminance/outline) | 5–8 |
 | Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
-| Text | 8 | 55% | range fills in the Fill section, right-to-left/bidi, text style picker depth, axis hover preview | 10–16 |
+| Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
 | Components & variants | 9 | 55% | nested overrides depth, libraries, slots, descriptions | 12–18 |
 | Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
 | Prototyping | 6 | 60% | overlay close animation, multi-selection editing, scrolling inside device frames | 6–10 |
