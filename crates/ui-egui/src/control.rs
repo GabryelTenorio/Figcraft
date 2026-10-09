@@ -252,6 +252,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if p.get("collapseLayers").and_then(Value::as_bool) == Some(true) {
                 app.ui.expanded.clear();
             }
+            if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
+                app.ui.export_thumb = v;
+            }
             Ok(app.inspect())
         }
         "ui.render" => {

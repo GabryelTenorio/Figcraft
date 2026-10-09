@@ -202,6 +202,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "ids": ids_schema("Layers to export (several are composited into one image)"),
                     "format": {"type": "string", "enum": ["png", "jpg", "svg", "webp", "pdf"], "description": "Format (default png, or from the path's extension)"},
                     "scale": num("Pixel scale for raster formats (default 1, max 64)"),
+                    "size": string("Instead of `scale`: `2x`, or a width or height in pixels like `512w` / `512h`"),
                     "path": string("Output file path"),
                 }),
                 &[],
@@ -226,8 +227,14 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "open_file",
             "Open file",
-            "Open a .figcraft or .json document, an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
-            obj(json!({"path": string("File path")}), &["path"]),
+            "Open a .figcraft or .json document (FigCraft or REST API file JSON), an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
+            obj(
+                json!({
+                    "path": string("File path"),
+                    "variables": {"description": "REST API file JSON only: the local variables JSON (`GET /v1/files/:key/variables/local`) as a path or the JSON object. Default: `<name>.variables.json` or `variables.json` next to the file."},
+                }),
+                &["path"],
+            ),
             false,
         ),
         tool(
@@ -636,6 +643,9 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
         }
         params.insert("scale".into(), json!(s));
     }
+    if let Some(s) = s_arg(a, "size")? {
+        params.insert("size".into(), json!(s));
+    }
     if let Some(p) = s_arg(a, "path")? {
         params.insert("path".into(), json!(p));
         return exec(b, "file.export", Value::Object(params)).map(|v| ToolResult::json(&v));
@@ -687,7 +697,13 @@ fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult,
 
 fn open_file(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
     let path = req_s(a, "path")?;
-    let r = exec(b, "file.open", json!({"path": path}))?;
+    let mut params = json!({"path": path});
+    match a.get("variables") {
+        None | Some(Value::Null) => {}
+        Some(v @ (Value::String(_) | Value::Object(_))) => params["variables"] = v.clone(),
+        Some(_) => return Err("`variables` must be a path or the local variables JSON object".into()),
+    }
+    let r = exec(b, "file.open", params)?;
     let doc = b.call("document.inspect", json!({"depth": 1}))?;
     Ok(ToolResult::json(&json!({"opened": r, "document": doc})))
 }

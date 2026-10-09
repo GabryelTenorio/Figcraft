@@ -461,6 +461,11 @@ pub struct PrototypeSettings {
     pub background: figcraft_color::Color,
 }
 
+impl PrototypeSettings {
+    /// The devices the presenter draws a frame for ("None" = no device).
+    pub const DEVICES: [&'static str; 7] = ["None", "iPhone 16", "iPhone 16 Pro Max", "Android Compact", "iPad mini", "MacBook Air", "Desktop"];
+}
+
 impl Default for PrototypeSettings {
     fn default() -> Self {
         Self { device: "None".into(), background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E) }

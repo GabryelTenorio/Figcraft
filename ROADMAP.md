@@ -75,10 +75,15 @@ dimension measured side by side.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
-   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest).
-   Paste from other apps: images, SVG and text (the newest clipboard content wins over our own
-   copy). *Left:* .fig import (best effort), PDF export (in progress), REST import
-   of prototype interactions and variables. 20–32 h.
+   properties, styles; image fills from an `images` folder or placeholders; warnings for the rest),
+   now with prototyping (interactions with their triggers, actions, transitions and easing, flows,
+   scrolling, the prototype device) and variables (the local variables JSON passed along, next to
+   the file or embedded: collections, modes, aliases, scopes, layer bindings and explicit modes).
+   Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
+   JPG, WebP, SVG and PDF, suffix), a preview, and "Export N layers" (`file.exportLayers`) in the
+   panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
+   content wins over our own copy). *Left:* .fig import (best effort), PDF export (in progress),
+   REST import of conditional and variable-mode prototype actions. 14–26 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
@@ -158,7 +163,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
 | Styles & variables | 5 | 72% | binding effects, line height and letter spacing, variable groups in the editor sidebar | 3–5 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
-| Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
+| Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |
 | Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 

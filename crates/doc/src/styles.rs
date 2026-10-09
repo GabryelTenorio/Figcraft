@@ -171,6 +171,26 @@ pub fn scopes_for(kind: VariableType) -> &'static [(&'static str, &'static str)]
     }
 }
 
+/// Whether `scope` is a scope id a variable of `kind` can be limited to (including the "every
+/// property" ids).
+pub fn scope_known(kind: VariableType, scope: &str) -> bool {
+    scope == ALL_SCOPES || (scope == "ALL_FILLS" && kind == VariableType::Color) || scopes_for(kind).iter().any(|(k, _)| *k == scope)
+}
+
+/// A variable's scope list in canonical form: known scope ids for `kind` only, without repeats, and
+/// None (no limit) when it names every supported property.
+pub fn normalize_scopes<'a>(kind: VariableType, scopes: impl IntoIterator<Item = &'a str>) -> Option<Vec<String>> {
+    let mut list: Vec<String> = Vec::new();
+    for s in scopes.into_iter().filter(|s| scope_known(kind, s)) {
+        if !list.iter().any(|l| l == s) {
+            list.push(s.to_string());
+        }
+    }
+    let allowed = scopes_for(kind);
+    let all = list.iter().any(|l| l == ALL_SCOPES) || (!allowed.is_empty() && allowed.iter().all(|(k, _)| list.iter().any(|l| l == k)));
+    if all { None } else { Some(list) }
+}
+
 impl VariableType {
     pub fn id(self) -> &'static str {
         match self {

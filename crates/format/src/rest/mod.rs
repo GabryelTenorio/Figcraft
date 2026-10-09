@@ -8,6 +8,10 @@
 //! vectors from `fillGeometry` / `strokeGeometry`, components, component sets, instances and
 //! component properties are imported. Image fills keep their `imageRef` as the image key and
 //! show a grey placeholder unless an [`ImageResolver`] supplies the bytes (nothing is fetched).
+//! Prototyping comes along: interactions (triggers, actions, transitions, easing), flows,
+//! scrolling and the prototype device. Variables come from the local variables response
+//! (`GET /v1/files/:key/variables/local`), embedded next to the file JSON or passed separately
+//! ([`import_with`]); layers' `boundVariables` and `explicitVariableModes` link to them.
 //! Anything unknown is skipped and reported in the warning list; malformed input never panics.
 //!
 //! Instances come out with their own layers as the file lists them. Linking those layers to the
@@ -15,16 +19,22 @@
 //! after loading), since that needs the component model.
 
 mod props;
+mod proto;
+#[cfg(test)]
+mod proto_variable_tests;
 #[cfg(test)]
 mod tests;
 mod text;
+mod variables;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use figcraft_doc::geom::{Affine, BezPath, Rect, Shape};
 use figcraft_doc::proto::Flow;
-use figcraft_doc::{BoolOp, Document, ImageData, LayoutMode, Node, NodeId, NodeKind, PropDef, Style, StyleKind, VectorNetwork, WindingRule};
+use figcraft_doc::{
+    BoolOp, Document, ImageData, LayoutMode, Node, NodeId, NodeKind, PropDef, Style, StyleKind, VariableType, VectorNetwork, WindingRule,
+};
 use serde_json::Value;
 
 use crate::FormatError;
@@ -69,9 +79,20 @@ fn nodes_entries(v: &Value) -> impl Iterator<Item = &Value> {
         .filter(|e| e.get("document").and_then(|d| text(d, "type")).is_some())
 }
 
+/// Whether `v` is a local variables response (or its `meta`).
+pub fn is_variables_json(v: &Value) -> bool {
+    variables::source(v).is_some()
+}
+
 /// Import `bytes` when they are REST API file JSON; `None` when they are something else (the
 /// caller then tries its other formats).
 pub fn try_import(bytes: &[u8], images: ImageResolver) -> Option<Result<(Document, Vec<String>), FormatError>> {
+    try_import_with(bytes, None, images)
+}
+
+/// [`try_import`] with the local variables response (or its `meta`) for the file, when the file
+/// JSON doesn't embed it.
+pub fn try_import_with(bytes: &[u8], variables: Option<&Value>, images: ImageResolver) -> Option<Result<(Document, Vec<String>), FormatError>> {
     let start = bytes.iter().position(|b| !b.is_ascii_whitespace())?;
     if bytes.get(start) != Some(&b'{') {
         return None;
@@ -81,7 +102,7 @@ pub fn try_import(bytes: &[u8], images: ImageResolver) -> Option<Result<(Documen
         return None;
     }
     match serde_json::from_str::<Value>(src) {
-        Ok(v) => is_rest_json(&v).then(|| import(&v, images)),
+        Ok(v) => is_rest_json(&v).then(|| import_with(&v, variables, images)),
         // Broken JSON that names a DOCUMENT root: report it as such.
         Err(e) => src.contains("\"DOCUMENT\"").then(|| Err(FormatError::Corrupt(format!("REST API file JSON: {e}")))),
     }
@@ -90,6 +111,13 @@ pub fn try_import(bytes: &[u8], images: ImageResolver) -> Option<Result<(Documen
 /// Build a document from a parsed REST API file (or nodes) response. Returns it with the
 /// warnings about what was skipped or approximated.
 pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
+    import_with(v, None, images)
+}
+
+/// [`import`] with the local variables response (or its `meta`) for the file. Variables embedded
+/// in the file JSON (a `meta` with `variableCollections`, or `variableCollections` and
+/// `variables` at the top level) are read too; the first definition of an id wins.
+pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) -> Result<(Document, Vec<String>), FormatError> {
     let entries: Vec<&Value> = if is_document(v) { vec![v] } else { nodes_entries(v).collect() };
     if entries.is_empty() {
         return Err(FormatError::Corrupt("not a REST API file JSON (no `document`)".into()));
@@ -100,6 +128,13 @@ pub fn import(v: &Value, images: ImageResolver) -> Result<(Document, Vec<String>
     let mut loose: Option<NodeId> = None;
     for e in &entries {
         cx.collect_meta(e);
+    }
+    // Variables first: layers link to them as they are built.
+    for src in [variables::source(v), variables.and_then(variables::source)].into_iter().flatten() {
+        cx.variables(src);
+    }
+    if variables.is_some_and(|x| variables::source(x).is_none()) {
+        cx.warn("the variables JSON has no `variableCollections` (expected the local variables response) and was ignored");
     }
     for e in entries {
         let Some(root) = e.get("document") else { continue };
@@ -197,6 +232,13 @@ pub(crate) struct Ctx<'a> {
     set_defs: BTreeMap<NodeId, BTreeMap<String, PropDef>>,
     /// Prototype starting points: (page, name, REST node id).
     flows: Vec<(NodeId, String, String)>,
+    /// Layers with prototype interactions, resolved once every layer is imported.
+    protos: Vec<(NodeId, &'a Value)>,
+    /// Layers that carry overlay settings (position, background, outside clicks), by REST id.
+    overlay_meta: BTreeMap<&'a str, &'a Value>,
+    /// Imported variables by id, and the mode ids of imported collections (default first).
+    var_kinds: BTreeMap<String, VariableType>,
+    var_modes: BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -216,6 +258,10 @@ impl<'a> Ctx<'a> {
             swap_defaults: Vec::new(),
             set_defs: BTreeMap::new(),
             flows: Vec::new(),
+            protos: Vec::new(),
+            overlay_meta: BTreeMap::new(),
+            var_kinds: BTreeMap::new(),
+            var_modes: BTreeMap::new(),
         }
     }
 
@@ -239,10 +285,21 @@ impl<'a> Ctx<'a> {
         {
             *background = bg;
         }
+        if let Some(s) = proto::page_settings(c)
+            && let Some(NodeKind::Page { prototype, .. }) = self.doc.node_mut(page).map(|n| &mut n.kind)
+        {
+            *prototype = s;
+        }
         for f in list(c, "flowStartingPoints") {
             if let Some(start) = text(f, "nodeId") {
                 self.flows.push((page, clip_str(text(f, "name").unwrap_or("Flow")).to_string(), start.to_string()));
             }
+        }
+        // The deprecated single starting frame, for files without flows.
+        if list(c, "flowStartingPoints").is_empty()
+            && let Some(start) = text(c, "prototypeStartNodeID").filter(|s| !s.is_empty())
+        {
+            self.flows.push((page, "Flow 1".into(), start.to_string()));
         }
         for ch in children(c) {
             self.build(ch, page, Space::default(), None, 0, false);
@@ -435,12 +492,16 @@ impl<'a> Ctx<'a> {
             }
         }
         self.link_styles(n, j);
-        if !list(j, "interactions").is_empty() {
-            self.warn("prototype interactions are not imported");
+        proto::scrolling(n, j);
+        if !list(j, "interactions").is_empty() || j.get("transitionNodeID").is_some_and(Value::is_string) {
+            self.protos.push((n.id, j));
         }
-        if j.get("boundVariables").and_then(Value::as_object).is_some_and(|m| !m.is_empty()) {
-            self.warn("variable bindings are not imported (the file JSON has no variable values)");
+        if let Some(rid) = text(j, "id")
+            && ["overlayPositionType", "overlayBackground", "overlayBackgroundInteraction"].iter().any(|k| j.get(k).is_some())
+        {
+            self.overlay_meta.entry(rid).or_insert(j);
         }
+        self.bindings(n, j);
     }
 
     /// A vector's network from its geometry. A stroke-only vector uses the stroke outline,
@@ -590,6 +651,12 @@ impl<'a> Ctx<'a> {
         }
         self.resolve_instances();
         self.rename_props();
+        for (id, j) in std::mem::take(&mut self.protos) {
+            let list = self.interactions(j);
+            if let Some(n) = self.doc.node_mut(id) {
+                n.interactions = list;
+            }
+        }
         for (page, name, start) in std::mem::take(&mut self.flows) {
             let Some(&id) = self.ids.get(&start) else { continue };
             if self.doc.page_of(id) == Some(page)
