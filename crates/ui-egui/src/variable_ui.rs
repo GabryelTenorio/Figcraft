@@ -39,7 +39,25 @@ pub fn open(ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType, at: Pos2) 
     ui.data_mut(|d| d.insert_temp(picker_id(), Picker { ids: ids.to_vec(), field: field.to_string(), kind, at }));
 }
 
-/// A number field whose value can be bound to a number variable.
+/// Open the picker for `field` of `ids` under the pointer (from a section header button).
+pub fn open_at_pointer(ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType) {
+    let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or_default();
+    open(ui, ids, field, kind, at);
+}
+
+/// Act on a bound field's event: change the variable, or detach it.
+fn handle(app: &mut FigApp, ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType, ev: Option<BindEvent>) {
+    match ev {
+        Some(BindEvent::Open(at)) => open(ui, ids, field, kind, at),
+        Some(BindEvent::Detach) => {
+            app.run("variable.bind", json!({"ids": ids, "field": field, "variable": null}));
+        }
+        None => {}
+    }
+}
+
+/// A number field whose value can be bound to a number variable. `suffix` follows the number
+/// ("%" for opacity, whose variables hold percentages).
 pub fn number_field(
     app: &mut FigApp,
     ui: &mut Ui,
@@ -48,18 +66,24 @@ pub fn number_field(
     id: Id,
     lead: Lead,
     value: Option<f64>,
+    suffix: &str,
     width: f32,
 ) -> Option<FieldEdit> {
     let name = app.session.doc().ok().and_then(|d| bound_name(d, ids, field));
-    let (edit, ev) = widgets::number_field_bindable(ui, id, lead, value, "", width, 1.0, Some(name.as_deref()));
-    match ev {
-        Some(BindEvent::Open(at)) => open(ui, ids, field, VariableType::Number, at),
-        Some(BindEvent::Detach) => {
-            app.run("variable.bind", json!({"ids": ids, "field": field, "variable": null}));
-        }
-        None => {}
-    }
+    let (edit, ev) = widgets::number_field_bindable(ui, id, lead, value, suffix, width, 1.0, Some(name.as_deref()));
+    handle(app, ui, ids, field, VariableType::Number, ev);
     edit
+}
+
+/// A field showing the variable `field` of `ids` is bound to, for bindings without a value field
+/// of their own (text content, visibility): `width` wide, at most the row. Nothing when unbound.
+pub fn bound_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kind: VariableType, lead: Lead, width: f32) {
+    let Some(name) = app.session.doc().ok().and_then(|d| bound_name(d, ids, field)) else { return };
+    crate::right::row(ui, 32.0, |ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(width.min(ui.available_width()), widgets::FIELD_H), Sense::hover());
+        let ev = widgets::bound_field(ui, Id::new(("bound_row", field)), lead, rect, &name);
+        handle(app, ui, ids, field, kind, ev);
+    });
 }
 
 /// The picker popover (call once per frame).

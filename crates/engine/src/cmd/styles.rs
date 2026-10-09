@@ -134,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke|width|height|opacity|cornerRadius|gap|padding|characters|visible|fontSize…), variable (null unbinds)}",
+            "{ids?, field (fill|stroke|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…), variable (null unbinds)}",
             true,
             |s, p| {
                 let field = req_string("variable.bind", p, "field")?;
@@ -453,6 +453,8 @@ pub fn apply_bindings(doc: &mut Document) {
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
             let jv = match &val {
                 VariableValue::Color(c) => json!(c.to_css_hex()),
+                // Opacity variables hold percentages.
+                VariableValue::Number(x) if field == "opacity" => json!((x / 100.0).clamp(0.0, 1.0)),
                 VariableValue::Number(x) => json!(x),
                 VariableValue::String(x) => json!(x),
                 VariableValue::Boolean(b) => json!(b),

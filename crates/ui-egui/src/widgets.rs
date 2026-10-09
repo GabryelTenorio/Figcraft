@@ -198,7 +198,8 @@ pub fn number_field_bindable(
 
 /// A field bound to a variable: the lead, then the variable's name in a chip; the chip opens the
 /// picker and the detach button unbinds.
-fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> Option<BindEvent> {
+/// A field showing the variable `name` bound to it in `rect`: click to change, detach to unbind.
+pub fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> Option<BindEvent> {
     let t = Tokens::get(ui.ctx());
     let resp = ui.interact(rect, id.with("bound"), Sense::click());
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);

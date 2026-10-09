@@ -114,9 +114,9 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, "Dimensions", None);
     row(ui, 32.0, |ui| {
-        let e = crate::variable_ui::number_field(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, col);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
         app.field(&ids, "width", e, |v| json!(v.max(0.0)));
-        let e = crate::variable_ui::number_field(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, col);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
         app.field(&ids, "height", e, |v| json!(v.max(0.0)));
         let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
         if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, "Constrain proportions").clicked() {
@@ -210,7 +210,7 @@ fn limit_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], hori
             let lead = format!("{} {}", if is_min { "Min" } else { "Max" }, axis.letter);
             if has(is_min) {
                 let v = common(doc, sel, |n| limit(n, horizontal, is_min).map(|v| (v * 100.0).round() / 100.0)).flatten();
-                let e = widgets::number_field(ui, Id::new(("lay_limit", key)), Lead::Text(&lead), v, "", col, 1.0);
+                let e = crate::variable_ui::number_field(app, ui, &ids, key, Id::new(("lay_limit", key)), Lead::Text(&lead), v, "", col);
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
             } else if add_slot(ui, &lead, col).clicked() {
                 app.set_props(&ids, json!({key: current}));
@@ -279,10 +279,20 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
         ui.vertical(|ui| {
             if grid_mode {
                 // Grid: gap between columns and between rows.
-                let e = widgets::number_field(ui, Id::new("al_gap"), Lead::Icon(Icon::Gap), Some(l.gap), "", 96.0, 1.0);
+                let e = crate::variable_ui::number_field(app, ui, ids, "columnGap", Id::new("al_gap"), Lead::Icon(Icon::Gap), Some(l.gap), "", 96.0);
                 app.field(ids, "columnGap", e, |v| json!(v.max(0.0)));
                 ui.add_space(8.0);
-                let e = widgets::number_field(ui, Id::new("al_rowgap"), Lead::Icon(Icon::DistributeV), Some(l.cross_gap), "", 96.0, 1.0);
+                let e = crate::variable_ui::number_field(
+                    app,
+                    ui,
+                    ids,
+                    "rowGap",
+                    Id::new("al_rowgap"),
+                    Lead::Icon(Icon::DistributeV),
+                    Some(l.cross_gap),
+                    "",
+                    96.0,
+                );
                 app.field(ids, "rowGap", e, |v| json!(v.max(0.0)));
                 return;
             }
@@ -296,6 +306,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 Id::new("al_gap"),
                 Lead::Icon(gap_icon),
                 if auto { None } else { Some(l.gap) },
+                "",
                 96.0,
             );
             app.field(ids, "gap", e, |v| json!(v));
@@ -328,16 +339,46 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     let col = widgets::col_width(ui.available_width());
     let [pt, pr, pb, pl] = l.padding;
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("al_padh"), Lead::Icon(Icon::PaddingH), (pl == pr).then_some(pl), "", col, 1.0);
+        let e = crate::variable_ui::number_field(
+            app,
+            ui,
+            ids,
+            "paddingHorizontal",
+            Id::new("al_padh"),
+            Lead::Icon(Icon::PaddingH),
+            (pl == pr).then_some(pl),
+            "",
+            col,
+        );
         app.field(ids, "paddingHorizontal", e, |v| json!(v.max(0.0)));
-        let e = widgets::number_field(ui, Id::new("al_padv"), Lead::Icon(Icon::PaddingV), (pt == pb).then_some(pt), "", col, 1.0);
+        let e = crate::variable_ui::number_field(
+            app,
+            ui,
+            ids,
+            "paddingVertical",
+            Id::new("al_padv"),
+            Lead::Icon(Icon::PaddingV),
+            (pt == pb).then_some(pt),
+            "",
+            col,
+        );
         app.field(ids, "paddingVertical", e, |v| json!(v.max(0.0)));
     });
     if l.mode == LayoutMode::Horizontal && l.wrap {
         // Wrapped rows: the gap between rows.
         widgets::sublabels(ui, "Row gap", None);
         row(ui, 32.0, |ui| {
-            let e = widgets::number_field(ui, Id::new("al_crossgap"), Lead::Icon(Icon::DistributeV), Some(l.cross_gap), "", col, 1.0);
+            let e = crate::variable_ui::number_field(
+                app,
+                ui,
+                ids,
+                "crossGap",
+                Id::new("al_crossgap"),
+                Lead::Icon(Icon::DistributeV),
+                Some(l.cross_gap),
+                "",
+                col,
+            );
             app.field(ids, "crossGap", e, |v| json!(v.max(0.0)));
         });
     }

@@ -146,7 +146,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
 | Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
 | Components & variants | 9 | 60% | libraries, slots, nested override edge cases | 10–15 |
-| Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |
+| Styles & variables | 5 | 66% | aliasing UI, scoping, binding effects, line height and letter spacing | 4–7 |
 | Prototyping | 6 | 70% | scrolling inside device frames, prototype preview pane in the editor | 3–5 |
 | Import/export | 6 | 50% | PDF (in progress), .fig import, export panel polish, REST import of prototypes/variables | 18–32 |
 | Dev mode / inspect | 2 | 55% | asset export list in Inspect, redlines in the Inspect tab, code for whole frames as components | 4–6 |

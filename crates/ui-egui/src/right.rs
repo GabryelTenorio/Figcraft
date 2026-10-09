@@ -504,16 +504,24 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let hdr = widgets::section_header(
         ui,
         "Appearance",
-        &[(if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"), (Icon::Blend, "Blend mode")],
+        &[
+            (if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"),
+            (Icon::Variable, "Apply variable to visibility"),
+            (Icon::Blend, "Blend mode"),
+        ],
         false,
     );
     if hdr == Some(0) {
         app.run("object.toggleVisible", json!({"ids": ids}));
     }
     if hdr == Some(1) {
+        crate::variable_ui::open_at_pointer(ui, &ids, "visible", VariableType::Boolean);
+    }
+    if hdr == Some(2) {
         ui.data_mut(|d| d.insert_temp(Id::new("blend_open"), !d.get_temp::<bool>(Id::new("blend_open")).unwrap_or(false)));
     }
     let col = widgets::col_width(ui.available_width());
+    crate::variable_ui::bound_row(app, ui, &ids, "visible", VariableType::Boolean, Lead::Icon(Icon::Eye), col * 2.0 + 8.0);
     // Masks: how they mask.
     if sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.is_mask)) {
         let mt = common(doc, sel, |n| n.mask_type);
@@ -535,11 +543,20 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));
     widgets::sublabels(ui, "Opacity", radius_ok.then_some("Corner radius"));
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", col, 1.0);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "opacity", Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", col);
         app.field(&ids, "opacity", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
         if radius_ok {
-            let e =
-                crate::variable_ui::number_field(app, ui, &ids, "cornerRadius", Id::new("ap_rad"), Lead::Icon(Icon::CornerRadius), r.flatten(), col);
+            let e = crate::variable_ui::number_field(
+                app,
+                ui,
+                &ids,
+                "cornerRadius",
+                Id::new("ap_rad"),
+                Lead::Icon(Icon::CornerRadius),
+                r.flatten(),
+                "",
+                col,
+            );
             app.field(&ids, "cornerRadius", e, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
             if icons::button(ui, Icon::IndependentCorners, 24.0, open, "Individual corners").clicked() {
@@ -552,13 +569,33 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         let keys = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
         row(ui, 32.0, |ui| {
             for (k, key) in keys.iter().enumerate().take(2) {
-                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", col, 1.0);
+                let e = crate::variable_ui::number_field(
+                    app,
+                    ui,
+                    &ids,
+                    key,
+                    Id::new(("corner", k)),
+                    Lead::Icon(Icon::CornerRadius),
+                    radii.map(|r| r[k]),
+                    "",
+                    col,
+                );
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
             }
         });
         row(ui, 32.0, |ui| {
             for (k, key) in keys.iter().enumerate().skip(2) {
-                let e = widgets::number_field(ui, Id::new(("corner", k)), Lead::Icon(Icon::CornerRadius), radii.map(|r| r[k]), "", col, 1.0);
+                let e = crate::variable_ui::number_field(
+                    app,
+                    ui,
+                    &ids,
+                    key,
+                    Id::new(("corner", k)),
+                    Lead::Icon(Icon::CornerRadius),
+                    radii.map(|r| r[k]),
+                    "",
+                    col,
+                );
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
             }
         });
@@ -704,7 +741,8 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
             });
             let sided = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Rectangle)));
             let weight_w = half - if sided { 60.0 } else { 32.0 };
-            let e = crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, weight_w);
+            let e =
+                crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, "", weight_w);
             app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
             if sided {
                 let sides_btn = icons::button(ui, Icon::IndependentCorners, 24.0, false, "Individual strokes");

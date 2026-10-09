@@ -121,7 +121,11 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         }
     };
 
-    widgets::section_header(ui, "Typography", &[(Icon::Styles, "Text styles")], false);
+    let hdr = widgets::section_header(ui, "Typography", &[(Icon::Variable, "Apply variable to text"), (Icon::Styles, "Text styles")], false);
+    if hdr == Some(0) {
+        crate::variable_ui::open_at_pointer(ui, &ids, "characters", VariableType::String);
+    }
+    crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text), f32::INFINITY);
 
     // Font family.
     let family = uniform(&styles, |s| s.font_family.clone());
@@ -163,7 +167,12 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         });
         let size = uniform(&styles, |s| s.font_size);
         ui.spacing_mut().item_spacing.x = 0.0;
-        let e = widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half - 20.0, 1.0);
+        // The whole layer's size can follow a variable; a selected range just takes a value.
+        let e = if editing {
+            widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
+        } else {
+            crate::variable_ui::number_field(app, ui, &ids, "fontSize", Id::new("ty_size"), Lead::None, size, "", half - 20.0)
+        };
         match e {
             Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
             // The text editing session already groups undo; just apply.

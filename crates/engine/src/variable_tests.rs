@@ -30,3 +30,39 @@ fn bound_layers_follow_variable_values_and_unbind() {
     assert_eq!(node(&s).width, 80.0);
     assert!(s.execute("variable.bind", &json!({"ids": [r], "field": "width", "variable": "nope"})).is_err());
 }
+
+#[test]
+fn opacity_padding_text_and_visibility_follow_their_variables() {
+    let mut s = Session::new();
+    let f = id_of(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 100})).unwrap()["id"]).unwrap();
+    s.execute("layout.add", &json!({"ids": [f]})).unwrap();
+    let t = id_of(&s.execute("text.create", &json!({"text": "Hello", "x": 200, "y": 0})).unwrap()["id"]).unwrap();
+    s.execute("variable.createCollection", &json!({"name": "Tokens"})).unwrap();
+    for (name, kind, value) in
+        [("fade", "number", json!(40)), ("pad", "number", json!(12)), ("label", "string", json!("Sign in")), ("shown", "boolean", json!(false))]
+    {
+        s.execute("variable.create", &json!({"collection": "Tokens", "name": name, "type": kind, "value": value})).unwrap();
+    }
+    let bind = |s: &mut Session, id, field: &str, var: &str| {
+        s.execute("variable.bind", &json!({"ids": [id], "field": field, "variable": var})).unwrap();
+    };
+    bind(&mut s, f, "opacity", "fade");
+    bind(&mut s, f, "paddingHorizontal", "pad");
+    bind(&mut s, t, "characters", "label");
+    bind(&mut s, t, "visible", "shown");
+    let doc = s.doc().unwrap();
+    let frame = doc.node(f).unwrap();
+    // Opacity variables are percentages.
+    assert!((frame.opacity - 0.4).abs() < 1e-6, "{}", frame.opacity);
+    let pad = frame.layout.as_ref().unwrap().padding;
+    assert_eq!((pad[1], pad[3]), (12.0, 12.0));
+    let text = doc.node(t).unwrap();
+    assert_eq!(text.kind.text().map(|x| x.characters.as_str()), Some("Sign in"));
+    assert!(!text.visible);
+    // Out-of-range percentages clamp; booleans flip visibility back.
+    s.execute("variable.set", &json!({"variable": "fade", "value": 250})).unwrap();
+    s.execute("variable.set", &json!({"variable": "shown", "value": true})).unwrap();
+    let doc = s.doc().unwrap();
+    assert_eq!(doc.node(f).unwrap().opacity, 1.0);
+    assert!(doc.node(t).unwrap().visible);
+}
