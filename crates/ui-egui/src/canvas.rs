@@ -559,6 +559,12 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     if let Some([x0, y0, x1, y1]) = ov.insert_line {
         painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 2.0));
     }
+    if let Some([x0, y0, x1, y1]) = ov.drop_cell {
+        let r = Rect::from_two_pos(app.to_screen(x0, y0), app.to_screen(x1, y1));
+        painter.rect_filled(r, CornerRadius::same(2), ACCENT.gamma_multiply(0.12));
+        let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+        painter.add(Shape::dashed_line(&pts, stroke(ACCENT, 1.5), 4.0, 3.0));
+    }
     // Vector edit mode.
     if let Some(ve) = ds.vector_edit.clone()
         && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, &ve)

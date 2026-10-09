@@ -752,6 +752,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
 }
 
 #[cfg(test)]
+mod al_drag_tests;
+#[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
 mod mask_tests;

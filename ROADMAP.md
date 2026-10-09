@@ -54,8 +54,8 @@ dimension measured side by side.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
-   alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI. *Left:*
-   grid/wrap-aware drag-reorder and drag-to-cell, nested hug/fill edge cases. 6–10 h.
+   alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI, wrap-aware
+   drag-reorder (by row) and dragging into a grid cell. *Left:* nested hug/fill edge cases. 4–7 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -141,7 +141,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
-| Auto layout & constraints | 9 | 60% | grid/wrap-aware drag-reorder, drag to grid cell, nested hug/fill edge cases | 6–10 |
+| Auto layout & constraints | 9 | 65% | nested hug/fill edge cases, drag-reorder across nested auto layout frames | 4–7 |
 | Text | 8 | 60% | right-to-left/bidi, text style picker depth, axis hover preview | 8–12 |
 | Components & variants | 9 | 60% | libraries, slots, descriptions, nested override edge cases | 10–15 |
 | Styles & variables | 5 | 60% | aliasing UI, scoping, binding padding/font size/opacity/text, string and boolean bindings in the panel | 6–10 |

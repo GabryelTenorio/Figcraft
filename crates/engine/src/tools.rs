@@ -218,6 +218,8 @@ pub struct Overlay {
     pub drop_target: Option<NodeId>,
     /// Auto layout insertion indicator (x0, y0, x1, y1).
     pub insert_line: Option<[f64; 4]>,
+    /// Auto layout grid cell a drag would drop into (x0, y0, x1, y1).
+    pub drop_cell: Option<[f64; 4]>,
     /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the
     /// paint bucket would fill (page-space polygons).
     pub vector_hover: Option<crate::vectoredit::VHit>,
@@ -636,6 +638,7 @@ impl Session {
                 let dup = *duplicate;
                 let page = self.page()?;
                 let mut insert_line = None;
+                let mut drop_cell = None;
                 let mut drop_target = None;
                 self.preview(|doc, sel| {
                     let mut moving = ids.clone();
@@ -659,6 +662,17 @@ impl Session {
                     if let (Some(pp), true) = (al_parent, flow) {
                         let pb = doc.world_bounds(pp).unwrap_or_default();
                         let still_inside = pb.inflate(8.0, 8.0).contains(ev.p());
+                        let grid = doc.node(pp).and_then(|n| n.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Grid);
+                        if still_inside && grid {
+                            // Grids: the dragged layer takes the cell under the pointer.
+                            if let (Some(first), Some((col, row, rect))) = (moving.first().copied(), crate::drop::grid_cell_at(doc, pp, ev.p())) {
+                                let cl = &mut doc.get_mut(first)?.child_layout;
+                                cl.grid_column = Some(col);
+                                cl.grid_row = Some(row);
+                                drop_cell = Some(rect);
+                            }
+                            return Ok(());
+                        }
                         if still_inside {
                             let (idx, line_at) = crate::drop::auto_layout_slot(doc, pp, ev.p(), &moving).unwrap_or((0, None));
                             insert_line = line_at;
@@ -684,6 +698,7 @@ impl Session {
                 })?;
                 self.tool.overlay.guides = guides;
                 self.tool.overlay.insert_line = insert_line;
+                self.tool.overlay.drop_cell = drop_cell;
                 self.tool.overlay.drop_target = drop_target;
                 self.tool.gesture = g.clone();
                 if let Gesture::Move { moved, .. } = &mut self.tool.gesture {
@@ -1066,6 +1081,7 @@ impl Session {
         self.tool.overlay.marquee = None;
         self.tool.overlay.guides.clear();
         self.tool.overlay.insert_line = None;
+        self.tool.overlay.drop_cell = None;
         let drop_target = self.tool.overlay.drop_target.take();
         match g {
             Gesture::Move { ids, moved, duplicate, .. } => {
