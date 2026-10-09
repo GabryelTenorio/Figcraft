@@ -59,7 +59,9 @@ dimension measured side by side.
    local libraries (publish/use across files), component descriptions UI. 10–14 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
-   *Left:* overlay close animation, springs, device frames, multi-selection editing. 6–10 h.
+   Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
+   laptop, desktop bodies drawn in code) around the presented frame. *Left:* overlay close
+   animation, multi-selection editing, scrolling inside device frames. 5–8 h.
 6. **Interop**: .fig import (best effort), PDF export (in progress), image crop handles (landed),
    paste from other apps, Figma REST JSON import. 25–40 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
@@ -130,7 +132,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Text | 8 | 35% | in-text mouse selection, styled ranges UI, lists, OpenType, variable fonts | 20–30 |
 | Components & variants | 9 | 55% | nested overrides depth, libraries, slots, descriptions | 12–18 |
 | Styles & variables | 5 | 45% | style picker everywhere, variable binding UI, aliasing UI, scoping | 10–16 |
-| Prototyping | 6 | 30% | noodle editing, overlays, scrolling, smart animate | 20–30 |
+| Prototyping | 6 | 60% | overlay close animation, multi-selection editing, scrolling inside device frames | 6–10 |
 | Import/export | 6 | 45% | PDF (in progress), .fig import, export panel polish | 20–35 |
 | Dev mode / inspect | 2 | 35% | measurements on canvas, code variants (Swift/Compose), assets | 6–10 |
 | Comments, versions, misc | 3 | 25% | comments, version history UI, plugins (WASM) | 15–25 |

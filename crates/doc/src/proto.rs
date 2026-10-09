@@ -51,7 +51,7 @@ pub enum Direction {
     Bottom,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Easing {
     Linear,
@@ -66,9 +66,28 @@ pub enum Easing {
     Quick,
     Bouncy,
     Slow,
+    /// A CSS-style cubic bezier through (0,0), (x1,y1), (x2,y2), (1,1).
+    #[serde(rename_all = "camelCase")]
+    CustomBezier {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+    },
+    /// A damped spring (mass, stiffness, damping), played over the interaction's duration.
+    #[serde(rename_all = "camelCase")]
+    CustomSpring {
+        mass: f64,
+        stiffness: f64,
+        damping: f64,
+    },
 }
 
 impl Easing {
+    /// The starting point when switching to a custom curve.
+    pub const CUSTOM_BEZIER: Easing = Easing::CustomBezier { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 };
+    pub const CUSTOM_SPRING: Easing = Easing::CustomSpring { mass: 1.0, stiffness: 100.0, damping: 15.0 };
+
     pub const ALL: [Easing; 11] = [
         Easing::Linear,
         Easing::EaseIn,
@@ -96,12 +115,14 @@ impl Easing {
             Easing::Quick => "Quick",
             Easing::Bouncy => "Bouncy",
             Easing::Slow => "Slow",
+            Easing::CustomBezier { .. } => "Custom bezier",
+            Easing::CustomSpring { .. } => "Custom spring",
         }
     }
 
     /// Spring presets run longer than the chosen duration in the incumbent; we keep the duration.
     pub fn is_spring(self) -> bool {
-        matches!(self, Easing::Gentle | Easing::Quick | Easing::Bouncy | Easing::Slow)
+        matches!(self, Easing::Gentle | Easing::Quick | Easing::Bouncy | Easing::Slow | Easing::CustomSpring { .. })
     }
 
     /// Evaluate the curve at `t` (0..1).
@@ -134,8 +155,59 @@ impl Easing {
             Easing::Quick => spring(t, 10.0, 0.8),
             Easing::Bouncy => spring(t, 9.0, 0.35),
             Easing::Slow => spring(t, 4.0, 0.9),
+            Easing::CustomBezier { x1, y1, x2, y2 } => cubic_bezier(t, x1, y1, x2, y2),
+            Easing::CustomSpring { mass, stiffness, damping } => physical_spring(t, mass, stiffness, damping),
         }
     }
+}
+
+/// CSS `cubic-bezier(x1, y1, x2, y2)` at time `t` (x clamped to 0..1 so time stays monotonic).
+fn cubic_bezier(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let fin = |v: f64, d: f64| if v.is_finite() { v } else { d };
+    let (x1, x2) = (fin(x1, 0.42).clamp(0.0, 1.0), fin(x2, 0.58).clamp(0.0, 1.0));
+    let (y1, y2) = (fin(y1, 0.0).clamp(-10.0, 10.0), fin(y2, 1.0).clamp(-10.0, 10.0));
+    let b = |p1: f64, p2: f64, s: f64| {
+        let u = 1.0 - s;
+        3.0 * u * u * s * p1 + 3.0 * u * s * s * p2 + s * s * s
+    };
+    // x(s) is monotonic for x1, x2 in 0..1: bisect for s with x(s) = t.
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..48 {
+        let mid = (lo + hi) / 2.0;
+        if b(x1, x2, mid) < t {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    b(y1, y2, (lo + hi) / 2.0)
+}
+
+/// A unit step response of a damped spring, with its settling time mapped onto 0..1.
+fn physical_spring(t: f64, mass: f64, stiffness: f64, damping: f64) -> f64 {
+    if t >= 1.0 {
+        return 1.0;
+    }
+    let ok = |v: f64, lo: f64, d: f64| if v.is_finite() && v >= lo { v } else { d };
+    let m = ok(mass, 0.01, 1.0).min(1e4);
+    let k = ok(stiffness, 0.01, 100.0).min(1e6);
+    let c = ok(damping, 0.0, 15.0).min(1e6);
+    let w0 = (k / m).sqrt();
+    let zeta = c / (2.0 * (k * m).sqrt());
+    // Time to settle within 0.1% (an undamped spring is cut at 10 s).
+    let settle = if zeta > 1e-6 { (6.9 / (zeta.min(1.0) * w0)).clamp(0.05, 10.0) } else { 10.0 };
+    let tau = t * settle;
+    let x = if zeta < 1.0 {
+        let wd = w0 * (1.0 - zeta * zeta).sqrt();
+        1.0 - (-zeta * w0 * tau).exp() * ((wd * tau).cos() + zeta * w0 / wd * (wd * tau).sin())
+    } else if (zeta - 1.0).abs() < 1e-9 {
+        1.0 - (-w0 * tau).exp() * (1.0 + w0 * tau)
+    } else {
+        let s = (zeta * zeta - 1.0).sqrt();
+        let (r1, r2) = (-w0 * (zeta - s), -w0 * (zeta + s));
+        1.0 - (r2 * (r1 * tau).exp() - r1 * (r2 * tau).exp()) / (r2 - r1)
+    };
+    if x.is_finite() { x } else { 1.0 }
 }
 
 fn spring(t: f64, freq: f64, damping: f64) -> f64 {

@@ -782,10 +782,23 @@ struct Layout {
     overlays: Vec<(NodeId, Place, Rect)>,
 }
 
+/// The page's prototype device ("None" when unset).
+fn device_of(p: &Presenter) -> String {
+    p.doc
+        .as_ref()
+        .and_then(|d| d.page_of(p.current).and_then(|pg| d.node(pg)))
+        .and_then(|n| match &n.kind {
+            NodeKind::Page { prototype, .. } => Some(prototype.device.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "None".into())
+}
+
 fn layout(p: &mut Presenter, area: Rect) -> Option<Layout> {
     let disp = p.display()?;
     let fb = disp.world_bounds(p.current)?;
-    let avail = area.shrink(32.0);
+    // Leave room for the device body around the screen.
+    let avail = if device_of(p) == "None" { area.shrink(32.0) } else { area.shrink2(vec2(72.0, 80.0)) };
     let scale = (f64::from(avail.width()) / fb.width().max(1.0)).min(f64::from(avail.height()) / fb.height().max(1.0)).clamp(0.01, 1.0);
     let place = Place::centered(fb, area.center(), scale);
     let target = place.rect(fb);
@@ -831,6 +844,79 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     app.ui.present = Some(pres);
 }
 
+/// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs).
+fn device_body(ui: &Ui, device: &str, s: Rect) {
+    let p = ui.painter();
+    let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
+    let edge = Color32::from_rgb(0x5A, 0x5A, 0x5E);
+    let w = s.width();
+    match device {
+        "None" => {}
+        "MacBook Air" => {
+            let b = (w * 0.025).max(6.0);
+            let lid = s.expand(b);
+            p.rect_filled(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), body);
+            p.rect_stroke(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), egui::Stroke::new(1.0, edge), egui::StrokeKind::Outside);
+            // The base: a thin slab wider than the lid, with a finger notch.
+            let base = Rect::from_min_max(pos2(lid.min.x - w * 0.08, lid.max.y), pos2(lid.max.x + w * 0.08, lid.max.y + (w * 0.022).max(6.0)));
+            p.rect_filled(base, CornerRadius { nw: 2, ne: 2, sw: 10, se: 10 }, Color32::from_rgb(0xB8, 0xB9, 0xBD));
+            let notch = Rect::from_center_size(pos2(base.center().x, base.min.y + 1.5), vec2(w * 0.12, 3.0));
+            p.rect_filled(notch, CornerRadius::same(2), Color32::from_rgb(0x8E, 0x8E, 0x93));
+        }
+        "Desktop" => {
+            let b = (w * 0.02).max(6.0);
+            let screen = s.expand(b);
+            p.rect_filled(screen, CornerRadius::same(8), body);
+            p.rect_stroke(screen, CornerRadius::same(8), egui::Stroke::new(1.0, edge), egui::StrokeKind::Outside);
+            let neck =
+                Rect::from_min_max(pos2(screen.center().x - w * 0.06, screen.max.y), pos2(screen.center().x + w * 0.06, screen.max.y + w * 0.08));
+            p.rect_filled(neck, CornerRadius::ZERO, Color32::from_rgb(0xB8, 0xB9, 0xBD));
+            let foot = Rect::from_min_max(pos2(neck.min.x - w * 0.06, neck.max.y), pos2(neck.max.x + w * 0.06, neck.max.y + 6.0));
+            p.rect_filled(foot, CornerRadius::same(3), Color32::from_rgb(0xA0, 0xA1, 0xA6));
+        }
+        _ => {
+            // Phones and tablets: a rounded slab with side buttons.
+            let tablet = device.starts_with("iPad");
+            let b = if tablet { (w * 0.05).max(8.0) } else { (w * 0.06).max(6.0) };
+            let screen_r = if tablet { w * 0.04 } else { w * 0.13 };
+            let slab = s.expand(b);
+            let r = CornerRadius::same((screen_r + b).min(255.0) as u8);
+            for (x, y0, h) in [(slab.min.x - 2.0, 0.18, 0.06), (slab.min.x - 2.0, 0.27, 0.1), (slab.max.x, 0.24, 0.13)] {
+                if tablet {
+                    break;
+                }
+                let btn = Rect::from_min_size(pos2(x, slab.min.y + slab.height() * y0), vec2(2.5, slab.height() * h));
+                p.rect_filled(btn, CornerRadius::same(1), edge);
+            }
+            p.rect_filled(slab, r, body);
+            p.rect_stroke(slab, r, egui::Stroke::new(1.5, edge), egui::StrokeKind::Inside);
+        }
+    }
+}
+
+/// What sits on top of the screen: rounded screen corners (the body colour masks the frame's
+/// square corners) and a phone's camera pill.
+fn device_glass(ui: &Ui, device: &str, s: Rect) {
+    let p = ui.painter();
+    let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
+    let w = s.width();
+    match device {
+        "None" | "Desktop" | "MacBook Air" => {}
+        _ => {
+            let tablet = device.starts_with("iPad");
+            let screen_r = if tablet { w * 0.04 } else { w * 0.13 };
+            // An outside stroke along the rounded screen covers the frame's square corners.
+            let bezel = if tablet { (w * 0.05).max(8.0) } else { (w * 0.06).max(6.0) };
+            let cover = (screen_r * 0.45 + 1.0).min(bezel);
+            p.rect_stroke(s, CornerRadius::same(screen_r.min(255.0) as u8), egui::Stroke::new(cover, body), egui::StrokeKind::Outside);
+            if device.starts_with("iPhone") {
+                let pill = Rect::from_center_size(pos2(s.center().x, s.min.y + w * 0.045), vec2(w * 0.3, w * 0.085));
+                p.rect_filled(pill, CornerRadius::same((w * 0.0425).min(255.0) as u8), Color32::BLACK);
+            }
+        }
+    }
+}
+
 /// One frame of the player; returns true to close it.
 fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool {
     let rect = ui.max_rect();
@@ -856,7 +942,10 @@ fn player(p: &mut Presenter, ui: &mut Ui, ctx: &egui::Context, now: f64) -> bool
         input(p, ctx, &l, resp.contains_pointer(), now);
     }
     let Some(l) = layout(p, area) else { return true };
+    let device = device_of(p);
+    device_body(ui, &device, l.target);
     draw(p, ui, ctx, &l, area, now);
+    device_glass(ui, &device, l.target);
     // Timers: the soonest pending "after delay".
     let mut next: Option<f64> = None;
     for id in l.disp.subtree(p.current) {

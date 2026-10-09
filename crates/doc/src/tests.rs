@@ -293,3 +293,40 @@ fn next_name_increments() {
     assert_eq!(d.next_name("Frame"), "Frame 8");
     assert_eq!(d.next_name("Ellipse"), "Ellipse 1");
 }
+
+#[test]
+fn custom_easings() {
+    use crate::proto::Easing;
+    // cubic-bezier(0.25, 0.1, 0.25, 1) is CSS `ease`: 0.8024 at half time.
+    let ease = Easing::CustomBezier { x1: 0.25, y1: 0.1, x2: 0.25, y2: 1.0 };
+    assert!((ease.eval(0.5) - 0.8024).abs() < 1e-3, "{}", ease.eval(0.5));
+    let linear = Easing::CustomBezier { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+    for t in [0.0, 0.1, 0.37, 0.9, 1.0] {
+        assert!((linear.eval(t) - t).abs() < 1e-6);
+    }
+    // Springs start at 0, end at 1; an under-damped one overshoots.
+    let bouncy = Easing::CustomSpring { mass: 1.0, stiffness: 300.0, damping: 6.0 };
+    assert!(bouncy.eval(0.0).abs() < 1e-9);
+    assert_eq!(bouncy.eval(1.0), 1.0);
+    assert!((0..100).map(|i| bouncy.eval(f64::from(i) / 100.0)).any(|v| v > 1.01), "overshoots");
+    let stiff = Easing::CustomSpring { mass: 1.0, stiffness: 100.0, damping: 40.0 };
+    assert!((0..100).map(|i| stiff.eval(f64::from(i) / 100.0)).all(|v| (-1e-9..=1.0 + 1e-9).contains(&v)), "over-damped never overshoots");
+    assert!(Easing::CUSTOM_SPRING.is_spring());
+    // Junk values stay finite.
+    for e in [
+        Easing::CustomBezier { x1: f64::NAN, y1: f64::INFINITY, x2: -5.0, y2: 1e300 },
+        Easing::CustomSpring { mass: 0.0, stiffness: -1.0, damping: f64::NAN },
+        Easing::CustomSpring { mass: 1e300, stiffness: 1e-300, damping: 0.0 },
+    ] {
+        for i in 0..=20 {
+            assert!(e.eval(f64::from(i) / 20.0).is_finite());
+        }
+    }
+    // Serde: presets stay strings, custom curves are objects.
+    assert_eq!(serde_json::to_value(Easing::Gentle).unwrap(), serde_json::json!("gentle"));
+    let v = serde_json::to_value(Easing::CUSTOM_BEZIER).unwrap();
+    assert_eq!(v["customBezier"]["x1"], serde_json::json!(0.42));
+    let back: Easing = serde_json::from_value(serde_json::json!({"customSpring": {"mass": 2, "stiffness": 50, "damping": 5}})).unwrap();
+    assert_eq!(back, Easing::CustomSpring { mass: 2.0, stiffness: 50.0, damping: 5.0 });
+    assert_eq!(serde_json::from_value::<Easing>(serde_json::json!("easeInOut")).unwrap(), Easing::EaseInOut);
+}

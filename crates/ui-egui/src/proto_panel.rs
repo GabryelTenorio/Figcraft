@@ -717,8 +717,9 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
         row(ui, 32.0, |ui| {
             let resp = widgets::dropdown(ui, it.easing.label(), ui.available_width() - 80.0, None);
             egui::Popup::menu(&resp).width(220.0).show(|ui| {
-                for (i, e) in Easing::ALL.iter().enumerate() {
-                    if i == 7 {
+                let custom = [Easing::CUSTOM_BEZIER, Easing::CUSTOM_SPRING];
+                for (i, e) in Easing::ALL.iter().chain(custom.iter()).enumerate() {
+                    if i == 7 || i == Easing::ALL.len() {
                         ui.separator();
                     }
                     let w = ui.available_width().max(200.0);
@@ -730,7 +731,9 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
                     curve(ui.painter(), Rect::from_min_size(pos2(r.min.x + 6.0, r.min.y + 4.0), vec2(28.0, 18.0)), *e, col, None);
                     ui.painter().text(pos2(r.min.x + 42.0, r.center().y), Align2::LEFT_CENTER, e.label(), regular(11.5), col);
                     if rr.clicked() {
-                        patch(app, node, k, json!({"easing": e}));
+                        // Keep the current custom values when re-picking the same custom kind.
+                        let same_kind = std::mem::discriminant(e) == std::mem::discriminant(&it.easing);
+                        patch(app, node, k, json!({"easing": if same_kind { it.easing } else { *e }}));
                         ui.close();
                     }
                 }
@@ -755,6 +758,7 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
                 }
             }
         });
+        custom_easing_fields(app, ui, node, k, it.easing);
         // Curve preview, with a dot running along it.
         let w = ui.available_width();
         let (r, _) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
@@ -764,6 +768,61 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
         let phase = ((ui.input(|i| i.time) % period) / (period - 0.6)).min(1.0);
         curve(ui.painter(), box_r.shrink2(vec2(10.0, 12.0)), it.easing, ACCENT, Some(phase));
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+    }
+}
+
+/// Fields for a custom bezier (x1, y1, x2, y2) or spring (mass, stiffness, damping).
+fn custom_easing_fields(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, e: Easing) {
+    let (names, vals, steps): ([&str; 4], [f64; 4], [f64; 4]) = match e {
+        Easing::CustomBezier { x1, y1, x2, y2 } => (["X1", "Y1", "X2", "Y2"], [x1, y1, x2, y2], [0.01; 4]),
+        Easing::CustomSpring { mass, stiffness, damping } => {
+            (["Mass", "Stiffness", "Damping", ""], [mass, stiffness, damping, 0.0], [0.1, 1.0, 0.5, 0.0])
+        }
+        _ => return,
+    };
+    let count = if matches!(e, Easing::CustomBezier { .. }) { 4 } else { 3 };
+    let make = |vals: [f64; 4]| match e {
+        Easing::CustomBezier { .. } => Easing::CustomBezier {
+            x1: vals[0].clamp(0.0, 1.0),
+            y1: vals[1].clamp(-5.0, 5.0),
+            x2: vals[2].clamp(0.0, 1.0),
+            y2: vals[3].clamp(-5.0, 5.0),
+        },
+        _ => Easing::CustomSpring { mass: vals[0].clamp(0.01, 100.0), stiffness: vals[1].clamp(1.0, 10_000.0), damping: vals[2].clamp(0.0, 1000.0) },
+    };
+    row(ui, 32.0, |ui| {
+        let w = ((ui.available_width() - 6.0 * (count as f32 - 1.0)) / count as f32).max(36.0);
+        for i in 0..count {
+            let (Some(name), Some(v), Some(step)) = (names.get(i), vals.get(i), steps.get(i)) else { continue };
+            let lead = if count == 4 { Lead::Text(name) } else { Lead::None };
+            let edit = widgets::number_field(ui, Id::new(("proto_ease", node, k, i)), lead, Some((v * 100.0).round() / 100.0), "", w, *step).map(
+                |e| match e {
+                    FieldEdit::Set(x) => (x, true, false),
+                    FieldEdit::Scrub(x, done) => (x, done, true),
+                },
+            );
+            if let Some((x, done, scrub)) = edit
+                && x.is_finite()
+            {
+                let mut nv = vals;
+                if let Some(slot) = nv.get_mut(i) {
+                    *slot = x;
+                }
+                let eased = make(nv);
+                if scrub {
+                    let _ = app.session.begin_interaction("Edit");
+                    let _ = app.session.execute("proto.interaction.set", &json!({"ids": [node], "index": k, "easing": eased}));
+                    if done {
+                        let _ = app.session.commit_interaction();
+                    }
+                } else {
+                    patch(app, node, k, json!({"easing": eased}));
+                }
+            }
+        }
+    });
+    if count == 3 {
+        widgets::sublabels(ui, "Mass · Stiffness · Damping", None);
     }
 }
 
