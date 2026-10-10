@@ -3,8 +3,11 @@
 //! gives before it is saved.
 //!
 //! Variables are written by name (a name with spaces or symbols reads as typed: the longest name
-//! that fits wins; `{name}` is always a variable). Literals: numbers, `"text"` or `'text'`,
-//! `true` / `false`, `#RRGGBB` colours. Operators, loosest first: `or` (`||`), `and` (`&&`), `not`
+//! that fits wins; `{name}` is always a variable). A variable followed by a mode in brackets
+//! (`accent[Dark]`, `{Brand color}["High contrast"]`) reads its value in that mode of its
+//! collection; `mode(Theme)` is the name of the mode a collection is in where the expression runs
+//! (`mode(Theme) == "Dark"`). Literals: numbers, `"text"` or `'text'`, `true` / `false`,
+//! `#RRGGBB` colours. Operators, loosest first: `or` (`||`), `and` (`&&`), `not`
 //! (`!`), comparisons (`==` or `=`, `!=`, `<`, `<=`, `>`, `>=`), `+` / `-`, `*` / `/`, unary `-`.
 //! [`Expr::display`] writes what this reads back.
 
@@ -88,6 +91,14 @@ impl Expr {
             Expr::Value(VariableValue::Alias(id)) => return vars.get(id).map(|v| v.kind).ok_or_else(|| format!("No variable `{id}`")),
             Expr::Value(VariableValue::Number(n)) if !n.is_finite() => return Err("Numbers must be finite".into()),
             Expr::Value(v) => return v.type_of().ok_or_else(|| "Not a value".to_string()),
+            Expr::Mode { collection } => {
+                return vars.collection(collection).map(|_| T::String).ok_or_else(|| format!("No variable collection `{collection}`"));
+            }
+            Expr::InMode { variable, mode } => {
+                let v = vars.get(variable).ok_or_else(|| format!("No variable `{variable}`"))?;
+                let c = vars.collection(&v.collection).ok_or_else(|| format!("No variable collection `{}`", v.collection))?;
+                return c.find_mode(mode).map(|_| v.kind).ok_or_else(|| format!("{} has no mode `{mode}`", c.name));
+            }
             Expr::Op { op, args } => (*op, args),
         };
         let ts = args.iter().map(|a| a.type_at(vars, depth + 1)).collect::<Result<Vec<T>, String>>()?;
@@ -187,6 +198,11 @@ impl Parser<'_> {
     fn at_keyword(&self, word: &str) -> bool {
         let n = word.chars().count();
         word.chars().enumerate().all(|(k, c)| self.peek(k).is_some_and(|x| x.to_lowercase().eq(c.to_lowercase()))) && !self.peek(n).is_some_and(ident)
+    }
+
+    /// The first character from `k` characters on that isn't whitespace.
+    fn next_after(&self, k: usize) -> Option<char> {
+        self.s.iter().skip(self.i + k).copied().find(|c| !c.is_whitespace())
     }
 
     fn at_symbol(&self, sym: &str) -> bool {
@@ -365,6 +381,11 @@ impl Parser<'_> {
     }
 
     fn string(&mut self, quote: char) -> Parsed {
+        self.text(quote).map(|t| Expr::Value(VariableValue::String(t)))
+    }
+
+    /// The text of a literal in `quote`s starting here.
+    fn text(&mut self, quote: char) -> Result<String, ExprError> {
         let start = self.i;
         self.i += 1;
         let mut out = String::new();
@@ -373,7 +394,7 @@ impl Parser<'_> {
                 None => return Err(ExprError { message: format!("Close the text with {quote}"), at: start }),
                 Some(c) if c == quote => {
                     self.i += 1;
-                    return Ok(Expr::Value(VariableValue::String(out)));
+                    return Ok(out);
                 }
                 Some('\\') => {
                     match self.peek(1) {
@@ -413,7 +434,7 @@ impl Parser<'_> {
                 let name: String = self.s.get(start + 1..end).unwrap_or_default().iter().collect();
                 self.i = end + 1;
                 match self.vars.get(name.trim()) {
-                    Some(v) => Ok(Expr::var(v.id.clone())),
+                    Some(v) => self.in_mode(v.id.clone()),
                     None => Err(ExprError { message: format!("No variable `{}`", name.trim()), at: start }),
                 }
             }
@@ -434,9 +455,13 @@ impl Parser<'_> {
             c if c.is_ascii_digit() || c == '.' => self.number(),
             ')' => Err(self.err("Unexpected )")),
             _ => {
+                // `mode(…)`, also when a variable is named "mode" (a variable can't take brackets).
+                if self.at_keyword("mode") && self.next_after(4) == Some('(') {
+                    return self.mode_of();
+                }
                 if let Some((id, n)) = self.variable_here() {
                     self.i += n;
-                    return Ok(Expr::var(id));
+                    return self.in_mode(id);
                 }
                 for (word, v) in [("true", true), ("false", false)] {
                     if self.at_keyword(word) {
@@ -448,6 +473,64 @@ impl Parser<'_> {
                 if word.is_empty() { Err(self.err(format!("Unexpected {c}"))) } else { Err(self.err(format!("No variable `{word}`"))) }
             }
         }
+    }
+
+    /// `mode(collection)` starting here: the mode the collection is in.
+    fn mode_of(&mut self) -> Parsed {
+        let start = self.i;
+        while self.peek(0).is_some_and(|c| c != '(') {
+            self.i += 1;
+        }
+        self.i += 1;
+        let name = self.argument(')', "collection")?;
+        match self.vars.collection(&name) {
+            Some(c) => Ok(Expr::Mode { collection: c.id.clone() }),
+            None => Err(ExprError { message: format!("No variable collection `{name}`"), at: start }),
+        }
+    }
+
+    /// Variable `var`, or with a mode in brackets after it its value in that mode of its collection.
+    fn in_mode(&mut self, var: String) -> Parsed {
+        if self.next_after(0) != Some('[') {
+            return Ok(Expr::var(var));
+        }
+        self.ws();
+        self.i += 1;
+        let start = self.i;
+        let name = self.argument(']', "mode")?;
+        let coll = self.vars.get(&var).and_then(|v| self.vars.collection(&v.collection));
+        match coll.and_then(|c| c.find_mode(&name)) {
+            Some(m) => Ok(Expr::InMode { variable: var, mode: m.id.clone() }),
+            None => {
+                let whose = coll.map_or("The variable's collection", |c| c.name.as_str());
+                Err(ExprError { message: format!("{whose} has no mode `{name}`"), at: start })
+            }
+        }
+    }
+
+    /// A collection or mode name up to `close` (quoted, or as typed with the spaces around it and
+    /// any `{…}` dropped), then past `close`.
+    fn argument(&mut self, close: char, what: &str) -> Result<String, ExprError> {
+        self.ws();
+        let start = self.i;
+        let name = match self.peek(0) {
+            Some(q @ ('"' | '\'')) => self.text(q)?,
+            _ => {
+                let mut raw = String::new();
+                self.take(&mut raw, |c| c != close);
+                let t = raw.trim();
+                t.strip_prefix('{').and_then(|x| x.strip_suffix('}')).unwrap_or(t).trim().to_string()
+            }
+        };
+        self.ws();
+        if self.peek(0) != Some(close) {
+            return Err(self.err(format!("Add a closing {close}")));
+        }
+        self.i += 1;
+        if name.is_empty() {
+            return Err(ExprError { message: format!("Name a {what} between the brackets"), at: start });
+        }
+        Ok(name)
     }
 
     /// What follows a complete expression that shouldn't.

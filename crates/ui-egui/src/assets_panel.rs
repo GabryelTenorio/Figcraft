@@ -18,6 +18,7 @@ use figcraft_engine::library;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{COMPONENT, Tokens, regular, semibold};
 
@@ -253,7 +254,7 @@ fn search_row(app: &mut FigApp, ui: &mut Ui, w: f32) -> String {
     }
     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     let br = Rect::from_center_size(pos2(fr.max.x - 26.0, field.center().y), vec2(24.0, 24.0));
-    let bresp = ui.interact(br, Id::new("asset_libraries_btn"), Sense::click()).on_hover_text("Libraries");
+    let bresp = ui.interact(br, Id::new("asset_libraries_btn"), Sense::click()).tip("Libraries");
     if bresp.hovered() {
         ui.painter().rect_filled(br, CornerRadius::same(5), t.hover);
     }
@@ -680,7 +681,7 @@ fn libraries_view(app: &mut FigApp, ui: &mut Ui) {
     let w = ui.available_width();
     let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     let back = Rect::from_center_size(pos2(hr.min.x + 24.0, hr.center().y), vec2(24.0, 24.0));
-    let bresp = ui.interact(back, Id::new("asset_libraries_back"), Sense::click()).on_hover_text("Back to assets");
+    let bresp = ui.interact(back, Id::new("asset_libraries_back"), Sense::click()).tip("Back to assets");
     if bresp.hovered() {
         ui.painter().rect_filled(back, CornerRadius::same(5), t.hover);
     }
@@ -819,7 +820,7 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         ui.painter().with_clip_rect(clip).galley(pos2(r.min.x + PAD, r.min.y + 23.0), line, t.text_secondary);
         ui.interact(clip, Id::new(("asset_lib_row", &l.id)), Sense::hover()).on_hover_text(&l.path);
         let x = Rect::from_center_size(pos2(r.max.x - 24.0, r.center().y), vec2(24.0, 24.0));
-        let xr = ui.interact(x, Id::new(("asset_lib_remove", &l.id)), Sense::click()).on_hover_text("Remove library from this file");
+        let xr = ui.interact(x, Id::new(("asset_lib_remove", &l.id)), Sense::click()).tip("Remove library from this file");
         if xr.hovered() {
             ui.painter().rect_filled(x, CornerRadius::same(5), t.hover);
         }

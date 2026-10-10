@@ -92,7 +92,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     if hdr == Some(1) {
         crate::style_picker::open(app, ui, &ids, crate::style_picker::StyleSlot::Text);
     }
-    crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text), f32::INFINITY);
+    crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text, "Text"), f32::INFINITY);
     // A text style: its chip stands for the font rows (they show again when the chars differ).
     crate::style_picker::chip(app, ui, doc, &ids, crate::style_picker::StyleSlot::Text);
     if !matches!(crate::style_picker::text_link(app, doc, &ids), Some(Some(_))) {
@@ -641,6 +641,7 @@ fn text_seg(ui: &mut Ui, salt: &str, items: &[(&str, &str)], active: Option<usiz
     for (i, (label, tip)) in items.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.min.x + i as f32 * cell, rect.min.y), vec2(cell, FIELD_H));
         let resp = ui.interact(r, Id::new(("ty_seg", salt, i)), Sense::click()).on_hover_text(*tip);
+        crate::a11y::toggle(&resp, tip, active == Some(i));
         if active == Some(i) {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.panel);
             ui.painter().rect_stroke(r.shrink(2.0), CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
@@ -763,6 +764,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
     let editing_id = id.with("editing");
     let mut editing: Option<String> = ui.data(|d| d.get_temp(editing_id));
     let resp = ui.interact(rect, id.with("click"), Sense::click()).on_hover_text(tip);
+    crate::a11y::text(&resp, tip, value);
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     if editing.is_some() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
@@ -770,7 +772,8 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
     paint_lead(ui.painter(), lead, glyph, t.icon_secondary);
-    if editing.is_none() && resp.clicked() {
+    let started = editing.is_none() && resp.clicked();
+    if started {
         editing = Some(if value == MIXED { String::new() } else { value.to_string() });
         ui.memory_mut(|m| m.request_focus(id.with("te")));
     }
@@ -785,7 +788,9 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
                     .font(regular(11.0))
                     .desired_width(text_rect.width() - 6.0),
             );
-            let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            crate::a11y::own_focus(&r);
+            // The Enter that started the edit (from the keyboard) doesn't end it.
+            let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if esc {
                 ui.data_mut(|d| d.remove::<String>(editing_id));

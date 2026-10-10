@@ -126,6 +126,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    crate::a11y::canvas(&mut app.ui.nav, &resp, || describe(&app.session));
     if let Ok(ds) = app.session.ds_mut()
         && ((ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5)
     {
@@ -178,7 +179,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         let h = (f64::from(v.height) / v.scale * zoom) as f32;
         painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
-    overlays(app, &painter, &t);
+    app.session.tool.labels = overlays(app, &painter, &t);
     // The zoom tool's area.
     if let (Some(start), Some(p)) = (app.canvas.zoom_drag, ctx.input(|i| i.pointer.hover_pos())) {
         let area = Rect::from_two_pos(start, p);
@@ -224,6 +225,25 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
             }
         };
         ctx.set_cursor_icon(c);
+    }
+}
+
+/// What the canvas says to screen readers: the selected layer ("Rectangle 1, Rectangle, 120 by 80,
+/// selected"), how many are selected, or the page with nothing selected.
+pub fn describe(s: &figcraft_engine::Session) -> String {
+    let Ok(ds) = s.ds() else { return String::new() };
+    match ds.selection.as_slice() {
+        [] => format!("{}, nothing selected", ds.doc.node(ds.page).map(|p| p.name.as_str()).unwrap_or("Page")),
+        [id] => match ds.doc.node(*id) {
+            Some(n) => {
+                let kind = n.kind.label();
+                let name = if n.name.is_empty() { kind } else { n.name.as_str() };
+                let (w, h) = (crate::widgets::fmt_num(n.width), crate::widgets::fmt_num(n.height));
+                format!("{name}, {kind}, {w} by {h}, selected")
+            }
+            None => String::new(),
+        },
+        many => format!("{} layers selected", many.len()),
     }
 }
 
@@ -307,7 +327,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     let (mods, scroll, zoom_delta, hover_pos, space) =
         ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
-    let typing_elsewhere = ctx.memory(|m| m.focused().is_some());
+    let typing_elsewhere = crate::a11y::field_focused(&ctx);
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
     // Dropped files import onto the canvas.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
@@ -584,8 +604,11 @@ fn outline_shape(app: &FigApp, doc: &Document, id: NodeId) -> Option<Vec<Vec<Pos
     Some(out)
 }
 
-fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
-    let Ok(ds) = app.session.ds() else { return };
+/// Everything drawn over the rendered page; returns the frame labels drawn (frame, corners on the
+/// page) for the engine to hit-test.
+fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [Point; 4])> {
+    let mut labels = Vec::new();
+    let Ok(ds) = app.session.ds() else { return labels };
     let doc = ds.doc.clone();
     let page = ds.page;
     let sel = ds.selection.clone();
@@ -616,8 +639,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     for c in boards(&doc, page).iter().filter(|c| focus.is_none_or(|f| f == **c)) {
         let Some(n) = doc.node(*c) else { continue };
         let Some(b) = doc.world_bounds(*c) else { continue };
-        // Off-screen frames draw neither grids nor a label (labels sit just above the frame).
-        let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand2(vec2(0.0, 20.0));
+        // Off-screen frames draw neither grids nor a label (labels sit just outside the frame).
+        let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand(20.0);
         if !on_screen.intersects(app.canvas.rect) {
             continue;
         }
@@ -639,50 +662,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         }
         // The focus view's bar names its frame.
         let labelled = focus.is_none() && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }));
-        if labelled {
-            let tl = app.to_screen(b.x0, b.y0);
-            let selected = sel.contains(c);
-            let hovered = ds.hover == Some(*c);
-            let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. });
-            let col = if is_comp {
-                COMPONENT
-            } else if selected || hovered {
-                ACCENT
-            } else {
-                t.text_secondary
-            };
-            if matches!(n.kind, NodeKind::Section { .. }) {
-                // Section titles are pills inside the top-left; a section hiding its contents shows
-                // an eye in its pill and says so in the middle.
-                let hidden = n.hides_contents();
-                let fg = if selected { Color32::WHITE } else { t.text };
-                let galley = crate::bidi::name_galley(painter, &n.name, semibold(11.0), fg, 480.0);
-                let eye = if hidden { 16.0 } else { 0.0 };
-                let r = Rect::from_min_size(tl, galley.size() + vec2(16.0 + eye, 8.0));
-                painter.rect_filled(r, CornerRadius::same(4), if selected { ACCENT } else { t.hover });
-                if hidden {
-                    let ir = Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(12.0, 12.0));
-                    crate::icons::paint(painter, ir, crate::icons::Icon::EyeOff, fg);
-                }
-                painter.galley(r.min + vec2(8.0 + eye, 4.0), galley, fg);
-                status_badge(painter, n, pos2(r.max.x + 6.0, r.center().y));
-                let body = Rect::from_two_pos(tl, app.to_screen(b.x1, b.y1));
-                if hidden && body.width() > 120.0 && body.height() > 60.0 {
-                    painter.text(body.center(), Align2::CENTER_CENTER, "Contents hidden", regular(11.0), t.text_tertiary);
-                }
-            } else {
-                let max_w = (b.width() * zoom) as f32;
-                let mut x = tl.x;
-                if is_comp {
-                    crate::icons::paint(painter, Rect::from_min_size(pos2(x, tl.y - 16.0), vec2(12.0, 12.0)), crate::icons::Icon::Component, col);
-                    x += 14.0;
-                }
-                // Names longer than the frame end in an ellipsis (a right-to-left name keeps its start).
-                let galley = crate::bidi::name_galley(painter, &n.name, regular(11.0), col, (max_w - (x - tl.x)).max(20.0));
-                let end = x + galley.size().x;
-                painter.galley(pos2(x, tl.y - 16.0), galley, col);
-                status_badge(painter, n, pos2(end + 6.0, tl.y - 9.0));
-            }
+        if labelled && let Some(q) = crate::frame_labels::draw(app, painter, t, &doc, *c, sel.contains(c), ds.hover == Some(*c)) {
+            labels.push((*c, q.map(|p| app.to_page(p))));
         }
     }
     // Prototype connections.
@@ -889,6 +870,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     if view.rulers {
         rulers(app, painter, t, &doc, &sel);
     }
+    labels
 }
 
 /// A transform box (screen corners tl, tr, br, bl): its outline when `outline`, the first `handles`

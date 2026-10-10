@@ -8,6 +8,7 @@ use figcraft_doc::*;
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::right::{block, common, menu_item, menu_popup, row};
 use crate::theme::{ACCENT, Tokens, regular};
@@ -226,7 +227,7 @@ fn limit_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], hori
 fn add_slot(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::click());
-    let resp = resp.on_hover_text(format!("Add {}", label.to_lowercase()));
+    let resp = resp.tip(format!("Add {}", label.to_lowercase()));
     let border = if resp.hovered() { t.field_hover_border } else { t.border };
     ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, border), StrokeKind::Inside);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(10.0, 10.0)), Icon::Plus, t.icon_secondary);
@@ -279,7 +280,17 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
         ui.vertical(|ui| {
             if grid_mode {
                 // Grid: gap between columns and between rows.
-                let e = crate::variable_ui::number_field(app, ui, ids, "columnGap", Id::new("al_gap"), Lead::Icon(Icon::Gap), Some(l.gap), "", 96.0);
+                let e = crate::variable_ui::number_field(
+                    app,
+                    ui,
+                    ids,
+                    "columnGap",
+                    Id::new("al_gap"),
+                    Lead::Icon(Icon::Gap, "Column gap"),
+                    Some(l.gap),
+                    "",
+                    96.0,
+                );
                 app.field(ids, "columnGap", e, |v| json!(v.max(0.0)));
                 ui.add_space(8.0);
                 let e = crate::variable_ui::number_field(
@@ -288,7 +299,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                     ids,
                     "rowGap",
                     Id::new("al_rowgap"),
-                    Lead::Icon(Icon::DistributeV),
+                    Lead::Icon(Icon::DistributeV, "Row gap"),
                     Some(l.cross_gap),
                     "",
                     96.0,
@@ -304,7 +315,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 ids,
                 "gap",
                 Id::new("al_gap"),
-                Lead::Icon(gap_icon),
+                Lead::Icon(gap_icon, "Gap between items"),
                 if auto { None } else { Some(l.gap) },
                 "",
                 96.0,
@@ -345,7 +356,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             ids,
             "paddingHorizontal",
             Id::new("al_padh"),
-            Lead::Icon(Icon::PaddingH),
+            Lead::Icon(Icon::PaddingH, "Horizontal padding"),
             (pl == pr).then_some(pl),
             "",
             col,
@@ -357,7 +368,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             ids,
             "paddingVertical",
             Id::new("al_padv"),
-            Lead::Icon(Icon::PaddingV),
+            Lead::Icon(Icon::PaddingV, "Vertical padding"),
             (pt == pb).then_some(pt),
             "",
             col,
@@ -374,7 +385,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 ids,
                 "crossGap",
                 Id::new("al_crossgap"),
-                Lead::Icon(Icon::DistributeV),
+                Lead::Icon(Icon::DistributeV, "Gap between rows"),
                 Some(l.cross_gap),
                 "",
                 col,

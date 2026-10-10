@@ -6,6 +6,7 @@ use figcraft_doc::*;
 use figcraft_engine::cmd::lists::moved_index;
 use serde_json::{Value, json};
 
+use crate::a11y::{self, Tip};
 use crate::icons::{self, Icon};
 use crate::list_drag::{ListDrag, move_flags};
 use crate::style_picker::{self, StyleSlot};
@@ -64,7 +65,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().text(pos2(top.min.x + 26.0, top.center().y), Align2::CENTER_CENTER, "Y", semibold(12.0), Color32::WHITE);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(top.min.x + 48.0, top.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
     let share = Rect::from_min_size(pos2(top.max.x - 70.0, top.center().y - 16.0), vec2(56.0, 32.0));
-    let sresp = ui.interact(share, ui.id().with("share"), Sense::click()).on_hover_text("Export and share");
+    let sresp = ui.interact(share, ui.id().with("share"), Sense::click()).tip("Export and share");
     ui.painter().rect_filled(share, CornerRadius::same(6), if sresp.hovered() { t.accent_hover } else { ACCENT });
     ui.painter().text(share.center(), Align2::CENTER_CENTER, "Share", semibold(11.5), Color32::WHITE);
     if sresp.clicked() {
@@ -75,8 +76,8 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let (tri_r, chev_r) =
         (Rect::from_min_max(play.min, pos2(play.max.x - 16.0, play.max.y)), Rect::from_min_max(pos2(play.max.x - 16.0, play.min.y), play.max));
     let present_keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("proto.present").unwrap_or(""));
-    let presp = ui.interact(tri_r, ui.id().with("play"), Sense::click()).on_hover_text(format!("Present  {present_keys}"));
-    let mresp = ui.interact(chev_r, ui.id().with("play_menu"), Sense::click()).on_hover_text("Present or preview");
+    let presp = ui.interact(tri_r, ui.id().with("play"), Sense::click()).tip(format!("Present  {present_keys}"));
+    let mresp = ui.interact(chev_r, ui.id().with("play_menu"), Sense::click()).tip("Present or preview");
     if presp.hovered() || mresp.hovered() {
         ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
     }
@@ -107,6 +108,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
         let r = Rect::from_min_size(pos2(x, tabs.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
         let resp = ui.interact(r, ui.id().with(("rtab", label)), Sense::click());
         let active = app.ui.right_tab == tab;
+        a11y::tab(&resp, label, active);
         if active {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
@@ -120,6 +122,9 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
     let zr = Rect::from_min_size(pos2(tabs.max.x - 64.0, tabs.center().y - 12.0), vec2(56.0, 24.0));
     let zresp = ui.interact(zr, ui.id().with("zoommenu"), Sense::click());
+    // The value is only spelled out while a screen reader reads the tree.
+    let value = if a11y::active(&zresp.ctx) { format!("{}%", (zoom * 100.0).round()) } else { String::new() };
+    a11y::combo(&zresp, "Zoom", &value, a11y::menu_open(&zresp));
     if zresp.hovered() {
         ui.painter().rect_filled(zr, CornerRadius::same(5), t.hover);
     }
@@ -179,6 +184,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             RightTab::Inspect => inspect(app, ui),
         }
         ui.add_space(80.0);
+        a11y::scroll_focus(&mut app.ui.nav, ui);
     });
 }
 
@@ -234,7 +240,10 @@ pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl 
     let trail = keys.as_ref().map_or(0.0, |k| k.size().x + MENU_PAD).max(art_w);
     let w = ui.available_width().max(menu_row_width(text.size().x, trail).ceil());
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
-    let hovered = resp.hovered();
+    a11y::menu_item(&resp, label, shortcut, None);
+    // The keyboard's item is highlighted like the hovered one.
+    a11y::own_focus(&resp);
+    let hovered = resp.hovered() || resp.has_focus();
     if hovered {
         ui.painter().rect_filled(r, CornerRadius::same(5), ACCENT);
     }
@@ -250,7 +259,9 @@ pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl 
 
 /// A menu item with a check mark when `on` (the unchecked ones line up with it).
 pub fn menu_check(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
-    menu_item(ui, &format!("{}{label}", if on { "✓ " } else { "    " }), shortcut)
+    let resp = menu_row(ui, &format!("{}{label}", if on { "✓ " } else { "    " }), shortcut, 0.0, |_, _, _| {});
+    a11y::menu_item(&resp, label, shortcut, Some(on));
+    resp.clicked()
 }
 
 pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
@@ -427,7 +438,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             t.icon_secondary,
         );
         let sr = Rect::from_min_size(pos2(lr.max.x + 4.0, r.center().y - 12.0), vec2(24.0, 24.0));
-        let sresp = ui.interact(sr, ui.id().with("swap_orient"), Sense::click()).on_hover_text("Swap orientation");
+        let sresp = ui.interact(sr, ui.id().with("swap_orient"), Sense::click()).tip("Swap orientation");
         if sresp.hovered() {
             ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
         }
@@ -462,7 +473,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     for (icon, label, cmd) in actions.into_iter().rev() {
         let br = Rect::from_min_size(pos2(x - 24.0, r.center().y - 12.0), vec2(24.0, 24.0));
         let tip = if cmd == "bool.union" { label } else { crate::shortcuts::tip(label, cmd) };
-        let bresp = ui.interact(br, ui.id().with(("qa", cmd)), Sense::click()).on_hover_text(tip);
+        let bresp = ui.interact(br, ui.id().with(("qa", cmd)), Sense::click()).tip(tip);
         if bresp.hovered() {
             ui.painter().rect_filled(br, CornerRadius::same(5), t.hover);
         }
@@ -552,7 +563,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     });
     widgets::sublabels(ui, "Rotation", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius), rot, "°", col, 1.0);
+        let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius, "Rotation"), rot, "°", col, 1.0);
         app.field(&ids, "rotation", e, |v| json!(v));
         let items = [
             (Icon::Rotate, "Rotate 90° right"),
@@ -629,7 +640,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         ui.data_mut(|d| d.insert_temp(Id::new("blend_open"), !d.get_temp::<bool>(Id::new("blend_open")).unwrap_or(false)));
     }
     let col = widgets::col_width(ui.available_width());
-    crate::variable_ui::bound_row(app, ui, &ids, "visible", VariableType::Boolean, Lead::Icon(Icon::Eye), col * 2.0 + 8.0);
+    crate::variable_ui::bound_row(app, ui, &ids, "visible", VariableType::Boolean, Lead::Icon(Icon::Eye, "Visible"), col * 2.0 + 8.0);
     // Masks: how they mask.
     if sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.is_mask)) {
         let mt = common(doc, sel, |n| n.mask_type);
@@ -651,7 +662,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));
     widgets::sublabels(ui, "Opacity", radius_ok.then_some("Corner radius"));
     row(ui, 32.0, |ui| {
-        let e = crate::variable_ui::number_field(app, ui, &ids, "opacity", Id::new("ap_op"), Lead::Icon(Icon::Opacity), op, "%", col);
+        let e = crate::variable_ui::number_field(app, ui, &ids, "opacity", Id::new("ap_op"), Lead::Icon(Icon::Opacity, "Opacity"), op, "%", col);
         app.field(&ids, "opacity", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
         if radius_ok {
             let e = crate::variable_ui::number_field(
@@ -660,7 +671,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 &ids,
                 "cornerRadius",
                 Id::new("ap_rad"),
-                Lead::Icon(Icon::CornerRadius),
+                Lead::Icon(Icon::CornerRadius, "Corner radius"),
                 r.flatten(),
                 "",
                 col,
@@ -674,16 +685,21 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     });
     if radius_ok && ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false) {
         let radii = common(doc, sel, |n| n.corners.radii);
-        let keys = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
+        let keys = [
+            ("topLeftRadius", "Top left radius"),
+            ("topRightRadius", "Top right radius"),
+            ("bottomRightRadius", "Bottom right radius"),
+            ("bottomLeftRadius", "Bottom left radius"),
+        ];
         row(ui, 32.0, |ui| {
-            for (k, key) in keys.iter().enumerate().take(2) {
+            for (k, (key, name)) in keys.iter().enumerate().take(2) {
                 let e = crate::variable_ui::number_field(
                     app,
                     ui,
                     &ids,
                     key,
                     Id::new(("corner", k)),
-                    Lead::Icon(Icon::CornerRadius),
+                    Lead::Icon(Icon::CornerRadius, name),
                     radii.map(|r| r[k]),
                     "",
                     col,
@@ -692,14 +708,14 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
         row(ui, 32.0, |ui| {
-            for (k, key) in keys.iter().enumerate().skip(2) {
+            for (k, (key, name)) in keys.iter().enumerate().skip(2) {
                 let e = crate::variable_ui::number_field(
                     app,
                     ui,
                     &ids,
                     key,
                     Id::new(("corner", k)),
-                    Lead::Icon(Icon::CornerRadius),
+                    Lead::Icon(Icon::CornerRadius, name),
                     radii.map(|r| r[k]),
                     "",
                     col,
@@ -950,8 +966,17 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
             });
             let sided = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Rectangle)));
             let weight_w = half - if sided { 60.0 } else { 32.0 };
-            let e =
-                crate::variable_ui::number_field(app, ui, &ids, "strokeWeight", Id::new("stroke_w"), Lead::Icon(Icon::Menu), weight, "", weight_w);
+            let e = crate::variable_ui::number_field(
+                app,
+                ui,
+                &ids,
+                "strokeWeight",
+                Id::new("stroke_w"),
+                Lead::Icon(Icon::Menu, "Stroke weight"),
+                weight,
+                "",
+                weight_w,
+            );
             app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
             if sided {
                 let sides_btn = icons::button(ui, Icon::IndependentCorners, 24.0, false, "Individual strokes");
@@ -1236,7 +1261,7 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
                 );
                 let _ = ui.interact(chip, Id::new(("bound_paint", fills, i)), Sense::hover()).on_hover_text(&name);
                 let dr = Rect::from_center_size(pos2(text_r.max.x - 9.0, r.center().y), vec2(18.0, 18.0));
-                let dresp = ui.interact(dr, Id::new(("detach_paint", fills, i)), Sense::click()).on_hover_text("Detach variable");
+                let dresp = ui.interact(dr, Id::new(("detach_paint", fills, i)), Sense::click()).tip("Detach variable");
                 icons::paint(ui.painter(), dr.shrink(3.0), Icon::Detach, t.icon_secondary);
                 if dresp.clicked() {
                     app.run("variable.bind", json!({"ids": ids, "field": key, "variable": null}));
@@ -1765,7 +1790,7 @@ pub(crate) fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine
 pub(crate) fn prop_row(app: &mut FigApp, ui: &mut Ui, p: &figcraft_engine::devinspect::Prop) {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-    let resp = resp.on_hover_text(format!("Copy {}", p.value));
+    let resp = resp.tip(format!("Copy {}", p.value));
     if resp.hovered() {
         ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
     }
@@ -1811,7 +1836,7 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devi
     let mut export: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
     for a in assets {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-        let resp = resp.on_hover_text(format!("Export {}", a.name));
+        let resp = resp.tip(format!("Export {}", a.name));
         if resp.hovered() {
             ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - PAD - 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Export, t.icon);

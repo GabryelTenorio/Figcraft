@@ -112,6 +112,12 @@ fn ui(s: &mut Session, kind: &str) -> Result<Value> {
     ok()
 }
 
+/// Move the keyboard `step` regions on (toolbar, layers, canvas, properties): the UI does it.
+fn region(s: &mut Session, step: i64) -> Result<Value> {
+    s.request_ui("focus.region", json!({"step": step}));
+    ok()
+}
+
 fn pref(s: &mut Session, p: &Value, f: fn(&mut crate::Prefs) -> &mut bool) -> Result<Value> {
     let slot = f(&mut s.prefs);
     *slot = boolean(p, "on").unwrap_or(!*slot);
@@ -196,6 +202,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Dev Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),
+        spec!("view.nextRegion", "Focus next region", "{}", false, |s, _| region(s, 1)),
+        spec!("view.previousRegion", "Focus previous region", "{}", false, |s, _| region(s, -1)),
         spec!("view.themeLight", "Light theme", "{}", false, |s, _| {
             s.prefs.theme = "light".into();
             ok()
@@ -213,6 +221,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("pref.renameDuplicates", "Rename duplicated layers", "{on?}", false, |s, p| pref(s, p, |x| &mut x.rename_duplicates)),
         spec!("pref.showDimensions", "Show dimensions on objects", "{on?}", false, |s, p| pref(s, p, |x| &mut x.show_dimensions)),
         spec!("pref.numberKeysOpacity", "Use number keys for opacity", "{on?}", false, |s, p| pref(s, p, |x| &mut x.number_keys_opacity)),
+        spec!("pref.reduceMotion", "Reduce motion", "{on?}", false, |s, p| pref(s, p, |x| &mut x.reduce_motion)),
         spec!("pref.nudge", "Nudge amount", "{small?, big?}", false, |s, p| {
             s.prefs.nudge_small = num(p, "small").unwrap_or(s.prefs.nudge_small).clamp(0.01, 1000.0);
             s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);

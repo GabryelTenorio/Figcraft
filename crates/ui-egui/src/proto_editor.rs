@@ -1,5 +1,5 @@
-//! The interaction editor's actions: an interaction's action list (add, reorder, remove, open one
-//! to edit it), conditional actions built in place (if / else if / else blocks, each with a
+//! The interaction editor's actions: an interaction's action list (add, reorder by dragging a row's
+//! grip or from its menu, remove, open one to edit it), conditional actions built in place (if / else if / else blocks, each with a
 //! condition from the expression builder or typed as an expression, and actions of its own), and
 //! set variable values given as expressions. Every edit runs a `proto.action.*` or
 //! `proto.conditional.*` command (one undo step each).
@@ -11,9 +11,11 @@ use figcraft_engine::cmd::proto_actions::{action_at, start_value};
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
+use crate::list_drag::ListDrag;
 use crate::proto_panel::{action_fields, action_of, action_summary, targets_for, value_json};
-use crate::right::{menu_check, menu_item, menu_popup, row};
+use crate::right::{menu_check, menu_item, menu_popup, row, row_rect};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, BindEvent, FIELD_H, FieldEdit, Lead, PAD};
 
@@ -146,16 +148,39 @@ fn nested(ui: &mut Ui, indent: f32, add: impl FnOnce(&mut Ui)) -> Rect {
     ui.scope_builder(egui::UiBuilder::new().max_rect(max).layout(egui::Layout::top_down(egui::Align::Min)), add).response.rect
 }
 
+/// The drag-to-reorder id of the action list at `prefix` (tests find its rows' grips by it).
+pub(crate) fn list_key(node: NodeId, k: usize, prefix: &[usize]) -> (&'static str, NodeId, usize, &[usize]) {
+    ("proto_actions", node, k, prefix)
+}
+
 /// An action list: the interaction's (`prefix` empty) or a conditional block's (`prefix` =
-/// `[action, block, …]`), then "Add action".
+/// `[action, block, …]`), then "Add action". Rows drag by their grip to reorder the list.
 pub fn action_list(app: &mut FigApp, ui: &mut Ui, cx: &Cx, list: &[Action], prefix: &[usize]) {
     let open = open_path(ui.ctx(), cx);
     // An interaction with one action shows its editor as it is.
     let single = prefix.is_empty() && list.len() == 1;
+    let mut drag = (!single).then(|| ListDrag::in_order(ui, list_key(cx.node, cx.k, prefix)));
     for (i, a) in list.iter().enumerate() {
         let path = [prefix, &[i]].concat();
         let is_open = single || open.starts_with(&path);
-        action_item(app, ui, cx, a, path, list.len(), is_open, single);
+        let (header, extent) = action_item(app, ui, cx, a, path, list.len(), is_open, single);
+        if let Some(d) = &mut drag {
+            d.row(ui, i, header, extent, || action_summary(cx.doc, a));
+        }
+    }
+    if let Some((from, to)) = drag.and_then(|d| d.finish(ui)) {
+        let moved = cx.slot([prefix, &[from]].concat());
+        if run_at(app, &moved, "proto.action.move", json!({ "to": to })).is_some() {
+            // The open action (or the one inside it) stays open where it went.
+            let mut next = open;
+            if next.len() > prefix.len()
+                && next.starts_with(prefix)
+                && let Some(at) = next.get_mut(prefix.len())
+            {
+                *at = figcraft_engine::cmd::lists::moved_index(*at, from, to);
+                set_open(ui.ctx(), cx, next);
+            }
+        }
     }
     add_action_row(app, ui, cx, [prefix, &[list.len()]].concat());
 }
@@ -194,17 +219,17 @@ fn add_action_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, path: Vec<usize>) {
 }
 
 /// One action: its kind (open) or a summary (closed) with a menu to move or remove it, and when
-/// open its settings below.
+/// open its settings below. Returns its row and the area it covers with its settings.
 #[allow(clippy::too_many_arguments)]
-fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usize>, count: usize, open: bool, single: bool) {
+fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usize>, count: usize, open: bool, single: bool) -> (Rect, Rect) {
     let t = Tokens::get(ui.ctx());
     let i = path.last().copied().unwrap_or(0);
     let removable = path.len() > 1 || count > 1;
     let slot = cx.slot(path);
-    row(ui, 32.0, |ui| {
+    let header = row_rect(ui, 32.0, |ui| {
         if !single {
             let (r, resp) = ui.allocate_exact_size(vec2(12.0, FIELD_H), Sense::click());
-            let resp = resp.on_hover_text(if open { "Close" } else { "Open" });
+            let resp = resp.tip(if open { "Close" } else { "Open" });
             icons::paint(
                 ui.painter(),
                 Rect::from_center_size(r.center(), vec2(12.0, 12.0)),
@@ -281,6 +306,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
             other => action_fields(app, ui, cx.doc, cx.page, &slot, other),
         });
     }
+    (header, header.with_max_y(ui.cursor().min.y.max(header.max.y)))
 }
 
 /// The if / else if / else blocks of a conditional action: each one's condition and actions,
@@ -298,10 +324,11 @@ fn conditional_blocks(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, block
             condition_editor(app, ui, cx, slot, b, c);
         }
         let prefix = [slot.path.as_slice(), &[b]].concat();
+        // A line down the block's actions, under its label (and under their rows' drag handles).
+        let line = ui.painter().add(egui::Shape::Noop);
         let r = nested(ui, INDENT, |ui| action_list(app, ui, cx, &block.actions, &prefix));
-        // A line down the block's actions, under its label.
         let x = r.min.x - INDENT + PAD + 2.0;
-        ui.painter().vline(x, r.min.y + 2.0..=r.max.y - 4.0, Stroke::new(1.0, t.border));
+        ui.painter().set(line, egui::Shape::vline(x, r.min.y + 2.0..=r.max.y - 4.0, Stroke::new(1.0, t.border)));
     }
     let has_else = blocks.last().is_some_and(|b| b.condition.is_none());
     row(ui, 28.0, |ui| {
@@ -382,7 +409,7 @@ pub fn simple(e: &Expr) -> Option<Simple> {
             let rhs = match rhs {
                 Expr::Value(VariableValue::Alias(w)) => Rhs::Variable(w.clone()),
                 Expr::Value(x) => Rhs::Value(x.clone()),
-                Expr::Op { .. } => return None,
+                _ => return None,
             };
             Some(Simple { var: v.clone(), op: *op, rhs })
         }

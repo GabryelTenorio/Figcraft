@@ -137,4 +137,6 @@ mod cache_tests;
 #[cfg(test)]
 mod list_tests;
 #[cfg(test)]
+mod rtl_list_tests;
+#[cfg(test)]
 mod tests;

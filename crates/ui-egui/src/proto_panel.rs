@@ -9,6 +9,7 @@ use figcraft_doc::*;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::proto_editor::{Cx, Slot, set_action};
 use crate::right::{menu_item, menu_popup, row};
@@ -301,7 +302,7 @@ fn flows_of(doc: &Document, page: NodeId) -> Vec<proto::Flow> {
 /// A square icon button painted at `rect`; true when clicked.
 fn icon_button(ui: &mut Ui, id: Id, rect: Rect, icon: Icon, tip: &str) -> bool {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.interact(rect, id, Sense::click()).on_hover_text(tip);
+    let resp = ui.interact(rect, id, Sense::click()).tip(tip);
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
     }
@@ -592,7 +593,7 @@ fn editor_popover(app: &mut FigApp, ctx: &egui::Context, doc: &Document, page: N
                 let (hr, _) = ui.allocate_exact_size(vec2(width, 40.0), Sense::hover());
                 ui.painter().text(pos2(hr.min.x + PAD, hr.center().y), Align2::LEFT_CENTER, "Interaction", semibold(11.0), t.text);
                 let x = Rect::from_center_size(pos2(hr.max.x - 20.0, hr.center().y), vec2(24.0, 24.0));
-                let xr = ui.interact(x, ui.id().with("proto_editor_close"), Sense::click()).on_hover_text("Close");
+                let xr = ui.interact(x, ui.id().with("proto_editor_close"), Sense::click()).tip("Close");
                 if xr.hovered() {
                     ui.painter().rect_filled(x, CornerRadius::same(5), t.hover);
                 }

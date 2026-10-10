@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.add",
             "Add interaction",
-            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate {preserveScroll?}|back|scrollTo|openOverlay {position?, close_on_outside?, background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
+            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate {preserveScroll?}|back|scrollTo|openOverlay {position?, close_on_outside? (default true), background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
             true,
             add
         ),
@@ -313,7 +313,7 @@ pub(crate) fn canonical_actions(vars: &Variables, actions: &mut [Action]) {
         }
         Action::SetVariableMode { collection, mode } => {
             if let Some(c) = vars.collection(collection) {
-                if let Some(m) = c.modes.iter().find(|m| m.id == *mode).or_else(|| c.modes.iter().find(|m| m.name == *mode)) {
+                if let Some(m) = c.find_mode(mode) {
                     *mode = m.id.clone();
                 }
                 *collection = c.id.clone();
@@ -328,12 +328,25 @@ pub(crate) fn canonical_actions(vars: &Variables, actions: &mut [Action]) {
     });
 }
 
-/// Variables an expression reads by name, stored by id.
+/// Variables, collections and modes an expression names by name, stored by id.
 pub(crate) fn canonical_expr(vars: &Variables, e: &mut Expr, depth: usize) {
     match e {
         Expr::Value(VariableValue::Alias(name)) => {
             if let Some(v) = vars.get(name) {
                 *name = v.id.clone();
+            }
+        }
+        Expr::Mode { collection } => {
+            if let Some(c) = vars.collection(collection) {
+                *collection = c.id.clone();
+            }
+        }
+        Expr::InMode { variable, mode } => {
+            if let Some(v) = vars.get(variable) {
+                if let Some(m) = vars.collection(&v.collection).and_then(|c| c.find_mode(mode)) {
+                    *mode = m.id.clone();
+                }
+                *variable = v.id.clone();
             }
         }
         Expr::Op { args, .. } if depth < MAX_EXPR_DEPTH => args.iter_mut().for_each(|a| canonical_expr(vars, a, depth + 1)),

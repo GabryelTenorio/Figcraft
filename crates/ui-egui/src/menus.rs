@@ -6,6 +6,7 @@ use figcraft_engine::catalog::{MENU, SEP};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y;
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular};
 use crate::toolbar::pretty_shortcut;
@@ -182,7 +183,7 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                 last_sep = false;
                 let full = format!("{prefix}/{sub}");
                 let resp = submenu_item(ui, &sub, &t);
-                if resp.hovered() {
+                if resp.hovered() || resp.has_focus() {
                     ui.data_mut(|d| d.insert_temp(Id::new(("submenu_open", prefix)), full.clone()));
                 }
                 let open: Option<String> = ui.data(|d| d.get_temp(Id::new(("submenu_open", prefix))));
@@ -237,7 +238,13 @@ fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, 
 fn indented_item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, indent: f32, t: &Tokens) -> bool {
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
-    let hov = resp.hovered() && enabled;
+    a11y::menu_item(&resp, label, shortcut, checked.then_some(true));
+    if !enabled {
+        a11y::disabled(&resp);
+    }
+    // The keyboard's item is highlighted like the hovered one.
+    a11y::own_focus(&resp);
+    let hov = (resp.hovered() || resp.has_focus()) && enabled;
     if hov {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
@@ -262,12 +269,19 @@ fn indented_item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checke
 fn submenu_item(ui: &mut Ui, label: &str, t: &Tokens) -> egui::Response {
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
-    if resp.hovered() {
+    a11y::submenu(&resp, label);
+    a11y::own_focus(&resp);
+    if resp.hovered() || resp.has_focus() {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
     ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.menu_text);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(12.0, 12.0)), Icon::ChevronRight, t.menu_text);
     resp
+}
+
+/// The main menu's area.
+pub fn main_menu_id() -> Id {
+    Id::new("main_menu")
 }
 
 /// Whether the pointer is over a menu (any foreground area).
@@ -282,50 +296,45 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
     // Main menu.
     if app.ui.main_menu {
         let mut close = false;
-        let area =
-            egui::Area::new(Id::new("main_menu")).fixed_pos(pos2(8.0, crate::tabs::HEIGHT + 48.0)).order(egui::Order::Foreground).show(ctx, |ui| {
-                menu_frame(ui, &t, |ui| {
-                    // Quick actions search row.
-                    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
-                    ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(5), Color32::from_white_alpha(18));
-                    icons::paint(
-                        ui.painter(),
-                        Rect::from_center_size(pos2(r.min.x + 16.0, r.center().y), vec2(14.0, 14.0)),
-                        Icon::Search,
-                        t.menu_dim,
-                    );
-                    ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Actions…", regular(12.0), t.menu_dim);
-                    ui.painter().text(
-                        pos2(r.max.x - 10.0, r.center().y),
-                        Align2::RIGHT_CENTER,
-                        pretty_shortcut(crate::shortcuts::shortcut("app.actions").unwrap_or("")),
-                        regular(12.0),
-                        t.menu_dim,
-                    );
-                    if resp.clicked() {
-                        app.ui.palette = Some(String::new());
-                        close = true;
+        let area = egui::Area::new(main_menu_id()).fixed_pos(pos2(8.0, crate::tabs::HEIGHT + 48.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            menu_frame(ui, &t, |ui| {
+                // Quick actions search row.
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+                a11y::menu_item(&resp, "Actions…", crate::shortcuts::shortcut("app.actions").unwrap_or(""), None);
+                ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(5), Color32::from_white_alpha(18));
+                icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 16.0, r.center().y), vec2(14.0, 14.0)), Icon::Search, t.menu_dim);
+                ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Actions…", regular(12.0), t.menu_dim);
+                ui.painter().text(
+                    pos2(r.max.x - 10.0, r.center().y),
+                    Align2::RIGHT_CENTER,
+                    pretty_shortcut(crate::shortcuts::shortcut("app.actions").unwrap_or("")),
+                    regular(12.0),
+                    t.menu_dim,
+                );
+                if resp.clicked() {
+                    app.ui.palette = Some(String::new());
+                    close = true;
+                }
+                ui.add_space(6.0);
+                for top in TOP_MENUS {
+                    let resp = submenu_item(ui, top, &t);
+                    if resp.hovered() || resp.has_focus() {
+                        ui.data_mut(|d| d.insert_temp(Id::new("main_open"), top.to_string()));
                     }
-                    ui.add_space(6.0);
-                    for top in TOP_MENUS {
-                        let resp = submenu_item(ui, top, &t);
-                        if resp.hovered() {
-                            ui.data_mut(|d| d.insert_temp(Id::new("main_open"), top.to_string()));
-                        }
-                        let open: Option<String> = ui.data(|d| d.get_temp(Id::new("main_open")));
-                        if open.as_deref() == Some(*top) {
-                            let pos = pos2(resp.rect.max.x + 12.0, resp.rect.min.y - 8.0);
-                            egui::Area::new(Id::new(("menu", *top))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-                                menu_frame(ui, &t, |ui| {
-                                    if menu_level(app, ui, top) {
-                                        close = true;
-                                    }
-                                });
+                    let open: Option<String> = ui.data(|d| d.get_temp(Id::new("main_open")));
+                    if open.as_deref() == Some(*top) {
+                        let pos = pos2(resp.rect.max.x + 12.0, resp.rect.min.y - 8.0);
+                        egui::Area::new(Id::new(("menu", *top))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+                            menu_frame(ui, &t, |ui| {
+                                if menu_level(app, ui, top) {
+                                    close = true;
+                                }
                             });
-                        }
+                        });
                     }
-                });
+                }
             });
+        });
         let clicked_outside = ctx.input(|i| i.pointer.any_pressed()) && !over_menu(ctx) || ctx.input(|i| i.key_pressed(egui::Key::Escape));
         if close || (clicked_outside && !area.response.hovered()) {
             app.ui.main_menu = false;

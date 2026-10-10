@@ -7,6 +7,7 @@ use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec
 use figcraft_doc::{Document, NodeId, NodeKind};
 use serde_json::json;
 
+use crate::a11y::{self, Region, RowInfo, Tip};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, COMPONENT, Tokens, regular, semibold};
 use crate::{FigApp, LeftTab};
@@ -70,13 +71,16 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
     let mut y = r.min.y + 8.0;
     // Main menu (logo).
     let lr = Rect::from_center_size(pos2(r.center().x, y + 16.0), vec2(36.0, 32.0));
-    let lresp = ui.interact(lr, ui.id().with("rail_menu"), Sense::click()).on_hover_text("Main menu");
+    let lresp = ui.interact(lr, ui.id().with("rail_menu"), Sense::click()).tip("Main menu");
     if lresp.hovered() || app.ui.main_menu {
         ui.painter().rect_filled(lr, CornerRadius::same(6), t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(lr.center(), vec2(18.0, 18.0)), Icon::Logo, t.icon);
     if lresp.clicked() {
         app.ui.main_menu = !app.ui.main_menu;
+    }
+    if app.ui.main_menu {
+        a11y::popup(&mut app.ui.nav, lresp.id, crate::menus::main_menu_id());
     }
     y += 44.0;
     ui.painter().line_segment([pos2(r.min.x + 18.0, y), pos2(r.max.x - 18.0, y)], Stroke::new(1.0, t.border));
@@ -85,8 +89,11 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
     for (icon, label, tab) in items {
         let ir = Rect::from_center_size(pos2(r.center().x, y + 14.0), vec2(36.0, 28.0));
         let hit = Rect::from_min_max(pos2(r.min.x, y), pos2(r.max.x, y + 48.0));
-        let resp = ui.interact(hit, ui.id().with(("rail", label)), Sense::click()).on_hover_text(label);
+        let resp = ui.interact(hit, ui.id().with(("rail", label)), Sense::click()).tip(label);
         let active = tab.is_some_and(|tb| tb == app.ui.left_tab && !app.ui.left_collapsed && !app.ui.versions.open);
+        if tab.is_some() {
+            a11y::tab(&resp, label, active);
+        }
         if active {
             ui.painter().rect_filled(ir, CornerRadius::same(6), t.selected_row);
         } else if resp.hovered() {
@@ -135,7 +142,7 @@ pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
         ui.painter().text(pos2(head.min.x + 16.0, head.min.y + 46.0), Align2::LEFT_CENTER, "Drafts", regular(11.0), t.text_secondary);
     }
     let hr = Rect::from_center_size(pos2(head.max.x - 24.0, head.min.y + 24.0), vec2(24.0, 24.0));
-    let hresp = ui.interact(hr, ui.id().with("hideui"), Sense::click()).on_hover_text("Collapse panel");
+    let hresp = ui.interact(hr, ui.id().with("hideui"), Sense::click()).tip("Collapse panel");
     if hresp.hovered() {
         ui.painter().rect_filled(hr, CornerRadius::same(5), t.hover);
     }
@@ -158,12 +165,13 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let w = ui.available_width();
     let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     let tresp = ui.interact(Rect::from_min_size(hr.min, vec2(w - 40.0, 40.0)), ui.id().with("pages_toggle"), Sense::click());
+    a11y::toggle(&tresp, "Pages", app.ui.pages_open);
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Pages", semibold(11.0), t.text);
     if tresp.clicked() {
         app.ui.pages_open = !app.ui.pages_open;
     }
     let sr = Rect::from_center_size(pos2(hr.max.x - 50.0, hr.center().y), vec2(24.0, 24.0));
-    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).on_hover_text(crate::shortcuts::tip("Find", "edit.findReplace"));
+    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).tip(crate::shortcuts::tip("Find", "edit.findReplace"));
     if sresp.hovered() {
         ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
     }
@@ -172,7 +180,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         app.ui.find = Some((String::new(), String::new()));
     }
     let ar = Rect::from_center_size(pos2(hr.max.x - 22.0, hr.center().y), vec2(24.0, 24.0));
-    let aresp = ui.interact(ar, ui.id().with("addpage"), Sense::click()).on_hover_text("Add new page");
+    let aresp = ui.interact(ar, ui.id().with("addpage"), Sense::click()).tip("Add new page");
     if aresp.hovered() {
         ui.painter().rect_filled(ar, CornerRadius::same(5), t.hover);
     }
@@ -195,7 +203,9 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let mut move_to: Option<(NodeId, String)> = None;
     for (id, name) in pages {
         let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
+        a11y::list_item(&resp, &name, id == cur);
         let r = r.shrink2(vec2(8.0, 0.0));
+        a11y::ring_around(ui, r, &resp);
         if resp.hovered() || id == cur {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
@@ -527,7 +537,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Layers", semibold(11.0), t.text);
     let sr = Rect::from_center_size(pos2(hr.max.x - 22.0, hr.center().y), vec2(24.0, 24.0));
-    let sresp = ui.interact(sr, ui.id().with("layer_search_btn"), Sense::click()).on_hover_text("Search layers");
+    let sresp = ui.interact(sr, ui.id().with("layer_search_btn"), Sense::click()).tip("Search layers");
     if sresp.hovered() || app.ui.layer_search {
         ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
     }
@@ -645,9 +655,23 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             let Some(n) = doc.node(row.id) else { continue };
             let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click_and_drag());
             let selected = sel.contains(&row.id);
+            a11y::layer_row(&mut app.ui.nav, &resp);
+            if sel.last() == Some(&row.id) {
+                a11y::prefer(&mut app.ui.nav, Region::Layers, resp.id);
+            }
+            let info = RowInfo {
+                kind: n.kind.label(),
+                depth: row.depth,
+                selected,
+                expanded: row.has_kids.then(|| app.ui.expanded.contains(&row.id)),
+                hidden: !n.visible,
+                locked: n.locked,
+            };
+            a11y::tree_item(&resp, if n.name.is_empty() { n.kind.label() } else { &n.name }, &info);
             let in_selected = !selected && doc.ancestors(row.id).iter().any(|a| sel.contains(a));
             let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. });
             let rr = r.shrink2(vec2(8.0, 0.0));
+            a11y::ring_around(ui, rr, &resp);
             if selected {
                 ui.painter().rect_filled(rr, CornerRadius::same(5), if is_comp { t.component_row } else { t.selected_row });
             } else if in_selected {
@@ -669,6 +693,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 let tri = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
                 let tresp = ui.interact(tri, ui.id().with(("tri", row.id)), Sense::click());
                 let open = app.ui.expanded.contains(&row.id);
+                a11y::button(&tresp, if open { "Collapse" } else { "Expand" });
                 icons::paint(ui.painter(), tri.shrink(1.0), if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
                 if tresp.clicked() {
                     if ui.input(|i| i.modifiers.alt) {
@@ -720,6 +745,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             let lr = Rect::from_center_size(pos2(rr.max.x - 36.0, r.center().y), vec2(20.0, 20.0));
             if show_eye {
                 let eresp = ui.interact(er, ui.id().with(("eye", row.id)), Sense::click());
+                a11y::toggle(&eresp, "Hidden", !n.visible);
                 icons::paint(ui.painter(), er.shrink(3.0), if n.visible { Icon::Eye } else { Icon::EyeOff }, t.icon_secondary);
                 if eresp.clicked() {
                     vis = Some(row.id);
@@ -727,6 +753,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             }
             if show_lock {
                 let lresp = ui.interact(lr, ui.id().with(("lock", row.id)), Sense::click());
+                a11y::toggle(&lresp, "Locked", n.locked);
                 icons::paint(ui.painter(), lr.shrink(3.0), if n.locked { Icon::Lock } else { Icon::Unlock }, t.icon_secondary);
                 if lresp.clicked() {
                     lock = Some(row.id);
@@ -806,7 +833,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         }
         // Empty space below clears selection.
         let rest = Rect::from_x_y_ranges(band.x_range(), (top + total)..=(top + total.max(viewport.max.y)));
-        if rest.height() > 0.0 && ui.interact(rest, Id::new("layers_empty_space"), Sense::click()).clicked() {
+        // A click target for the pointer only (no stop for the keyboard).
+        if rest.height() > 0.0 && ui.interact(rest, Id::new("layers_empty_space"), Sense::CLICK).clicked() {
             app.run("select.none", json!({}));
         }
     });

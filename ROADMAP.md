@@ -74,7 +74,9 @@ dimension measured side by side.
    unlinks the chars edited). Live previews of a hovered named instance or font style and of a
    dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
    paragraph's font, renames start with the name selected and centred, Max lines shows while
-   truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
+   truncating. Right-to-left paragraphs mirror lists and indents: bullets and numbers (".1") on
+   the right, wrapped lines hanging from the right, the paragraph indent on the right, trailing
+   spaces hanging outside the line (canvas, PNG, PDF and SVG). *Left:* visual QA. 0.5 h.
 3. **Auto layout and sections depth**: *landed:* on-canvas padding/gap handles (also wrapped-row
    and grid column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed,
    hugging text wraps at its max), ignore auto layout (absolute position) with constraints, text
@@ -160,16 +162,20 @@ dimension measured side by side.
    presenter's flow picker and under each flow; conditional actions (if / else if / else over
    variable expressions) and set-variable-mode actions run in the presenter (from REST files or
    commands). Conditionals are built in the interaction editor: an interaction's actions are a list
-   (add, reorder, remove, open one to edit it), "Add action ▸ Conditional" adds an if whose
+   (add, reorder by dragging a row's grip, also inside conditional blocks, or from its menu, remove,
+   open one to edit it; one undo step per move), "Add action ▸ Conditional" adds an if whose
    condition comes from a builder (a variable from the variable picker, an operator, a value or
    another variable) or is typed as an expression (`count >= 3 and not done`, checked when entered,
    what's wrong shown under the field), each block with its own actions (the same editors,
    nested), plus "Else if" and "Else"; set variable values can be expressions (`count + 1`,
-   `"Hi " + name`); every edit is an undo step (`proto.action.*`, `proto.conditional.*`). Hotspot
-   hints: a click where nothing reacts flashes the screen's hotspots (an Options menu toggle, on by
-   default); the presenter's Inspect panel shows the hovered layer's properties. *Left:* dragging
-   actions to reorder them (a menu moves them now), QA against larger prototypes with
-   conditionals. 2–4 h.
+   `"Hi " + name`); expressions read a variable's value in a given mode of its collection
+   (`accent[Dark]`, also from REST files' variable mode lookups) and the mode a collection is in
+   where the interaction runs (`mode(Theme) == "Dark"`, following set variable mode actions); every
+   edit is an undo step (`proto.action.*`, `proto.conditional.*`). Hotspot hints: a click where
+   nothing reacts flashes the screen's hotspots (an Options menu toggle, on by default); the
+   presenter's Inspect panel shows the hovered layer's properties. Overlays opened through commands
+   close on a click outside unless told not to, as in the editor. *Left:* QA against larger
+   real-world prototypes. 1–2 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -200,9 +206,8 @@ dimension measured side by side.
    past the frame (its fills reach out, its children are clipped at the bleed), crop and bleed
    marks outside it, MediaBox / BleedBox / TrimBox, and CMYK colour (a documented, deterministic
    naive conversion; images and rasterised effects too).
-   *Left:* .fig import (best effort), variable mode lookups in prototype expressions, a CMYK
-   output intent (no CMYK ICC profile can ship in the repository), SVG filters other than shadows
-   and blurs (left out with a warning). 8–16 h.
+   *Left:* .fig import (best effort), a CMYK output intent (no CMYK ICC profile can ship in the
+   repository), SVG filters other than shadows and blurs (left out with a warning). 8–16 h.
 7. **Look & feel and interaction-fidelity pass**: *landed:* keyboard shortcuts audited against the
    public shortcut reference: one keymap (`figcraft_engine::keymap`) drives the menus, the canvas,
    the control channel and MCP, with macOS and Windows/Linux keys where they differ (mask, bring to
@@ -255,8 +260,19 @@ dimension measured side by side.
    main's layer used ~900 times 188/226 → 4/18 ms, adding a layer to it 430 → 21 ms, a label style
    in all 72 button variants (1,800 copies) 450 → 57 ms, switching a variant, reset, detach, push
    and paste ~450 → under 3 ms, accepting a library update 460 → 64 ms; the Assets panel with 2,000
-   assets 3.4 → 1.3 ms a frame. *Left:* a real-world file corpus, Windows/Linux/browser QA,
-   accessibility. 30–50 h.
+   assets 3.4 → 1.3 ms a frame. Accessibility: the custom-painted
+   controls name themselves for screen readers (AccessKit on desktop: role, name, value and state
+   for tools, layer rows with their type, level, selection and hidden/locked state, fields,
+   dropdowns, tabs, menu items, and the canvas, which describes the selection); keyboard navigation:
+   F6 / Shift+F6 move between the toolbar, layers, canvas and properties, Tab / Shift+Tab move
+   within a region with a focus ring, Enter or Space activate, the arrows go along the toolbar and
+   through the layer rows, menus and tool flyouts opened from the keyboard take it and give it back,
+   Escape returns to the canvas (where Tab selects the next layer again instead of wandering into
+   the tab strip); reduced motion follows the system's setting or a preference; secondary and
+   accent text meet WCAG AA in both themes. *Left:* a real-world file corpus, Windows/Linux/browser
+   QA, runs with real screen readers (NVDA, Narrator, VoiceOver, Orca), the AccessKit tree in the
+   browser (eframe's web backend doesn't send it yet), keyboard box selection, keyboard rename and
+   context menus in the layers panel. 28–46 h.
 
 ### Where we're going
 
@@ -318,7 +334,8 @@ dimension measured side by side.
   code where components take their properties as parameters and instances are calls), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
   context menu, Actions palette (⌘K), keyboard shortcuts from one keymap per platform (a tabbed,
-  searchable Keyboard shortcuts panel), presentation player with
+  searchable Keyboard shortcuts panel), keyboard navigation (F6 between regions, Tab within them, a
+  focus ring) and screen-reader names for the custom controls (AccessKit), presentation player with
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).
@@ -330,7 +347,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 80% | frame labels along a rotated frame's top edge, visual QA at extreme zooms | 1 |
+| Canvas & navigation | 6 | 82% | visual QA at extreme zooms | 0.5–1 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
 | Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |
@@ -339,11 +356,11 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Effects | 4 | 84% | glass and progressive blur tuned side by side; SVG draws noise, texture, progressive and background blur as embedded images | 2–4 |
 | Frames, groups, sections, masks | 5 | 82% | visual QA | 0.5–1 |
 | Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
-| Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
+| Text | 8 | 79% | visual QA | 0.5–1 |
 | Components & variants | 9 | 79% | QA with real-world (not synthetic) libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
-| Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
-| Import/export | 6 | 71% | .fig import (best effort), variable-mode lookups in prototype expressions, SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
+| Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |
+| Import/export | 6 | 71% | .fig import (best effort), SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
 | Dev mode / inspect | 2 | 91% | visual QA of the compare and focus views, comparing against an older named version (not only the snapshot taken when a frame first changes) | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 

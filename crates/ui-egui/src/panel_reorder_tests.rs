@@ -70,6 +70,7 @@ fn escape_cancels_a_row_drag() {
     u.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
     u.button(top, false);
     assert_eq!(fills(&u, r), ["FF0000", "00FF00", "0000FF"]);
+    assert_eq!(u.app.session.ds().unwrap().selection, [r], "the Escape only cancels the drag");
 }
 
 #[test]

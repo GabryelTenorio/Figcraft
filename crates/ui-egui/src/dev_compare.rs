@@ -212,6 +212,7 @@ fn header(ui: &mut Ui, t: &Tokens, cmp: &Comparison, mode: &mut Mode, open: &mut
         let cell = Rect::from_min_max(pos2(x - g.size().x - 20.0, r.center().y - 12.0), pos2(x, r.center().y + 12.0));
         let resp = ui.interact(cell, Id::new(("compare_mode", label)), Sense::click());
         let on = *mode == *m;
+        crate::a11y::tab(&resp, label, on);
         if on {
             ui.painter().rect_filled(cell, CornerRadius::same(5), t.field);
             ui.painter().rect_stroke(cell, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
@@ -335,6 +336,7 @@ fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>)
             let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
             let resp =
                 if c.change == ChangeKind::Removed { resp.on_hover_text("Removed since it was marked") } else { resp.on_hover_text("Select layer") };
+            crate::a11y::list_item(&resp, &format!("{} {}", c.change.label(), c.name), false);
             if resp.hovered() {
                 ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.hover);
                 now_hovered = Some(c.id);

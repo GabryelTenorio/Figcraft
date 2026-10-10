@@ -11,6 +11,7 @@ use figcraft_engine::codegen::{CodeLang, code_for};
 use figcraft_engine::devinspect::{self, DevItem, Prop};
 use serde_json::json;
 
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::right::{menu_check, menu_item_with, menu_popup, prop_row, row};
 use crate::theme::{ACCENT, Tokens, doc_c32, regular, semibold};
@@ -392,7 +393,8 @@ pub fn categories_section(app: &mut FigApp, ui: &mut Ui) {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
         // The colour: click for the palette.
         let sw = Rect::from_center_size(pos2(r.min.x + PAD + 8.0, r.center().y), vec2(16.0, 16.0));
-        let sw_resp = ui.interact(sw, Id::new(("cat_color", &c.id)), Sense::click()).on_hover_text("Colour");
+        let sw_resp = ui.interact(sw, Id::new(("cat_color", &c.id)), Sense::click()).tip("Colour");
+        crate::a11y::color(&sw_resp, &c.name, &c.color.to_css_hex());
         ui.painter().rect_filled(sw, CornerRadius::same(4), doc_c32(ui.ctx(), c.color));
         if sw_resp.hovered() {
             ui.painter().rect_stroke(sw.expand(2.0), CornerRadius::same(5), Stroke::new(1.0, t.border_strong), StrokeKind::Inside);
@@ -489,7 +491,7 @@ pub fn ready_list(app: &mut FigApp, ui: &mut Ui) {
     let (mut go, mut focus) = (None, None);
     for item in &app.ui.dev.ready {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
-        let resp = resp.on_hover_text(format!("Go to {}", item.name));
+        let resp = resp.tip(format!("Go to {}", item.name));
         if resp.hovered() {
             ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
         }

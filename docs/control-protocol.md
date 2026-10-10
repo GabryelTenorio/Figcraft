@@ -81,12 +81,19 @@ whether a click where nothing reacts flashes them (`hotspotHints`) and they are 
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`).
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
+`focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
+`canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
+pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
+screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
+the system's accessibility setting turns the interface's animations off.
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 
 A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `double`, `hover`,
 `drag` (needs `to: [x, y]`; `steps` intermediate moves, default 8). Position in page coordinates
-(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`.
+(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`. With the Move and Scale
+tools, a press on a frame's or section's name label (as the canvas last drew it, along a rotated
+frame's top edge) selects and drags that frame.
 
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}
@@ -132,10 +139,12 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
-`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
+`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `focusRegion`
+(`toolbar|layers|canvas|properties`: give that region the keyboard as F6 would, on the next frame),
+`iconGallery` (bool:
 every UI icon at 12, 16, 24 and 32 px over the window, for reviewing the icon set), `colorPicker`
 (`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
 or a collection id or name to show, or `{library, collection?}` for an enabled library's collection: the

@@ -64,7 +64,7 @@ pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Va
 /// win), then re-apply bindings. False for an unknown collection or mode.
 pub fn set_mode(doc: &mut Document, frame: NodeId, collection: &str, mode: &str) -> bool {
     let Some(c) = doc.variables.collection(collection) else { return false };
-    let Some(mode) = c.modes.iter().find(|m| m.id == mode).or_else(|| c.modes.iter().find(|m| m.name == mode)).map(|m| m.id.clone()) else {
+    let Some(mode) = c.find_mode(mode).map(|m| m.id.clone()) else {
         return false;
     };
     let cid = c.id.clone();

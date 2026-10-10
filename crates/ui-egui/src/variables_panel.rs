@@ -10,6 +10,7 @@ use figcraft_engine::library;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::colorpicker::PickerTarget;
 use crate::icons::{self, Icon};
 use crate::right::menu_item;
@@ -693,7 +694,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
             let sw = Rect::from_center_size(pos2(body.min.x + 13.0, body.center().y), vec2(14.0, 14.0));
             widgets::paint_swatch(ui.painter(), sw, &figcraft_color::Paint::solid(*c));
-            if ui.interact(sw.expand(3.0), id.with("swatch"), Sense::click()).on_hover_text("Edit colour").clicked() {
+            if ui.interact(sw.expand(3.0), id.with("swatch"), Sense::click()).tip("Edit colour").clicked() {
                 app.ui.picker = Some(PickerTarget::Variable { id: v.id.clone(), mode: mode.to_string() });
             }
             let hex_r = Rect::from_min_max(pos2(sw.max.x + 8.0, body.min.y + 4.0), pos2(body.max.x - 44.0, body.max.y - 4.0));

@@ -116,6 +116,17 @@ impl Collection {
     pub fn default_mode(&self) -> Option<&ModeId> {
         self.modes.first().map(|m| &m.id)
     }
+
+    /// The mode with id `key`, else the one named `key`.
+    pub fn find_mode(&self, key: &str) -> Option<&Mode> {
+        self.modes.iter().find(|m| m.id == key).or_else(|| self.modes.iter().find(|m| m.name == key))
+    }
+
+    /// The mode the collection is in under `modes` (collection → chosen mode): the chosen one if it
+    /// is one of its modes, else the default.
+    pub fn current_mode(&self, modes: &BTreeMap<CollectionId, ModeId>) -> Option<&Mode> {
+        modes.get(&self.id).and_then(|m| self.modes.iter().find(|x| x.id == *m)).or_else(|| self.modes.first())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

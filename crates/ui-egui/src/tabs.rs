@@ -5,6 +5,7 @@
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular};
 use crate::{FigApp, TitleBar};
@@ -30,8 +31,9 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         let mut x = rect.min.x + if app.ui.title_bar == TitleBar::Inset { 76.0 } else { 8.0 };
         // Home.
         let hr = Rect::from_min_size(pos2(x, rect.min.y), vec2(44.0, HEIGHT));
-        let hresp = ui.interact(hr, ui.id().with("home"), Sense::click()).on_hover_text("Home");
+        let hresp = ui.interact(hr, ui.id().with("home"), Sense::click()).tip("Home");
         let home_active = app.ui.home || app.session.docs.is_empty();
+        crate::a11y::tab(&hresp, "Home", home_active);
         if home_active {
             ui.painter().rect_filled(hr, CornerRadius::ZERO, t.tab_active);
         } else if hresp.hovered() {
@@ -51,6 +53,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             let w = (regular(12.0).size * 0.6 * name.chars().count() as f32 + 64.0).clamp(120.0, 220.0);
             let r = Rect::from_min_size(pos2(x, rect.min.y), vec2(w, HEIGHT));
             let resp = ui.interact(r, ui.id().with(("tab", d.uid)), Sense::click());
+            crate::a11y::tab(&resp, &name, active);
             if active {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.tab_active);
             } else if resp.hovered() {
@@ -77,7 +80,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             }
             let cr = Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(18.0, 18.0));
             if resp.hovered() || active {
-                let cresp = ui.interact(cr, ui.id().with(("tabclose", d.uid)), Sense::click());
+                let cresp = ui.interact(cr, ui.id().with(("tabclose", d.uid)), Sense::click()).tip("Close tab");
                 if cresp.hovered() {
                     ui.painter().rect_filled(cr, CornerRadius::same(4), t.pressed);
                 }
@@ -97,7 +100,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         }
         // New tab.
         let nr = Rect::from_center_size(pos2(x + 20.0, rect.center().y), vec2(28.0, 28.0));
-        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).on_hover_text(crate::shortcuts::tip("New design file", "file.new"));
+        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).tip(crate::shortcuts::tip("New design file", "file.new"));
         if nresp.hovered() {
             ui.painter().rect_filled(nr, CornerRadius::same(5), t.hover);
         }
@@ -108,7 +111,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         }
         // Right side: theme toggle (left of the window buttons).
         let tr = Rect::from_center_size(pos2(rect.max.x - buttons_w - 24.0, rect.center().y), vec2(28.0, 28.0));
-        let tresp = ui.interact(tr, ui.id().with("theme"), Sense::click()).on_hover_text("Toggle light/dark theme");
+        let tresp = ui.interact(tr, ui.id().with("theme"), Sense::click()).tip("Toggle light/dark theme");
         if tresp.hovered() {
             ui.painter().rect_filled(tr, CornerRadius::same(5), t.hover);
         }
@@ -150,7 +153,7 @@ fn window_buttons(ui: &mut Ui, bar: Rect) -> f32 {
     ];
     for (k, (icon, tip, cmd)) in buttons.into_iter().enumerate() {
         let r = Rect::from_min_size(pos2(bar.max.x - W * (3 - k) as f32, bar.min.y), vec2(W, bar.height()));
-        let resp = ui.interact(r, ui.id().with(("window_button", k)), Sense::click()).on_hover_text(tip);
+        let resp = ui.interact(r, ui.id().with(("window_button", k)), Sense::click()).tip(tip);
         let close = k == 2;
         let mut col = t.icon;
         if resp.hovered() {
