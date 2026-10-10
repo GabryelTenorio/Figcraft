@@ -36,6 +36,7 @@ pub mod vectoredit;
 
 pub use cmd::{CommandSpec, all_commands, find_command};
 pub use figcraft_doc as doc;
+pub use figcraft_svg::looks_like_svg;
 pub use tools::{PointerEvent, PointerKind, ToolId};
 
 use std::collections::BTreeSet;
@@ -1016,6 +1017,8 @@ mod shapebuilder_tests;
 mod slot_tests;
 #[cfg(test)]
 mod style_tests;
+#[cfg(test)]
+mod svg_import_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

@@ -59,7 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.import",
             "Import",
-            "{path | data (base64) + name, x?, y?, variables? (REST: the local variables JSON as an object, JSON text or a path)}  SVG becomes vectors, images become image layers, .figcraft and REST API file JSON pages are appended with their variables and flows (REST: with `warnings`)",
+            "{path | data (base64) + name, x?, y?, center? (SVG: centre it on x, y), variables? (REST: the local variables JSON as an object, JSON text or a path)}  SVG becomes an editable frame (shapes, text, gradients, masks, effects; with `warnings` for what it left out), images become image layers, .figcraft and REST API file JSON pages are appended with their variables and flows (REST: with `warnings`)",
             true,
             import
         ),
@@ -406,8 +406,10 @@ fn load_with(
         "svg" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
-            figcraft_svg::import_svg(&mut doc, bytes, page, 0.0, 0.0, &file_stem(name_hint)).map_err(|e| EngineError::Other(e.to_string()))?;
-            Ok((doc.into(), false))
+            let notes = figcraft_svg::import_svg_with_notes(&mut doc, bytes, page, 0.0, 0.0, &file_stem(name_hint))
+                .map_err(|e| EngineError::Other(e.to_string()))?
+                .notes;
+            Ok((figcraft_format::Loaded { issues: notes, ..doc.into() }, false))
         }
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
             let mut doc = Document::new(file_stem(name_hint));
@@ -525,10 +527,11 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let (loaded, rest) = load_path(&path, variables.as_ref())?;
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
+    let warnings = rest || ext(&path) == "svg";
     s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions));
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active});
-    out[if rest { "warnings" } else { "repairs" }] = json!(loaded.issues);
+    out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
     Ok(out)
 }
 
@@ -832,10 +835,22 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
     match ext(&name).as_str() {
         "svg" => {
             let doc = s.doc_mut()?;
-            let id = figcraft_svg::import_svg(doc, &bytes, page, x.unwrap_or(center.0), y.unwrap_or(center.1), &file_stem(&name))
-                .map_err(|e| EngineError::Other(e.to_string()))?;
+            let (x, y) = (x.unwrap_or(center.0), y.unwrap_or(center.1));
+            let imported =
+                figcraft_svg::import_svg_with_notes(doc, &bytes, page, x, y, &file_stem(&name)).map_err(|e| EngineError::Other(e.to_string()))?;
+            let id = imported.frame;
+            // Centred on the point (a paste lands in the middle of the view).
+            if boolean(p, "center").unwrap_or(false)
+                && let Some(n) = doc.node_mut(id)
+            {
+                n.transform = figcraft_geom::Affine::translate(((x - n.width / 2.0).round(), (y - n.height / 2.0).round()));
+            }
             s.set_selection(vec![id]);
-            Ok(json!({"id": id}))
+            let mut out = json!({"id": id});
+            if !imported.notes.is_empty() {
+                out["warnings"] = json!(imported.notes);
+            }
+            Ok(out)
         }
         "figcraft" | "json" => {
             let resolver = path.as_deref().map(rest_images);
