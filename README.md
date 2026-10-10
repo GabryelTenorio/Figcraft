@@ -102,7 +102,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>Prototype and hand off</h3>
-      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Inspect mode with measurements, CSS and SVG. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
+      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Alt to measure distances and padding on the canvas, Inspect mode with measurements, CSS and SVG, comment threads pinned to frames (replies, @mentions, reactions, read state) and named version history. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
     </td>
   </tr>
 </table>
@@ -111,7 +111,7 @@
 
 ## Built for agents
 
-Every menu item, tool and gesture runs a command from one registry of 270+ commands. The UI, the CLI, the JSON control channel and the MCP server all call the same commands, so anything you can click, a script or an AI agent can do too.
+Every menu item, tool and gesture runs a command from one registry of 400+ commands. The UI, the CLI, the JSON control channel and the MCP server all call the same commands, so anything you can click, a script or an AI agent can do too.
 
 ```sh
 # Headless: render and export

@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (day 2, later: variable width strokes, a transform box and snapping for vector points, pixel-exact UI icons, the custom title bar, library variables, prototype rotation, scaling, scroll momentum and responsive presentation with device colours and custom sizes, conditional prototype actions, PDF export depth, 50k-layer renders and save/load)._
+_Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and selection depth, effects fidelity (backdrop blur in clipping frames, exact shadow spread, glass, noise and texture), right-to-left names and the text style browser, comments polish, keyboard navigation in the layers panel, frame guides, 2x pixel preview, line-end previews)._
 
 ## Where we are
 
@@ -18,10 +18,10 @@ _Last updated: 2026-10-10 (day 2, later: variable width strokes, a transform box
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
 | Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~73%** |
+| Feature depth (weighted rubric below) | **~76%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
-| Time to **feature parity** | **~55–100 h** one agent · **~15–30 h** with 4–6 agents |
-| Time to **full parity** (feature parity + fidelity pass + hardening) | **~125–210 h** one agent · **~35–60 h** with 4–6 agents |
+| Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
+| Time to **full parity** (feature parity + fidelity pass + hardening) | **~115–195 h** one agent · **~32–55 h** with 4–6 agents |
 
 ## Honest assessment (2026-10-09)
 
@@ -240,24 +240,24 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 75% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
-| Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
-| Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
+| Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
+| Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
+| Layers panel | 5 | 86% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
-| Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
+| Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
-| Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
+| Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
-| Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
+| Prototyping | 6 | 86% | building conditionals in the interaction editor, hotspot hints, inspect in the presenter | 3–5 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |
-| Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
+| Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
-Weighted feature depth ≈ **73%** (self-graded, from the table).
+Weighted feature depth ≈ **76%** (self-graded, from the table).
 
 ## Milestones
 
