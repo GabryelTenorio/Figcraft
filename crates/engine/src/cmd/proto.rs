@@ -109,29 +109,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.settings",
             "Prototype settings",
-            "{device?, background?, rotation? portrait|landscape (or 0|90; phones and tablets turn)}",
+            "{device? (a device name, \"Custom size\" or \"None\"), background?, rotation? portrait|landscape (or 0|90; phones and tablets turn), color? (one of the device's colours by name), width?, height? (the custom size's screen, 1–10000 points; picks \"Custom size\"), responsive? bool (frames resize to the screen and their constraints and auto layout respond)}",
             true,
-            |s, p| {
-                let page = s.page()?;
-                let bg = color(p, "background");
-                let dev = string(p, "device");
-                let rot = match p.get("rotation") {
-                    None | Some(Value::Null) => None,
-                    Some(v) => Some(rotation_of(v).ok_or_else(|| bad("proto.settings", "rotation: portrait|landscape"))?),
-                };
-                if let NodeKind::Page { prototype, .. } = &mut s.doc_mut()?.get_mut(page)?.kind {
-                    if let Some(c) = bg {
-                        prototype.background = c;
-                    }
-                    if let Some(d) = dev {
-                        prototype.device = d;
-                    }
-                    if let Some(r) = rot {
-                        prototype.rotation = r;
-                    }
-                }
-                ok()
-            }
+            settings
         ),
         spec!(
             "proto.present",
@@ -174,6 +154,91 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
     ]
+}
+
+/// `proto.settings`: everything is checked before anything changes.
+fn settings(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "proto.settings";
+    let page = s.page()?;
+    let bg = color(p, "background");
+    let dev = string(p, "device");
+    let rot = match p.get("rotation") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(rotation_of(v).ok_or_else(|| bad(cmd, "rotation: portrait|landscape"))?),
+    };
+    let side = |key: &str| -> Result<Option<f64>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => v.as_f64().and_then(PrototypeSettings::custom_side).map(Some).ok_or_else(|| bad(cmd, format!("{key}: 1–10000 points"))),
+        }
+    };
+    let (w, h) = (side("width")?, side("height")?);
+    let responsive = match p.get("responsive") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_bool().ok_or_else(|| bad(cmd, "responsive: true|false"))?),
+    };
+    let col = match p.get("color") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().ok_or_else(|| bad(cmd, "color: one of the device's colour names"))?.trim().to_string()),
+    };
+    let NodeKind::Page { prototype, .. } = &s.doc()?.get(page)?.kind else { return Err(bad(cmd, "not a page")) };
+    let mut next = prototype.clone();
+    if let Some(c) = bg {
+        next.background = c;
+    }
+    if let Some(d) = dev {
+        next.device = d;
+    }
+    if let Some(r) = rot {
+        next.rotation = r;
+    }
+    // A width or height is the custom size's: it picks "Custom size".
+    if w.is_some() || h.is_some() {
+        next.custom_size = [w.unwrap_or(next.custom_size[0]), h.unwrap_or(next.custom_size[1])];
+        next.device = PrototypeSettings::CUSTOM_DEVICE.into();
+    }
+    if let Some(r) = responsive {
+        next.responsive = r;
+    }
+    let colors = next.model().map_or(&[][..], |m| m.colors);
+    match col {
+        Some(c) if c.is_empty() => next.color.clear(),
+        Some(c) => {
+            let found = colors.iter().find(|x| x.name.eq_ignore_ascii_case(&c)).ok_or_else(|| {
+                let names: Vec<&str> = colors.iter().map(|x| x.name).collect();
+                bad(cmd, if names.is_empty() { "this device has no colours".to_string() } else { format!("color: {}", names.join("|")) })
+            })?;
+            next.color = found.name.into();
+        }
+        // Another device keeps the colour only if it comes in it.
+        None if !colors.iter().any(|x| x.name == next.color) => next.color.clear(),
+        None => {}
+    }
+    if next != *prototype
+        && let NodeKind::Page { prototype, .. } = &mut s.doc_mut()?.get_mut(page)?.kind
+    {
+        *prototype = next;
+    }
+    ok()
+}
+
+/// Resize top-level `frame` to a screen of `(w, h)` as a responsive prototype does: its children
+/// follow their constraints and auto layout flows again (fill layers stretch, text wraps), exactly
+/// as when the frame is resized in the editor; an axis the frame hugs keeps hugging its content.
+/// Used by the player on its own copy of the document.
+pub fn respond(doc: &mut Document, frame: NodeId, (w, h): (f64, f64)) {
+    if !(w.is_finite() && h.is_finite()) || doc.node(frame).is_none_or(|n| !n.kind.is_frame_like()) {
+        return;
+    }
+    let (w, h) = (w.clamp(1.0, 100_000.0), h.clamp(1.0, 100_000.0));
+    if doc.node(frame).is_some_and(|n| (n.width - w).abs() < 1e-9 && (n.height - h).abs() < 1e-9) {
+        return;
+    }
+    doc.take_dirty();
+    let before = doc.clone();
+    if super::props::resize_node(doc, frame, w, h).is_ok() {
+        crate::normalize(doc, &before);
+    }
 }
 
 /// The presenter's scale options (`proto.presentOptions {scale}`).

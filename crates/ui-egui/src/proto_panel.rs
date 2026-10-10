@@ -311,6 +311,19 @@ fn flows_overview(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     }
     for f in &flows {
         flow_row(app, ui, f);
+        // Its description under it (in full on hover).
+        let d = f.description.trim();
+        if !d.is_empty() {
+            let w = ui.available_width();
+            let (r, resp) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
+            // Lined up with the flow's name (after the play button).
+            let indent = PAD + 26.0;
+            let shown = widgets::elide(ui, d, w - indent - PAD);
+            ui.painter().text(pos2(r.min.x + indent, r.min.y + 1.0), Align2::LEFT_TOP, &shown, regular(10.5), t.text_secondary);
+            if shown != d {
+                resp.on_hover_text(d);
+            }
+        }
     }
 }
 
@@ -323,24 +336,51 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
         _ => proto::PrototypeSettings::default(),
     };
     let bg = settings.background;
+    let model = settings.model();
     // Phones and tablets turn: a toggle beside the device picker.
-    let rotates = settings.model().is_some_and(|d| d.rotates);
+    let rotates = model.is_some_and(|d| d.rotates);
     let landscape = settings.landscape();
     widgets::sublabels(ui, "Device", None);
     row(ui, 32.0, |ui| {
         let w = ui.available_width() - if rotates { 32.0 } else { 0.0 };
         let resp = widgets::dropdown(ui, &settings.device, w, None);
         egui::Popup::menu(&resp).show(|ui| {
-            for d in std::iter::once("None").chain(proto::PrototypeSettings::DEVICES.iter().map(|d| d.name)) {
+            let mut pick = None;
+            if crate::right::menu_check(ui, settings.device == "None", "None", "") {
+                pick = Some("None");
+            }
+            ui.separator();
+            for d in proto::PrototypeSettings::DEVICES.iter().map(|d| d.name) {
                 if crate::right::menu_check(ui, d == settings.device, d, "") {
-                    app.run("proto.settings", json!({"device": d}));
-                    ui.close();
+                    pick = Some(d);
                 }
+            }
+            ui.separator();
+            let custom = proto::PrototypeSettings::CUSTOM_DEVICE;
+            if crate::right::menu_check(ui, settings.device == custom, custom, "") {
+                pick = Some(custom);
+            }
+            if let Some(d) = pick {
+                app.run("proto.settings", json!({"device": d}));
+                ui.close();
             }
         });
         let tip = if landscape { "Rotate to portrait" } else { "Rotate to landscape" };
         if rotates && icons::button(ui, Icon::Rotate, 24.0, landscape, tip).clicked() {
             app.run("proto.settings", json!({"rotation": if landscape { "portrait" } else { "landscape" }}));
+        }
+    });
+    if let Some(m) = model.filter(|m| !m.colors.is_empty()) {
+        device_colors(app, ui, m.colors, settings.device_color());
+    }
+    if settings.device == proto::PrototypeSettings::CUSTOM_DEVICE {
+        custom_size(app, ui, model);
+    }
+    row(ui, 32.0, |ui| {
+        let clicked = widgets::checkbox(ui, settings.responsive, "Responsive");
+        ui.interact(ui.min_rect(), Id::new("proto_responsive_tip"), Sense::hover()).on_hover_text(RESPONSIVE_TIP);
+        if clicked {
+            app.run("proto.settings", json!({"responsive": !settings.responsive}));
         }
     });
     widgets::sublabels(ui, "Background", None);
@@ -350,6 +390,62 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
             && let Some(c) = figcraft_color::Color::from_hex(&h)
         {
             app.run("proto.settings", json!({"background": c.to_css_hex()}));
+        }
+    });
+}
+
+/// What "Responsive" does, on hover.
+const RESPONSIVE_TIP: &str = "Resize frames to the device's screen (or the window without a device): their constraints and auto layout respond";
+
+/// A device colour as a swatch paint.
+fn color_paint(c: proto::DeviceColor) -> Paint {
+    let [r, g, b] = c.rgb;
+    Paint::solid(figcraft_color::Color::from_rgb8_const(r, g, b))
+}
+
+/// The colours the device comes in: its swatch and a picker (each colour with its swatch).
+fn device_colors(app: &mut FigApp, ui: &mut Ui, colors: &[proto::DeviceColor], current: Option<proto::DeviceColor>) {
+    widgets::sublabels(ui, "Color", None);
+    row(ui, 32.0, |ui| {
+        if let Some(c) = current {
+            widgets::swatch(ui, &color_paint(c), 16.0);
+        }
+        let w = ui.available_width();
+        let resp = widgets::dropdown(ui, current.map_or("", |c| c.name), w, None);
+        egui::Popup::menu(&resp).show(|ui| {
+            for c in colors {
+                let on = current.is_some_and(|x| x.name == c.name);
+                let label = format!("{}{}", if on { "✓ " } else { "    " }, c.name);
+                let paint = color_paint(*c);
+                let picked = crate::right::menu_item_with(ui, &label, "", |p, r, _| {
+                    widgets::paint_swatch(p, Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(12.0, 12.0)), &paint);
+                });
+                if picked {
+                    app.run("proto.settings", json!({"color": c.name}));
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
+/// The custom size's screen: width and height fields and a button that swaps them.
+fn custom_size(app: &mut FigApp, ui: &mut Ui, model: Option<proto::Device>) {
+    let Some(d) = model else { return };
+    let col = widgets::col_width(ui.available_width());
+    widgets::sublabels(ui, "Size", None);
+    row(ui, 32.0, |ui| {
+        for (key, lead, v) in [("width", "W", d.width), ("height", "H", d.height)] {
+            if let Some(FieldEdit::Set(x) | FieldEdit::Scrub(x, true)) =
+                widgets::number_field(ui, Id::new(("proto_custom", key)), Lead::Text(lead), Some(v), "", col, 1.0)
+                && let Some(x) = proto::PrototypeSettings::custom_side(x)
+                && x != v
+            {
+                app.run("proto.settings", json!({ key: x }));
+            }
+        }
+        if icons::button(ui, Icon::Rotate, 24.0, false, "Swap width and height").clicked() && d.width != d.height {
+            app.run("proto.settings", json!({"width": d.height, "height": d.width}));
         }
     });
 }

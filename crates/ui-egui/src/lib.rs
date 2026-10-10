@@ -50,6 +50,8 @@ mod present_tests;
 #[cfg(test)]
 mod present_view_tests;
 #[cfg(test)]
+mod proto_responsive_tests;
+#[cfg(test)]
 mod titlebar_tests;
 
 use std::collections::BTreeSet;

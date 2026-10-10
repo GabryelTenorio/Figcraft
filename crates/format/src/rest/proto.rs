@@ -50,6 +50,12 @@ pub(super) fn page_settings(c: &Value) -> Option<PrototypeSettings> {
     if let Some(d) = device {
         s.device = device_name(d).to_string();
         s.rotation = text(d, "rotation").and_then(DeviceRotation::parse).unwrap_or_default();
+        // A custom size keeps its screen (turned: its sides swap, as it doesn't turn here).
+        if let Some((w, h)) = custom_size(d) {
+            s.device = PrototypeSettings::CUSTOM_DEVICE.into();
+            s.custom_size = if s.rotation == DeviceRotation::Landscape { [h, w] } else { [w, h] };
+            s.rotation = DeviceRotation::Portrait;
+        }
     }
     if let Some(b) = background {
         s.background = b.with_alpha(1.0);
@@ -57,8 +63,17 @@ pub(super) fn page_settings(c: &Value) -> Option<PrototypeSettings> {
     Some(s)
 }
 
-/// The closest of our device frames: preset identifiers by the device family they name, custom
-/// sizes by their shorter side.
+/// The screen of a `CUSTOM` device, when its size is usable.
+fn custom_size(d: &Value) -> Option<(f64, f64)> {
+    if text(d, "type") != Some("CUSTOM") {
+        return None;
+    }
+    let s = d.get("size")?;
+    Some((PrototypeSettings::custom_side(num(s, "width")?)?, PrototypeSettings::custom_side(num(s, "height")?)?))
+}
+
+/// The closest of our device frames: preset identifiers by the device family they name, unknown
+/// presets (and custom sizes without a usable size) by their shorter side.
 fn device_name(d: &Value) -> &'static str {
     let size = d.get("size").and_then(|s| Some((num(s, "width")?, num(s, "height")?)));
     let by_size = || match size {

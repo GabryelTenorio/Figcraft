@@ -169,11 +169,17 @@ moves or resizes it, `{action: "remove", index}` deletes it. Rendering, PNG/SVG/
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
 the scroll position with `preserveScroll: true`), flows `proto.flow.add` / `rename` / `remove`,
 and the device, its rotation and the background `proto.settings {device?, background?,
-rotation?}` (`None`, `iPhone 16`, `iPhone 16 Pro Max`, `Android Compact`, `iPad mini`, `MacBook
-Air`, `Desktop`; `rotation` `portrait` or `landscape`, which turns phones and tablets). On a device the
-presented frame is sized to the device's screen: what doesn't fit is clipped, or scrolls when the
-frame's `overflow` allows it, while `fixed` layers stay on screen (pinned to the edges their
-constraints name). `proto.present {start?}` plays the prototype full-window and `proto.preview
+rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 16 Pro Max`,
+`Android Compact`, `iPad mini`, `MacBook Air`, `Desktop` or `Custom size`; `rotation` `portrait` or
+`landscape`, which turns phones and tablets; `color` one of the device's colours by name, e.g.
+`Black`, `White`, `Pink`, `Teal`, `Blue` for the iPhone 16 (an error lists them), `""` for the
+default; `width` / `height` set the custom size's screen, 1–10000 points, and pick `Custom size`,
+which is a bare screen without a body). On a device the presented frame is sized to the device's
+screen: what doesn't fit is clipped, or scrolls when the frame's `overflow` allows it, while `fixed`
+layers stay on screen (pinned to the edges their constraints name). With `responsive: true` (saved
+in the file) the presented frame is instead resized to the device's screen, or without a device to
+the presenter's window at 100%, and its constraints and auto layout respond as when it is resized
+in the editor (an axis it hugs keeps hugging its content); the file's frames don't change. `proto.present {start?}` plays the prototype full-window and `proto.preview
 {start?}` in a resizable pane over the canvas that follows edits live; `proto.closePreview` closes
 it. `proto.presentOptions {scale?, deviceFrame?}` sets how the full-window presenter sizes the
 prototype (`fit` scales it down to fit, `fitWidth` fills the width, `fill` covers the window,
@@ -181,6 +187,9 @@ prototype (`fit` scales it down to fit, `fitWidth` fills the width, `fill` cover
 kept for later presentations (in the presenter Z cycles them and R restarts). The player's state is
 in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
+The presenter's Options menu offers Responsive next to the size options (without a device) or
+Responsive / Fixed size (on one), the same `proto.settings {responsive}`; its flow picker lists each
+flow with its description.
 
 ### Local libraries
 
@@ -213,7 +222,9 @@ read library files return an error).
   variable in (linked, read-only, with the variables it aliases and its collection) and binds it
   like `variable.bind`; `library.aliasVariable {library, alias, variable, mode?}` makes a local
   variable's value an alias of a library variable; `library.setVariableMode {library, collection,
-  mode, ids?}` sets a library collection's mode on frames (the page when no ids are given);
+  mode, ids?}` sets a library collection's mode on frames (the page when no ids are given; the
+Design panel's Variable modes section lists enabled libraries' collections under the library's
+name and sets them this way);
   `library.importVariable {library, variable}` only copies it (then `variable.bind`, `variable.set
   {value: {alias}}`). The copies render without the library file. Editing the copies (library
   components, styles, variables or collections) is refused; edit the library file and publish.

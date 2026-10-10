@@ -489,12 +489,45 @@ pub struct PrototypeSettings {
     pub background: figcraft_color::Color,
     /// Applies to devices that turn (phones and tablets).
     pub rotation: DeviceRotation,
+    /// The device's colour: one of its model's [`Device::colors`] by name (empty or one the model
+    /// doesn't come in: its first).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub color: String,
+    /// The screen of the [`CUSTOM_DEVICE`](Self::CUSTOM_DEVICE) (points, width × height).
+    #[serde(alias = "customSize", skip_serializing_if = "is_custom_default")]
+    pub custom_size: [f64; 2],
+    /// Responsive: the presented frame is resized to the screen (the device's, else the window)
+    /// and its constraints and auto layout respond, instead of showing at its own size.
+    #[serde(skip_serializing_if = "is_false")]
+    pub responsive: bool,
 }
 
 impl Default for PrototypeSettings {
     fn default() -> Self {
-        Self { device: "None".into(), background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E), rotation: DeviceRotation::Portrait }
+        Self {
+            device: "None".into(),
+            background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E),
+            rotation: DeviceRotation::Portrait,
+            color: String::new(),
+            custom_size: PrototypeSettings::CUSTOM_DEFAULT,
+            responsive: false,
+        }
     }
+}
+
+fn is_custom_default(s: &[f64; 2]) -> bool {
+    *s == PrototypeSettings::CUSTOM_DEFAULT
+}
+
+/// A colour a device model comes in (its body; the glass around the screen stays black).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceColor {
+    pub name: &'static str,
+    pub rgb: [u8; 3],
+}
+
+const fn c(name: &'static str, r: u8, g: u8, b: u8) -> DeviceColor {
+    DeviceColor { name, rgb: [r, g, b] }
 }
 
 /// A device prototypes are presented on: its name and screen size in points (held upright).
@@ -505,22 +538,91 @@ pub struct Device {
     pub height: f64,
     /// It can be turned to landscape (phones and tablets; laptops and desktops can't).
     pub rotates: bool,
+    /// The colours it comes in, the default first (none for a custom size: just a screen).
+    pub colors: &'static [DeviceColor],
 }
 
 impl PrototypeSettings {
     /// The devices to pick from ("None" presents the frame at its own size).
     pub const DEVICES: [Device; 6] = [
-        Device { name: "iPhone 16", width: 393.0, height: 852.0, rotates: true },
-        Device { name: "iPhone 16 Pro Max", width: 440.0, height: 956.0, rotates: true },
-        Device { name: "Android Compact", width: 412.0, height: 917.0, rotates: true },
-        Device { name: "iPad mini", width: 744.0, height: 1133.0, rotates: true },
-        Device { name: "MacBook Air", width: 1280.0, height: 832.0, rotates: false },
-        Device { name: "Desktop", width: 1440.0, height: 1024.0, rotates: false },
+        Device {
+            name: "iPhone 16",
+            width: 393.0,
+            height: 852.0,
+            rotates: true,
+            colors: &[
+                c("Black", 0x3A, 0x3B, 0x3F),
+                c("White", 0xEE, 0xED, 0xE8),
+                c("Pink", 0xEC, 0xBF, 0xCB),
+                c("Teal", 0xA3, 0xCF, 0xC6),
+                c("Blue", 0x72, 0x84, 0xD4),
+            ],
+        },
+        Device {
+            name: "iPhone 16 Pro Max",
+            width: 440.0,
+            height: 956.0,
+            rotates: true,
+            colors: &[c("Black", 0x3B, 0x3A, 0x38), c("White", 0xEC, 0xEB, 0xE6), c("Natural", 0xBF, 0xB9, 0xAF), c("Sand", 0xC6, 0xAC, 0x8F)],
+        },
+        Device {
+            name: "Android Compact",
+            width: 412.0,
+            height: 917.0,
+            rotates: true,
+            colors: &[c("Black", 0x2E, 0x2F, 0x33), c("Silver", 0xD6, 0xD8, 0xDB), c("Green", 0xA6, 0xC0, 0xA3)],
+        },
+        Device {
+            name: "iPad mini",
+            width: 744.0,
+            height: 1133.0,
+            rotates: true,
+            colors: &[c("Grey", 0x6A, 0x6B, 0x6F), c("Silver", 0xE0, 0xE1, 0xE3), c("Blue", 0x9C, 0xB1, 0xC9), c("Purple", 0xC6, 0xBC, 0xD7)],
+        },
+        Device {
+            name: "MacBook Air",
+            width: 1280.0,
+            height: 832.0,
+            rotates: false,
+            colors: &[c("Silver", 0xC9, 0xCA, 0xCE), c("Grey", 0x7B, 0x7C, 0x80), c("Dark blue", 0x2E, 0x33, 0x3D), c("Cream", 0xE0, 0xD9, 0xCB)],
+        },
+        Device {
+            name: "Desktop",
+            width: 1440.0,
+            height: 1024.0,
+            rotates: false,
+            colors: &[c("Silver", 0xB8, 0xB9, 0xBD), c("Black", 0x2C, 0x2C, 0x2E)],
+        },
     ];
+
+    /// The device whose screen is [`custom_size`](Self::custom_size) (no body is drawn around it).
+    pub const CUSTOM_DEVICE: &'static str = "Custom size";
+    /// A new custom size.
+    pub const CUSTOM_DEFAULT: [f64; 2] = [1280.0, 720.0];
+    /// The largest side a custom size may have (points).
+    pub const CUSTOM_MAX: f64 = 10_000.0;
+
+    /// A custom screen side from a command or file value: finite, at least 1, at most
+    /// [`CUSTOM_MAX`](Self::CUSTOM_MAX).
+    pub fn custom_side(v: f64) -> Option<f64> {
+        (v.is_finite() && v >= 1.0).then(|| v.min(Self::CUSTOM_MAX).round())
+    }
 
     /// The chosen device model, held upright (None for "None" or a name we don't know).
     pub fn model(&self) -> Option<Device> {
+        if self.device == Self::CUSTOM_DEVICE {
+            let ([w, h], [dw, dh]) = (self.custom_size, Self::CUSTOM_DEFAULT);
+            let (width, height) = (Self::custom_side(w).unwrap_or(dw), Self::custom_side(h).unwrap_or(dh));
+            return Some(Device { name: Self::CUSTOM_DEVICE, width, height, rotates: false, colors: &[] });
+        }
         Self::DEVICES.iter().find(|d| d.name == self.device).copied()
+    }
+
+    /// The chosen device's colour (its model's first unless another is picked; None without a
+    /// body).
+    pub fn device_color(&self) -> Option<DeviceColor> {
+        let colors = self.model()?.colors;
+        colors.iter().find(|c| c.name == self.color).or(colors.first()).copied()
     }
 
     /// The device turned to landscape (only devices that turn do).

@@ -283,12 +283,18 @@ fn scrolling_flows_and_prototype_device() {
         (json!({"type": "PRESET", "presetIdentifier": "GOOGLE_PIXEL_8", "rotation": "NONE"}), "Android Compact"),
         (json!({"type": "PRESET", "presetIdentifier": "APPLE_IPAD_MINI", "rotation": "NONE"}), "iPad mini"),
         (json!({"type": "PRESET", "presetIdentifier": "MACBOOK_PRO_14", "rotation": "NONE"}), "MacBook Air"),
-        (json!({"type": "CUSTOM", "size": {"width": 1920, "height": 1080}, "rotation": "NONE"}), "Desktop"),
-        (json!({"type": "CUSTOM", "size": {"width": 375, "height": 667}, "rotation": "NONE"}), "iPhone 16"),
+        (json!({"type": "CUSTOM", "size": {"width": 0, "height": 1080}, "rotation": "NONE"}), "None"),
+        (json!({"type": "CUSTOM", "size": {"width": "wide", "height": 667}, "rotation": "NONE"}), "None"),
     ] {
         let got = device(d).device;
         assert_eq!(got, want);
         assert!(got == "None" || PrototypeSettings::DEVICES.iter().any(|d| d.name == got), "{got}");
+    }
+    // Custom sizes keep their screen (turned ones swap their sides).
+    for (rotation, want) in [("NONE", (1920.0, 1080.0)), ("CCW_90", (1080.0, 1920.0))] {
+        let got = device(json!({"type": "CUSTOM", "size": {"width": 1920, "height": 1080}, "rotation": rotation}));
+        assert_eq!(got.device, PrototypeSettings::CUSTOM_DEVICE);
+        assert_eq!(got.device().map(|d| (d.width, d.height)), Some(want));
     }
     // A device turned a quarter turn presents in landscape.
     let turned = device(json!({"type": "PRESET", "presetIdentifier": "APPLE_IPHONE_16", "rotation": "CCW_90"}));

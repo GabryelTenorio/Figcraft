@@ -66,8 +66,10 @@ UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings (`f
 the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, the screen's `scroll` offset and `scrollRange`, the
-`device` (and whether it is turned to `landscape`) and the `viewport` of the frame its screen shows,
-the size option (`scale`: `fit|fitWidth|fill|actual`, `deviceFrame`), the `zoom` it shows at, how
+`device` (and whether it is turned to `landscape`, its `deviceColor`) and the `viewport` of the frame
+its screen shows, the presented frame's `frameSize` and, for a responsive prototype, the screen it
+was resized to (`responsive`: `[w, h]`, else `null`), the size option (`scale`:
+`fit|fitWidth|fill|actual`, `deviceFrame`), the `zoom` it shows at, how
 far the view is panned (`pan`, `panRange`) and whether a scroll is still coasting (`flinging`)
 (`null` when nothing plays). `presentOptions` holds the options the next presentation starts with.
 

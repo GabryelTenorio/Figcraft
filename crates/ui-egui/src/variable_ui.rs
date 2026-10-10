@@ -95,6 +95,51 @@ pub fn groups<'a>(
     out
 }
 
+/// A collection the Design panel's mode picker lists: this file's, or one an enabled library
+/// offers (or offered: a copy whose library isn't read any more).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModeRow<'a> {
+    /// The collection with its modes (a library's copy once it is used here).
+    pub coll: &'a Collection,
+    /// The library's (id, name); None for this file's collections.
+    pub library: Option<(&'a str, &'a str)>,
+    /// The collection's id in the library, when the library is read (modes are set through
+    /// `library.setVariableMode`, which copies the collection in).
+    pub key: Option<&'a str>,
+    /// The id frames' modes are kept under: this file's collection or a library collection's copy
+    /// (None until a library collection is used here).
+    pub local: Option<&'a str>,
+}
+
+/// The collections with more than one mode the mode picker lists: this file's first, then each
+/// enabled library's published ones (their copies once used), then copies of collections from
+/// libraries that aren't read.
+pub fn mode_rows<'a>(doc: &'a Document, libs: &'a [Arc<PublishedLibrary>]) -> Vec<ModeRow<'a>> {
+    let several = |c: &Collection| c.modes.len() > 1;
+    let mut out: Vec<ModeRow<'a>> =
+        library::local_collections(doc).filter(|c| several(c)).map(|c| ModeRow { coll: c, library: None, key: None, local: Some(&c.id) }).collect();
+    let copy = |lib: &str, key: &str| doc.libraries.collections.iter().find(|r| r.library == lib && r.key == key);
+    for lib in libs {
+        let (id, name) = (lib.manifest.id.as_str(), library::library_name(doc, &lib.manifest.id));
+        for c in library::published_collections(lib) {
+            let local = copy(id, &c.id).map(|r| r.local.as_str());
+            let coll = local.and_then(|l| doc.variables.collection(l)).unwrap_or(c);
+            if several(coll) {
+                out.push(ModeRow { coll, library: Some((id, name)), key: Some(&c.id), local });
+            }
+        }
+    }
+    for r in &doc.libraries.collections {
+        if out.iter().any(|x| x.local == Some(r.local.as_str())) {
+            continue;
+        }
+        if let Some(c) = doc.variables.collection(&r.local).filter(|c| several(c)) {
+            out.push(ModeRow { coll: c, library: Some((&r.library, library::library_name(doc, &r.library))), key: None, local: Some(&r.local) });
+        }
+    }
+    out
+}
+
 /// A picker row: the variable's swatch (colours) or icon, its name and (other types) its value in
 /// the default modes; true when clicked.
 pub fn variable_row(ui: &mut Ui, vars: &Variables, v: &Variable, width: f32) -> bool {

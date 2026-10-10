@@ -679,10 +679,15 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 
 /// The variable modes of the selected frames (sections, components, instances): a row per
 /// collection with more than one mode, Auto (the mode the layer inherits from its parent) or a mode
-/// of its own (`variable.setMode`). Returns whether it showed.
+/// of its own (`variable.setMode`). Collections from enabled libraries follow under their
+/// library's name (`library.setVariableMode` copies the collection in). Returns whether it showed.
 fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) -> bool {
-    let colls: Vec<&Collection> = doc.variables.collections.iter().filter(|c| c.modes.len() > 1).collect();
-    if colls.is_empty() || !sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())) {
+    if !sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())) {
+        return false;
+    }
+    let libs = crate::variable_ui::libraries(app, doc);
+    let rows = crate::variable_ui::mode_rows(doc, &libs);
+    if rows.is_empty() {
         return false;
     }
     let t = Tokens::get(ui.ctx());
@@ -692,23 +697,39 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     let (name_w, pick_w) = ((col * 0.7).round(), (col * 1.3).round());
     // Auto resolves from the parent of the first selected layer.
     let parent_modes = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).map(|p| doc.modes_for(p)).unwrap_or_default();
-    for c in colls {
+    let mut group = None;
+    for r in &rows {
+        let c = r.coll;
+        // Library collections under their library's name.
+        if r.library != group {
+            group = r.library;
+            if let Some((_, lib)) = r.library {
+                widgets::sublabels(ui, lib, None);
+            }
+        }
         let name_of = |m: &str| c.modes.iter().find(|x| x.id == m).map_or("", |x| x.name.as_str());
         // Each layer's own mode (None: Auto); None overall when they differ.
-        let own = common(doc, sel, |n| n.var_modes.get(&c.id).cloned());
-        let inherited = parent_modes.get(&c.id).or(c.default_mode()).map_or("", |m| name_of(m));
+        let own = match r.local {
+            Some(l) => common(doc, sel, |n| n.var_modes.get(l).cloned()),
+            None => Some(None),
+        };
+        let inherited = r.local.and_then(|l| parent_modes.get(l)).or(c.default_mode()).map_or("", |m| name_of(m));
         let auto = format!("Auto ({inherited})");
         let label = match &own {
             Some(Some(m)) => name_of(m).to_string(),
             Some(None) => auto.clone(),
             None => "Mixed".into(),
         };
+        let hover = match r.library {
+            Some((_, lib)) => format!("{} (from {lib})", c.name),
+            None => c.name.clone(),
+        };
         row(ui, 32.0, |ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(name_w, FIELD_H), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(vec2(name_w, FIELD_H), Sense::hover());
             let name = widgets::elide(ui, &c.name, name_w);
-            ui.painter().text(pos2(r.min.x, r.center().y), Align2::LEFT_CENTER, &name, regular(11.0), t.text);
-            if name != c.name {
-                ui.interact(r, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&c.name);
+            ui.painter().text(pos2(rect.min.x, rect.center().y), Align2::LEFT_CENTER, &name, regular(11.0), t.text);
+            if name != c.name || r.library.is_some() {
+                ui.interact(rect, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&hover);
             }
             let resp = widgets::elided_dropdown(ui, &label, pick_w);
             egui::Popup::menu(&resp).width(180.0).show(|ui| {
@@ -723,7 +744,7 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
                     }
                 }
                 if let Some(mode) = pick {
-                    app.run("variable.setMode", json!({"ids": sel, "collection": c.id, "mode": mode}));
+                    set_variable_mode(app, sel, r, mode);
                     ui.close();
                 }
             });
@@ -731,6 +752,20 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     }
     ui.add_space(8.0);
     true
+}
+
+/// Set `sel`'s mode of the collection of `row` (`mode` null: Auto). A library collection goes
+/// through `library.setVariableMode` (copying it in); Auto on one never used here is already so.
+fn set_variable_mode(app: &mut FigApp, sel: &[NodeId], row: &crate::variable_ui::ModeRow, mode: Value) {
+    match (row.library, row.key, row.local) {
+        (Some((lib, _)), Some(key), _) if !mode.is_null() => {
+            app.run("library.setVariableMode", json!({"library": lib, "collection": key, "ids": sel, "mode": mode}));
+        }
+        (_, _, Some(local)) => {
+            app.run("variable.setMode", json!({"ids": sel, "collection": local, "mode": mode}));
+        }
+        _ => {}
+    }
 }
 
 /// While a range of text is selected, the Fill section edits that range's colour.

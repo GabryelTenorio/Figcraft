@@ -5,7 +5,11 @@
 //! offsets change it without touching the user's file) and copies the editor's document again
 //! whenever it changes, so the preview pane follows edits live. On a device, the presented frame
 //! is sized to the device's screen ([`fit_viewport`]): what doesn't fit is clipped, or scrolls when
-//! the frame's overflow allows it. Every frame is rendered through `figcraft_render::render_node`
+//! the frame's overflow allows it. A responsive prototype's frame is instead resized to the screen
+//! (the device's, else the player's whole area) and laid out again, its constraints and auto layout
+//! responding (`figcraft_engine::cmd::proto::respond`, on the player's copy, from the design each
+//! time). Device bodies are drawn in code in the device's colour. Every frame is rendered through
+//! `figcraft_render::render_node`
 //! into a texture. Smart animate interpolates a temporary document between the outgoing and
 //! incoming states ([`smart_interpolate`]) and renders it each animation frame; the other
 //! transitions move or fade the two cached textures ([`transition_frames`]).
@@ -20,7 +24,9 @@ use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use figcraft_color::{Color, Paint, PaintKind};
-use figcraft_doc::proto::{Action, Device, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{
+    Action, Device, DeviceColor, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+};
 use figcraft_doc::{Document, HConstraint, Node, NodeId, NodeKind, VConstraint, VariableValue};
 use figcraft_geom::{Affine, Point};
 use serde_json::{Value, json};
@@ -221,7 +227,13 @@ pub struct Presenter {
     pub render_ms: f64,
     start: NodeId,
     original: Option<Document>,
+    /// The player's document as designed, with what the prototype changed (variables set,
+    /// variants changed); `doc` is it laid out for the screen.
+    design: Option<Document>,
+    /// The player's document as presented: `design` with the presented frame resized to `fit`.
     doc: Option<Document>,
+    /// The screen a responsive prototype's frame is resized to (None: frames keep their size).
+    fit: Option<(f64, f64)>,
     rev: u64,
     display: Option<(u64, Document)>,
     scroll_anim: Option<ScrollAnim>,
@@ -277,7 +289,9 @@ impl Presenter {
             render_ms: 0.0,
             start,
             original: None,
+            design: None,
             doc: None,
+            fit: None,
             rev: 0,
             display: None,
             scroll_anim: None,
@@ -378,7 +392,8 @@ impl Presenter {
         self.source = Some(doc.clone());
         let copy = Document::clone(doc);
         self.original = Some(copy.clone());
-        self.doc = Some(copy);
+        self.design = Some(copy);
+        self.relayout();
         if first {
             self.arrived = now;
             return;
@@ -398,9 +413,31 @@ impl Presenter {
         self.scroll_anim = None;
         self.stop_scrolling();
         self.scroll.retain(|f, _| doc.contains(*f));
-        let clamped: Vec<(NodeId, (f64, f64))> = self.scroll.iter().map(|(f, s)| (*f, clamp_scroll(*s, self.range(doc, *f)))).collect();
-        self.scroll.extend(clamped);
+        if let Some(laid) = self.doc.as_ref() {
+            let clamped: Vec<(NodeId, (f64, f64))> = self.scroll.iter().map(|(f, s)| (*f, clamp_scroll(*s, self.range(laid, *f)))).collect();
+            self.scroll.extend(clamped);
+        }
         self.rev += 1;
+    }
+
+    /// Lay the document out for the screen: `design` with the presented frame resized to `fit`
+    /// when the prototype is responsive (its constraints and auto layout respond).
+    fn relayout(&mut self) {
+        let mut d = self.design.clone();
+        if let (Some(d), Some(size)) = (d.as_mut(), self.fit) {
+            figcraft_engine::cmd::proto::respond(d, self.current, size);
+        }
+        self.doc = d;
+        self.rev += 1;
+    }
+
+    /// Responsive prototypes: resize the presented frame to a screen of `size` (None: frames
+    /// keep their size). Lays out again only when it changes.
+    fn respond_to(&mut self, size: Option<(f64, f64)>) {
+        if self.fit != size {
+            self.fit = size;
+            self.relayout();
+        }
     }
 
     /// The player's document with scroll offsets applied and the presented frame sized to the
@@ -479,6 +516,9 @@ impl Presenter {
             "viewport": doc.and_then(|d| viewport(d, self.current)).map(|v| [v.0, v.1]),
             "scale": self.view.scale.id(),
             "deviceFrame": self.view.device_frame,
+            "deviceColor": doc.and_then(|d| page_settings(d, self.current).device_color()).map(|c| c.name),
+            "responsive": self.fit.map(|f| [f.0, f.1]),
+            "frameSize": doc.and_then(|d| d.node(self.current)).map(|n| [n.width, n.height]),
             "pan": [pan.0, pan.1],
             "panRange": [self.pan_range.0, self.pan_range.1],
             "zoom": self.zoom,
@@ -489,7 +529,7 @@ impl Presenter {
     fn snapshot(&self) -> Option<Snapshot> {
         Some(Snapshot {
             current: self.current,
-            doc: self.doc.clone()?,
+            doc: self.design.clone()?,
             overlays: self.overlays.clone(),
             history: self.history.clone(),
             scroll: self.scroll.clone(),
@@ -529,6 +569,7 @@ impl Presenter {
         self.pan = None;
         self.temp = None;
         self.current = frame;
+        self.relayout();
         if let Some(s) = kept
             && let Some(doc) = self.doc.as_ref()
         {
@@ -550,7 +591,8 @@ impl Presenter {
         self.pan = None;
         self.anim = None;
         self.temp = None;
-        self.doc = self.original.clone();
+        self.design = self.original.clone();
+        self.relayout();
         self.arrive(now);
     }
 
@@ -558,7 +600,8 @@ impl Presenter {
         let Some(t) = self.temp.take() else { return };
         self.begin(t.transition.reversed(), t.dur, t.easing, now);
         self.current = t.snap.current;
-        self.doc = Some(t.snap.doc);
+        self.design = Some(t.snap.doc);
+        self.relayout();
         self.overlays = t.snap.overlays;
         self.history = t.snap.history;
         self.scroll = t.snap.scroll;
@@ -686,18 +729,18 @@ impl Presenter {
                     return false;
                 }
                 self.begin(tr, dur, easing, now);
-                let Some(d) = self.doc.as_mut() else { return false };
+                let Some(d) = self.design.as_mut() else { return false };
                 if let Some(n) = d.node_mut(inst)
                     && let NodeKind::Instance { component, .. } = &mut n.kind
                 {
                     *component = *dest;
                 }
                 figcraft_engine::components::sync_instance(d, inst);
-                self.rev += 1;
+                self.relayout();
                 true
             }
             Action::SetVariable { variable, value } => {
-                let Some(d) = self.doc.as_mut() else { return false };
+                let Some(d) = self.design.as_mut() else { return false };
                 let Some(var) = d.variables.get(variable).cloned() else { return false };
                 let Some(v) = variable_value(&var.values, value) else { return false };
                 if let Some(slot) = d.variables.variables.iter_mut().find(|x| x.id == var.id) {
@@ -706,7 +749,7 @@ impl Presenter {
                     }
                 }
                 figcraft_engine::cmd::styles::apply_bindings(d);
-                self.rev += 1;
+                self.relayout();
                 true
             }
         }
@@ -1270,8 +1313,8 @@ struct Layout {
     device: Option<Device>,
     /// The device is turned to landscape.
     landscape: bool,
-    /// The device's body is drawn around its screen.
-    body: bool,
+    /// The colour of the device's body, when it is drawn around its screen.
+    color: Option<DeviceColor>,
     overlays: Vec<(NodeId, Place, Rect)>,
     /// Overlays animating out (same order as `Presenter::closing`).
     closing: Vec<(NodeId, Place, Rect)>,
@@ -1308,15 +1351,20 @@ fn body_outset(device: &str, size: Vec2, landscape: bool) -> (f32, f32, f32) {
 /// Place the presented frame in `area`: on its device's screen (the whole device sized by the
 /// view's scale option), else the frame itself. Fit and 100% keep the chrome's padding from the
 /// edges; Fit never goes above 100%. What doesn't fit the window pans (`Presenter::pan`). The
-/// preview pane always fits.
+/// preview pane always fits. A responsive prototype's frame is first resized to the device's
+/// screen, or without a device to the whole area (shown at 100%).
 fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
+    let settings = page_settings(p.doc.as_ref()?, p.current);
+    let (device, landscape) = (settings.device(), settings.landscape());
+    let fills = settings.responsive && device.is_none();
+    let whole_area = (f64::from(area.width().round()), f64::from(area.height().round()));
+    p.respond_to(settings.responsive.then(|| device.map_or(whole_area, |d| (d.width, d.height))));
     let disp = p.display()?;
     let fb = disp.world_bounds(p.current)?;
-    let settings = page_settings(&disp, p.current);
-    let (device, landscape) = (settings.device(), settings.landscape());
     let view = if chrome.pane { PresentView::default() } else { p.view };
-    let body = device.filter(|_| view.device_frame);
-    let pad = if matches!(view.scale, PresentScale::Fit | PresentScale::Actual) { chrome.pad } else { 0.0 };
+    // Custom sizes are just a screen: no body.
+    let body = device.filter(|d| view.device_frame && !d.colors.is_empty());
+    let pad = if !fills && matches!(view.scale, PresentScale::Fit | PresentScale::Actual) { chrome.pad } else { 0.0 };
     let avail = area.shrink(pad);
     let (sw, sh) = device.map_or((fb.width(), fb.height()), |d| (d.width, d.height));
     // The screen at `scale`, the body's outsets around it and the whole size.
@@ -1335,7 +1383,7 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
             PresentScale::Actual => 1.0,
         })
     };
-    let mut scale = factor(vec2(sw as f32, sh as f32));
+    let mut scale = if fills { 1.0 } else { factor(vec2(sw as f32, sh as f32)) };
     // The body doesn't scale exactly with the screen (its edges have a minimum): size it once more.
     if body.is_some() {
         scale *= factor(outer(scale).3);
@@ -1367,7 +1415,8 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
     let overlays = p.overlays.iter().filter_map(place_overlay).collect();
     let closing = p.closing.iter().filter_map(|(_, o)| place_overlay(o)).collect();
     let clip = if device.is_some() { screen } else { area };
-    Some(Layout { disp, scale, place, screen, clip, device, landscape, body: body.is_some(), overlays, closing })
+    let color = body.and(settings.device_color());
+    Some(Layout { disp, scale, place, screen, clip, device, landscape, color, overlays, closing })
 }
 
 /// The keys that present the current frame full-window.
@@ -1398,6 +1447,8 @@ enum BarAction {
     Present,
     /// The full-window presenter's options menu (handled in the bar).
     Options,
+    /// Turn responsive presentation on or off (saved in the file: `proto.settings`).
+    Responsive(bool),
 }
 
 /// The full-window presenter (while `app.ui.present` is set). Escape or Close ends it.
@@ -1417,6 +1468,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     }
     // The options carry over to the next presentation.
     app.ui.present_view = pres.view;
+    if let Some(BarAction::Responsive(on)) = action {
+        app.run("proto.settings", json!({"responsive": on}));
+    }
     if action == Some(BarAction::Close) || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         return;
     }
@@ -1502,38 +1556,58 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
-/// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs). Turned
-/// to landscape (a quarter turn counter-clockwise), a phone's left side is at the bottom.
-fn device_body(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
-    let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
-    let edge = Color32::from_rgb(0x5A, 0x5A, 0x5E);
+/// The black glass around a device's screen.
+const GLASS: Color32 = Color32::from_rgb(0x16, 0x16, 0x18);
+
+/// A device colour lighter (`k` > 0, towards white) or darker (`k` < 0, towards black).
+fn shade([r, g, b]: [u8; 3], k: f32) -> Color32 {
+    let k = k.clamp(-1.0, 1.0);
+    let f = |c: u8| {
+        let c = f32::from(c);
+        (if k >= 0.0 { c + (255.0 - c) * k } else { c * (1.0 + k) }).round().clamp(0.0, 255.0) as u8
+    };
+    Color32::from_rgb(f(r), f(g), f(b))
+}
+
+/// The width of the coloured band round a device's glass (upright screen width `w`, bezel `b`).
+fn rim(w: f32, b: f32) -> f32 {
+    (w * 0.016).clamp(1.5, (b * 0.5).max(1.5))
+}
+
+/// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs in the
+/// device's colour with black glass round the screen). Turned to landscape (a quarter turn
+/// counter-clockwise), a phone's left side is at the bottom.
+fn device_body(p: &egui::Painter, device: &str, s: Rect, landscape: bool, color: DeviceColor) {
+    let (body, edge, metal) = (shade(color.rgb, 0.0), shade(color.rgb, -0.3), shade(color.rgb, 0.12));
     let w = upright_w(s.size(), landscape);
     let (b, screen_r) = bezel(device, w);
+    let band = rim(w, b);
+    let radius = |r: f32| CornerRadius::same(r.clamp(0.0, 255.0) as u8);
     match device {
         "MacBook Air" => {
+            // The lid's coloured edge round black glass, then the base: a thin slab wider than
+            // the lid, with a finger notch.
             let lid = s.expand(b);
-            p.rect_filled(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), body);
-            p.rect_stroke(lid, CornerRadius::same((b * 1.2).min(255.0) as u8), Stroke::new(1.0, edge), StrokeKind::Outside);
-            // The base: a thin slab wider than the lid, with a finger notch.
+            p.rect_filled(lid, radius(b * 1.2), body);
+            p.rect_filled(lid.shrink(band), radius(b * 1.2 - band), GLASS);
             let base = Rect::from_min_max(pos2(lid.min.x - w * 0.08, lid.max.y), pos2(lid.max.x + w * 0.08, lid.max.y + (w * 0.022).max(6.0)));
-            p.rect_filled(base, CornerRadius { nw: 2, ne: 2, sw: 10, se: 10 }, Color32::from_rgb(0xB8, 0xB9, 0xBD));
+            p.rect_filled(base, CornerRadius { nw: 2, ne: 2, sw: 10, se: 10 }, metal);
             let notch = Rect::from_center_size(pos2(base.center().x, base.min.y + 1.5), vec2(w * 0.12, 3.0));
-            p.rect_filled(notch, CornerRadius::same(2), Color32::from_rgb(0x8E, 0x8E, 0x93));
+            p.rect_filled(notch, CornerRadius::same(2), edge);
         }
         "Desktop" => {
             let screen = s.expand(b);
             p.rect_filled(screen, CornerRadius::same(8), body);
-            p.rect_stroke(screen, CornerRadius::same(8), Stroke::new(1.0, edge), StrokeKind::Outside);
+            p.rect_filled(screen.shrink(band), radius(8.0 - band), GLASS);
             let neck =
                 Rect::from_min_max(pos2(screen.center().x - w * 0.06, screen.max.y), pos2(screen.center().x + w * 0.06, screen.max.y + w * 0.08));
-            p.rect_filled(neck, CornerRadius::ZERO, Color32::from_rgb(0xB8, 0xB9, 0xBD));
+            p.rect_filled(neck, CornerRadius::ZERO, metal);
             let foot = Rect::from_min_max(pos2(neck.min.x - w * 0.06, neck.max.y), pos2(neck.max.x + w * 0.06, neck.max.y + 6.0));
-            p.rect_filled(foot, CornerRadius::same(3), Color32::from_rgb(0xA0, 0xA1, 0xA6));
+            p.rect_filled(foot, CornerRadius::same(3), edge);
         }
         _ => {
             // Phones and tablets: a rounded slab (phones with side buttons).
             let slab = s.expand(b);
-            let r = CornerRadius::same((screen_r + b).min(255.0) as u8);
             if !device.starts_with("iPad") {
                 // (on the left side, from the top, length) as fractions of the upright side.
                 for (left, f0, h) in [(true, 0.18, 0.06), (true, 0.27, 0.1), (false, 0.24, 0.13)] {
@@ -1547,23 +1621,24 @@ fn device_body(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
                     p.rect_filled(btn, CornerRadius::same(1), edge);
                 }
             }
-            p.rect_filled(slab, r, body);
-            p.rect_stroke(slab, r, Stroke::new(1.5, edge), StrokeKind::Inside);
+            p.rect_filled(slab, radius(screen_r + b), body);
+            p.rect_stroke(slab, radius(screen_r + b), Stroke::new(1.0, edge), StrokeKind::Inside);
+            // The glass reaches round the screen's square corners (masked by `device_glass`).
+            let glass = b - band;
+            p.rect_filled(slab.shrink(band), radius((screen_r + glass).min(glass * 3.4)), GLASS);
         }
     }
 }
 
-/// What sits on top of the screen: rounded screen corners (the body colour masks the frame's
-/// square corners) and a phone's camera pill (at the left when turned to landscape).
+/// What sits on top of the screen: rounded screen corners (glass masks the frame's square
+/// corners) and a phone's camera pill (at the left when turned to landscape).
 fn device_glass(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
     let w = upright_w(s.size(), landscape);
-    let (b, screen_r) = bezel(device, w);
+    let (_, screen_r) = bezel(device, w);
     if screen_r <= 0.0 {
         return;
     }
-    // An outside stroke along the rounded screen covers the frame's square corners.
-    let cover = (screen_r * 0.45 + 1.0).min(b);
-    p.rect_stroke(s, CornerRadius::same(screen_r.min(255.0) as u8), Stroke::new(cover, Color32::from_rgb(0x1C, 0x1C, 0x1E)), StrokeKind::Outside);
+    p.add(corner_masks(s, screen_r.min(s.width() / 2.0).min(s.height() / 2.0), GLASS));
     if device.starts_with("iPhone") {
         let pill = if landscape {
             Rect::from_center_size(pos2(s.min.x + w * 0.045, s.center().y), vec2(w * 0.085, w * 0.3))
@@ -1572,6 +1647,35 @@ fn device_glass(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
         };
         p.rect_filled(pill, CornerRadius::same((w * 0.0425).min(255.0) as u8), Color32::BLACK);
     }
+}
+
+/// Fill what lies between each corner of `s` and its rounding of radius `r` (fans of triangles
+/// from the corner to the arc).
+fn corner_masks(s: Rect, r: f32, color: Color32) -> egui::Shape {
+    const SEGMENTS: usize = 12;
+    if !(r.is_finite() && r > 0.0) {
+        return egui::Shape::Noop;
+    }
+    let mut mesh = egui::Mesh::default();
+    // (corner, centre of its arc, angle the arc starts at).
+    let corners = [
+        (s.left_top(), s.left_top() + vec2(r, r), std::f32::consts::PI),
+        (s.right_top(), s.right_top() + vec2(-r, r), std::f32::consts::FRAC_PI_2 * 3.0),
+        (s.right_bottom(), s.right_bottom() + vec2(-r, -r), 0.0),
+        (s.left_bottom(), s.left_bottom() + vec2(r, -r), std::f32::consts::FRAC_PI_2),
+    ];
+    for (corner, centre, start) in corners {
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(corner, color);
+        for k in 0..=SEGMENTS {
+            let a = start + std::f32::consts::FRAC_PI_2 * k as f32 / SEGMENTS as f32;
+            mesh.colored_vertex(centre + r * vec2(a.cos(), a.sin()), color);
+        }
+        for k in 0..SEGMENTS as u32 {
+            mesh.add_triangle(base, base + 1 + k, base + 2 + k);
+        }
+    }
+    egui::Shape::mesh(mesh)
 }
 
 /// One frame of the player in `rect`: the top bar, then the prototype (on its device) below.
@@ -1619,14 +1723,15 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     }
     let Some(l) = layout(p, area, chrome) else { return action };
     let painter = ui.painter_at(area);
+    let body = l.device.zip(l.color);
     if l.device.is_some() {
-        if let Some(d) = l.device.filter(|_| l.body) {
-            device_body(&painter, d.name, l.screen, l.landscape);
+        if let Some((d, c)) = body {
+            device_body(&painter, d.name, l.screen, l.landscape, c);
         }
         painter.rect_filled(l.screen, CornerRadius::ZERO, bg);
     }
     draw(p, &painter, &ctx, &l, now);
-    if let Some(d) = l.device.filter(|_| l.body) {
+    if let Some((d, _)) = body {
         device_glass(&painter, d.name, l.screen, l.landscape);
     }
     // Timers: wake up for the soonest pending "after delay".
@@ -1668,7 +1773,8 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         Some(NodeKind::Page { flows, .. }) => flows.clone(),
         _ => vec![],
     };
-    let device = page_settings(doc, p.current).device().is_some();
+    let settings = page_settings(doc, p.current);
+    let device = settings.device();
     let mut action = None;
     // Right: the buttons, right to left.
     let buttons: &[(BarAction, &str, Icon)] = if chrome.pane {
@@ -1694,7 +1800,8 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
         }
         if *act == BarAction::Options {
-            egui::Popup::menu(&resp).width(220.0).show(|ui| options_menu(p, ui, device, now));
+            let menu = egui::Popup::menu(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
+            action = action.or(menu.and_then(|m| m.inner));
         } else if resp.clicked() {
             action = Some(*act);
         }
@@ -1702,21 +1809,31 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     // Left: the flow picker and the frame's name, clipped before the buttons.
     let left = ui.painter().with_clip_rect(Rect::from_min_max(bar.min, pos2(x, bar.max.y)));
     let mut lx = bar.min.x + if chrome.pane { 8.0 } else { 12.0 };
-    let flow_name = flows.iter().find(|f| f.start == p.start).map(|f| f.name.clone());
+    // The flow playing: its name on the picker, its description on hover; the menu lists each
+    // flow with its description.
+    let playing = flows.iter().find(|f| f.start == p.start);
     if !flows.is_empty() {
-        let label = format!("{}  ▾", flow_name.unwrap_or_else(|| "Flows".into()));
+        let label = format!("{}  ▾", playing.map_or("Flows", |f| f.name.as_str()));
+        let tip = playing.map(|f| f.description.trim()).filter(|d| !d.is_empty()).unwrap_or("Flows").to_string();
         let galley = left.layout_no_wrap(label, semibold(11.5), text);
         let fr = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
-        let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).on_hover_text("Flows");
+        let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).on_hover_text(tip);
         if resp.hovered() {
             left.rect_filled(fr, CornerRadius::same(5), hover);
         }
         left.galley(pos2(fr.min.x + 8.0, fr.center().y - galley.size().y / 2.0), galley, text);
-        egui::Popup::menu(&resp).width(200.0).show(|ui| {
+        egui::Popup::menu(&resp).width(240.0).show(|ui| {
+            let t = Tokens::get(ui.ctx());
             for f in &flows {
-                if crate::right::menu_item(ui, &f.name, "") {
+                if crate::right::menu_check(ui, f.start == p.start, &f.name, "") {
                     p.restart(f.start, now);
                     ui.close();
+                }
+                let d = f.description.trim();
+                if !d.is_empty() {
+                    egui::Frame::NONE.inner_margin(egui::Margin { left: 26, right: 8, top: 0, bottom: 4 }).show(ui, |ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(d).font(regular(10.5)).color(t.text_secondary)).wrap());
+                    });
                 }
             }
         });
@@ -1728,22 +1845,43 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     action
 }
 
-/// The full-window presenter's options menu: how the prototype is sized (Z cycles them), the
-/// device's body, restart (R).
-fn options_menu(p: &mut Presenter, ui: &mut Ui, device: bool, now: f64) {
+/// The full-window presenter's options menu: how the prototype is sized (Z cycles them), whether
+/// the frame is responsive (a file setting: the frame takes the window's size, or on a device the
+/// screen's, instead of being scaled or shown at a fixed size), the device's body, restart (R).
+fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsive: bool, now: f64) -> Option<BarAction> {
     use crate::right::menu_check;
-    for s in PresentScale::options(device) {
-        if menu_check(ui, p.view.scale == *s, s.label(device), "") {
+    let mut action = None;
+    let on_device = device.is_some();
+    // Without a device, responsive is one of the sizes: the frame fills the window at 100%.
+    if !on_device && menu_check(ui, responsive, "Responsive", "") {
+        action = Some(BarAction::Responsive(true));
+        ui.close();
+    }
+    for s in PresentScale::options(on_device) {
+        if menu_check(ui, p.view.scale == *s && (on_device || !responsive), s.label(on_device), "") {
             p.set_scale(*s);
+            if !on_device && responsive {
+                action = Some(BarAction::Responsive(false));
+            }
             ui.close();
         }
     }
-    if menu_check(ui, false, "Next size option", "Z") {
-        p.set_scale(p.view.scale.next(device));
+    if (on_device || !responsive) && menu_check(ui, false, "Next size option", "Z") {
+        p.set_scale(p.view.scale.next(on_device));
         ui.close();
     }
     ui.separator();
-    if device && menu_check(ui, p.view.device_frame, "Show device frame", "") {
+    // On a device: the frame takes the screen's size, or keeps its own (clipped or scrolling).
+    if on_device {
+        for (on, label) in [(true, "Responsive"), (false, "Fixed size")] {
+            if menu_check(ui, responsive == on, label, "") {
+                action = (responsive != on).then_some(BarAction::Responsive(on));
+                ui.close();
+            }
+        }
+        ui.separator();
+    }
+    if device.is_some_and(|d| !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, "Show device frame", "") {
         p.view.device_frame = !p.view.device_frame;
         ui.close();
     }
@@ -1751,6 +1889,7 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: bool, now: f64) {
         p.restart(p.start, now);
         ui.close();
     }
+    action
 }
 
 /// Scrolling frames under the screen point `q`, innermost first: those of `root` (in the display
@@ -2011,7 +2150,8 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
                     consume_key(ctx, *key);
                     return;
                 }
-                egui::Key::Z if !pane => {
+                // (A responsive frame filling the window has no size options.)
+                egui::Key::Z if !pane && (l.device.is_some() || p.fit.is_none()) => {
                     p.set_scale(p.view.scale.next(l.device.is_some()));
                     consume_key(ctx, *key);
                     return;

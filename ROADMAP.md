@@ -93,8 +93,9 @@ dimension measured side by side.
    a library collection's mode on a frame copies the variables in as read-only linked copies, so the
    file renders without the library; library components keep their variable bindings and modes;
    "Library updates available" covers changed variables and bound layers follow). Explicit variable
-   modes in the Design panel: a frame's mode per collection, Auto (inherited) or its own.
-   *Left:* library collections in the Design panel's mode picker. 1 h.
+   modes in the Design panel: a frame's mode per collection, Auto (inherited) or its own, with
+   enabled libraries' collections listed under the library's name (picking a mode copies the
+   collection in). *Left:* QA with larger real-world libraries. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -108,8 +109,13 @@ dimension measured side by side.
    pane); presentation options (fit, fit width, fill, 100%, with Z to cycle them and R to
    restart, the device frame shown or hidden, kept between presentations; what overflows the
    window pans); scroll momentum (drags fling and slow down the same at any frame rate, the wheel
-   coasts, a drag past the ends stretches and springs back). *Left:* responsive presentation
-   (frames resized to the window), device colours and custom device sizes. 1–2 h.
+   coasts, a drag past the ends stretches and springs back); responsive presentation (the presented
+   frame resized to the device's screen, or the window without a device, its constraints and auto
+   layout responding live; in the Options menu and the Prototype panel, saved in the file); device
+   colours (each model's colour variants, bodies drawn in code) and custom device sizes (a bare
+   screen with width and height fields, imported from REST files); flow descriptions in the
+   presenter's flow picker and under each flow. *Left:* conditional actions and expressions,
+   hotspot hints on click, comments and inspect in the presenter. 4–8 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -145,8 +151,8 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); responsive
-  presentation.
+- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); conditional
+  prototype actions.
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
