@@ -354,7 +354,19 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
                     sh.offset = (sh.offset.0 * k, sh.offset.1 * k);
                 }
                 EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => *radius *= k,
-                _ => {}
+                EffectKind::Noise(nz) => {
+                    nz.size *= k;
+                    nz.size_y = nz.size_y.map(|v| v * k);
+                }
+                EffectKind::Texture(t) => {
+                    t.size *= k;
+                    t.size_y = t.size_y.map(|v| v * k);
+                    t.radius *= k;
+                }
+                EffectKind::Glass(g) => {
+                    g.depth *= k;
+                    g.frost *= k;
+                }
             }
         }
         if let Some(l) = n.layout.as_mut() {

@@ -20,6 +20,8 @@
 
 #[cfg(test)]
 mod conditional_tests;
+#[cfg(test)]
+mod effects_tests;
 mod props;
 mod proto;
 #[cfg(test)]

@@ -201,7 +201,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "effect.add",
             "Add effect",
-            "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture), effect? {..}}",
+            "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture|glass), effect? {..}}",
             true,
             effect_add
         ),
@@ -1038,17 +1038,10 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
 fn effect_add(s: &mut Session, p: &Value) -> Result<Value> {
     let e: Effect = match get(p, "effect") {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("effect.add", e.to_string()))?,
-        None => match string(p, "type").unwrap_or_else(|| "dropShadow".into()).to_ascii_lowercase().replace(['_', ' ', '-'], "").as_str() {
-            "dropshadow" => Effect::drop_shadow(),
-            "innershadow" => Effect::inner_shadow(),
-            "layerblur" | "blur" => Effect::layer_blur(),
-            "backgroundblur" => Effect::background_blur(),
-            "noise" => {
-                Effect { kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) }, visible: true }
-            }
-            "texture" => Effect { kind: EffectKind::Texture { size: 0.5, radius: 4.0 }, visible: true },
-            other => return Err(bad("effect.add", format!("unknown effect type `{other}`"))),
-        },
+        None => {
+            let ty = string(p, "type").unwrap_or_else(|| "dropShadow".into());
+            Effect::of_type(&ty).ok_or_else(|| bad("effect.add", format!("unknown effect type `{ty}`")))?
+        }
     };
     for i in req_targets("effect.add", s, p)? {
         s.doc_mut()?.get_mut(i)?.effects.push(e.clone());

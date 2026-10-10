@@ -115,7 +115,7 @@ fn background_blur_is_a_blurred_backdrop_image() {
 fn backdrop_leaves_out_the_layer_and_what_is_above_it() {
     let (d, f, panel) = frosted_doc(8.0);
     let mut tmp = d.clone();
-    raster::hide_from(&mut tmp, panel, &[f]);
+    figcraft_render::backdrop::hide_above(&mut tmp, panel, &[f]);
     let hidden: Vec<&str> = tmp.nodes().filter(|n| !n.visible).map(|n| n.name.as_str()).collect();
     assert_eq!(hidden.len(), 2, "{hidden:?}");
     assert!(hidden.contains(&"Panel") && hidden.contains(&"Above"));
@@ -128,7 +128,7 @@ fn backdrop_leaves_out_the_layer_and_what_is_above_it() {
     let later = d.create(p, NodeKind::Frame, "Later", 0.0, 0.0, 10.0, 10.0).unwrap();
     d.get_mut(f).unwrap().strokes = vec![Paint::solid(Color::BLACK)];
     let mut tmp = d.clone();
-    raster::hide_from(&mut tmp, inner, &[f, later]);
+    figcraft_render::backdrop::hide_above(&mut tmp, inner, &[f, later]);
     let hidden: Vec<&str> = tmp.nodes().filter(|n| !n.visible).map(|n| n.name.as_str()).collect();
     assert_eq!(hidden.len(), 3, "{hidden:?}");
     assert!(["Inner", "Sibling", "Later"].iter().all(|h| hidden.contains(h)), "{hidden:?}");

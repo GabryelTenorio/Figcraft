@@ -778,6 +778,8 @@ mod colors_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]
+mod effects_tests;
+#[cfg(test)]
 mod proto_expr_tests;
 #[cfg(test)]
 mod tests;

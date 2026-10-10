@@ -68,7 +68,10 @@ fn inner_shadow_and_blur_dont_crash() {
     n.effects.push(Effect::inner_shadow());
     n.effects.push(Effect::layer_blur());
     n.effects.push(Effect::background_blur());
-    n.effects.push(Effect { kind: EffectKind::Noise { size: 1.0, density: 0.5, color: Color::BLACK }, visible: true });
+    n.effects.push(Effect {
+        kind: EffectKind::Noise(figcraft_doc::Noise { size: 1.0, density: 0.5, color: Color::BLACK, ..Default::default() }),
+        visible: true,
+    });
     let _ = render_view(&d, p, &view(100, 100), &Options::default()).unwrap();
 }
 

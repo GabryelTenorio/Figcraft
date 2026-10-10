@@ -335,6 +335,162 @@ impl Default for Shadow {
     }
 }
 
+/// How shadow spread offsets a sharp corner: the outline's edges move out (or in) in parallel and
+/// meet in a mitre up to this many times the spread from the corner, then bevel.
+pub const SPREAD_MITER_LIMIT: f64 = 4.0;
+
+/// How many colours noise grains take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum NoiseMode {
+    /// One colour.
+    #[default]
+    Mono,
+    /// Two colours (`color` and `secondary`).
+    Duo,
+    /// Grains of every colour, at `opacity`.
+    Multi,
+}
+
+impl NoiseMode {
+    pub const ALL: [NoiseMode; 3] = [NoiseMode::Mono, NoiseMode::Duo, NoiseMode::Multi];
+    pub fn label(self) -> &'static str {
+        match self {
+            NoiseMode::Mono => "Mono",
+            NoiseMode::Duo => "Duo",
+            NoiseMode::Multi => "Multi",
+        }
+    }
+}
+
+/// A grain size (document units) on both axes, sanitised.
+fn grain_of(size: f64, size_y: Option<f64>) -> (f64, f64) {
+    let ok = |v: f64| if v.is_finite() { v.clamp(0.01, 1000.0) } else { 0.5 };
+    (ok(size), ok(size_y.unwrap_or(size)))
+}
+
+/// Grain over the layer's pixels.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Noise {
+    pub mode: NoiseMode,
+    /// Grain size (document units) across; also down unless `size_y` is set.
+    pub size: f64,
+    #[serde(alias = "sizeY", skip_serializing_if = "Option::is_none")]
+    pub size_y: Option<f64>,
+    /// Share of grains drawn (0–1).
+    pub density: f64,
+    /// Mono and Duo: the grains' colour and opacity.
+    pub color: Color,
+    /// Duo: the other grains' colour.
+    pub secondary: Color,
+    /// Multi: the grains' opacity (0–1).
+    pub opacity: f32,
+    pub blend: BlendMode,
+}
+
+impl Default for Noise {
+    fn default() -> Self {
+        Self {
+            mode: NoiseMode::Mono,
+            size: 0.5,
+            size_y: None,
+            density: 0.5,
+            color: Color::new(0.0, 0.0, 0.0, 0.25),
+            secondary: Color::new(1.0, 1.0, 1.0, 0.25),
+            opacity: 0.25,
+            blend: BlendMode::Normal,
+        }
+    }
+}
+
+impl Noise {
+    /// Grain size across and down (document units, sanitised).
+    pub fn grain(&self) -> (f64, f64) {
+        grain_of(self.size, self.size_y)
+    }
+}
+
+/// Roughened edges: the layer's pixels scattered by up to `radius`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Texture {
+    /// Grain size (document units) across; also down unless `size_y` is set.
+    pub size: f64,
+    #[serde(alias = "sizeY", skip_serializing_if = "Option::is_none")]
+    pub size_y: Option<f64>,
+    /// How far pixels scatter (document units): past the layer's edge unless clipped.
+    pub radius: f64,
+    /// Keep the texture inside the layer's own pixels.
+    #[serde(alias = "clipToShape")]
+    pub clip_to_shape: bool,
+}
+
+impl Default for Texture {
+    fn default() -> Self {
+        Self { size: 0.5, size_y: None, radius: 4.0, clip_to_shape: false }
+    }
+}
+
+impl Texture {
+    /// Grain size across and down (document units, sanitised).
+    pub fn grain(&self) -> (f64, f64) {
+        grain_of(self.size, self.size_y)
+    }
+}
+
+/// Glass: the backdrop seen through a pane whose curved edges bend it, split its colours and catch
+/// the light, optionally frosted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Glass {
+    /// Where the light comes from, in degrees clockwise from the top.
+    #[serde(alias = "lightAngle")]
+    pub light_angle: f64,
+    /// Brightness of the edge highlights (0–1).
+    #[serde(alias = "lightIntensity")]
+    pub light_intensity: f64,
+    /// How strongly the curved edge bends the backdrop (0–1).
+    pub refraction: f64,
+    /// How far the curved edge reaches in from the border (document units, at least 1).
+    pub depth: f64,
+    /// Colour splitting along the curved edge (0–1).
+    pub dispersion: f64,
+    /// Blur of the backdrop (a blur radius, document units).
+    pub frost: f64,
+    /// How widely the light spreads over the glass (0–1).
+    pub splay: f64,
+}
+
+impl Default for Glass {
+    fn default() -> Self {
+        Self { light_angle: -45.0, light_intensity: 0.8, refraction: 0.8, depth: 20.0, dispersion: 0.5, frost: 4.0, splay: 0.0 }
+    }
+}
+
+impl Glass {
+    /// The values clamped to their ranges (non-finite ones at their defaults).
+    pub fn sanitized(&self) -> Glass {
+        let d = Glass::default();
+        let ok = |v: f64, def: f64, lo: f64, hi: f64| if v.is_finite() { v.clamp(lo, hi) } else { def };
+        Glass {
+            light_angle: ok(self.light_angle, d.light_angle, -3600.0, 3600.0),
+            light_intensity: ok(self.light_intensity, d.light_intensity, 0.0, 1.0),
+            refraction: ok(self.refraction, d.refraction, 0.0, 1.0),
+            depth: ok(self.depth, d.depth, 1.0, 1000.0),
+            dispersion: ok(self.dispersion, d.dispersion, 0.0, 1.0),
+            frost: ok(self.frost, d.frost, 0.0, 1000.0),
+            splay: ok(self.splay, d.splay, 0.0, 1.0),
+        }
+    }
+
+    /// Furthest the curved edge moves the backdrop (document units).
+    pub fn max_bend(&self) -> f64 {
+        let g = self.sanitized();
+        g.refraction * g.depth * (1.0 + g.dispersion * 0.25)
+    }
+}
+
 /// One effect in a node's effect list.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -347,35 +503,12 @@ pub enum EffectKind {
     BackgroundBlur {
         radius: f64,
     },
-    /// Monotone grain over the layer.
-    Noise {
-        #[serde(default = "noise_size")]
-        size: f64,
-        #[serde(default = "noise_density")]
-        density: f64,
-        #[serde(default = "noise_color")]
-        color: Color,
-    },
+    /// Grain over the layer.
+    Noise(Noise),
     /// Roughened edges.
-    Texture {
-        #[serde(default = "noise_size")]
-        size: f64,
-        #[serde(default = "texture_radius")]
-        radius: f64,
-    },
-}
-
-fn noise_size() -> f64 {
-    0.5
-}
-fn noise_density() -> f64 {
-    0.5
-}
-fn texture_radius() -> f64 {
-    4.0
-}
-fn noise_color() -> Color {
-    Color::new(0.0, 0.0, 0.0, 0.25)
+    Texture(Texture),
+    /// The backdrop through curved glass.
+    Glass(Glass),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -391,29 +524,70 @@ fn yes() -> bool {
 }
 
 impl Effect {
+    /// Effect types in the order the Design panel lists them: (label, type name).
+    pub const TYPES: [(&'static str, &'static str); 7] = [
+        ("Drop shadow", "dropShadow"),
+        ("Inner shadow", "innerShadow"),
+        ("Layer blur", "layerBlur"),
+        ("Background blur", "backgroundBlur"),
+        ("Noise", "noise"),
+        ("Texture", "texture"),
+        ("Glass", "glass"),
+    ];
+
+    fn of(kind: EffectKind) -> Self {
+        Self { kind, visible: true }
+    }
     pub fn drop_shadow() -> Self {
-        Self { kind: EffectKind::DropShadow(Shadow::default()), visible: true }
+        Self::of(EffectKind::DropShadow(Shadow::default()))
     }
     pub fn inner_shadow() -> Self {
-        Self { kind: EffectKind::InnerShadow(Shadow { offset: (0.0, 4.0), ..Shadow::default() }), visible: true }
+        Self::of(EffectKind::InnerShadow(Shadow { offset: (0.0, 4.0), ..Shadow::default() }))
     }
     pub fn layer_blur() -> Self {
-        Self { kind: EffectKind::LayerBlur { radius: 4.0 }, visible: true }
+        Self::of(EffectKind::LayerBlur { radius: 4.0 })
     }
     pub fn background_blur() -> Self {
-        Self { kind: EffectKind::BackgroundBlur { radius: 4.0 }, visible: true }
+        Self::of(EffectKind::BackgroundBlur { radius: 4.0 })
     }
+    pub fn noise() -> Self {
+        Self::of(EffectKind::Noise(Noise::default()))
+    }
+    pub fn texture() -> Self {
+        Self::of(EffectKind::Texture(Texture::default()))
+    }
+    pub fn glass() -> Self {
+        Self::of(EffectKind::Glass(Glass::default()))
+    }
+
+    /// A new effect of a type named like `dropShadow`, `drop shadow` or `DROP_SHADOW` (`blur` is
+    /// a layer blur), with its defaults.
+    pub fn of_type(name: &str) -> Option<Self> {
+        Some(match name.to_ascii_lowercase().replace(['_', ' ', '-'], "").as_str() {
+            "dropshadow" => Self::drop_shadow(),
+            "innershadow" => Self::inner_shadow(),
+            "layerblur" | "blur" => Self::layer_blur(),
+            "backgroundblur" => Self::background_blur(),
+            "noise" => Self::noise(),
+            "texture" => Self::texture(),
+            "glass" => Self::glass(),
+            _ => return None,
+        })
+    }
+
     pub fn label(&self) -> &'static str {
         match self.kind {
             EffectKind::DropShadow(_) => "Drop shadow",
             EffectKind::InnerShadow(_) => "Inner shadow",
             EffectKind::LayerBlur { .. } => "Layer blur",
             EffectKind::BackgroundBlur { .. } => "Background blur",
-            EffectKind::Noise { .. } => "Noise",
-            EffectKind::Texture { .. } => "Texture",
+            EffectKind::Noise(_) => "Noise",
+            EffectKind::Texture(_) => "Texture",
+            EffectKind::Glass(_) => "Glass",
         }
     }
-    /// How far outside the node's bounds this effect can paint.
+    /// How far outside the node's bounds this effect can paint (a shadow's spread at a sharp
+    /// corner can reach further: see [`Node::paint_reach`](crate::Node::paint_reach)).
     pub fn reach(&self) -> f64 {
         if !self.visible {
             return 0.0;
@@ -421,9 +595,41 @@ impl Effect {
         match &self.kind {
             EffectKind::DropShadow(s) => s.radius.abs() * 1.5 + s.spread.max(0.0) + s.offset.0.abs().max(s.offset.1.abs()),
             EffectKind::LayerBlur { radius } => radius.abs() * 1.5,
-            EffectKind::Texture { radius, .. } => radius.abs(),
+            EffectKind::Texture(t) if !t.clip_to_shape => t.radius.abs(),
             _ => 0.0,
         }
+    }
+    /// The effect's colour (`secondary`: a duo noise's second colour), if it has one.
+    pub fn color(&self, secondary: bool) -> Option<Color> {
+        match (&self.kind, secondary) {
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), false) => Some(s.color),
+            (EffectKind::Noise(n), false) => Some(n.color),
+            (EffectKind::Noise(n), true) => Some(n.secondary),
+            _ => None,
+        }
+    }
+    /// Mutable access to [`Effect::color`].
+    pub fn color_mut(&mut self, secondary: bool) -> Option<&mut Color> {
+        match (&mut self.kind, secondary) {
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), false) => Some(&mut s.color),
+            (EffectKind::Noise(n), false) => Some(&mut n.color),
+            (EffectKind::Noise(n), true) => Some(&mut n.secondary),
+            _ => None,
+        }
+    }
+    /// How far around the node a backdrop effect (background blur, glass) reads what is behind
+    /// it, as a blur radius (document units); 0 for other effects.
+    pub fn backdrop_radius(&self) -> f64 {
+        if !self.visible {
+            return 0.0;
+        }
+        let r = match &self.kind {
+            EffectKind::BackgroundBlur { radius } => radius.abs(),
+            // The frost blur plus the furthest bend, in blur radii (a blur reads 1.5 radii).
+            EffectKind::Glass(g) => g.sanitized().frost + g.max_bend() / 1.5,
+            _ => 0.0,
+        };
+        if r.is_finite() { r } else { 0.0 }
     }
 }
 

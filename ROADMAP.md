@@ -160,7 +160,8 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA).
+- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
+  inner shadows under strokes (render order), progressive blur, glass tuned side by side.
 - **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -175,7 +176,11 @@ dimension measured side by side.
   sets (variants), instances with per-layer overrides, slices; fills (solid, linear/radial/angular/
   diamond gradients, images with fill/fit/crop/tile + adjustments), multiple strokes with
   inside/center/outside alignment, per-side weights, dashes, caps/arrowheads, joins; effects (drop
-  and inner shadow with spread, layer blur, background blur, noise, texture); corner radii with
+  and inner shadow with spread that offsets the outline exactly: ellipses, stars, vectors, text;
+  layer blur; background blur that sees the whole backdrop, inside clipping frames, faded groups
+  and masks too; noise in mono, duo and multi colour with grain size, density and blend mode;
+  texture with clip to shape; glass with light angle and intensity, refraction, depth, dispersion,
+  frost and splay; the same in PNG, PDF and SVG exports); corner radii with
   smoothing; constraints; auto layout (horizontal, vertical, wrap, grid; hug/fill/fixed; min/max;
   absolute children); layout grids; export settings; prototype interactions, flows and transitions;
   paint/text/effect/grid styles; variables with collections, modes and aliases.

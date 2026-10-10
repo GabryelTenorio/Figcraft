@@ -236,12 +236,18 @@ impl<'a> Exporter<'a> {
             return;
         }
         let fx: Vec<&EffectKind> = n.effects.iter().filter(|e| e.visible).map(|e| &e.kind).collect();
-        if fx.iter().any(|k| matches!(k, EffectKind::LayerBlur { .. } | EffectKind::Noise { .. } | EffectKind::Texture { .. })) {
+        let op = n.opacity.clamp(0.0, 1.0);
+        // Background blur and glass: an image drawn from what lies under the node, under its
+        // content (nothing in a soft mask is seen).
+        let back = if !as_mask && self.masking == 0 && figcraft_render::backdrop::has_effects(n) { self.backdrop(id) } else { None };
+        if fx.iter().any(|k| matches!(k, EffectKind::LayerBlur { .. } | EffectKind::Noise(_) | EffectKind::Texture(_))) {
             // Effects that change every pixel: the renderer draws the whole node.
+            if let Some(b) = &back {
+                self.place_raster(s, b, op, n.blend);
+            }
             self.raster_node(s, id, as_mask);
             return;
         }
-        let op = n.opacity.clamp(0.0, 1.0);
         let shadows = if fx.iter().any(|k| matches!(k, EffectKind::DropShadow(_) | EffectKind::InnerShadow(_))) { self.shadows(id) } else { None };
         // Drop shadows go under the node, with its opacity.
         if let Some(sh) = &shadows {
@@ -249,8 +255,6 @@ impl<'a> Exporter<'a> {
                 self.place_raster(s, r, op, *b);
             }
         }
-        // Background blur: the blurred backdrop clipped to the shape, under the node's content.
-        let backdrop = if fx.iter().any(|k| matches!(k, EffectKind::BackgroundBlur { .. })) && self.masking == 0 { self.backdrop(id) } else { None };
         let nb = blend(n.blend);
         if let Some(b) = nb {
             s.push_blend_mode(b);
@@ -259,8 +263,8 @@ impl<'a> Exporter<'a> {
         if op < 1.0 {
             s.push_opacity(norm(op));
         }
-        if let Some(r) = &backdrop {
-            self.place_raster(s, r, 1.0, BlendMode::Normal);
+        if let Some(b) = &back {
+            self.place_raster(s, b, 1.0, BlendMode::Normal);
         }
         self.content(s, n, xf, depth);
         if let Some(sh) = &shadows {
