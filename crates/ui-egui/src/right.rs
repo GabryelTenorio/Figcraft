@@ -1186,26 +1186,10 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, e.label(), w, None);
             egui::Popup::menu(&resp).show(|ui| {
-                for (l, ty) in [
-                    ("Drop shadow", "dropShadow"),
-                    ("Inner shadow", "innerShadow"),
-                    ("Layer blur", "layerBlur"),
-                    ("Background blur", "backgroundBlur"),
-                    ("Noise", "noise"),
-                    ("Texture", "texture"),
-                ] {
-                    if menu_item(ui, l, "") {
-                        let ne = match ty {
-                            "dropShadow" => Effect::drop_shadow(),
-                            "innerShadow" => Effect::inner_shadow(),
-                            "layerBlur" => Effect::layer_blur(),
-                            "backgroundBlur" => Effect::background_blur(),
-                            "noise" => Effect {
-                                kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) },
-                                visible: true,
-                            },
-                            _ => Effect { kind: EffectKind::Texture { size: 0.5, radius: 4.0 }, visible: true },
-                        };
+                for (l, ty) in Effect::TYPES {
+                    if menu_item(ui, l, "")
+                        && let Some(ne) = Effect::of_type(ty)
+                    {
                         app.run("effect.set", json!({"ids": ids, "index": i, "effect": ne}));
                         ui.close();
                     }
@@ -1254,6 +1238,14 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
         Some(FieldEdit::Scrub(v, d)) => set(app, f(v), Some(d)),
         None => {}
     };
+    // A new colour for the effect (`secondary`: a duo noise's second colour).
+    let edit_color = |app: &mut FigApp, secondary: bool, c: figcraft_color::Color, scrub: Option<bool>| {
+        let mut e2 = e.clone();
+        if let Some(slot) = e2.color_mut(secondary) {
+            *slot = c;
+        }
+        set(app, e2, scrub);
+    };
     match &e.kind {
         EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) => {
             let inner = matches!(e.kind, EffectKind::InnerShadow(_));
@@ -1280,17 +1272,7 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                     crate::variable_ui::bound_chip(app, ui, ids, &color_field, VariableType::Color, r);
                     return;
                 }
-                let p = Paint::solid(s.color);
-                if widgets::swatch(ui, &p, 16.0).clicked() {
-                    app.ui.picker = Some(crate::colorpicker::PickerTarget::Effect { ids: ids.to_vec(), index: i });
-                }
-                if let Some(h) = widgets::text_field(ui, Id::new(("fx_c", i)), &s.color.to_hex(), 80.0, "")
-                    && let Some(c) = figcraft_color::Color::from_hex(&h)
-                {
-                    set(app, mk(Shadow { color: c.with_alpha(s.color.a), ..s.clone() }), None);
-                }
-                let ed = widgets::number_field(ui, Id::new(("fx_a", i)), Lead::None, Some((f64::from(s.color.a) * 100.0).round()), "%", 56.0, 1.0);
-                edit(app, ed, &|v| mk(Shadow { color: s.color.with_alpha((v / 100.0) as f32), ..s.clone() }));
+                fx_color(app, ui, ids, i, e, false, &edit_color);
                 crate::variable_ui::bind_button(ui, row_rect, ids, &color_field, VariableType::Color);
             });
             if !inner {
@@ -1311,25 +1293,137 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                 });
             });
         }
-        EffectKind::Noise { size, density, color } => {
+        EffectKind::Noise(nz) => {
+            let with = |f: &dyn Fn(&mut Noise)| {
+                tweaked(e, |k| {
+                    if let EffectKind::Noise(n) = k {
+                        f(n);
+                    }
+                })
+            };
             row(ui, 32.0, |ui| {
-                let ed = widgets::number_field(ui, Id::new(("fx_ns", i)), Lead::Text("Size"), Some(*size), "", half, 0.1);
-                edit(app, ed, &|v| Effect { kind: EffectKind::Noise { size: v.max(0.1), density: *density, color: *color }, visible: e.visible });
-                let ed = widgets::number_field(ui, Id::new(("fx_nd", i)), Lead::Text("Density"), Some((density * 100.0).round()), "%", half, 1.0);
-                edit(app, ed, &|v| Effect {
-                    kind: EffectKind::Noise { size: *size, density: (v / 100.0).clamp(0.0, 1.0), color: *color },
-                    visible: e.visible,
+                let resp = widgets::dropdown(ui, nz.mode.label(), half * 2.0 + 8.0, None);
+                egui::Popup::menu(&resp).show(|ui| {
+                    for m in NoiseMode::ALL {
+                        if menu_item(ui, m.label(), "") {
+                            set(app, with(&|n| n.mode = m), None);
+                            ui.close();
+                        }
+                    }
                 });
             });
-        }
-        EffectKind::Texture { size, radius } => {
             row(ui, 32.0, |ui| {
-                let ed = widgets::number_field(ui, Id::new(("fx_ts", i)), Lead::Text("Size"), Some(*size), "", half, 0.1);
-                edit(app, ed, &|v| Effect { kind: EffectKind::Texture { size: v.max(0.1), radius: *radius }, visible: e.visible });
-                let ed = widgets::number_field(ui, Id::new(("fx_tr", i)), Lead::Text("Radius"), Some(*radius), "", half, 1.0);
-                edit(app, ed, &|v| Effect { kind: EffectKind::Texture { size: *size, radius: v.max(0.0) }, visible: e.visible });
+                let ed = widgets::number_field(ui, Id::new(("fx_ns", i)), Lead::Text("Size"), Some(nz.size), "", half, 0.1);
+                edit(app, ed, &|v| {
+                    with(&|n| {
+                        n.size = v.clamp(0.01, 1000.0);
+                        n.size_y = None;
+                    })
+                });
+                let ed = widgets::number_field(ui, Id::new(("fx_nd", i)), Lead::Text("Density"), Some((nz.density * 100.0).round()), "%", half, 1.0);
+                edit(app, ed, &|v| with(&|n| n.density = (v / 100.0).clamp(0.0, 1.0)));
+            });
+            match nz.mode {
+                NoiseMode::Mono => row(ui, 32.0, |ui| fx_color(app, ui, ids, i, e, false, &edit_color)),
+                NoiseMode::Duo => {
+                    row(ui, 32.0, |ui| fx_color(app, ui, ids, i, e, false, &edit_color));
+                    row(ui, 32.0, |ui| fx_color(app, ui, ids, i, e, true, &edit_color));
+                }
+                NoiseMode::Multi => row(ui, 32.0, |ui| {
+                    let op = Some((f64::from(nz.opacity) * 100.0).round());
+                    let ed = widgets::number_field(ui, Id::new(("fx_no", i)), Lead::Text("Opacity"), op, "%", half, 1.0);
+                    edit(app, ed, &|v| with(&|n| n.opacity = (v / 100.0).clamp(0.0, 1.0) as f32));
+                }),
+            }
+        }
+        EffectKind::Texture(tx) => {
+            let with = |f: &dyn Fn(&mut Texture)| {
+                tweaked(e, |k| {
+                    if let EffectKind::Texture(t) = k {
+                        f(t);
+                    }
+                })
+            };
+            row(ui, 32.0, |ui| {
+                let ed = widgets::number_field(ui, Id::new(("fx_ts", i)), Lead::Text("Size"), Some(tx.size), "", half, 0.1);
+                edit(app, ed, &|v| {
+                    with(&|t| {
+                        t.size = v.clamp(0.01, 1000.0);
+                        t.size_y = None;
+                    })
+                });
+                let ed = widgets::number_field(ui, Id::new(("fx_tr", i)), Lead::Text("Radius"), Some(tx.radius), "", half, 1.0);
+                edit(app, ed, &|v| with(&|t| t.radius = v.max(0.0)));
+            });
+            row(ui, 32.0, |ui| {
+                if widgets::checkbox(ui, tx.clip_to_shape, "Clip to shape") {
+                    set(app, with(&|t| t.clip_to_shape = !tx.clip_to_shape), None);
+                }
             });
         }
+        EffectKind::Glass(g) => {
+            let with = |f: &dyn Fn(&mut Glass)| {
+                tweaked(e, |k| {
+                    if let EffectKind::Glass(gl) = k {
+                        f(gl);
+                    }
+                })
+            };
+            let pct = |v: f64| Some((v * 100.0).round());
+            let unit = |v: f64| (v / 100.0).clamp(0.0, 1.0);
+            row(ui, 32.0, |ui| {
+                let ed = widgets::number_field(ui, Id::new(("fx_gl", i)), Lead::Text("Light"), Some(g.light_angle.round()), "°", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.light_angle = v.clamp(-180.0, 180.0)));
+                let ed = widgets::number_field(ui, Id::new(("fx_gi", i)), Lead::None, pct(g.light_intensity), "%", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.light_intensity = unit(v)));
+            });
+            row(ui, 32.0, |ui| {
+                let ed = widgets::number_field(ui, Id::new(("fx_gr", i)), Lead::Text("Refraction"), pct(g.refraction), "%", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.refraction = unit(v)));
+                let ed = widgets::number_field(ui, Id::new(("fx_gd", i)), Lead::Text("Depth"), Some(g.depth), "", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.depth = v.clamp(1.0, 1000.0)));
+            });
+            row(ui, 32.0, |ui| {
+                let ed = widgets::number_field(ui, Id::new(("fx_gs", i)), Lead::Text("Dispersion"), pct(g.dispersion), "%", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.dispersion = unit(v)));
+                let ed = widgets::number_field(ui, Id::new(("fx_gf", i)), Lead::Text("Frost"), Some(g.frost), "", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.frost = v.clamp(0.0, 1000.0)));
+            });
+            row(ui, 32.0, |ui| {
+                let ed = widgets::number_field(ui, Id::new(("fx_gp", i)), Lead::Text("Splay"), pct(g.splay), "%", half, 1.0);
+                edit(app, ed, &|v| with(&|gl| gl.splay = unit(v)));
+            });
+        }
+    }
+}
+
+/// Applies a new colour to an effect: (app, secondary colour, colour, scrubbing: `Some(done)`).
+type ColorEdit<'a> = dyn Fn(&mut FigApp, bool, figcraft_color::Color, Option<bool>) + 'a;
+
+/// `e` with `f` applied to its kind.
+fn tweaked(e: &Effect, f: impl FnOnce(&mut EffectKind)) -> Effect {
+    let mut e2 = e.clone();
+    f(&mut e2.kind);
+    e2
+}
+
+/// The swatch (opens the colour picker), hex and opacity of effect `i`'s colour (`secondary`: a
+/// duo noise's second colour), in the current row; `edit` applies a new one.
+fn fx_color(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Effect, secondary: bool, edit: &ColorEdit<'_>) {
+    let Some(c) = e.color(secondary) else { return };
+    if widgets::swatch(ui, &Paint::solid(c), 16.0).clicked() {
+        app.ui.picker = Some(crate::colorpicker::PickerTarget::Effect { ids: ids.to_vec(), index: i, secondary });
+    }
+    if let Some(h) = widgets::text_field(ui, Id::new(("fx_c", i, secondary)), &c.to_hex(), 80.0, "")
+        && let Some(nc) = figcraft_color::Color::from_hex(&h)
+    {
+        edit(app, secondary, nc.with_alpha(c.a), None);
+    }
+    let alpha = |v: f64| c.with_alpha((v / 100.0).clamp(0.0, 1.0) as f32);
+    match widgets::number_field(ui, Id::new(("fx_a", i, secondary)), Lead::None, Some((f64::from(c.a) * 100.0).round()), "%", 56.0, 1.0) {
+        Some(FieldEdit::Set(v)) => edit(app, secondary, alpha(v), None),
+        Some(FieldEdit::Scrub(v, done)) => edit(app, secondary, alpha(v), Some(done)),
+        None => {}
     }
 }
 

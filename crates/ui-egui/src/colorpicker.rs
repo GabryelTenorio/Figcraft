@@ -3,7 +3,7 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Mesh, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::{Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImageScaleMode, Paint, PaintKind};
-use figcraft_doc::{EffectKind, NodeId, NodeKind};
+use figcraft_doc::{NodeId, NodeKind};
 use serde_json::json;
 
 use crate::FigApp;
@@ -22,6 +22,8 @@ pub enum PickerTarget {
     Effect {
         ids: Vec<NodeId>,
         index: usize,
+        /// A duo noise's second colour.
+        secondary: bool,
     },
     /// The fill of a character range of a text layer being edited.
     TextRange {
@@ -68,10 +70,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             let list = if *fills { &n.fills } else { &n.strokes };
             list.get(*index).cloned()
         }
-        PickerTarget::Effect { ids, index } => match &doc.node(*ids.first()?)?.effects.get(*index)?.kind {
-            EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) => Some(Paint::solid(s.color)),
-            _ => None,
-        },
+        PickerTarget::Effect { ids, index, secondary } => doc.node(*ids.first()?)?.effects.get(*index)?.color(*secondary).map(Paint::solid),
         PickerTarget::TextRange { id, start, .. } => range_fills(doc, *id, *start)?.into_iter().next(),
         PickerTarget::Variable { id, mode } => match doc.variables.get(id)?.values.get(mode)? {
             figcraft_doc::VariableValue::Color(c) => {
@@ -98,14 +97,12 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         PickerTarget::Paint { fills, index, ids } => {
             app.session.execute(if *fills { "fill.set" } else { "stroke.set" }, &json!({"ids": ids, "index": index, "paint": paint}))
         }
-        PickerTarget::Effect { ids, index } => {
-            let Some(e) = ids.first().and_then(|i| app.session.doc().ok()?.node(*i)?.effects.get(*index).cloned()) else { return };
-            let c = paint.solid_color().unwrap_or(Color::BLACK);
-            let mut e2 = e;
-            if let EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) = &mut e2.kind {
-                s.color = c;
+        PickerTarget::Effect { ids, index, secondary } => {
+            let Some(mut e) = ids.first().and_then(|i| app.session.doc().ok()?.node(*i)?.effects.get(*index).cloned()) else { return };
+            if let Some(c) = e.color_mut(*secondary) {
+                *c = paint.solid_color().unwrap_or(Color::BLACK);
             }
-            app.session.execute("effect.set", &json!({"ids": ids, "index": index, "effect": e2}))
+            app.session.execute("effect.set", &json!({"ids": ids, "index": index, "effect": e}))
         }
         PickerTarget::TextRange { id, start, end } => {
             app.session.execute("text.style", &json!({"id": id, "start": start, "end": end, "textFills": [paint]}))

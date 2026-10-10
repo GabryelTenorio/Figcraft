@@ -5,12 +5,16 @@
 //! runs identically on desktop, in tests and in the browser.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod backdrop;
 pub mod draw;
 pub mod fx;
+pub mod glass;
+pub mod grain;
 pub mod images;
 pub mod lod;
 pub mod paint;
 pub mod retained;
+pub mod shadow;
 
 pub use draw::{node_outline, paint_bounds, subtree_outline, ts_path};
 pub use retained::{Retained, Work};
@@ -60,16 +64,10 @@ fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
     Pixmap::new(w, h)
 }
 
-/// The largest visible background blur radius in the document (0 without any).
+/// The largest backdrop radius (background blur, glass: see [`figcraft_doc::Effect::backdrop_radius`])
+/// in the document (0 without any).
 pub(crate) fn max_backdrop_blur(doc: &Document) -> f64 {
-    doc.nodes()
-        .flat_map(|n| n.effects.iter())
-        .filter(|e| e.visible)
-        .filter_map(|e| match e.kind {
-            figcraft_doc::EffectKind::BackgroundBlur { radius } if radius.is_finite() => Some(radius),
-            _ => None,
-        })
-        .fold(0.0, f64::max)
+    doc.nodes().flat_map(|n| n.effects.iter()).map(figcraft_doc::Effect::backdrop_radius).fold(0.0, f64::max)
 }
 
 /// How far (device pixels) a background blur of `radius` reads its backdrop at `scale`.
@@ -149,7 +147,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
         pix.fill(paint::ts_color(bg));
     }
     let lod = opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE;
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip, lod };
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip, lod, under: None };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
     for c in &p.children {
@@ -160,7 +158,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 
 /// Render several nodes (in z-order) into an existing pixmap through `view`.
 pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap) {
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[], lod: false };
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[], lod: false, under: None };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         draw::draw_node(&ctx, pix, *id, view.transform() * parent_xf, 0);
@@ -320,11 +318,17 @@ pub fn png_insert_chunk(png: Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(test)]
+mod backdrop_tests;
+#[cfg(test)]
 mod band_tests;
+#[cfg(test)]
+mod grain_tests;
 #[cfg(test)]
 mod lod_tests;
 #[cfg(test)]
 mod retained_tests;
+#[cfg(test)]
+mod spread_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

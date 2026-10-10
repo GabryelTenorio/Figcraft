@@ -546,6 +546,23 @@ impl Node {
             0.0
         };
         let fx = self.effects.iter().map(Effect::reach).fold(0.0, f64::max);
-        stroke + fx
+        stroke + fx + self.spread_miter_reach()
+    }
+
+    /// How much further than its spread a drop shadow can reach at the outline's sharp corners:
+    /// spread moves the edges out in parallel and they meet in a mitre (see
+    /// [`SPREAD_MITER_LIMIT`]). Rectangles, frames and ellipses grow by exactly the spread.
+    fn spread_miter_reach(&self) -> f64 {
+        if matches!(self.kind, NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Section { .. }) || self.kind.is_frame_like() {
+            return 0.0;
+        }
+        self.effects
+            .iter()
+            .filter(|e| e.visible)
+            .filter_map(|e| match &e.kind {
+                EffectKind::DropShadow(s) if s.spread.is_finite() => Some(s.spread.max(0.0) * (SPREAD_MITER_LIMIT - 1.0)),
+                _ => None,
+            })
+            .fold(0.0, f64::max)
     }
 }

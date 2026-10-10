@@ -21,11 +21,12 @@
 //! - image fills are embedded as images (the original PNG/JPEG/GIF/WebP bytes when no image
 //!   adjustments apply, else decoded pixels), placed with `figcraft_render::paint::image_transform`;
 //! - angular and diamond gradients: an image of the paint clipped to the shape;
-//! - drop and inner shadows: images of just the shadow, under/over the vector content;
+//! - drop and inner shadows: images of just the shadow (the renderer's, spread offsetting the
+//!   outline), under/over the vector content;
+//! - background blur and glass: the renderer draws them from a render of everything under the node
+//!   on the page (its ancestors' fills included), placed under the node's content;
 //! - layer blur, noise and texture: the whole node is rendered by `figcraft_render` and placed as
-//!   one image;
-//! - background blur: what the page draws under the layer, rendered, blurred and cut to its shape,
-//!   placed under its (vector) content.
+//!   one image.
 //!
 //! Pages are sized in points, one point per pixel of the document.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -170,6 +171,8 @@ fn write(doc: &Document, pages: &[(Vec<NodeId>, Rect)], opts: &PdfOptions) -> Re
     pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))
 }
 
+#[cfg(test)]
+mod backdrop_tests;
 #[cfg(test)]
 mod export_tests;
 #[cfg(test)]

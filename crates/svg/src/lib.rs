@@ -4,7 +4,9 @@
 //! their fills (solid, linear/radial gradients; angular and diamond fall back to their first
 //! colour... or a raster pattern), strokes are written as filled outlines so Inside/Outside
 //! alignment survives exactly, text is outlined, images are embedded as data URIs, and shadows
-//! and blurs become SVG filters.
+//! and blurs become SVG filters. Shadow spread offsets the outline like the renderer (the shape
+//! stroked twice the spread wide with mitred joins, cut away with a mask to shrink); inner shadows
+//! are masked, blurred rectangles clipped to the shape.
 //!
 //! Import (via usvg) turns an SVG file into a frame of vector nodes.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -16,8 +18,9 @@ use std::fmt::Write as _;
 
 use base64::Engine as _;
 use figcraft_color::{Color, GradientKind, Paint, PaintKind};
-use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind};
+use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind, SPREAD_MITER_LIMIT, Shadow};
 use figcraft_geom::{Affine, BezPath, Rect};
+use figcraft_render::shadow::Outline;
 
 #[derive(Clone, Debug)]
 pub struct SvgOptions {
@@ -171,8 +174,16 @@ impl W<'_> {
         }
     }
 
-    fn filter_for(&mut self, n: &Node) -> Option<String> {
-        let fx: Vec<&figcraft_doc::Effect> = n.effects.iter().filter(|e| e.visible).collect();
+    /// The layer's filter: drop shadows (but those drawn as `exact` geometry: see
+    /// [`W::drop_shadows`]) and layer blur.
+    fn filter_for(&mut self, n: &Node, exact: bool) -> Option<String> {
+        let fx: Vec<&figcraft_doc::Effect> = n
+            .effects
+            .iter()
+            .filter(|e| e.visible)
+            .filter(|e| !(exact && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0)))
+            .filter(|e| matches!(e.kind, EffectKind::DropShadow(_) | EffectKind::LayerBlur { .. }))
+            .collect();
         if fx.is_empty() {
             return None;
         }
@@ -182,11 +193,20 @@ impl W<'_> {
         for (i, e) in fx.iter().enumerate() {
             match &e.kind {
                 EffectKind::DropShadow(s) => {
+                    // Spread here (layers that aren't one outline) grows the pixels, like the renderer.
+                    let morph = if s.spread != 0.0 {
+                        format!(
+                            "<feMorphology in=\"SourceAlpha\" operator=\"{}\" radius=\"{}\" result=\"s{i}m\"/>",
+                            if s.spread > 0.0 { "dilate" } else { "erode" },
+                            num(s.spread.abs())
+                        )
+                    } else {
+                        String::new()
+                    };
+                    let src = if morph.is_empty() { "SourceAlpha".to_string() } else { format!("s{i}m") };
                     let _ = write!(
                         f,
-                        "<feMorphology in=\"SourceAlpha\" operator=\"{}\" radius=\"{}\" result=\"s{i}m\"/><feOffset in=\"s{i}m\" dx=\"{}\" dy=\"{}\"/><feGaussianBlur stdDeviation=\"{}\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 {} 0 0 0 0 {} 0 0 0 0 {} 0 0 0 {} 0\" result=\"s{i}\"/>",
-                        if s.spread >= 0.0 { "dilate" } else { "erode" },
-                        num(s.spread.abs()),
+                        "{morph}<feOffset in=\"{src}\" dx=\"{}\" dy=\"{}\"/><feGaussianBlur stdDeviation=\"{}\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 {} 0 0 0 0 {} 0 0 0 0 {} 0 0 0 {} 0\" result=\"s{i}\"/>",
                         num(s.offset.0),
                         num(s.offset.1),
                         num(s.radius / 2.0),
@@ -232,7 +252,12 @@ impl W<'_> {
         if !matches!(n.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
             let _ = write!(attrs, " style=\"mix-blend-mode:{}\"", n.blend.css());
         }
-        if let Some(fid) = self.filter_for(n) {
+        let spreads = n.effects.iter().any(|e| e.visible && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0));
+        let sil = if spreads { figcraft_render::shadow::silhouette(self.doc, n) } else { None };
+        if let Some(sil) = &sil {
+            self.drop_shadows(n, sil, xf);
+        }
+        if let Some(fid) = self.filter_for(n, sil.is_some()) {
             let _ = write!(attrs, " filter=\"url(#{fid})\"");
         }
         let _ = write!(self.body, "<g{attrs}>");
@@ -312,7 +337,138 @@ impl W<'_> {
                 }
             }
         }
+        if let Some(o) = &outline {
+            for e in n.effects.iter().filter(|e| e.visible) {
+                if let EffectKind::InnerShadow(s) = &e.kind {
+                    self.inner_shadow(o, s, xf);
+                }
+            }
+        }
         self.body.push_str("</g>");
+    }
+
+    /// Markup painting `outlines` (local, through `xf`) grown (`spread > 0`) or shrunk by `spread`
+    /// local units in opaque `color`: the outline filled and stroked twice the spread wide with
+    /// mitred joins (shrinking: that band masked away), like the renderer's spread.
+    fn spread_paths(&mut self, outlines: &[Outline], spread: f64, xf: Affine, color: &str) -> String {
+        let paths = |fill: &str, stroke: Option<(&str, f64)>| -> String {
+            let mut s = String::new();
+            for (p, rule) in outlines {
+                let fr = if *rule == figcraft_render::FillRule::EvenOdd { " fill-rule=\"evenodd\"" } else { "" };
+                let _ = write!(s, "<path transform=\"{}\" d=\"{}\" fill=\"{fill}\"{fr}/>", matrix(xf), path_d(p));
+            }
+            if let Some((c, half)) = stroke {
+                for (p, _) in outlines {
+                    let _ = write!(
+                        s,
+                        "<path transform=\"{}\" d=\"{}\" fill=\"none\" stroke=\"{c}\" stroke-width=\"{}\" stroke-linejoin=\"miter\" stroke-miterlimit=\"{}\"/>",
+                        matrix(xf),
+                        path_d(p),
+                        num(half * 2.0),
+                        num(SPREAD_MITER_LIMIT)
+                    );
+                }
+            }
+            s
+        };
+        let half = if spread.is_finite() { spread.abs() } else { 0.0 };
+        if spread >= 0.0 || half <= 1e-6 {
+            return paths(color, (half > 1e-6).then_some((color, half)));
+        }
+        let bounds =
+            outlines.iter().map(|(p, _)| figcraft_geom::transform_rect_bbox(xf, figcraft_geom::Shape::bounding_box(p))).reduce(|a, b| a.union(b));
+        let Some(b) = bounds.map(|b| b.inflate(1.0, 1.0)) else { return String::new() };
+        let mid = self.id("mask");
+        let _ = write!(
+            self.defs,
+            "<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\">{}</mask>",
+            num(b.x0),
+            num(b.y0),
+            num(b.width()),
+            num(b.height()),
+            paths("white", Some(("black", half)))
+        );
+        format!("<g mask=\"url(#{mid})\">{}</g>", paths(color, None))
+    }
+
+    /// A Gaussian blur filter over `region` (page units); `None` for no blur.
+    fn blur_filter(&mut self, radius: f64, region: Rect) -> Option<String> {
+        if !(radius.is_finite() && radius > 0.0) {
+            return None;
+        }
+        let fid = self.id("filter");
+        let _ = write!(
+            self.defs,
+            "<filter id=\"{fid}\" filterUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" color-interpolation-filters=\"sRGB\"><feGaussianBlur stdDeviation=\"{}\"/></filter>",
+            num(region.x0),
+            num(region.y0),
+            num(region.width()),
+            num(region.height()),
+            num(radius / 2.0)
+        );
+        Some(fid)
+    }
+
+    /// Drop shadows with spread, as geometry under the layer: its silhouette offset by the
+    /// spread (exactly, like the renderer), moved, blurred and faded.
+    fn drop_shadows(&mut self, n: &Node, sil: &[Outline], xf: Affine) {
+        for e in n.effects.iter().filter(|e| e.visible) {
+            let EffectKind::DropShadow(s) = &e.kind else { continue };
+            if s.spread == 0.0 || !(s.offset.0.is_finite() && s.offset.1.is_finite()) {
+                continue;
+            }
+            let at = Affine::translate(s.offset) * xf;
+            let Some(b) =
+                sil.iter().map(|(p, _)| figcraft_geom::transform_rect_bbox(at, figcraft_geom::Shape::bounding_box(p))).reduce(|a, b| a.union(b))
+            else {
+                continue;
+            };
+            let reach = s.spread.abs() * SPREAD_MITER_LIMIT + s.radius.abs() * 1.5 + 2.0;
+            let filter = self.blur_filter(s.radius, b.inflate(reach, reach)).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
+            let op = f64::from(s.color.a * n.opacity.clamp(0.0, 1.0));
+            let blend = if matches!(s.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
+                String::new()
+            } else {
+                format!(" style=\"mix-blend-mode:{}\"", s.blend.css())
+            };
+            let body = self.spread_paths(sil, s.spread, at, &hex(s.color));
+            let _ = write!(self.body, "<g opacity=\"{}\"{blend}><g{filter}>{body}</g></g>", num(op));
+        }
+    }
+
+    /// An inner shadow over the layer: everything outside its outline shrunk by the spread and
+    /// moved, blurred, tinted and clipped to the outline (the renderer's inner shadow).
+    fn inner_shadow(&mut self, o: &Outline, s: &Shadow, xf: Affine) {
+        if !(s.offset.0.is_finite() && s.offset.1.is_finite()) {
+            return;
+        }
+        let b = figcraft_geom::transform_rect_bbox(xf, figcraft_geom::Shape::bounding_box(&o.0));
+        let reach = s.spread.abs() * SPREAD_MITER_LIMIT + s.radius.abs() * 1.5 + s.offset.0.abs().max(s.offset.1.abs()) + 2.0;
+        let r = b.inflate(reach, reach);
+        let cr = if o.1 == figcraft_render::FillRule::EvenOdd { " clip-rule=\"evenodd\"" } else { "" };
+        let cid = self.id("clip");
+        let _ = write!(self.defs, "<clipPath id=\"{cid}\"><path transform=\"{}\" d=\"{}\"{cr}/></clipPath>", matrix(xf), path_d(&o.0));
+        let hole = self.spread_paths(std::slice::from_ref(o), -s.spread, Affine::translate(s.offset) * xf, "black");
+        let mid = self.id("mask");
+        let rect = |fill: &str| {
+            format!("<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\"/>", num(r.x0), num(r.y0), num(r.width()), num(r.height()))
+        };
+        let _ = write!(
+            self.defs,
+            "<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\">{}{hole}</mask>",
+            num(r.x0),
+            num(r.y0),
+            num(r.width()),
+            num(r.height()),
+            rect("white")
+        );
+        let filter = self.blur_filter(s.radius, r).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
+        let _ = write!(
+            self.body,
+            "<g clip-path=\"url(#{cid})\"><g opacity=\"{}\"{filter}><g mask=\"url(#{mid})\">{}</g></g></g>",
+            num(f64::from(s.color.a)),
+            rect(&hex(s.color))
+        );
     }
 }
 
@@ -352,5 +508,7 @@ pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<S
     ))
 }
 
+#[cfg(test)]
+mod effects_tests;
 #[cfg(test)]
 mod tests;

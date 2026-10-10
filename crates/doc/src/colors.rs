@@ -23,8 +23,11 @@ impl Effect {
     pub fn for_each_color_mut(&mut self, f: &mut ColorVisitor) {
         match &mut self.kind {
             EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) => f(&mut s.color),
-            EffectKind::Noise { color, .. } => f(color),
-            EffectKind::LayerBlur { .. } | EffectKind::BackgroundBlur { .. } | EffectKind::Texture { .. } => {}
+            EffectKind::Noise(n) => {
+                f(&mut n.color);
+                f(&mut n.secondary);
+            }
+            EffectKind::LayerBlur { .. } | EffectKind::BackgroundBlur { .. } | EffectKind::Texture(_) | EffectKind::Glass(_) => {}
         }
     }
 }
