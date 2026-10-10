@@ -190,3 +190,26 @@ pub fn slot(doc: &Document, page: NodeId, p: Point) -> DropSlot {
         None => DropSlot { parent, index: None, line: None },
     }
 }
+
+/// The component set a component belongs to, by name (`None` for a lone component): which
+/// instances an Alt-drop of it prefers to swap.
+pub fn swap_family(doc: &Document, component: NodeId) -> Option<String> {
+    crate::components::variant_set(doc, component).and_then(|s| doc.node(s)).map(|s| s.name.clone())
+}
+
+/// The instance that a component dropped at page point `p` with Alt held swaps: of the instances
+/// under the point (innermost first; never one inside the dropped component `exclude`), the first
+/// showing a variant of the same component set (`family`), else the innermost.
+pub fn swap_target(doc: &Document, page: NodeId, p: Point, family: Option<&str>, exclude: Option<NodeId>) -> Option<NodeId> {
+    let hit = doc.hit_test(page, p, 0.0)?;
+    let chain: Vec<NodeId> = std::iter::once(hit)
+        .chain(doc.ancestors(hit))
+        .filter(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Instance { .. })))
+        .filter(|i| exclude.is_none_or(|c| !doc.is_ancestor(c, *i)))
+        .collect();
+    let same_family = |i: &NodeId| match (doc.node(*i).map(|n| &n.kind), family) {
+        (Some(NodeKind::Instance { component, .. }), Some(f)) => swap_family(doc, *component).as_deref() == Some(f),
+        _ => false,
+    };
+    chain.iter().copied().find(same_family).or_else(|| chain.first().copied())
+}

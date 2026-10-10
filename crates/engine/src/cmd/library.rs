@@ -65,6 +65,18 @@ pub fn specs() -> Vec<CommandSpec> {
             place
         ),
         spec!(
+            "library.swapAt",
+            "Swap instance to library component",
+            "{library, component (id or name of a published component, set or variant), x, y (page point)}  copies the component in and swaps the instance there to it (as instance.swapAt)",
+            true,
+            |s, p| {
+                let (_, lib, key) = component_arg(s, "library.swapAt", p)?;
+                let map = import(s.doc_mut()?, &lib, &[key], false)?;
+                let local = map.get(&key).copied().ok_or_else(|| EngineError::Other("the component didn't import".into()))?;
+                super::component::swap_at(s, &with(p, &["x", "y"], json!({"component": local})))
+            }
+        ),
+        spec!(
             "library.import",
             "Import library component",
             "{library, component}  → {component (local, read-only main to instantiate with instance.create)}",

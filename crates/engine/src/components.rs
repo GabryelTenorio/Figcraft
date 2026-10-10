@@ -232,7 +232,7 @@ pub fn prop_default_value(d: &PropDef) -> Value {
     match d {
         PropDef::Boolean { default } => Value::Bool(*default),
         PropDef::Text { default } => Value::String(default.clone()),
-        PropDef::InstanceSwap { default } => Value::from(default.0),
+        PropDef::InstanceSwap { default, .. } => Value::from(default.0),
         PropDef::Variant { default, .. } => Value::String(default.clone()),
         PropDef::Slot { .. } => Value::Null,
     }
@@ -290,67 +290,76 @@ fn carry_overrides(from: &Node, to: &mut Node, what: Carry) {
             Carry::Geometry if !geo => continue,
             _ => {}
         }
-        match g.as_str() {
-            "fills" => {
-                to.fills = from.fills.clone();
-                to.styles.fill = from.styles.fill.clone();
-            }
-            "strokes" => {
-                to.strokes = from.strokes.clone();
-                to.stroke = from.stroke.clone();
-                to.styles.stroke = from.styles.stroke.clone();
-            }
-            "effects" => {
-                to.effects = from.effects.clone();
-                to.styles.effect = from.styles.effect.clone();
-            }
-            "opacity" => {
-                to.opacity = from.opacity;
-                to.blend = from.blend;
-            }
-            "visible" => to.visible = from.visible,
-            "name" => to.name = from.name.clone(),
-            "corners" => to.corners = from.corners,
-            "characters" => {
-                if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
-                    b.characters = a.characters.clone();
-                    b.runs = a.runs.clone();
-                }
-            }
-            "textStyle" => {
-                if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
-                    b.style = a.style.clone();
-                    b.runs = a.runs.clone();
-                    b.align_h = a.align_h;
-                    b.align_v = a.align_v;
-                }
-                to.styles.text = from.styles.text.clone();
-            }
-            "size" => {
-                to.width = from.width;
-                to.height = from.height;
-                to.child_layout = from.child_layout.clone();
-                if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
-                    b.auto_resize = a.auto_resize;
-                }
-            }
-            "position" => to.transform = from.transform,
-            "component" => {
-                if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&from.kind, &mut to.kind) {
-                    *b = *a;
-                }
-            }
-            "props" => {
-                if let (NodeKind::Instance { props: a, .. }, NodeKind::Instance { props: b, .. }) = (&from.kind, &mut to.kind) {
-                    *b = a.clone();
-                }
-                carry_prop_bindings(from, to);
-            }
-            _ => {}
-        }
+        copy_group(from, to, g);
     }
     if what != Carry::Geometry {
         to.overrides = from.overrides.clone();
+    }
+}
+
+/// Copy the values of property group `g` of `from` onto `to`, with the variables bound to them.
+fn copy_group(from: &Node, to: &mut Node, g: &str) {
+    if from.bound.iter().chain(to.bound.iter()).any(|(k, _)| binding_group(k) == Some(g)) {
+        to.bound.retain(|k, _| binding_group(k) != Some(g));
+        to.bound.extend(bindings_of(from, g).map(|(k, v)| (k.clone(), v.clone())));
+    }
+    match g {
+        "fills" => {
+            to.fills = from.fills.clone();
+            to.styles.fill = from.styles.fill.clone();
+        }
+        "strokes" => {
+            to.strokes = from.strokes.clone();
+            to.stroke = from.stroke.clone();
+            to.styles.stroke = from.styles.stroke.clone();
+        }
+        "effects" => {
+            to.effects = from.effects.clone();
+            to.styles.effect = from.styles.effect.clone();
+        }
+        "opacity" => {
+            to.opacity = from.opacity;
+            to.blend = from.blend;
+        }
+        "visible" => to.visible = from.visible,
+        "name" => to.name = from.name.clone(),
+        "corners" => to.corners = from.corners,
+        "characters" => {
+            if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
+                b.characters = a.characters.clone();
+                b.runs = a.runs.clone();
+            }
+        }
+        "textStyle" => {
+            if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
+                b.style = a.style.clone();
+                b.runs = a.runs.clone();
+                b.align_h = a.align_h;
+                b.align_v = a.align_v;
+            }
+            to.styles.text = from.styles.text.clone();
+        }
+        "size" => {
+            to.width = from.width;
+            to.height = from.height;
+            to.child_layout = from.child_layout.clone();
+            if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
+                b.auto_resize = a.auto_resize;
+            }
+        }
+        "position" => to.transform = from.transform,
+        "component" => {
+            if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&from.kind, &mut to.kind) {
+                *b = *a;
+            }
+        }
+        "props" => {
+            if let (NodeKind::Instance { props: a, .. }, NodeKind::Instance { props: b, .. }) = (&from.kind, &mut to.kind) {
+                *b = a.clone();
+            }
+            carry_prop_bindings(from, to);
+        }
+        _ => {}
     }
 }
 
@@ -435,9 +444,15 @@ fn apply_prop(doc: &Document, n: &mut Node, field: &str, val: &Value) {
 /// Rebuild instance `inst` from its main component, keeping ids, overrides and the content of its
 /// slots. An instance whose main component was deleted keeps its layers as they are.
 pub fn sync_instance(doc: &mut Document, inst: NodeId) {
+    // Layers the rebuild leaves as they were keep their shared snapshot (and aren't edits).
+    let old: Vec<(std::sync::Arc<Node>, bool)> =
+        doc.subtree(inst).into_iter().filter_map(|i| doc.node_arc(i).map(|a| (a.clone(), doc.dirty().contains(&i)))).collect();
     let kept = slot_content(doc, inst);
-    sync_instance_depth(doc, inst, 0);
+    sync_instance_depth(doc, inst, 0, BTreeMap::new());
     restore_slot_content(doc, kept);
+    for (a, was_dirty) in old {
+        doc.keep_if_unchanged(a, was_dirty);
+    }
 }
 
 /// The slots in instance `inst` (nested instances included) holding the instance's own content:
@@ -484,7 +499,9 @@ fn restore_slot_content(doc: &mut Document, kept: Vec<(NodeId, Vec<Node>)>) {
     }
 }
 
-fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
+/// `spare`: layers the outer rebuild didn't reuse that were below `inst` (a swapped nested
+/// instance): its layers the outer main doesn't have, matched here so they keep ids and overrides.
+fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BTreeMap<NodeId, std::sync::Arc<Node>>) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -502,37 +519,38 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
             eff_props.insert(k.clone(), v.clone());
         }
     }
-    // Old layers, by (parent, source), by source alone (when only one layer mirrors it) and by
-    // name path.
-    let old_paths = path_map(doc, inst, true);
-    let mut by_source: BTreeMap<(NodeId, NodeId), Node> = BTreeMap::new();
-    let mut by_src: BTreeMap<NodeId, Option<Node>> = BTreeMap::new();
-    let mut by_path: BTreeMap<String, Node> = BTreeMap::new();
-    for (i, path) in &old_paths {
-        let Some(n) = doc.node(*i) else { continue };
+    // Old layers (kept alive for their overrides), by (parent, source), by source alone (when only
+    // one layer mirrors it) and, only when those don't match, by name path.
+    let mut old_ids = old_layers(doc, inst);
+    old_ids.extend(spare.keys().copied());
+    old_ids.sort();
+    old_ids.dedup();
+    let mut old: BTreeMap<NodeId, std::sync::Arc<Node>> = spare;
+    let mut by_source: BTreeMap<(NodeId, NodeId), NodeId> = BTreeMap::new();
+    let mut by_src: BTreeMap<NodeId, Option<NodeId>> = BTreeMap::new();
+    for i in &old_ids {
+        let Some(n) = doc.node_arc(*i).or_else(|| old.get(i)).cloned() else { continue };
         if let Some(s) = n.source {
             if let Some(p) = n.parent {
-                by_source.entry((p, s)).or_insert_with(|| n.clone());
+                by_source.entry((p, s)).or_insert(*i);
             }
-            by_src.entry(s).and_modify(|e| *e = None).or_insert_with(|| Some(n.clone()));
+            by_src.entry(s).and_modify(|e| *e = None).or_insert(Some(*i));
         }
-        by_path.insert(path.clone(), n.clone());
+        old.insert(*i, n);
     }
-    for c in root.children.clone() {
-        let _ = doc.remove(c);
-    }
+    let mut by_path: Option<BTreeMap<String, NodeId>> = None;
+    let mut main_paths: Option<BTreeMap<NodeId, String>> = None;
     // Ids for the copies: reuse the matching old layer's id (a layer the main moved to another
     // parent keeps its id and overrides).
     let src: Vec<NodeId> = doc.subtree(component).into_iter().filter(|i| *i != component).collect();
-    let main_paths = path_map(doc, component, false);
     let mut map: BTreeMap<NodeId, NodeId> = BTreeMap::new();
     map.insert(component, inst);
-    let mut olds: BTreeMap<NodeId, Node> = BTreeMap::new();
     let mut used: BTreeSet<NodeId> = BTreeSet::new();
     // Slots holding the instance's own content (new ids), and main layers not copied: the
     // default content of those slots.
     let mut edited: BTreeSet<NodeId> = BTreeSet::new();
     let mut skipped: BTreeSet<NodeId> = BTreeSet::new();
+    let mut fresh_ids = Vec::new();
     for s in &src {
         let Some(sn) = doc.node(*s) else { continue };
         if sn.parent.is_some_and(|p| skipped.contains(&p) || map.get(&p).is_some_and(|pn| edited.contains(pn))) {
@@ -540,21 +558,30 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
             continue;
         }
         let parent_new = sn.parent.and_then(|p| map.get(&p).copied());
-        let old = parent_new
-            .and_then(|pn| by_source.get(&(pn, *s)))
-            .or_else(|| by_src.get(s).and_then(Option::as_ref))
-            .or_else(|| main_paths.get(s).and_then(|p| by_path.get(p)));
-        let nid = match old {
-            Some(o) if !doc.contains(o.id) && used.insert(o.id) => {
-                olds.insert(o.id, o.clone());
-                o.id
+        let mut found = parent_new.and_then(|pn| by_source.get(&(pn, *s)).copied()).or_else(|| by_src.get(s).copied().flatten());
+        if found.is_none() {
+            let paths = by_path.get_or_insert_with(|| path_map(doc, inst, true).into_iter().map(|(k, v)| (v, k)).collect());
+            let mains = main_paths.get_or_insert_with(|| path_map(doc, component, false));
+            found = mains.get(s).and_then(|p| paths.get(p)).copied();
+        }
+        let nid = match found {
+            Some(o) if used.insert(o) => o,
+            _ => {
+                fresh_ids.push(*s);
+                continue;
             }
-            _ => doc.alloc_id(),
         };
-        if olds.get(&nid).is_some_and(holds_content) && is_slot(doc, *s) {
+        if old.get(&nid).is_some_and(|o| holds_content(o)) && is_slot(doc, *s) {
             edited.insert(nid);
         }
         map.insert(*s, nid);
+    }
+    for c in root.children.clone() {
+        let _ = doc.remove(c);
+    }
+    for s in fresh_ids {
+        let nid = doc.alloc_id();
+        map.insert(s, nid);
     }
     // Build the copies (pre-order: parents first).
     let mut enclosing: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
@@ -563,8 +590,10 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     inst_props.insert(inst, eff_props);
     let mut nested = Vec::new();
     let mut new_nodes = Vec::new();
+    // Text layers showing other text or style than their main layer (to re-measure).
+    let mut remeasure = Vec::new();
     for s in &src {
-        let Some(orig) = doc.node(*s).cloned() else { continue };
+        let Some(orig) = doc.node(*s) else { continue };
         let Some(&nid) = map.get(s) else { continue };
         let Some(parent) = orig.parent.and_then(|p| map.get(&p).copied()) else { continue };
         let mut n = orig.clone();
@@ -574,10 +603,12 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
         n.source = Some(*s);
         n.overrides.clear();
         n.prop_refs.clear();
+        let prev = old.get(&nid);
         // Annotations belong to the layer they were added to, not to its copies.
-        n.annotations = olds.get(&nid).map(|o| o.annotations.clone()).unwrap_or_default();
-        if let Some(old) = olds.get(&nid) {
-            carry_overrides(old, &mut n, Carry::Values);
+        n.annotations = prev.map(|o| o.annotations.clone()).unwrap_or_default();
+        if let Some(o) = prev {
+            carry_overrides(o, &mut n, Carry::Values);
+            keep_laid_out(doc, orig, o, &mut n);
         }
         if !edited.contains(&nid) {
             // No longer a slot in the main: it mirrors the main again.
@@ -586,9 +617,9 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
         // Component properties: the main layer's bindings use this instance's values; layers of
         // nested instances use the nested instance's values (one level per source hop).
         let enc = enclosing.get(&parent).cloned().unwrap_or_default();
-        let mut chain = vec![orig.clone()];
+        let mut chain: Vec<&Node> = vec![orig];
         while chain.len() < enc.len() {
-            let Some(next) = chain.last().and_then(|c| c.source).and_then(|x| doc.node(x)).cloned() else { break };
+            let Some(next) = chain.last().and_then(|c| c.source).and_then(|x| doc.node(x)) else { break };
             chain.push(next);
         }
         for (j, level) in chain.iter().enumerate().rev() {
@@ -605,7 +636,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
         }
         if let NodeKind::Instance { component: c, props } = &n.kind {
             inst_props.insert(nid, props.clone());
-            let mut e = enc.clone();
+            let mut e = enc;
             e.push(nid);
             enclosing.insert(nid, e);
             if !matches!(orig.kind, NodeKind::Instance { component: oc, .. } if oc == *c) {
@@ -613,6 +644,11 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
             }
         } else {
             enclosing.insert(nid, enc);
+        }
+        if let (NodeKind::Text(a), NodeKind::Text(b)) = (&orig.kind, &n.kind)
+            && a != b
+        {
+            remeasure.push(nid);
         }
         new_nodes.push(n);
     }
@@ -634,7 +670,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     fresh.kind = root.kind.clone();
     carry_prop_bindings(&root, &mut fresh);
     // A nested instance keeps mirroring its layer of the outer main.
-    fresh.source = if inside_instance(doc, inst) { root.source } else { Some(component) };
+    let nested_copy = inside_instance(doc, inst);
+    fresh.source = if nested_copy { root.source } else { Some(component) };
     fresh.constraints = root.constraints;
     fresh.child_layout = root.child_layout.clone();
     fresh.interactions = root.interactions.clone();
@@ -646,7 +683,19 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     fresh.visible = root.visible;
     fresh.var_modes = root.var_modes.clone();
     fresh.is_mask = root.is_mask;
-    fresh.name = default_instance_name(doc, component);
+    fresh.exposed = root.exposed;
+    fresh.guides = root.guides.clone();
+    fresh.dev_status = root.dev_status;
+    fresh.dev_changed = root.dev_changed;
+    fresh.dev_note = root.dev_note.clone();
+    fresh.constrain_proportions = root.constrain_proportions;
+    // A swapped nested instance keeps the name its layer was given in the outer main.
+    let renamed = nested_copy
+        && root.source.and_then(|s| doc.node(s)).is_some_and(|s| match &s.kind {
+            NodeKind::Instance { component: c, .. } => s.name != default_instance_name(doc, *c),
+            _ => false,
+        });
+    fresh.name = if renamed { root.name.clone() } else { default_instance_name(doc, component) };
     carry_overrides(&root, &mut fresh, Carry::Root);
     if let Some(r) = doc.node_mut(inst) {
         *r = fresh;
@@ -655,39 +704,106 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     let (iw, ih) = doc.node(inst).map(|n| (n.width, n.height)).unwrap_or((comp.width, comp.height));
     if (iw - comp.width).abs() > 1e-9 || (ih - comp.height).abs() > 1e-9 {
         figcraft_layout::apply_constraints(doc, inst, comp.width, comp.height);
+        remeasure = map.values().copied().collect();
     }
     // Geometry overrides of children win over constraints.
     for s in &src {
         let Some(nid) = map.get(s).copied() else { continue };
-        let Some(old) = olds.get(&nid) else { continue };
-        if !old.overrides.contains("size") && !old.overrides.contains("position") {
+        let Some(o) = old.get(&nid) else { continue };
+        if !o.overrides.contains("size") && !o.overrides.contains("position") {
             continue;
         }
+        remeasure.push(nid);
         let Some((ow, oh)) = doc.node(nid).map(|n| (n.width, n.height)) else { continue };
-        if old.overrides.contains("size") {
+        if o.overrides.contains("size") {
             // Through set_size so vector networks scale with the box.
-            figcraft_layout::set_size(doc, nid, old.width, old.height);
+            figcraft_layout::set_size(doc, nid, o.width, o.height);
             if doc.node(nid).is_some_and(|n| n.kind.is_frame_like() && n.layout.is_none()) {
                 figcraft_layout::apply_constraints(doc, nid, ow, oh);
             }
         }
         if let Some(n) = doc.node_mut(nid) {
-            carry_overrides(old, n, Carry::Geometry);
+            carry_overrides(o, n, Carry::Geometry);
         }
     }
     // Text whose characters or style differ from the main re-measures.
-    for nid in map.values() {
-        if let Some(n) = doc.node(*nid)
+    for nid in remeasure {
+        if let Some(n) = doc.node(nid)
             && let Some((w, h)) = figcraft_text::auto_size(n)
             && ((w - n.width).abs() > 1e-6 || (h - n.height).abs() > 1e-6)
         {
-            figcraft_layout::set_size(doc, *nid, w, h);
+            figcraft_layout::set_size(doc, nid, w, h);
         }
     }
-    // Nested instances showing another main than the main's copy (swapped): rebuild from it.
+    // Nested instances showing another main than the main's copy (swapped): rebuild from it,
+    // with the old layers below them this rebuild didn't reuse.
+    let unused: BTreeMap<NodeId, std::sync::Arc<Node>> = old.into_iter().filter(|(i, _)| !used.contains(i) && !doc.contains(*i)).collect();
     for n in nested {
-        sync_instance_depth(doc, n, depth + 1);
+        let below: BTreeMap<NodeId, std::sync::Arc<Node>> = unused
+            .iter()
+            .filter(|(_, x)| {
+                let mut cur = x.parent;
+                for _ in 0..=MAX_DEPTH * 4 {
+                    match cur {
+                        Some(p) if p == n => return true,
+                        Some(p) => cur = unused.get(&p).and_then(|a| a.parent),
+                        None => return false,
+                    }
+                }
+                false
+            })
+            .map(|(i, x)| (*i, x.clone()))
+            .collect();
+        sync_instance_depth(doc, n, depth + 1, below);
     }
+}
+
+/// Where auto layout places and sizes a rebuilt copy `n` of main layer `orig`, keep the old
+/// copy's `o` values (an instance's auto layout re-flows from its own content, so they usually
+/// differ from the main's): unchanged layers then stay unchanged, and auto layout re-flows wherever
+/// something that sizes or places layers did change.
+fn keep_laid_out(doc: &Document, orig: &Node, o: &Node, n: &mut Node) {
+    if o.parent != n.parent || o.overrides.contains("size") || o.overrides.contains("position") {
+        return;
+    }
+    let flows = !n.child_layout.absolute && orig.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
+    if flows {
+        // The main's rotation and skew, the old place.
+        let [a, b, c, d, _, _] = n.transform.as_coeffs();
+        let [.., e, f] = o.transform.as_coeffs();
+        n.transform = Affine::new([a, b, c, d, e, f]);
+    }
+    // Only layers whose shape is their box (a vector's points scale with it).
+    let boxed = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Text(_) | NodeKind::Rectangle | NodeKind::Ellipse { .. });
+    let derived = |s: Sizing| boxed && ((s == Sizing::Hug && n.layout.is_some()) || (s == Sizing::Fill && flows));
+    if derived(n.child_layout.sizing_h) {
+        n.width = o.width;
+    }
+    if derived(n.child_layout.sizing_v) {
+        n.height = o.height;
+    }
+}
+
+/// The layers of instance `inst` a rebuild matches against (every layer below it but the content
+/// of slots holding its own), ascending.
+fn old_layers(doc: &Document, inst: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack = vec![inst];
+    while let Some(id) = stack.pop() {
+        let Some(n) = doc.node(id) else { continue };
+        for c in &n.children {
+            out.push(*c);
+            if out.len() > 1_000_000 {
+                break;
+            }
+            if doc.node(*c).is_some_and(|cn| !holds_content(cn)) {
+                stack.push(*c);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Insert a node whose parent/children links are already set (used when rebuilding instances).
@@ -706,6 +822,40 @@ fn insert_linked(doc: &mut Document, n: Node) -> Result<(), DocError> {
         p.children.retain(|c| seen.insert(*c));
     }
     Ok(())
+}
+
+/// The property groups whose value layer `n` takes from the same variables as its main layer
+/// `src` (they differ only where the two resolve in different variable modes).
+pub fn variable_groups(n: &Node, src: &Node) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for (k, v) in &n.bound {
+        let Some(g) = binding_group(k) else { continue };
+        if src.bound.get(k) == Some(v) && !out.contains(&g) {
+            out.push(g);
+        }
+    }
+    out
+}
+
+/// The override group a variable binding key feeds (`None` for component property and layout
+/// grid bindings, which follow other rules).
+fn binding_group(key: &str) -> Option<&'static str> {
+    use crate::cmd::lists::{BoundList, list_binding};
+    if key.starts_with(PROP_BINDING) {
+        return None;
+    }
+    match list_binding(key).map(|(l, _, _)| l) {
+        Some(BoundList::Fills) => Some("fills"),
+        Some(BoundList::Strokes) => Some("strokes"),
+        Some(BoundList::Effects) => Some("effects"),
+        Some(BoundList::Grids) => None,
+        None => Some(crate::cmd::props::override_group(key)).filter(|g| *g != "other"),
+    }
+}
+
+/// The variable bindings of `n` that feed group `g`.
+fn bindings_of<'a>(n: &'a Node, g: &'a str) -> impl Iterator<Item = (&'a String, &'a String)> + 'a {
+    n.bound.iter().filter(move |(k, _)| binding_group(k) == Some(g))
 }
 
 /// Property groups that differ between two versions of a node.
@@ -835,7 +985,18 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
                     differs.push("name");
                 }
             }
-            groups.retain(|g| differs.contains(g));
+            // A value from the same variable as the main's (resolved in this layer's modes) isn't an
+            // override either.
+            let from_variables = variable_groups(n, src);
+            groups.retain(|g| differs.contains(g) && !from_variables.contains(g));
+            // Binding another variable (or none) where the main binds one is an override.
+            for (k, _) in b.bound.iter().chain(n.bound.iter()) {
+                let Some(g) = binding_group(k) else { continue };
+                let rebound = b.bound.get(k) != n.bound.get(k) && !bindings_of(n, g).eq(bindings_of(src, g));
+                if rebound && !groups.contains(&g) {
+                    groups.push(g);
+                }
+            }
             cleared =
                 raw.iter().filter(|g| !matches!(**g, "size" | "position") && !differs.contains(g) && n.overrides.contains(**g)).copied().collect();
             if top_root {
@@ -860,15 +1021,46 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
             resync.insert(r);
         }
     }
-    // 2. Components whose layers changed, were added or removed.
+    // 2. Components whose layers changed, were added or removed. Value-only edits (paint, text,
+    //    visibility, …) are carried to the copies directly; anything else rebuilds the instances.
     let mut comps: BTreeSet<NodeId> = BTreeSet::new();
+    let mut patches: Vec<(NodeId, Vec<&'static str>)> = Vec::new();
+    // Main layers that only gained new layers or lost some: their copies take the same change.
+    let mut restructured: Vec<NodeId> = Vec::new();
+    let mut covered: BTreeSet<NodeId> = BTreeSet::new();
     for &id in changed {
-        if let Some(c) = owning_component(doc, id) {
+        if let (Some(b), Some(n)) = (before.node(id), doc.node(id))
+            && b.children != n.children
+            && owning_instance(doc, id).is_none()
+            && owning_component(doc, id).is_some()
+            && let Some(layers) = restructurable(doc, before, b, n)
+        {
+            restructured.push(id);
+            covered.extend(layers);
+        }
+    }
+    for &id in changed {
+        if covered.contains(&id) || restructured.contains(&id) {
+            continue;
+        }
+        let Some(c) = owning_component(doc, id) else { continue };
+        let (Some(b), Some(n)) = (before.node(id), doc.node(id)) else {
             comps.insert(c);
+            continue;
+        };
+        if b == n {
+            continue;
+        }
+        match patchable(doc, b, n) {
+            Some(groups) => patches.push((id, groups)),
+            None => {
+                comps.insert(c);
+            }
         }
     }
     for &id in touched {
         if !doc.contains(id)
+            && !covered.contains(&id)
             && let Some(c) = owning_component(before, id)
             && doc.contains(c)
         {
@@ -883,34 +1075,347 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
             }
         }
     }
+    // A copy the patch can't follow exactly rebuilds instead (as does any other change).
+    let patched = comps.is_empty()
+        && !full_rebuild()
+        && (restructured.is_empty() || patch_structure(doc, before, &restructured))
+        && (patches.is_empty() || patch_copies(doc, &patches));
+    #[cfg(test)]
+    if patched && (!restructured.is_empty() || !patches.is_empty()) {
+        PATCHED.with(|c| c.set(c.get() + 1));
+    }
+    if !patched {
+        comps.extend(patches.iter().map(|(id, _)| *id).chain(restructured.iter().copied()).filter_map(|id| owning_component(doc, id)));
+    }
     // 3. Instances of changed components follow; an instance inside another component makes that
-    // one change too. Instances nested inside instances are rebuilt with their outer instance.
-    let mut done: BTreeSet<NodeId> = BTreeSet::new();
-    let mut frontier: Vec<NodeId> = comps.into_iter().collect();
+    //    one change too.
+    rebuild_instances(doc, &comps);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: rebuild instances even for edits that could be patched (to compare both ways).
+    pub(crate) static FULL_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests: edits carried to the copies without rebuilding instances.
+    pub(crate) static PATCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn full_rebuild() -> bool {
+    FULL_REBUILD.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn full_rebuild() -> bool {
+    false
+}
+
+/// The property groups of a main-component layer edited from `b` to `n` when the edit changed
+/// values only (paint, text, visibility, size, position, …) that copies take as they are: carried to them without
+/// rebuilding the instances ([`patch_copies`]). `None` when anything else changed.
+fn patchable(doc: &Document, b: &Node, n: &Node) -> Option<Vec<&'static str>> {
+    const VALUES: [&str; 11] =
+        ["fills", "strokes", "effects", "opacity", "visible", "name", "corners", "characters", "textStyle", "size", "position"];
+    if b.children != n.children || b.parent != n.parent || b.kind.type_name() != n.kind.type_name() {
+        return None;
+    }
+    let groups = diff_groups(b, n);
+    if groups.is_empty() || groups.iter().any(|g| !VALUES.contains(g)) {
+        return None;
+    }
+    // Exactly those groups (and the layer's own overrides) changed.
+    let mut probe = n.clone();
+    for g in &groups {
+        copy_group(b, &mut probe, g);
+    }
+    probe.overrides = b.overrides.clone();
+    if probe != *b {
+        return None;
+    }
+    // Values a component property sets (on this layer or a main it mirrors) come from instances.
+    let mut cur = Some(n);
+    for _ in 0..=MAX_DEPTH {
+        let Some(x) = cur else { break };
+        if x.prop_refs.keys().any(|f| groups.contains(&field_group(f))) {
+            return None;
+        }
+        cur = x.source.and_then(|s| doc.node(s));
+    }
+    Some(groups)
+}
+
+/// Copies by the layer they mirror; nested instances swapped to a main also follow it.
+fn copies_index(doc: &Document) -> BTreeMap<NodeId, Vec<NodeId>> {
+    let mut copies: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+    for n in doc.nodes() {
+        let Some(s) = n.source else { continue };
+        copies.entry(s).or_default().push(n.id);
+        if let (NodeKind::Instance { component, .. }, Some(NodeKind::Instance { component: other, .. })) = (&n.kind, doc.node(s).map(|x| &x.kind))
+            && component != other
+        {
+            copies.entry(*component).or_default().push(n.id);
+        }
+    }
+    copies
+}
+
+/// When main layer `b` → `n` only gained new plain layers (created in this edit: no instances,
+/// components or property bindings in them) or lost layers that were deleted: those layers, which
+/// [`patch_structure`] carries to the copies. `None` for anything else.
+fn restructurable(doc: &Document, before: &Document, b: &Node, n: &Node) -> Option<Vec<NodeId>> {
+    let mut probe = n.clone();
+    probe.children = b.children.clone();
+    probe.overrides = b.overrides.clone();
+    if probe != *b {
+        return None;
+    }
+    let mut layers = Vec::new();
+    for c in n.children.iter().filter(|c| !b.children.contains(c)) {
+        for d in doc.subtree(*c) {
+            let x = doc.node(d)?;
+            let plain = !matches!(x.kind, NodeKind::Instance { .. } | NodeKind::Component { .. } | NodeKind::ComponentSet { .. });
+            if before.contains(d) || !plain || !x.prop_refs.is_empty() {
+                return None;
+            }
+            layers.push(d);
+        }
+    }
+    for c in b.children.iter().filter(|c| !n.children.contains(c)) {
+        if doc.contains(*c) {
+            return None;
+        }
+        layers.extend(before.subtree(*c));
+    }
+    Some(layers)
+}
+
+/// Carry the new and deleted layers of main layers `seeds` ([`restructurable`]) to every copy,
+/// through copies of copies (slots holding an instance's own content keep it). Returns false
+/// (leaving a partial patch for the caller to rebuild over) when a copy can't follow exactly.
+fn patch_structure(doc: &mut Document, before: &Document, seeds: &[NodeId]) -> bool {
+    let copies = copies_index(doc);
+    let mut work: Vec<NodeId> = seeds.to_vec();
+    let mut steps = 0usize;
+    while let Some(p) = work.pop() {
+        steps += 1;
+        if steps > 10_000_000 {
+            return false;
+        }
+        let Some(pn) = doc.node(p).cloned() else { continue };
+        for c in copies.get(&p).cloned().unwrap_or_default() {
+            let Some(cn) = doc.node(c).cloned() else { continue };
+            if holds_content(&cn) {
+                continue;
+            }
+            if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&pn.kind, &cn.kind)
+                && a != b
+            {
+                continue;
+            }
+            // The copy's layers by the layer of `p` they mirror.
+            let mut mirrors: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+            for k in &cn.children {
+                let Some(src) = doc.node(*k).and_then(|x| x.source) else { return false };
+                if mirrors.insert(src, *k).is_some() {
+                    return false;
+                }
+            }
+            let mut order = Vec::with_capacity(pn.children.len());
+            for pc in &pn.children {
+                if let Some(k) = mirrors.remove(pc) {
+                    order.push(k);
+                    continue;
+                }
+                // A layer the copy lacks must be new in this edit, placed as in the main.
+                let absolute = doc.node(*pc).is_some_and(|x| x.child_layout.absolute);
+                if before.contains(*pc) || !child_follows_main(doc, c, absolute) {
+                    return false;
+                }
+                match copy_layers(doc, *pc, c) {
+                    Some(k) => order.push(k),
+                    None => return false,
+                }
+            }
+            // Copies of layers the main lost.
+            for (src, k) in mirrors {
+                if doc.contains(src) || doc.remove(k).is_err() {
+                    return false;
+                }
+            }
+            if doc.node(c).is_some_and(|x| x.children != order)
+                && let Some(m) = doc.node_mut(c)
+            {
+                m.children = order;
+            }
+            work.push(c);
+        }
+    }
+    true
+}
+
+/// Whether a layer placed in copy `parent` (absolutely positioned or not) takes its main layer's
+/// place and size: nothing on the way up applies constraints ([`follows_main_geometry`]).
+fn child_follows_main(doc: &Document, parent: NodeId, absolute: bool) -> bool {
+    let Some(p) = doc.node(parent) else { return false };
+    let constrains = p.layout.is_none() || absolute;
+    let resized = p.overrides.contains("size")
+        || match &p.kind {
+            NodeKind::Instance { component, .. } => {
+                doc.node(*component).is_none_or(|m| (m.width - p.width).abs() > 1e-9 || (m.height - p.height).abs() > 1e-9)
+            }
+            _ => false,
+        };
+    !(constrains && resized) && follows_main_geometry(doc, parent)
+}
+
+/// Copy main layer `src` (with its layers) into copy `parent` as layers mirroring them; returns the
+/// new copy (the caller places it among `parent`'s layers).
+fn copy_layers(doc: &mut Document, src: NodeId, parent: NodeId) -> Option<NodeId> {
+    let sub = doc.subtree(src);
+    let map: BTreeMap<NodeId, NodeId> = sub.iter().map(|d| (*d, doc.alloc_id())).collect();
+    for d in &sub {
+        let mut n = doc.node(*d)?.clone();
+        n.id = *map.get(d)?;
+        n.parent = if *d == src { Some(parent) } else { n.parent.and_then(|x| map.get(&x).copied()) };
+        n.children = n.children.iter().filter_map(|k| map.get(k).copied()).collect();
+        n.source = Some(*d);
+        n.overrides.clear();
+        n.prop_refs.clear();
+        n.annotations.clear();
+        insert_linked(doc, n).ok()?;
+    }
+    map.get(&src).copied()
+}
+
+/// Carry value-only edits of main-component layers (`seeds`: layer, groups) to every copy, through
+/// copies of copies, except where a copy overrides the group. Returns false (leaving a partial
+/// patch for the caller to rebuild over) when a copy can't follow exactly.
+fn patch_copies(doc: &mut Document, seeds: &[(NodeId, Vec<&'static str>)]) -> bool {
+    let copies = copies_index(doc);
+    let text = |g: &str| matches!(g, "characters" | "textStyle");
+    let mut work: Vec<(NodeId, Vec<&'static str>)> = seeds.to_vec();
+    let mut steps = 0usize;
+    while let Some((p, groups)) = work.pop() {
+        steps += 1;
+        if steps > 10_000_000 {
+            return false;
+        }
+        let Some(pn) = doc.node(p).cloned() else { continue };
+        for c in copies.get(&p).cloned().unwrap_or_default() {
+            let Some(cn) = doc.node(c) else { continue };
+            // A swapped nested instance shows its own main, not the layer it stands in for.
+            if let (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) = (&pn.kind, &cn.kind)
+                && a != b
+            {
+                continue;
+            }
+            // An instance keeps its own visibility and place; its name follows the main's unless
+            // renamed; a resized one lays its layers out against the main's size.
+            let root = matches!(pn.kind, NodeKind::Component { .. });
+            if root && ((groups.contains(&"name") && !cn.overrides.contains("name")) || (groups.contains(&"size") && cn.overrides.contains("size"))) {
+                return false;
+            }
+            let gs: Vec<&'static str> =
+                groups.iter().copied().filter(|g| !cn.overrides.contains(*g) && !(root && matches!(*g, "visible" | "name" | "position"))).collect();
+            if gs.is_empty() {
+                continue;
+            }
+            let geometry = gs.iter().any(|g| matches!(*g, "size" | "position"));
+            if geometry && !follows_main_geometry(doc, c) {
+                return false;
+            }
+            // Text content and style share their runs: a copy overriding one keeps its runs when the
+            // other follows the main (as a rebuild carries them).
+            let runs = match &cn.kind {
+                NodeKind::Text(t) if gs.iter().any(|g| text(g)) && cn.overrides.iter().any(|g| text(g)) => Some(t.runs.clone()),
+                _ => None,
+            };
+            if let Some(m) = doc.node_mut(c) {
+                for g in &gs {
+                    copy_group(&pn, m, g);
+                }
+                if let (Some(r), NodeKind::Text(t)) = (runs, &mut m.kind) {
+                    t.runs = r;
+                }
+            }
+            if (geometry || gs.iter().any(|g| text(g)))
+                && let Some((w, h)) = doc.node(c).and_then(figcraft_text::auto_size)
+                && doc.node(c).is_some_and(|n| (n.width - w).abs() > 1e-6 || (n.height - h).abs() > 1e-6)
+            {
+                figcraft_layout::set_size(doc, c, w, h);
+            }
+            work.push((c, gs));
+        }
+    }
+    true
+}
+
+/// Whether a copy's size and place are its main layer's: no layer around it inside its instances
+/// applies constraints on the way down to it (a resized instance or frame without auto layout, or
+/// a resized auto layout instance holding it absolutely positioned). Auto layout re-flows the rest.
+fn follows_main_geometry(doc: &Document, id: NodeId) -> bool {
+    let chain = scope(doc, id);
+    chain.windows(2).all(|w| {
+        let (Some(below), Some(a)) = (w.first().and_then(|i| doc.node(*i)), w.get(1).and_then(|i| doc.node(*i))) else { return false };
+        let constrains = a.layout.is_none() || below.child_layout.absolute;
+        if a.overrides.contains("size") && constrains {
+            return false;
+        }
+        match &a.kind {
+            NodeKind::Instance { component, .. } => {
+                !constrains || doc.node(*component).is_some_and(|m| (m.width - a.width).abs() <= 1e-9 && (m.height - a.height).abs() <= 1e-9)
+            }
+            _ => true,
+        }
+    })
+}
+
+/// Rebuild every instance of `comps` (and of the components that hold those instances, and so on
+/// outwards), each outermost instance once, inner components first.
+fn rebuild_instances(doc: &mut Document, comps: &BTreeSet<NodeId>) {
+    if comps.is_empty() {
+        return;
+    }
+    // Outermost instances by the components their layers instantiate.
+    let mut roots_of: BTreeMap<NodeId, BTreeSet<NodeId>> = BTreeMap::new();
+    for n in doc.nodes() {
+        if let NodeKind::Instance { component, .. } = &n.kind {
+            roots_of.entry(*component).or_default().insert(root_instance(doc, n.id).unwrap_or(n.id));
+        }
+    }
+    // Affected components, with how deep their dependencies go (an instance inside component X of
+    // component Y: X follows Y).
+    let mut level: BTreeMap<NodeId, usize> = comps.iter().map(|c| (*c, 0)).collect();
+    let mut outer: BTreeMap<NodeId, Option<NodeId>> = BTreeMap::new();
+    let mut frontier: Vec<NodeId> = comps.iter().copied().collect();
     let mut rounds = 0;
     while !frontier.is_empty() && rounds < 64 {
         rounds += 1;
         let mut next = Vec::new();
-        let mut synced: BTreeSet<NodeId> = BTreeSet::new();
         for c in frontier {
-            if !done.insert(c) {
-                continue;
-            }
-            for inst in instances_of(doc, c) {
-                // A copy inside another instance is rebuilt with its outermost instance.
-                let r = root_instance(doc, inst).unwrap_or(inst);
-                if !synced.insert(r) {
-                    continue;
-                }
-                sync_instance(doc, r);
-                if let Some(outer) = owning_component(doc, r)
-                    && !done.contains(&outer)
+            let lc = level.get(&c).copied().unwrap_or(0);
+            for r in roots_of.get(&c).into_iter().flatten() {
+                let o = *outer.entry(*r).or_insert_with(|| owning_component(doc, *r));
+                if let Some(x) = o
+                    && x != c
                 {
-                    next.push(outer);
+                    let lx = level.entry(x).or_insert(0);
+                    if *lx < lc + 1 {
+                        *lx = lc + 1;
+                        next.push(x);
+                    }
                 }
             }
         }
         frontier = next;
+    }
+    // Instances inside components by level, then the rest (each once).
+    let mut order: Vec<(usize, NodeId)> = outer.iter().map(|(r, o)| (o.and_then(|x| level.get(&x).copied()).unwrap_or(usize::MAX), *r)).collect();
+    order.sort();
+    for (_, r) in order {
+        if doc.contains(r) {
+            sync_instance(doc, r);
+        }
     }
 }
 
@@ -1017,7 +1522,8 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
         let main = main.or_else(|| theirs.get(path).copied());
         let mut overrides: BTreeSet<String> = n.overrides.iter().filter(|g| !matches!(g.as_str(), "component" | "props")).cloned().collect();
         if let Some(m) = main.and_then(|m| doc.node(m)) {
-            let bound: Vec<&str> = m.prop_refs.keys().map(|f| field_group(f)).collect();
+            let mut bound: Vec<&str> = m.prop_refs.keys().map(|f| field_group(f)).collect();
+            bound.extend(variable_groups(n, m));
             overrides.extend(value_groups(m, n).into_iter().filter(|g| !bound.contains(&g.as_str())));
             if matches!((&m.kind, &n.kind), (NodeKind::Instance { component: a, .. }, NodeKind::Instance { component: b, .. }) if a != b) {
                 overrides.insert("component".into());
@@ -1032,7 +1538,15 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
         }
     }
     let root_groups = match (doc.node(component), doc.node(inst)) {
-        (Some(m), Some(n)) => value_groups(m, n).into_iter().filter(|g| g != "name").collect::<Vec<_>>(),
+        (Some(m), Some(n)) => {
+            let from_variables = variable_groups(n, m);
+            let mut groups: Vec<String> = value_groups(m, n).into_iter().filter(|g| g != "name" && !from_variables.contains(&g.as_str())).collect();
+            // A layer name of its own (a nested instance renamed in its old main) stays.
+            if n.name != default_instance_name(doc, component) {
+                groups.push("name".into());
+            }
+            groups
+        }
         _ => Vec::new(),
     };
     if let Some(n) = doc.node_mut(inst) {

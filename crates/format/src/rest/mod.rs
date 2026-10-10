@@ -691,7 +691,7 @@ impl<'a> Ctx<'a> {
                 self.warn("instance swap properties whose default component isn't in the file were skipped");
                 continue;
             };
-            let def = PropDef::InstanceSwap { default: c };
+            let def = PropDef::InstanceSwap { default: c, preferred: Vec::new() };
             if let Some(defs) = self.set_defs.get_mut(&owner) {
                 defs.insert(name, def);
             } else if let Some(NodeKind::Component { props, .. }) = self.doc.node_mut(owner).map(|n| &mut n.kind) {

@@ -456,6 +456,10 @@ pub fn copy_to_clipboard(s: &mut Session, ids: &[NodeId]) -> Result<()> {
     }
     let bounds = doc.bounds_of(&ids);
     let uid = ds.uid;
+    let source = Some(ds.doc.clone());
+    let source_path = ds.path.clone();
+    s.clipboard.source = source;
+    s.clipboard.source_path = source_path;
     s.clipboard.nodes = nodes;
     s.clipboard.images = images;
     s.clipboard.bounds = bounds;
@@ -481,6 +485,8 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
     if clip.nodes.is_empty() {
         return Err(EngineError::Disabled("edit.paste".into(), "the clipboard is empty".into()));
     }
+    // From another file: its instances follow the mains this file can have.
+    let foreign = clip.source.as_ref().filter(|_| s.ds().is_ok_and(|d| d.uid != clip.source_doc));
     let doc = s.doc_mut()?;
     for (k, v) in &clip.images {
         doc.images.entry(k.clone()).or_insert_with(|| v.clone());
@@ -491,6 +497,7 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
         _ => Affine::IDENTITY,
     };
     let mut out = Vec::new();
+    let mut all = BTreeMap::new();
     for (root, nodes) in &clip.nodes {
         let mut map = BTreeMap::new();
         for n in nodes {
@@ -500,8 +507,11 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
         if let Some(r) = nodes.first_mut() {
             r.transform = parent_world.inverse() * shift * r.transform;
         }
-        let nid = doc.paste_nodes(&nodes, &map, *root, parent, None)?;
-        out.push(nid);
+        out.push(doc.paste_nodes(&nodes, &map, *root, parent, None)?);
+        all.extend(map);
+    }
+    if let Some(src) = foreign {
+        crate::library::adopt_pasted(doc, src, clip.source_path.as_deref(), &all)?;
     }
     Ok(out)
 }

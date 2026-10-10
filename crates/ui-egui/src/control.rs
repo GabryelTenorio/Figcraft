@@ -9,8 +9,10 @@
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
-//! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}]}`
-//!   — raw pointer and key events for the next frame, as if from the window (panels, popovers)
+//! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
+//!   | {hold: {alt?, shift?, cmd?}}]}` — raw pointer and key events for the next frame, as if from the
+//!   window (panels, popovers); `hold` keeps modifier keys down for the frames that follow (all
+//!   false: released)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
@@ -219,6 +221,15 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     });
                 } else if b(e, "leave") {
                     events.push(egui::Event::PointerGone);
+                } else if let Some(h) = e.get("hold") {
+                    let held = egui::Modifiers {
+                        alt: b(h, "alt"),
+                        ctrl: b(h, "cmd") || b(h, "ctrl"),
+                        shift: b(h, "shift"),
+                        mac_cmd: false,
+                        command: b(h, "cmd") || b(h, "ctrl"),
+                    };
+                    events.push(egui::Event::ModifiersChanged(held));
                 } else {
                     return Err(format!("unknown input event {e}"));
                 }

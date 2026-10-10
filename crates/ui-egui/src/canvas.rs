@@ -508,6 +508,28 @@ fn slot_badges(app: &FigApp, painter: &egui::Painter, doc: &Document, sel: &[Nod
     }
 }
 
+/// The instance an Alt-drop of a component from the Assets panel swaps: tinted and outlined in
+/// the component colour, with a "Swap instance" label above its top-left corner.
+fn swap_highlight(app: &FigApp, painter: &egui::Painter, doc: &Document, id: NodeId) {
+    let Some(q) = node_quad(app, doc, id) else { return };
+    // White on the component colour, in both themes (like the canvas's selection labels).
+    let ink = Color32::WHITE;
+    painter.add(Shape::convex_polygon(q.to_vec(), COMPONENT.gamma_multiply(0.12), Stroke::NONE));
+    quad(painter, q, stroke(COMPONENT, 2.0));
+    let galley = painter.layout_no_wrap("Swap instance".to_string(), semibold(10.0), ink);
+    let size = vec2(galley.size().x + 26.0, 18.0);
+    let top = Rect::from_points(&q).min;
+    let pill = Rect::from_min_size(pos2(top.x, top.y - size.y - 4.0), size);
+    painter.rect_filled(pill, CornerRadius::same(4), COMPONENT);
+    crate::icons::paint(
+        painter,
+        Rect::from_center_size(pos2(pill.min.x + 11.0, pill.center().y), vec2(10.0, 10.0)),
+        crate::icons::Icon::Instance,
+        ink,
+    );
+    painter.galley(pos2(pill.min.x + 20.0, pill.center().y - galley.size().y / 2.0), galley, ink);
+}
+
 /// The outline colour for a layer: purple for components, sets and instances and every layer in
 /// them, blue otherwise.
 fn outline_colour(doc: &Document, id: NodeId) -> Color32 {
@@ -687,6 +709,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         quad(painter, q, stroke(if figcraft_engine::components::is_slot(&doc, d) { COMPONENT } else { ACCENT }, 1.0));
     }
     slot_badges(app, painter, &doc, &sel, ov.drop_target);
+    if let Some(t) = ov.swap_target {
+        swap_highlight(app, painter, &doc, t);
+    }
     if let Some([x0, y0, x1, y1]) = ov.insert_line {
         painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 2.0));
     }

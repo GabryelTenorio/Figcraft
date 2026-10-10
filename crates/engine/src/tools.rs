@@ -213,6 +213,8 @@ pub struct Overlay {
     pub drop_target: Option<NodeId>,
     /// Auto layout insertion indicator (x0, y0, x1, y1).
     pub insert_line: Option<[f64; 4]>,
+    /// The instance an Alt-drop of a component from the Assets panel would swap (highlighted).
+    pub swap_target: Option<NodeId>,
     /// Auto layout grid cell a drag would drop into (x0, y0, x1, y1).
     pub drop_cell: Option<[f64; 4]>,
     /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the

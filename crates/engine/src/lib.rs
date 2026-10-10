@@ -29,6 +29,7 @@ pub mod proto_run;
 pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
+pub mod synthetic_ds;
 pub mod textedit;
 pub mod textpreview;
 pub mod tools;
@@ -42,7 +43,7 @@ pub use tools::{PointerEvent, PointerKind, ToolId};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use figcraft_doc::{Document, NodeId};
+use figcraft_doc::{Document, Node, NodeId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -462,6 +463,9 @@ pub struct Clipboard {
     /// The page-space bounds of the copied selection.
     pub bounds: Option<figcraft_geom::Rect>,
     pub source_doc: u64,
+    /// The document copied from (pastes into other files follow its mains) and its file path.
+    pub source: Option<Arc<Document>>,
+    pub source_path: Option<String>,
 }
 
 /// The editing session: open documents, the current tool, clipboard and prefs.
@@ -830,7 +834,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     }
     let m = measure::TextMeasure;
     // 0. Variable bindings and style links feed node values.
-    cmd::styles::apply_bindings(doc);
+    let scope = binding_scope(doc, before, &touched);
+    cmd::styles::apply_bindings_to(doc, scope.as_ref());
     if doc.styles != before.styles {
         let changed_styles: Vec<String> = doc.styles.iter().filter(|s| !before.styles.contains(s)).map(|s| s.id.clone()).collect();
         for sid in changed_styles {
@@ -862,6 +867,12 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     // 2. Instances follow edited main components (and record overrides inside instances).
     let changed = live(doc, &touched);
     components::sync_after_edit(doc, before, &changed, &touched);
+    // Rebuilt copies took their mains' values: their bindings resolve in their own modes.
+    let synced = doc.take_dirty();
+    if !synced.is_empty() {
+        cmd::styles::apply_bindings_to(doc, Some(&synced));
+        touched.extend(synced);
+    }
     touched.extend(doc.take_dirty());
     // Parents of removed nodes (as they were before) count as touched.
     let removed_parents: Vec<NodeId> =
@@ -891,9 +902,10 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         }
     }
     touched.extend(doc.take_dirty());
-    // 4. Auto layout for affected frames.
+    // 4. Auto layout for frames where something that sizes or places layers changed.
     let mut frames: BTreeSet<NodeId> = BTreeSet::new();
-    for id in live(doc, &touched).into_iter().chain(removed_parents) {
+    let moved = live(doc, &touched).into_iter().filter(|id| affects_layout(before, doc, *id));
+    for id in moved.chain(removed_parents) {
         if !doc.contains(id) {
             continue;
         }
@@ -908,7 +920,18 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     let mut frames: Vec<NodeId> = frames.into_iter().collect();
     frames.sort_by_key(|id| std::cmp::Reverse(doc.ancestors(*id).len()));
     for f in frames {
+        // Layers the layout leaves where they were stay untouched.
+        let kept: Vec<(Arc<Node>, bool)> = doc
+            .node(f)
+            .map(|n| std::iter::once(f).chain(n.children.iter().copied()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|i| doc.node_arc(i).map(|a| (a.clone(), doc.dirty().contains(&i))))
+            .collect();
         figcraft_layout::layout_frame(doc, f, &m);
+        for (a, was_dirty) in kept {
+            doc.keep_if_unchanged(a, was_dirty);
+        }
     }
     touched.extend(doc.take_dirty());
     // 5. Ready-for-dev layers whose contents changed show "Changed".
@@ -918,6 +941,44 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     cmd::comment::follow_anchors(doc, before);
 }
 
+/// Whether layer `id` changed (since `before`) in a way that can move or resize layers in an auto
+/// layout frame around it: new, resized, moved, shown or hidden, restructured, other text or
+/// layout settings.
+fn affects_layout(before: &Document, doc: &Document, id: NodeId) -> bool {
+    let (Some(a), Some(b)) = (before.node(id), doc.node(id)) else { return true };
+    a.width != b.width
+        || a.height != b.height
+        || a.transform != b.transform
+        || a.visible != b.visible
+        || a.parent != b.parent
+        || a.children != b.children
+        || a.layout != b.layout
+        || a.child_layout != b.child_layout
+        || a.stroke != b.stroke
+        || a.strokes.len() != b.strokes.len()
+        || a.kind != b.kind
+}
+
+/// The layers whose variable bindings an edit may have changed: every bound layer when a variable
+/// changed, else the touched layers and everything below those that moved, are new or chose
+/// another variable mode (modes are inherited).
+fn binding_scope(doc: &Document, before: &Document, touched: &BTreeSet<NodeId>) -> Option<BTreeSet<NodeId>> {
+    if doc.variables != before.variables {
+        return None;
+    }
+    let mut out = BTreeSet::new();
+    for &id in touched {
+        let Some(n) = doc.node(id) else { continue };
+        let inherited = before.node(id).is_none_or(|b| b.var_modes != n.var_modes || b.parent != n.parent);
+        if inherited {
+            out.extend(doc.subtree(id));
+        } else {
+            out.insert(id);
+        }
+    }
+    Some(out)
+}
+
 /// Flag the frames and sections marked ready for dev (before this edit) that contain a layer whose
 /// design `touched` changed (added, removed or edited; the handoff status itself and hiding a
 /// section's contents don't count).
@@ -925,17 +986,21 @@ fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<No
     let ready = |d: &Document, id: NodeId| d.node(id).is_some_and(|n| n.dev_status == figcraft_doc::DevStatus::ReadyForDev);
     let mut changed: BTreeSet<NodeId> = BTreeSet::new();
     for &id in touched {
+        // Ready-for-dev frames around it first (the cheap test).
+        let mut chain = vec![id];
+        chain.extend(if doc.contains(id) { doc.ancestors(id) } else { before.ancestors(id) });
+        chain.retain(|m| ready(before, *m) && ready(doc, *m));
+        if chain.is_empty() {
+            continue;
+        }
         let differs = match (before.node(id), doc.node(id)) {
             (Some(a), Some(b)) => !a.same_design(b),
             (None, None) => false,
             _ => true,
         };
-        if !differs {
-            continue;
+        if differs {
+            changed.extend(chain);
         }
-        let mut chain = vec![id];
-        chain.extend(if doc.contains(id) { doc.ancestors(id) } else { before.ancestors(id) });
-        changed.extend(chain.into_iter().filter(|m| ready(before, *m) && ready(doc, *m)));
     }
     for m in changed {
         if let Some(n) = doc.node_mut(m)
@@ -964,6 +1029,8 @@ mod binding_lists_tests;
 mod comments_polish_tests;
 #[cfg(test)]
 mod component_codegen_tests;
+#[cfg(test)]
+mod components_scale_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
