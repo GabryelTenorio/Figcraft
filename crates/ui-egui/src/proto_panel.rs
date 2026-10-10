@@ -318,21 +318,30 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     if widgets::section_header(ui, "Prototype settings", &[(Icon::Preview, "Open prototype preview")], false).is_some() {
         app.run("proto.preview", json!({}));
     }
-    let (device, bg) = match doc.node(page).map(|n| &n.kind) {
-        Some(NodeKind::Page { prototype, .. }) => (prototype.device.clone(), prototype.background),
-        _ => ("None".into(), figcraft_color::Color::BLACK),
+    let settings = match doc.node(page).map(|n| &n.kind) {
+        Some(NodeKind::Page { prototype, .. }) => prototype.clone(),
+        _ => proto::PrototypeSettings::default(),
     };
+    let bg = settings.background;
+    // Phones and tablets turn: a toggle beside the device picker.
+    let rotates = settings.model().is_some_and(|d| d.rotates);
+    let landscape = settings.landscape();
     widgets::sublabels(ui, "Device", None);
     row(ui, 32.0, |ui| {
-        let resp = widgets::dropdown(ui, &device, ui.available_width(), None);
+        let w = ui.available_width() - if rotates { 32.0 } else { 0.0 };
+        let resp = widgets::dropdown(ui, &settings.device, w, None);
         egui::Popup::menu(&resp).show(|ui| {
             for d in std::iter::once("None").chain(proto::PrototypeSettings::DEVICES.iter().map(|d| d.name)) {
-                if menu_item(ui, d, "") {
+                if crate::right::menu_check(ui, d == settings.device, d, "") {
                     app.run("proto.settings", json!({"device": d}));
                     ui.close();
                 }
             }
         });
+        let tip = if landscape { "Rotate to portrait" } else { "Rotate to landscape" };
+        if rotates && icons::button(ui, Icon::Rotate, 24.0, landscape, tip).clicked() {
+            app.run("proto.settings", json!({"rotation": if landscape { "portrait" } else { "landscape" }}));
+        }
     });
     widgets::sublabels(ui, "Background", None);
     row(ui, 32.0, |ui| {

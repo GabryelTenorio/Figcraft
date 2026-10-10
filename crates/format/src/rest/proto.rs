@@ -3,7 +3,7 @@
 //! `prototypeDevice`, `prototypeBackgrounds` and `prototypeStartNodeID`.
 
 use figcraft_doc::proto::{
-    Action, Direction, Easing, Interaction, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+    Action, DeviceRotation, Direction, Easing, Interaction, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
 };
 use figcraft_doc::{Node, NodeId, VariableValue};
 use serde_json::{Value, json};
@@ -39,7 +39,7 @@ pub(super) fn scrolling(n: &mut Node, j: &Value) {
     };
 }
 
-/// A page's prototype device and background, when the file sets them.
+/// A page's prototype device (and its rotation) and background, when the file sets them.
 pub(super) fn page_settings(c: &Value) -> Option<PrototypeSettings> {
     let device = c.get("prototypeDevice").filter(|d| d.is_object());
     let background = list(c, "prototypeBackgrounds").first().and_then(color).filter(|b| b.a > 0.0);
@@ -49,6 +49,7 @@ pub(super) fn page_settings(c: &Value) -> Option<PrototypeSettings> {
     let mut s = PrototypeSettings::default();
     if let Some(d) = device {
         s.device = device_name(d).to_string();
+        s.rotation = text(d, "rotation").and_then(DeviceRotation::parse).unwrap_or_default();
     }
     if let Some(b) = background {
         s.background = b.with_alpha(1.0);

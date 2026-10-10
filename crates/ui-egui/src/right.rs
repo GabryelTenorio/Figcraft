@@ -199,6 +199,11 @@ pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce
     resp.clicked()
 }
 
+/// A menu item with a check mark when `on` (the unchecked ones line up with it).
+pub fn menu_check(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
+    menu_item(ui, &format!("{}{label}", if on { "✓ " } else { "    " }), shortcut)
+}
+
 pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
     block(ui, h, (h - FIELD_H) / 2.0, add);
 }
@@ -241,6 +246,9 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     widgets::separator(ui);
     appearance(app, ui, &doc, &sel);
     widgets::separator(ui);
+    if variable_modes(app, ui, &doc, &sel) {
+        widgets::separator(ui);
+    }
     if sel.iter().any(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)))) {
         crate::typography::typography(app, ui, &doc, &sel);
         widgets::separator(ui);
@@ -662,6 +670,62 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         });
     }
     ui.add_space(8.0);
+}
+
+/// The variable modes of the selected frames (sections, components, instances): a row per
+/// collection with more than one mode, Auto (the mode the layer inherits from its parent) or a mode
+/// of its own (`variable.setMode`). Returns whether it showed.
+fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) -> bool {
+    let colls: Vec<&Collection> = doc.variables.collections.iter().filter(|c| c.modes.len() > 1).collect();
+    if colls.is_empty() || !sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())) {
+        return false;
+    }
+    let t = Tokens::get(ui.ctx());
+    widgets::section_header(ui, "Variable modes", &[], false);
+    // The collection's name, then a wider mode picker ("Auto (Light)") across both field columns.
+    let col = widgets::col_width(ui.available_width());
+    let (name_w, pick_w) = ((col * 0.7).round(), (col * 1.3).round());
+    // Auto resolves from the parent of the first selected layer.
+    let parent_modes = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).map(|p| doc.modes_for(p)).unwrap_or_default();
+    for c in colls {
+        let name_of = |m: &str| c.modes.iter().find(|x| x.id == m).map_or("", |x| x.name.as_str());
+        // Each layer's own mode (None: Auto); None overall when they differ.
+        let own = common(doc, sel, |n| n.var_modes.get(&c.id).cloned());
+        let inherited = parent_modes.get(&c.id).or(c.default_mode()).map_or("", |m| name_of(m));
+        let auto = format!("Auto ({inherited})");
+        let label = match &own {
+            Some(Some(m)) => name_of(m).to_string(),
+            Some(None) => auto.clone(),
+            None => "Mixed".into(),
+        };
+        row(ui, 32.0, |ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(name_w, FIELD_H), Sense::hover());
+            let name = widgets::elide(ui, &c.name, name_w);
+            ui.painter().text(pos2(r.min.x, r.center().y), Align2::LEFT_CENTER, &name, regular(11.0), t.text);
+            if name != c.name {
+                ui.interact(r, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&c.name);
+            }
+            let resp = widgets::elided_dropdown(ui, &label, pick_w);
+            egui::Popup::menu(&resp).width(180.0).show(|ui| {
+                let mut pick = None;
+                if menu_check(ui, own == Some(None), &auto, "") {
+                    pick = Some(Value::Null);
+                }
+                ui.separator();
+                for m in &c.modes {
+                    if menu_check(ui, own.as_ref().is_some_and(|o| o.as_ref() == Some(&m.id)), &m.name, "") {
+                        pick = Some(json!(m.id));
+                    }
+                }
+                if let Some(mode) = pick {
+                    app.run("variable.setMode", json!({"ids": sel, "collection": c.id, "mode": mode}));
+                    ui.close();
+                }
+            });
+        });
+    }
+    ui.add_space(8.0);
+    true
 }
 
 /// While a range of text is selected, the Fill section edits that range's colour.
