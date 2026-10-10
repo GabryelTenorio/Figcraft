@@ -99,7 +99,7 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -115,7 +115,10 @@ to what it can scroll), `colorProfileDialog` (`srgb|displayP3`: open File ▸ Co
 profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid`: open the style picker
 for the selection; `null` closes it) with `stylePickerEdit` (a style id or name: open its editor),
 `stylePickerView` (`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that
-interaction's editor in the Prototype panel; `null` closes it). Returns `ui.inspect` (which reports
+interaction's editor in the Prototype panel; `null` closes it), `contextMenu` (`[sx, sy]`: right-click
+the canvas at that screen point, selecting what is under it (with `cmd: true`, the nested layer) and
+opening the context menu; `null` closes it), `contextSelectLayer` (bool: open the context menu's
+Select layer submenu, which lists every layer under the click). Returns `ui.inspect` (which reports
 `stylePicker` and `stylePickerView`).
 
 ### `ui.screenshot {path}`

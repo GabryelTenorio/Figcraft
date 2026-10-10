@@ -1,6 +1,7 @@
 //! The Scale tool's panel (K): scale the selection by a factor or to a width or height, around an
-//! anchor point. Everything goes through `transform.scale`, so strokes, effects, corner radii and
-//! text scale with the layers.
+//! anchor point (the engine's `tool.scaleAnchor`, which the canvas handles scale about too).
+//! Everything goes through `transform.scale`, so strokes, effects, corner radii and text scale
+//! with the layers.
 
 use egui::{CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId};
@@ -11,17 +12,13 @@ use crate::right::row;
 use crate::theme::Tokens;
 use crate::widgets::{self, FieldEdit, Lead};
 
-fn anchor_id() -> Id {
-    Id::new("scale_anchor")
-}
-
 /// The Scale section, shown in place of Position while the Scale tool is active.
 pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let Some(b) = doc.bounds_of(sel) else { return };
     widgets::section_header(ui, "Scale", &[], false);
     let col = widgets::col_width(ui.available_width());
     // Anchor: column and row (0 start, 1 middle, 2 end) of the point that stays put.
-    let anchor: (u8, u8) = ui.data(|d| d.get_temp(anchor_id())).unwrap_or((0, 0));
+    let anchor = app.session.tool.scale_anchor;
     let mut factor: Option<f64> = None;
     let round = |v: f64| (v * 100.0).round() / 100.0;
     widgets::sublabels(ui, "Dimensions", None);
@@ -44,7 +41,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
         ui.add_space(8.0);
         if let Some(a) = anchor_picker(ui, anchor) {
-            ui.data_mut(|d| d.insert_temp(anchor_id(), a));
+            app.run("tool.scaleAnchor", json!({"anchor": figcraft_engine::tools::anchor_name(a)}));
         }
     });
     if let Some((k, cx, cy)) = factor.and_then(|k| scale_about(b, anchor, k)) {

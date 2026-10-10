@@ -216,6 +216,19 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
             }
+            // A right-click on the canvas at screen [sx, sy] (null closes the menu);
+            // `contextSelectLayer` opens its Select layer submenu.
+            match p.get("contextMenu") {
+                Some(Value::Array(at)) => {
+                    let (x, y) = (at.first().and_then(Value::as_f64).unwrap_or(0.0), at.get(1).and_then(Value::as_f64).unwrap_or(0.0));
+                    crate::canvas::open_context_menu(app, egui::pos2(x as f32, y as f32), b(p, "cmd"));
+                }
+                Some(Value::Null) => app.ui.context_menu = None,
+                _ => {}
+            }
+            if let Some(v) = p.get("contextSelectLayer").and_then(Value::as_bool) {
+                crate::menus::open_select_layer(ctx, v);
+            }
             if let Some(h) = p.get("iconGallery").and_then(Value::as_bool) {
                 app.ui.icon_gallery = h;
             }

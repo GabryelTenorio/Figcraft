@@ -189,8 +189,14 @@ dimension measured side by side.
   skrifa outlines, font fallback), aligned strokes with caching.
 - **Engine:** pointer tools (move/marquee/deep select/resize/rotate/Alt-duplicate with smart-guide
   snapping, frame/section/slice/shapes/line/arrow with Shift/Alt, text, pen, pencil, hand,
-  eyedropper), text editing (caret, selection, words, lines), auto layout reorder by dragging,
-  drop into frames, align/distribute/tidy, z-order, flip/rotate, scale tool, booleans, flatten,
+  eyedropper), Cmd/Ctrl-click and Cmd/Ctrl-marquee into nested layers, Shift-marquee toggling,
+  Select layer (every layer under the click), measuring (Alt-hover distances from the selection to
+  layers, parents and ruler guides, Cmd+Alt for nested layers, extension lines, one box inside the
+  other, overlaps, live distances to the neighbours while Alt-dragging, Shift+Alt for auto layout
+  padding and gaps; labels that never overlap at any zoom), text editing (caret, selection, words,
+  lines), auto layout reorder by dragging, drop into frames, align/distribute/tidy, z-order,
+  flip/rotate, the scale tool (panel, and canvas handles that scale everything about its anchor
+  point or from the centre with Alt, with a live factor, one undo step per drag), booleans, flatten,
   outline stroke, components (create, instances, sync with overrides, reset, detach, push changes,
   variants, properties, slots), styles and variables, prototype commands, find/replace, batch rename,
   copy/paste (internal + SVG/text), file new/open/save/import/export (native `.figcraft`, SVG
