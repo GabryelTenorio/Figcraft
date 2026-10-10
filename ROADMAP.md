@@ -217,7 +217,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
-  inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
+  glass and progressive blur tuned side by side; the last
   text details (right-to-left list markers) and auto layout details (grid `fr` rows around
   fixed-size children).
 - **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
@@ -236,10 +236,13 @@ dimension measured side by side.
   diamond gradients, images with fill/fit/crop/tile + adjustments), multiple strokes with
   inside/center/outside alignment, per-side weights, dashes, caps/arrowheads, joins; effects (drop
   and inner shadow with spread that offsets the outline exactly: ellipses, stars, vectors, text;
-  layer blur; background blur that sees the whole backdrop, inside clipping frames, faded groups
-  and masks too; noise in mono, duo and multi colour with grain size, density and blend mode;
-  texture with clip to shape; glass with light angle and intensity, refraction, depth, dispersion,
-  frost and splay; the same in PNG, PDF and SVG exports); corner radii with
+  inner shadows over the fills and under the children and strokes; layer blur; background blur
+  that sees the whole backdrop, inside clipping frames, faded groups and masks too; both blurs
+  uniform or progressive (the radius ramps between two points, dragged on the canvas); noise in
+  mono, duo and multi colour with grain size, density and blend mode; texture with clip to shape;
+  glass with light angle and intensity, refraction, depth, dispersion, frost and splay; the same in
+  PNG, PDF and SVG exports, SVG embedding renders of noise grains, texture, progressive and
+  background blur and glass); corner radii with
   smoothing; constraints; auto layout (horizontal, vertical, wrap, grid; hug/fill/fixed; min/max;
   absolute children); layout grids; export settings; prototype interactions, flows and transitions;
   paint/text/effect/grid styles; variables with collections, modes and aliases.
@@ -281,13 +284,13 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
+| Canvas & navigation | 6 | 80% | visual QA at extreme zooms | 1 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
 | Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
-| Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
+| Effects | 4 | 84% | glass and progressive blur tuned side by side; SVG draws noise, texture, progressive and background blur as embedded images | 2–4 |
 | Frames, groups, sections, masks | 5 | 80% | comparing what changed in ready-for-dev frames and sections, visual QA | 1–2 |
 | Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
 | Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |

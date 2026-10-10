@@ -1305,11 +1305,11 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let Some(list) = list else { return };
     let mut drag = ListDrag::new(ui, "effects");
     for (i, e) in list.iter().enumerate().rev() {
-        let mut open = ui.data(|d| d.get_temp::<bool>(Id::new(("fx_open", i)))).unwrap_or(false);
+        let mut open = effect_open(ui.ctx(), i);
         let header = row_rect(ui, 32.0, |ui| {
             if icons::button(ui, Icon::Effects, 24.0, open, "Effect settings").clicked() {
                 open = !open;
-                ui.data_mut(|d| d.insert_temp(Id::new(("fx_open", i)), open));
+                ui.data_mut(|d| d.insert_temp(Id::new((FX_OPEN, i)), open));
             }
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, e.label(), w, None);
@@ -1339,11 +1339,19 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     if let Some((from, to)) = drag.finish(ui) {
         app.run("effect.move", json!({"ids": ids, "from": from, "to": to}));
-        move_flags(ui, "fx_open", list.len(), from, to);
+        move_flags(ui, FX_OPEN, list.len(), from, to);
         if let Some(crate::colorpicker::PickerTarget::Effect { index, .. }) = &mut app.ui.picker {
             *index = moved_index(*index, from, to);
         }
     }
+}
+
+/// Salt of the flags that keep effect rows' settings open.
+const FX_OPEN: &str = "fx_open";
+
+/// Whether effect `i`'s settings are open in the Design panel.
+pub(crate) fn effect_open(ctx: &egui::Context, i: usize) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new((FX_OPEN, i)))).unwrap_or(false)
 }
 
 /// A number field of effect `i` that can be bound to a variable (`effects/<i>/<prop>`).
@@ -1412,14 +1420,36 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                 });
             }
         }
-        EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => {
-            let bg = matches!(e.kind, EffectKind::BackgroundBlur { .. });
+        EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => {
+            let with = |f: &dyn Fn(&mut Blur)| {
+                let mut e2 = e.clone();
+                if let Some(b2) = e2.blur_mut() {
+                    f(b2);
+                }
+                e2
+            };
             row(ui, 32.0, |ui| {
-                let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), *radius, half * 2.0 + 8.0);
-                edit(app, ed, &|v| Effect {
-                    kind: if bg { EffectKind::BackgroundBlur { radius: v.max(0.0) } } else { EffectKind::LayerBlur { radius: v.max(0.0) } },
-                    visible: e.visible,
+                let resp = widgets::dropdown(ui, b.blur_type.label(), half * 2.0 + 8.0, None);
+                menu_popup(&resp).show(|ui| {
+                    for t in BlurType::ALL {
+                        if menu_item(ui, t.label(), "") {
+                            set(app, with(&|b2| b2.blur_type = t), None);
+                            ui.close();
+                        }
+                    }
                 });
+            });
+            row(ui, 32.0, |ui| {
+                if b.is_progressive() {
+                    // The ramp's start and end points are dragged on the canvas.
+                    let ed = fx_field(app, ui, ids, i, "startRadius", Lead::Text("Start"), b.start_radius, half);
+                    edit(app, ed, &|v| with(&|b2| b2.start_radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                    let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("End"), b.radius, half);
+                    edit(app, ed, &|v| with(&|b2| b2.radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                } else {
+                    let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), b.radius, half * 2.0 + 8.0);
+                    edit(app, ed, &|v| with(&|b2| b2.radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                }
             });
         }
         EffectKind::Noise(nz) => {

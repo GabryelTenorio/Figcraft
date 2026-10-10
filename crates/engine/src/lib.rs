@@ -19,6 +19,7 @@ pub mod devinspect;
 pub mod distance;
 pub mod drop;
 pub mod guard;
+pub mod guides;
 pub mod inspect;
 pub mod keymap;
 pub mod library;
@@ -986,6 +987,8 @@ mod paint_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
+mod progressive_blur_tests;
+#[cfg(test)]
 mod proto_conditional_tests;
 #[cfg(test)]
 mod proto_multi_tests;
@@ -995,6 +998,8 @@ mod proto_present_tests;
 mod proto_responsive_tests;
 #[cfg(test)]
 mod proto_run_tests;
+#[cfg(test)]
+mod rotated_guides_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]

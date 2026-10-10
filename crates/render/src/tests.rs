@@ -281,7 +281,7 @@ fn hostile_sizes() {
     let n = d.get_mut(r).unwrap();
     n.width = f64::NAN;
     n.height = 1e12;
-    n.effects.push(Effect { kind: EffectKind::LayerBlur { radius: 1e9 }, visible: true });
+    n.effects.push(Effect { kind: EffectKind::LayerBlur(figcraft_doc::Blur::uniform(1e9)), visible: true });
     let _ = render_view(&d, p, &view(64, 64), &Options::default());
     let _ = render_node(&d, r, f64::NAN);
     let _ = render_view(&d, p, &View { origin: (f64::NAN, 0.0), scale: 0.0, width: 0, height: 0 }, &Options::default());

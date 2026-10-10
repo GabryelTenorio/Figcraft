@@ -340,8 +340,9 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     }
     for e in n.effects.iter().filter(|e| e.visible) {
         match e.kind {
-            EffectKind::LayerBlur { radius } => put("filter", format!("blur({}px)", num(radius / 2.0))),
-            EffectKind::BackgroundBlur { radius } => put("backdrop-filter", format!("blur({}px)", num(radius / 2.0))),
+            // CSS blurs are uniform: a progressive blur has no CSS equivalent and is left out.
+            EffectKind::LayerBlur(ref b) if !b.is_progressive() => put("filter", format!("blur({}px)", num(b.radius / 2.0))),
+            EffectKind::BackgroundBlur(ref b) if !b.is_progressive() => put("backdrop-filter", format!("blur({}px)", num(b.radius / 2.0))),
             // CSS has no refraction: the frost is the nearest.
             EffectKind::Glass(ref g) => put("backdrop-filter", format!("blur({}px)", num(g.sanitized().frost / 2.0))),
             _ => {}

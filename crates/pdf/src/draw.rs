@@ -6,6 +6,8 @@ use figcraft_color::{BlendMode, Color, Gradient, GradientKind, ImagePaint, Image
 use figcraft_doc::{Document, EffectKind, MaskType as DocMaskType, Node, NodeId, NodeKind, StrokeAlign};
 use figcraft_geom::{Affine, BezPath, Rect, Shape};
 use krilla::color::rgb;
+
+use crate::raster::Raster;
 use krilla::geom::{Path, PathBuilder, Size, Transform};
 use krilla::image::Image;
 use krilla::mask::{Mask, MaskType};
@@ -245,7 +247,7 @@ impl<'a> Exporter<'a> {
             if let Some(b) = &back {
                 self.place_raster(s, b, op, n.blend);
             }
-            self.raster_node(s, id, as_mask);
+            self.raster_node(s, id);
             return;
         }
         let shadows = if fx.iter().any(|k| matches!(k, EffectKind::DropShadow(_) | EffectKind::InnerShadow(_))) { self.shadows(id) } else { None };
@@ -266,12 +268,7 @@ impl<'a> Exporter<'a> {
         if let Some(b) = &back {
             self.place_raster(s, b, 1.0, BlendMode::Normal);
         }
-        self.content(s, n, xf, depth);
-        if let Some(sh) = &shadows {
-            for r in &sh.inner {
-                self.place_raster(s, r, 1.0, BlendMode::Normal);
-            }
-        }
+        self.content(s, n, xf, depth, shadows.as_ref().map_or(&[], |sh| sh.inner.as_slice()));
         if op < 1.0 {
             s.pop();
         }
@@ -281,12 +278,13 @@ impl<'a> Exporter<'a> {
         }
     }
 
-    /// Fills, children (clipped), strokes and text of a node, without opacity/effects.
-    fn content(&mut self, s: &mut Surface, n: &Node, xf: Affine, depth: usize) {
+    /// Fills, `inner` shadows (over the fills, under the children and strokes), children
+    /// (clipped), strokes and text of a node, without opacity/effects.
+    fn content(&mut self, s: &mut Surface, n: &Node, xf: Affine, depth: usize, inner: &[Raster]) {
         let (w, h) = (n.width, n.height);
         match &n.kind {
             NodeKind::Page { .. } | NodeKind::Group => self.children(s, n, xf, depth),
-            NodeKind::Text(_) => crate::text::draw_text(self, s, n, xf),
+            NodeKind::Text(_) => crate::text::draw_text(self, s, n, xf, inner),
             _ => {
                 let outline = figcraft_render::node_outline(self.doc, n);
                 let is_bool = matches!(n.kind, NodeKind::BooleanOp { .. });
@@ -298,6 +296,7 @@ impl<'a> Exporter<'a> {
                         self.fill(s, path, rule(*r), p, w, h, xf);
                     }
                 }
+                self.place_inner(s, inner);
                 if !is_bool && !n.children.is_empty() {
                     if n.clip && n.kind.is_frame_like() {
                         // Clip content: children outside the frame's outline are cut off (and

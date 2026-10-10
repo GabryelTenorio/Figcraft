@@ -460,6 +460,28 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
   order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
   frames and, with nothing selected, lists them with a status filter (click one to go to it).
 
+### Effects
+
+`effect.add {ids?, type? | effect?}` adds an effect (`dropShadow`, `innerShadow`, `layerBlur`,
+`backgroundBlur`, `noise`, `texture`, `glass`) with its defaults, or the full `effect` object;
+`effect.set {ids?, index, effect}` replaces one. A layer paints its drop shadows first, then its
+fills, inner shadows, children and strokes (strokes draw over inner shadows), with layer blur,
+noise and texture over the result.
+
+- **Blurs** (`layerBlur`, `backgroundBlur`) are uniform (`{"radius": 8}`) or progressive:
+  `{"type": "layerBlur", "blurType": "progressive", "startRadius": 0, "radius": 24, "startOffset":
+  [0.5, 0], "endOffset": [0.5, 1]}` ramps the radius linearly from `startRadius` at `startOffset` to
+  `radius` at `endOffset`, points in the layer's unit box (0–1 across and down, like a gradient's
+  handles; before the start and past the end the radius stays). Radii above 10,000 draw as
+  10,000. In the app, the Design panel's blur row picks Uniform or Progressive, and while a
+  progressive blur's settings are open its start and end points are handles on the canvas.
+  Generated CSS leaves progressive blurs out (CSS blurs are uniform); Inspect lists the ramp.
+- **Exports:** PNG, PDF and SVG draw the same pixels as the canvas. PDF and SVG keep layers vector
+  and embed images for what vectors can't show: background blur and glass (from what lies under
+  the layer: on the page in PDF, among the exported layers in SVG), layer blur, noise and texture
+  in PDF; noise grains (an image over the vector layer), texture and progressive layer blur (the
+  layer whole) in SVG, where uniform layer blur and shadows stay SVG filters.
+
 ### Paint, effect and layout grid lists
 
 A layer's fills, strokes, effects and layout grids are lists kept **bottom first**: index 0 paints
@@ -474,7 +496,7 @@ first, the last one is on top (the Design panel lists them the other way round, 
 - **Variable bindings follow their items** when a list is reordered or an item removed
   (`fill.remove`, `stroke.remove`, `effect.remove`, `grid.remove`); a removed item's bindings go
   with it. Binding fields (`variable.bind {field}`): `fill` / `stroke` (the first paint's colour) or
-  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|spread|color>`,
+  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color>`,
   `layoutGrids/<i>/<size|count|gutter|offset>` (number variables; count is kept to 1–1000, size and
   gutter are never negative). Moving a bound paint rewrites its key (`fill` becomes `fills/2/color`).
 - **Instance properties:** `variable.bind {ids: [instance], field: "componentProperties/<name>",
@@ -494,7 +516,10 @@ first, the last one is on top (the Design panel lists them the other way round, 
 `guide.remove {index, …}` and `guide.clear {…}` edit the guides of the current page, another
 `page`, or a `frame` (frames, components and instances). A frame's guides are in its own
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
-it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
+it. On a rotated frame they run along its own axes, and the layers inside it snap to them (and to
+their siblings and the frame's edges) along those axes, keeping whole pixels in the frame's
+coordinates. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's
+guide, along the frame's axis nearer the ruler's.
 
 ### Measuring, the Scale tool, arc handles and selecting
 

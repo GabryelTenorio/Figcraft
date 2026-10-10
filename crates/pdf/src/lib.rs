@@ -174,6 +174,8 @@ fn write(doc: &Document, pages: &[(Vec<NodeId>, Rect)], opts: &PdfOptions) -> Re
 #[cfg(test)]
 mod backdrop_tests;
 #[cfg(test)]
+mod effect_order_tests;
+#[cfg(test)]
 mod export_tests;
 #[cfg(test)]
 mod tests;

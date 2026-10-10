@@ -64,7 +64,7 @@ fn scene(cut_sensitive: bool) -> Scene {
         });
         let glass = d.create(page, NodeKind::Rectangle, "Glass", 120.0, 280.0, 120.0, 40.0).unwrap();
         d.get_mut(glass).unwrap().fills = vec![Paint::solid(Color::new(1.0, 1.0, 1.0, 0.3))];
-        d.get_mut(glass).unwrap().effects.push(Effect { kind: EffectKind::BackgroundBlur { radius: 8.0 }, visible: true });
+        d.get_mut(glass).unwrap().effects.push(Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(8.0)), visible: true });
     }
     Scene { doc: Arc::new(d), page, rect, text, frame, child }
 }

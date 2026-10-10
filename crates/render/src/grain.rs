@@ -54,14 +54,23 @@ impl Cells {
 /// alpha of the pixel under it, blended with the noise's blend mode. Grains are twice the noise
 /// size across.
 pub fn noise(layer: &mut Pixmap, nz: &Noise, xf: Affine, seed: u32) {
+    if let Some(g) = grains(layer, nz, xf, seed) {
+        let paint = PixmapPaint { blend_mode: ts_blend(nz.blend), ..Default::default() };
+        layer.draw_pixmap(0, 0, g.as_ref(), &paint, Transform::identity(), None);
+    }
+}
+
+/// `nz`'s grains for the pixels of `layer` (see [`noise`]), to draw over it with the noise's blend
+/// mode; `None` when there are none.
+pub fn grains(layer: &Pixmap, nz: &Noise, xf: Affine, seed: u32) -> Option<Pixmap> {
     let (sx, sy) = nz.grain();
-    let Some(cells) = Cells::new(xf, (sx * 2.0, sy * 2.0)) else { return };
+    let cells = Cells::new(xf, (sx * 2.0, sy * 2.0))?;
     let density = if nz.density.is_finite() { nz.density.clamp(0.0, 1.0) as f32 } else { 0.0 };
     if density <= 0.0 {
-        return;
+        return None;
     }
     let (w, h) = (layer.width(), layer.height());
-    let Some(mut grains) = Pixmap::new(w, h) else { return };
+    let mut grains = Pixmap::new(w, h)?;
     let (c1, c2) = (nz.color.sanitized(), nz.secondary.sanitized());
     let multi_alpha = if nz.opacity.is_finite() { nz.opacity.clamp(0.0, 1.0) } else { 0.0 };
     let src = layer.data();
@@ -91,8 +100,7 @@ pub fn noise(layer: &mut Pixmap, nz: &Noise, xf: Affine, seed: u32) {
             }
         }
     }
-    let paint = PixmapPaint { blend_mode: ts_blend(nz.blend), ..Default::default() };
-    layer.draw_pixmap(0, 0, grains.as_ref(), &paint, Transform::identity(), None);
+    Some(grains)
 }
 
 /// Scatter `layer`'s pixels by up to the texture's radius (`scale` device pixels per unit), one
