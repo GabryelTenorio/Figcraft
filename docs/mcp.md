@@ -135,7 +135,7 @@ Or in a project's `.mcp.json`:
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
-| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` or an image; save as `.figcraft`. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
@@ -351,6 +351,26 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.regions","params":{"ids":[2,3]}}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.merge","params":{"ids":[2,3],"points":[[120,80],[160,80]]}}}}
 ```
+
+### Importing SVG
+
+`open_file {path}` opens an SVG as a new document; `run_command {command: "file.import", params:
+{path | data + name, x?, y?, center?}}` adds it to the current page as a frame (top-left at `x, y`,
+or centred there with `center: true`, as pasting does). It comes in editable: groups named from
+their `id`, transforms baked into the layers, `<rect>`/`<circle>`/`<ellipse>`/`<line>` (and paths
+tracing those outlines) as rectangles with their corner radius, ellipses and lines, everything else
+as vectors; strokes with their width, dashes, caps, joins and miter limit; linear and radial
+gradients with their exact handles (`gradientTransform`, `reflect`/`repeat` unrolled, a focal
+point as the centre); patterns as image fills (fill, fit, crop or tile); clip paths as vector masks
+and masks as luminance or alpha masks; shadow and blur filters (`feDropShadow`, the offset / blur /
+flood / composite chains, colour-matrix shadows, inner shadows, `feMorphology` spread) as drop
+shadows, inner shadows and layer blurs; opacity and `mix-blend-mode`; text as text layers (fonts
+the SVG names when installed, anchors, letter spacing, styled `<tspan>` runs, stacked lines as one
+layer); images as image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
+and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list what was left out
+(filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
+Linked files are never read, only data URIs; documents nested more than 512 elements deep are
+refused.
 
 ### Importing REST API file JSON
 

@@ -167,7 +167,15 @@ dimension measured side by side.
    Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
    JPG, WebP, SVG and PDF, suffix), a preview, and "Export N layers" (`file.exportLayers`) in the
    panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
-   content wins over our own copy). PDF export: one page per frame in points (Export frames to
+   content wins over our own copy; pasted SVG lands centred in the view). SVG import is editable and
+   checked against a corpus of synthetic files (expected pixels worked out by hand, layer structure,
+   export and re-import): groups named from their ids with transforms baked into the layers;
+   rectangles (corner radius), ellipses and lines kept as those shapes; gradients with exact
+   handles, `reflect`/`repeat` and focal points; patterns as image fills; clip paths and masks as
+   vector, luminance and alpha masks; shadow and blur filter chains as drop shadows, inner shadows
+   and layer blurs; blend modes; text as text layers with runs, anchors and stacked lines; images
+   and nested SVG images; import warnings for what's left out; linked files never read; hostile
+   input fuzzed. SVG export keeps alpha and luminance masks. PDF export: one page per frame in points (Export frames to
    PDF, the Export panel, `figcraft-cli export -o x.pdf`), vectors, gradients and strokes as
    vectors, real selectable text in subset fonts with clickable hyperlinks, images embedded once,
    opacity and blend modes, clip content, alpha/luminance/vector masks, shadows and layer and
@@ -178,7 +186,8 @@ dimension measured side by side.
    marks outside it, MediaBox / BleedBox / TrimBox, and CMYK colour (a documented, deterministic
    naive conversion; images and rasterised effects too).
    *Left:* .fig import (best effort), variable mode lookups in prototype expressions, a CMYK
-   output intent (no CMYK ICC profile can ship in the repository). 10–20 h.
+   output intent (no CMYK ICC profile can ship in the repository), SVG filters other than shadows
+   and blurs (left out with a warning). 8–16 h.
 7. **Look & feel and interaction-fidelity pass**: *landed:* keyboard shortcuts audited against the
    public shortcut reference: one keymap (`figcraft_engine::keymap`) drives the menus, the canvas,
    the control channel and MCP, with macOS and Windows/Linux keys where they differ (mask, bring to
@@ -307,7 +316,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
-| Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 10–20 |
+| Import/export | 6 | 71% | .fig import (best effort), variable-mode lookups in prototype expressions, SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
