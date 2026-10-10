@@ -216,6 +216,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
             }
+            if let Some(h) = p.get("iconGallery").and_then(Value::as_bool) {
+                app.ui.icon_gallery = h;
+            }
             // Comment thread popover: an id opens it, null closes it.
             if let Some(v) = p.get("commentOpen") {
                 app.ui.comments.open = v.as_u64();
