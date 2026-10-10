@@ -162,6 +162,8 @@ icons! {
     ViewList,
     /// Show as a grid of swatches.
     ViewGrid,
+    /// Add an emoji reaction: a smiling face.
+    Reaction,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -946,6 +948,12 @@ fn draw(p: &P, icon: Icon) {
                 p.fill_rect(2.0, y, 5.0, y + 3.0, 0.0);
                 p.line(7.0, y + 1.5, 14.0, y + 1.5);
             }
+        }
+        Reaction => {
+            p.circle(8.0, 8.0, 5.5);
+            p.dot(6.0, 6.5, 0.9);
+            p.dot(10.0, 6.5, 0.9);
+            p.arc(8.0, 8.5, 3.0, 0.6, PI - 0.6);
         }
         ViewGrid => {
             for (x, y) in [(2.5, 2.5), (9.5, 2.5), (2.5, 9.5), (9.5, 9.5)] {

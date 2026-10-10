@@ -311,6 +311,30 @@ visibility, text, font properties, single solid fills and strokes) and `explicit
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
 
+### Comments
+
+Comment threads live in the file, pinned to a page point or to a layer (`anchor`: a node id, or
+`true` for the innermost frame under the point) so they move with it; when the layer is deleted the
+pin stays where it was, on the nearest surviving parent. Driven with `run_command`:
+`comment.add {x, y, text, page?, anchor?}` (returns `{id, link}`), `comment.reply {id, text}`,
+`comment.edit {id, text, reply?}` and `comment.delete {id, reply?}` (a message is the thread's
+first one, or `reply`: an index into its replies; deleting the first message deletes the thread),
+`comment.react {id, emoji, reply?, on?}` (toggles your reaction), `comment.resolve {id, resolved?}`,
+`comment.move {id, x, y, anchor?}` (pins it to the frame under the new point unless `anchor: false`).
+Everyone acts as the name from Preferences (`pref.userName {name}`, default "You") unless `author`
+says otherwise; only a message's author can edit or delete it. `@Name` in a message mentions
+someone (`comment.people` lists the names used in the file).
+
+Read state is kept per name: a new message is unread for everyone but its author;
+`comment.markRead {id? | link?, read?}` marks one thread (or, without `id`, all of them) read or
+unread (not an undo step). `comment.list {page? | "all", filter? (all|open|resolved|mine|unread),
+sort? (date|page), query?, frame?}` returns the threads with their position, `frame`/`frameName`,
+`pageName`, `unread`, `link` and replies (with `edited` times and `reactions`). Links are
+`figcraft://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
+to its page, zooms to its frame (`fit`, the default; `center` keeps the zoom; `keep` doesn't move)
+and opens it in the app, and `comment.next {id?, dir?, …list params}` steps to the next or previous
+thread of a list the same way. `comment.zoom {ids}` zooms in on a group of pins.
+
 ### Version history
 
 Named snapshots of the document, kept in the `.figcraft` file (they persist once the file is saved;

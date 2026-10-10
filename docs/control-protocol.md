@@ -87,8 +87,10 @@ A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `d
 ### `ui.key {key, shift?, alt?, cmd?, ctrl?}`
 
 A key as if typed on the canvas (in vector edit mode the edit keys come first: `V` `P` `Q` `X` `Shift+B` `Shift+E` `Shift+W` tools, arrows nudge points, `Delete`/`Shift+Delete`, `Cmd+A`, `Cmd+J`; with the shape builder, `Enter` finishes): a menu shortcut (`{"key":"G","cmd":true}` groups), a tool key,
-`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). While text is being
-edited, keys go to the text editor. Returns `{"command": id}` for shortcuts.
+`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). With the Comment
+tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel's list instead
+(returns `{"comment": id}`). While text is being edited, keys go to the text editor. Returns
+`{"command": id}` for shortcuts.
 
 ### `ui.type {text}`
 
@@ -99,7 +101,7 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -115,8 +117,15 @@ to what it can scroll), `colorProfileDialog` (`srgb|displayP3`: open File ▸ Co
 profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid`: open the style picker
 for the selection; `null` closes it) with `stylePickerEdit` (a style id or name: open its editor),
 `stylePickerView` (`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that
-interaction's editor in the Prototype panel; `null` closes it). Returns `ui.inspect` (which reports
-`stylePicker` and `stylePickerView`).
+interaction's editor in the Prototype panel; `null` closes it). Comments: `commentOpen` (a thread
+id opens its popover, `null` closes it), `commentDraft` (`{x, y}`: start a new comment there),
+`commentFilter` (`open|resolved|mine|unread|all`: what the Comments panel and the pins show),
+`commentSort` (`date|page`), `commentSearch` (the panel's search text), `commentReply` (the open
+thread's reply text, focused with the cursor at its end: an `@` there shows the mention picker),
+`commentEdit` (a message index of the open thread to edit, 0 for the first; `null` stops),
+`presentComments` (bool: the presenter shows the presented frame's comments, also Shift+C there).
+Returns `ui.inspect` (which reports `stylePicker`, `stylePickerView`, and `comments`: `open`,
+`draft`, `filter`, `sort`, `search`, `editing` and the `mentions` the picker offers).
 
 ### `ui.screenshot {path}`
 

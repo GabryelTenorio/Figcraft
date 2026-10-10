@@ -323,7 +323,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
         return;
     }
-    if !app.canvas.dragging && resp.hovered() && crate::comments::input(app, &ctx, pos) {
+    if !app.canvas.dragging && (resp.hovered() || app.ui.comments.dragging()) && crate::comments::input(app, &ctx, pos) {
         return;
     }
     if !app.canvas.dragging && resp.hovered() && crate::guides::input(app, &ctx, pos) {

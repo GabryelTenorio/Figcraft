@@ -139,7 +139,16 @@ dimension measured side by side.
    options (bleed, CMYK). 10–20 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
-8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
+8. **Collaboration (local):** comments landed: pins pinned to frames and layers that move with them
+   (to other pages too) and stay where they were when the layer is deleted, your pins dragged onto
+   another frame, crowded pins clustered when zoomed out (a click zooms them apart), Shift+C to show
+   or hide them; threads where you edit and delete your own messages, emoji reactions, @mentions
+   with a picker of the names used in the file (your name from Preferences), read and unread state,
+   resolve, and "Copy link" (`figcraft://comment/<id>`: pasting or `comment.open` goes to the page,
+   zooms to the frame and opens the thread); the Comments panel with search (text, names, frame),
+   filters (open, resolved, yours, unread), sorting by date or page, each thread's frame and page,
+   and Up/Down to step through threads; comments on the presented frame (Comments button or
+   Shift+C: read and reply). All of it through `comment.*` commands. Version history
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
    minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
@@ -161,7 +170,8 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA).
-- **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
+- **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
+  history are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
