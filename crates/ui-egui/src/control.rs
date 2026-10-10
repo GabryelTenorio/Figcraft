@@ -217,6 +217,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     }
                 } else if let Some(t) = e.get("text").and_then(Value::as_str) {
                     events.push(egui::Event::Text(t.to_string()));
+                } else if let Some(d) = e.get("scroll").and_then(pos) {
+                    // Content moves by `d` points (negative y scrolls down, like a wheel turned towards you).
+                    events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: d.to_vec2(),
+                        phase: egui::TouchPhase::Move,
+                        modifiers: mods,
+                    });
                 } else if b(e, "leave") {
                     events.push(egui::Event::PointerGone);
                 } else {
