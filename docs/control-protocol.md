@@ -85,7 +85,9 @@ instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 
 A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `double`, `hover`,
 `drag` (needs `to: [x, y]`; `steps` intermediate moves, default 8). Position in page coordinates
-(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`.
+(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`. With the Move and Scale
+tools, a press on a frame's or section's name label (as the canvas last drew it, along a rotated
+frame's top edge) selects and drags that frame.
 
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}

@@ -17,6 +17,7 @@ pub mod dev_mode;
 pub mod dialogs;
 pub mod export_panel;
 pub mod font_preview;
+pub mod frame_labels;
 pub mod frame_presets;
 pub mod guides;
 pub mod handles;
@@ -52,6 +53,8 @@ pub mod widgets;
 mod canvas_drag_tests;
 #[cfg(test)]
 mod comments_tests;
+#[cfg(test)]
+mod frame_label_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]

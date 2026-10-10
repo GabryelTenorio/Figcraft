@@ -1038,6 +1038,8 @@ mod effects_tests;
 #[cfg(test)]
 mod frame_guides_tests;
 #[cfg(test)]
+mod frame_label_tests;
+#[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
 mod gesture_preview_tests;
