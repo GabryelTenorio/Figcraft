@@ -241,7 +241,13 @@ dimension measured side by side.
    and a client that shows its own edits at once and replays them over others'; derived data
    (auto layout, instances, bindings) is repaired by the author after concurrent edits; binary
    messages (a moved layer is 43 bytes, a cursor 23) with a JSON form; a randomized multi-client
-   test over real commands converges.
+   test over real commands converges. Live sessions landed (`crates/collab-net`, a preview:
+   documents don't sync between apps yet): Share ▸ Start live session hosts the open file from the
+   app (this machine, or the local network when chosen) with an invite link and `ws://` URL to copy
+   (a 128-bit token), File ▸ Join live session…, a WebSocket transport with keep-alive, size and
+   rate limits and reconnect with backoff; others' cursors (named, gliding), selections and
+   viewports, avatars in the right panel, click one to follow (Escape or a pan stops); `collab.*`
+   commands for the control channel and MCP (an agent can take part with its own cursor).
    Plugins landed: sandboxed WebAssembly plugins (a metered wasmi
    interpreter with a memory cap and no WASI, also in the browser) whose API is the command
    registry; each run is one undo step and is rolled back when it fails (error, trap, endless loop,
@@ -253,8 +259,9 @@ dimension measured side by side.
    plugins, and `plugin.*` commands for scripts, the CLI and MCP; a Rust SDK and two example
    plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
    plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
-   distribution; for collaboration, the WebSocket transport, hosting and joining from the app,
-   live cursors, per-user undo, reconnect, the browser client and a standalone server. 18–45 h.
+   distribution; for collaboration, document sync between apps over the live session (the core's
+   client wired into the engine's edits), per-user undo, resuming after a reconnect, a
+   `figcraft://` link handler, the browser client and a standalone server. 18–45 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -408,4 +415,4 @@ Weighted feature depth ≈ **79%** (self-graded, from the table).
 | M5 Prototype & present | ~82% |
 | M6 Interop & dev mode | ~62% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |
-| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | core done (ids, change sets, server ordering, convergence); networking next |
+| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | core done (ids, change sets, server ordering, convergence); live sessions hosted from the app with invite links, live cursors, selections, avatars and follow; document sync over them next |

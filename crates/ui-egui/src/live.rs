@@ -1,0 +1,401 @@
+//! Live sessions in the window: other people's cursors (smoothly following their pointer, with a
+//! name tag) and selections on the canvas, their avatars at the top of the right panel (click one
+//! to follow their view), the Share popover (start a session, the invite link, stop) and the
+//! Join dialog. Everything acts through the `collab.*` commands; the state is the engine's
+//! (`Session::live`). The network wakes the UI when something arrives, and cursors only ask for
+//! frames while they glide, so an idle session draws nothing.
+
+use std::collections::BTreeMap;
+
+use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
+use figcraft_engine::live::{PEOPLE, Role, Status, initials, parse_color, presence_page};
+use serde_json::json;
+
+use crate::FigApp;
+use crate::a11y::{self, Tip};
+use crate::icons::{self, Icon};
+use crate::right::{menu_item, menu_item_with, menu_popup};
+use crate::theme::{ACCENT, Tokens, regular, semibold};
+use crate::widgets;
+
+/// What the note under live sessions says until documents sync.
+pub const PREVIEW_NOTE: &str = "Live cursors only — editing sync coming next.";
+
+/// How fast a remote cursor closes in on where it was last reported (per second).
+const GLIDE: f64 = 20.0;
+/// Most of one person's selection outlined.
+const MAX_OUTLINES: usize = 500;
+
+/// UI-only live session state.
+#[derive(Default)]
+pub struct LiveUi {
+    /// Where each remote cursor is drawn (page coordinates), gliding to where it was reported.
+    shown: BTreeMap<u32, (f64, f64)>,
+    /// The UI clock at the last cursor frame.
+    last: f64,
+    /// The pointer position last handed to the session (page coordinates).
+    seen: Option<(f64, f64)>,
+    /// The Join dialog's link field (open when `Some`).
+    pub join: Option<String>,
+    /// Start sessions on the local network (else this machine only).
+    pub lan: bool,
+}
+
+impl LiveUi {
+    /// The remote cursors drawn last frame (`ui.inspect`).
+    pub fn shown(&self) -> Vec<u32> {
+        self.shown.keys().copied().collect()
+    }
+}
+
+/// A person's colour (`#RRGGBB` from the session), or the accent for anything else.
+pub fn color(s: &str) -> Color32 {
+    parse_color(s).map_or(ACCENT, |(r, g, b)| Color32::from_rgb(r, g, b))
+}
+
+/// The palette colour `i` (comment authors use it too).
+pub fn people(i: usize) -> Color32 {
+    PEOPLE.get(i % PEOPLE.len()).map_or(ACCENT, |c| color(c))
+}
+
+/// Text that reads on `fill`.
+pub fn text_on(fill: Color32) -> Color32 {
+    let l = 0.299 * f32::from(fill.r()) + 0.587 * f32::from(fill.g()) + 0.114 * f32::from(fill.b());
+    if l > 170.0 { Color32::from_rgb(0x1E, 0x1E, 0x1E) } else { Color32::WHITE }
+}
+
+/// An avatar: the initials in a circle of the person's colour.
+pub fn avatar(painter: &egui::Painter, center: Pos2, r: f32, name: &str, fill: Color32) {
+    painter.circle_filled(center, r, fill);
+    painter.text(center, Align2::CENTER_CENTER, initials(name), semibold(r * 0.8), text_on(fill));
+}
+
+/// FigCraft's remote pointer: a notched dart pointing up-left from `tip`, filled with the
+/// person's colour and edged in white so it shows on any canvas.
+pub fn pointer(painter: &egui::Painter, tip: Pos2, fill: Color32) {
+    let at = |x: f32, y: f32| tip + vec2(x, y);
+    let (left, notch, right) = (at(3.5, 15.5), at(7.5, 8.5), at(15.5, 4.0));
+    painter.add(Shape::convex_polygon(vec![tip, left, notch], fill, Stroke::NONE));
+    painter.add(Shape::convex_polygon(vec![tip, notch, right], fill, Stroke::NONE));
+    painter.add(Shape::closed_line(vec![tip, left, notch, right], Stroke::new(1.5, Color32::WHITE)));
+}
+
+/// The name tag next to a remote pointer.
+fn name_tag(painter: &egui::Painter, tip: Pos2, name: &str, fill: Color32) {
+    let galley = painter.layout_no_wrap(name.to_string(), semibold(11.0), text_on(fill));
+    let r = Rect::from_min_size(tip + vec2(12.0, 16.0), galley.size() + vec2(12.0, 6.0));
+    painter.rect_filled(r, CornerRadius::same(4), fill);
+    painter.galley(r.min + vec2(6.0, 3.0), galley, text_on(fill));
+}
+
+/// Hand the pointer's page position to the session when it moved (or the view under it did).
+pub fn track_pointer(app: &mut FigApp, ctx: &egui::Context) {
+    if app.session.live.status != Status::Live {
+        app.ui.live.seen = None;
+        return;
+    }
+    let at = ctx.input(|i| i.pointer.hover_pos()).filter(|p| app.canvas.rect.contains(*p)).map(|p| app.to_page(p)).map(|p| (p.x, p.y));
+    if at != app.ui.live.seen {
+        app.ui.live.seen = at;
+        app.session.live.cursor = at;
+    }
+}
+
+/// Others' selections and cursors on the canvas, and the frame around it while following.
+pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
+    let live = &app.session.live;
+    if live.peers.is_empty() {
+        app.ui.live.shown.clear();
+        return;
+    }
+    let Ok(ds) = app.session.ds() else { return };
+    let (doc, page, shared) = (ds.doc.clone(), ds.page, live.shared_document);
+    let mut cursors = Vec::new();
+    for (id, p) in &live.presence {
+        let Some(peer) = live.peers.get(id) else { continue };
+        let fill = color(&peer.color);
+        // Selections only mean something on the same page of the same (synced) document.
+        if shared
+            && presence_page(p) == Some(page)
+            && let Some(sel) = &p.selection
+        {
+            for n in sel.iter().filter(|n| doc.page_of(**n) == Some(page)).take(MAX_OUTLINES) {
+                if let Some(q) = crate::canvas::node_quad(app, &doc, *n) {
+                    painter.add(Shape::closed_line(q.to_vec(), Stroke::new(1.5, fill)));
+                }
+            }
+        }
+        // Cursors: on your page in a shared document; until documents sync, everyone has their
+        // own file, so cursors show in page coordinates on whatever page you look at.
+        if let Some((pg, x, y)) = p.cursor
+            && (pg == page || !shared)
+        {
+            cursors.push((*id, peer.name.clone(), fill, (x, y)));
+        }
+    }
+    if let Some(peer) = live.follow.and_then(|f| live.peers.get(&f)) {
+        follow_frame(painter, app.canvas.rect, &peer.name, color(&peer.color));
+    }
+    let now = ctx.input(|i| i.time);
+    let dt = (now - app.ui.live.last).clamp(0.0, 0.1);
+    app.ui.live.last = now;
+    let k = if app.reduce_motion() { 1.0 } else { 1.0 - (-dt * GLIDE).exp() };
+    let zoom = ds.view.zoom.max(1e-9);
+    let mut gliding = false;
+    let mut shown = BTreeMap::new();
+    for (id, name, fill, (x, y)) in cursors {
+        let (mut sx, mut sy) = app.ui.live.shown.get(&id).copied().unwrap_or((x, y));
+        sx += (x - sx) * k;
+        sy += (y - sy) * k;
+        // Within half a pixel: there.
+        if ((x - sx) * zoom).hypot((y - sy) * zoom) < 0.5 {
+            (sx, sy) = (x, y);
+        } else {
+            gliding = true;
+        }
+        shown.insert(id, (sx, sy));
+        let tip = app.to_screen(sx, sy);
+        pointer(painter, tip, fill);
+        name_tag(painter, tip, &name, fill);
+    }
+    app.ui.live.shown = shown;
+    if gliding {
+        ctx.request_repaint();
+    }
+}
+
+/// A frame around the canvas in the followed person's colour, with their name at the top.
+fn follow_frame(painter: &egui::Painter, canvas: Rect, name: &str, fill: Color32) {
+    painter.rect_stroke(canvas.shrink(1.0), CornerRadius::ZERO, Stroke::new(2.0, fill), egui::StrokeKind::Inside);
+    let text = format!("Following {name} · {} to stop", crate::toolbar::pretty_shortcut("Escape"));
+    let galley = painter.layout_no_wrap(text, semibold(11.0), text_on(fill));
+    let r = Rect::from_center_size(pos2(canvas.center().x, canvas.min.y + 2.0 + (galley.size().y + 6.0) / 2.0), galley.size() + vec2(16.0, 6.0));
+    painter.rect_filled(r, CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 }, fill);
+    painter.galley(r.min + vec2(8.0, 3.0), galley, text_on(fill));
+}
+
+/// You and the others at the top of the right panel, within `area`: click someone to follow
+/// them (again to stop); the chevron lists everyone.
+pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
+    let t = Tokens::get(ui.ctx());
+    const R: f32 = 12.0;
+    const STEP: f32 = 20.0;
+    let cy = area.center().y;
+    let live = &app.session.live;
+    let me_name = match live.info.as_ref() {
+        Some(i) if !i.name.is_empty() => i.name.clone(),
+        _ => app.session.prefs.user_name.clone(),
+    };
+    let me_fill = live.info.as_ref().map_or(t.success, |i| color(&i.color));
+    let peers: Vec<(u32, String, Color32)> = live.peers.values().map(|p| (p.client_id, p.name.clone(), color(&p.color))).collect();
+    let follow = live.follow;
+    // Room for the avatars after yours and the chevron.
+    let fit = (((area.width() - 2.0 * R - 18.0) / STEP).floor() as usize).max(1);
+    let (show, more) = if peers.len() > fit { (fit - 1, peers.len() - (fit - 1)) } else { (peers.len(), 0) };
+    let mut x = area.min.x + R + 2.0;
+    let ring = |ui: &Ui, c: Pos2| ui.painter().circle_stroke(c, R + 1.0, Stroke::new(2.0, t.panel));
+    avatar(ui.painter(), pos2(x, cy), R, &me_name, me_fill);
+    let mut clicked = None;
+    for (id, name, fill) in peers.iter().take(show) {
+        x += STEP;
+        let c = pos2(x, cy);
+        let following = follow == Some(*id);
+        let tip = if following { format!("Stop following {name}") } else { format!("Follow {name}") };
+        let resp = ui.interact(Rect::from_center_size(c, vec2(2.0 * R, 2.0 * R)), ui.id().with(("live_avatar", id)), Sense::click()).tip(tip);
+        ring(ui, c);
+        avatar(ui.painter(), c, R, name, *fill);
+        if following || resp.hovered() {
+            ui.painter().circle_stroke(c, R + 2.5, Stroke::new(2.0, *fill));
+        }
+        if resp.clicked() {
+            clicked = Some(*id);
+        }
+    }
+    if more > 0 {
+        x += STEP;
+        let c = pos2(x, cy);
+        ring(ui, c);
+        ui.painter().circle_filled(c, R, t.pressed);
+        ui.painter().text(c, Align2::CENTER_CENTER, format!("+{more}"), semibold(10.0), t.text);
+    }
+    let chev = Rect::from_center_size(pos2(x + R + 10.0, cy), vec2(16.0, 24.0));
+    let cresp = ui.interact(chev, ui.id().with("live_people"), Sense::click());
+    a11y::menu_button(&cresp, "People in this file", a11y::menu_open(&cresp));
+    if cresp.hovered() {
+        ui.painter().rect_filled(chev, CornerRadius::same(4), t.hover);
+    }
+    icons::paint(ui.painter(), Rect::from_center_size(chev.center(), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+    menu_popup(&cresp).width(220.0).show(|ui| {
+        let row = |ui: &mut Ui, label: &str, fill: Color32, check: bool| {
+            menu_item_with(ui, label, if check { "Following" } else { "" }, 22.0, |p, r, _| {
+                avatar(p, pos2(r.max.x - 15.0, r.center().y), 8.0, label, fill)
+            })
+        };
+        row(ui, &format!("{me_name} (you)"), me_fill, false);
+        for (id, name, fill) in &peers {
+            if row(ui, name, *fill, follow == Some(*id)) {
+                clicked = Some(*id);
+                ui.close();
+            }
+        }
+        if peers.is_empty() {
+            widgets::label(ui, if app.session.live.status.active() { "Nobody else is here yet" } else { "Not in a live session" }, t.text_secondary);
+        }
+    });
+    if let Some(id) = clicked {
+        let params = if follow == Some(id) { json!({}) } else { json!({"client": id}) };
+        app.run("collab.follow", params);
+    }
+}
+
+/// The Share button's popover: the live session (start, invite link, stop or leave) and export.
+pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
+    menu_popup(anchor).width(300.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        let t = Tokens::get(ui.ctx());
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new("Live session").font(semibold(12.0)));
+        let status = app.session.live.status.clone();
+        let role = app.session.live.role();
+        let (line, col) = match (&status, role) {
+            (Status::Live, Some(Role::Host)) => (format!("Live · {}", people_count(app.session.live.peers.len())), t.success),
+            (Status::Live, _) => {
+                let file = app.session.live.info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
+                (if file.is_empty() { "Joined".to_string() } else { format!("Joined {file}") }, t.success)
+            }
+            (Status::Failed { .. }, _) => (status.label(), t.danger),
+            _ => (status.label(), t.text_secondary),
+        };
+        widgets::label(ui, &line, col);
+        match (&status, role) {
+            (Status::Off | Status::Failed { .. }, _) => start_ui(app, ui, &t),
+            (Status::Live, Some(Role::Host)) => host_ui(app, ui),
+            _ => {
+                if let Some(i) = app.session.live.info.as_ref().filter(|i| !i.pages.is_empty()) {
+                    let pages: Vec<&str> = i.pages.iter().map(|p| p.name.as_str()).take(8).collect();
+                    widgets::label(ui, &format!("Pages: {}", pages.join(", ")), t.text_secondary);
+                }
+                if widgets::button(ui, "Leave session", false, true).clicked() {
+                    app.run("collab.leave", json!({}));
+                }
+            }
+        }
+        widgets::label(ui, PREVIEW_NOTE, t.text_secondary);
+        ui.separator();
+        if menu_item(ui, "Export…", "") {
+            app.ui.export_preview = true;
+            ui.close();
+        }
+    });
+}
+
+fn people_count(others: usize) -> String {
+    match others {
+        0 => "nobody else here yet".into(),
+        1 => "1 person joined".into(),
+        n => format!("{n} people joined"),
+    }
+}
+
+/// Not in a session: your name, where to share, start; or join one.
+fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    ui.horizontal(|ui| {
+        widgets::label(ui, "Your name", t.text);
+        let name = app.session.prefs.user_name.clone();
+        if let Some(n) = widgets::text_field(ui, egui::Id::new("live_name"), &name, 160.0, "Your name") {
+            app.run("pref.userName", json!({"name": n}));
+        }
+    });
+    if widgets::checkbox(ui, app.ui.live.lan, "Share on the local network") {
+        app.ui.live.lan = !app.ui.live.lan;
+    }
+    let reach = if app.ui.live.lan {
+        "Anyone on your network who has the invite link can join."
+    } else {
+        "Only this computer can join (turn on network sharing to invite others)."
+    };
+    widgets::label(ui, reach, t.text_secondary);
+    ui.horizontal(|ui| {
+        if widgets::button(ui, "Start live session", true, true).clicked() {
+            let bind = if app.ui.live.lan { "lan" } else { "local" };
+            app.run("collab.host", json!({"bind": bind}));
+        }
+        if widgets::button(ui, "Join a session…", false, true).clicked() {
+            app.ui.live.join = Some(String::new());
+            ui.close();
+        }
+    });
+}
+
+/// Hosting: the invite link and URL to copy, and stop.
+fn host_ui(app: &mut FigApp, ui: &mut Ui) {
+    let Some(info) = app.session.live.info.clone() else { return };
+    for (label, value, what) in [("Invite link", &info.link, "Invite link copied"), ("WebSocket URL", &info.url, "WebSocket URL copied")] {
+        ui.horizontal(|ui| {
+            let t = Tokens::get(ui.ctx());
+            let w = ui.available_width() - 64.0;
+            ui.vertical(|ui| {
+                ui.set_width(w);
+                widgets::label(ui, label, t.text_secondary);
+                ui.label(egui::RichText::new(widgets::elide(ui, value, w)).font(regular(10.5)).monospace());
+            });
+            if widgets::button(ui, "Copy", false, true).on_hover_text(format!("Copy the {}", label.to_lowercase())).clicked() {
+                app.services.clipboard_set_text(value);
+                app.toast(what);
+            }
+        });
+    }
+    let t = Tokens::get(ui.ctx());
+    widgets::label(ui, "The link carries the session's secret: share it only with people you invite.", t.text_secondary);
+    if widgets::button(ui, "Stop session", false, true).clicked() {
+        app.run("collab.stop", json!({}));
+    }
+}
+
+/// File ▸ Join live session: paste an invite link.
+pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
+    let Some(mut link) = app.ui.live.join.take() else { return };
+    let t = Tokens::get(ctx);
+    let mut open = true;
+    let mut cancel = false;
+    let mut go = false;
+    crate::dialogs::window("Join live session", ctx).open(&mut open).show(ctx, |ui| {
+        ui.set_width(380.0);
+        widgets::label(ui, "Paste the invite link the host shared with you.", t.text);
+        let resp = ui
+            .add(egui::TextEdit::singleline(&mut link).hint_text("figcraft://join?host=…").desired_width(380.0).id(egui::Id::new("live_join_link")));
+        a11y::text(&resp, "Invite link", "");
+        go = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        widgets::label(ui, PREVIEW_NOTE, t.text_secondary);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            go |= widgets::button(ui, "Join", true, !link.trim().is_empty()).clicked();
+            cancel = widgets::button(ui, "Cancel", false, true).clicked();
+        });
+    });
+    if go && !link.trim().is_empty() && app.run("collab.join", json!({"link": link.trim()})).is_some() {
+        return;
+    }
+    if open && !cancel {
+        app.ui.live.join = Some(link);
+    }
+}
+
+/// Live session state for `ui.inspect`.
+pub fn inspect(app: &FigApp) -> serde_json::Value {
+    let l = &app.session.live;
+    json!({
+        "status": l.status.id(),
+        "role": l.role(),
+        "peers": l.peers.len(),
+        "follow": l.follow,
+        "cursorsShown": app.ui.live.shown(),
+        "joinDialog": app.ui.live.join.is_some(),
+    })
+}
+
+/// Peer ids drawn on the canvas, by what they point at (tests).
+#[cfg(test)]
+pub(crate) fn shown_at(app: &FigApp) -> Vec<(u32, (f64, f64))> {
+    app.ui.live.shown.iter().map(|(k, v)| (*k, *v)).collect()
+}

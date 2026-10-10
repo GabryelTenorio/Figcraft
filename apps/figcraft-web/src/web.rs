@@ -35,7 +35,10 @@ pub fn start() {
                         log::info!("figcraft-web: wgpu backend {:?}", rs.adapter.get_info().backend);
                     }
                     let reduce_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
-                    let fig = FigApp::new(Session::new(), Box::new(WebServices { reduce_motion }));
+                    let mut session = Session::new();
+                    // Live sessions say they need the desktop app until the browser client lands.
+                    session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(|| {}))));
+                    let fig = FigApp::new(session, Box::new(WebServices { reduce_motion }));
                     Ok(Box::new(WebShell { fig }))
                 }),
             )

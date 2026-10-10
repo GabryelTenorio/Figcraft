@@ -29,6 +29,7 @@ pub mod icons;
 pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;
+pub mod live;
 pub mod measure_overlay;
 pub mod menus;
 pub mod plugins_ui;
@@ -71,6 +72,8 @@ mod layers_drag_tests;
 mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
@@ -275,6 +278,8 @@ pub struct UiState {
     pub plugins_window: bool,
     /// A plugin command's parameters form, when open.
     pub plugin_form: Option<plugins_ui::PluginForm>,
+    /// Live sessions: remote cursors as drawn, the Join dialog.
+    pub live: live::LiveUi,
 }
 
 impl Default for UiState {
@@ -342,6 +347,7 @@ impl Default for UiState {
             nav: a11y::Nav::default(),
             plugins_window: false,
             plugin_form: None,
+            live: live::LiveUi::default(),
         }
     }
 }
@@ -645,6 +651,12 @@ impl FigApp {
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
+        // What happened in a live session (the network woke us for it).
+        if self.session.live_poll()
+            && let Some(m) = self.session.message.take()
+        {
+            self.toast(m);
+        }
         // Before any widget: the navigation keys (F6, Tab, arrows, Escape) move the keyboard.
         a11y::begin(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
@@ -741,6 +753,8 @@ impl FigApp {
         }
         a11y::end(self, &ctx);
         self.field_focus = a11y::field_focused(&ctx);
+        // Your pointer, selection and view to the others in a live session (when they changed).
+        self.session.live_sync();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -819,6 +833,7 @@ impl FigApp {
                     figcraft_render::Work::Full => json!({"kind": "full"}),
                 }),
             },
+            "live": live::inspect(self),
             "tool": self.session.tool_info(),
             "status": self.session.status(),
             "lastError": self.ui.last_error,

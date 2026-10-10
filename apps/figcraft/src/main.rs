@@ -107,6 +107,13 @@ fn main() -> eframe::Result {
         }
     });
     let mut session = Session::empty();
+    // Live sessions: the network threads wake the window when something arrives.
+    let wake_slot = ctx_slot.clone();
+    session.live.install(Box::new(figcraft_collab_net::NetLink::new(Arc::new(move || {
+        if let Some(c) = wake_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+            c.request_repaint();
+        }
+    }))));
     for f in &files {
         if let Err(e) = session.execute("file.open", &json!({"path": f})) {
             log::error!("{f}: {e}");

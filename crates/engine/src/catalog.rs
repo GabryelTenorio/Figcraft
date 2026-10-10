@@ -30,6 +30,9 @@ pub static MENU: &[MenuItem] = &[
     m!("File", "Save to version history…", "file.saveVersion"),
     m!("File", "Show version history", "file.versionHistory"),
     m!("File", SEP, ""),
+    // FigCraft's own (live sessions): not in the reference menu, so not counted by `parity`.
+    m!("File", "Join live session…", "collab.join"),
+    m!("File", SEP, ""),
     m!("File", "Export…", "file.export"),
     m!("File", "Export frames to PDF…", "file.exportFramesPdf"),
     m!("File", "Export selection as SVG…", "file.exportSvg"),
@@ -270,7 +273,7 @@ pub fn parity(extra: &[&str]) -> (usize, usize, Vec<&'static str>) {
     let mut done = 0;
     let mut missing = Vec::new();
     let mut total = 0;
-    for m in items() {
+    for m in items().filter(|m| !m.id.starts_with("collab.")) {
         total += 1;
         if crate::find_command(m.id).is_some() || extra.contains(&m.id) {
             done += 1;

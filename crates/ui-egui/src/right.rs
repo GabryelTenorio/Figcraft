@@ -59,18 +59,13 @@ impl FigApp {
 pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
-    // Top bar: avatar, present, share.
+    // Top bar: people (you and the others in a live session), present, share.
     let (top, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
-    ui.painter().circle_filled(pos2(top.min.x + 26.0, top.center().y), 13.0, Color32::from_rgb(0x14, 0xAE, 0x5C));
-    ui.painter().text(pos2(top.min.x + 26.0, top.center().y), Align2::CENTER_CENTER, "Y", semibold(12.0), Color32::WHITE);
-    icons::paint(ui.painter(), Rect::from_center_size(pos2(top.min.x + 48.0, top.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
     let share = Rect::from_min_size(pos2(top.max.x - 70.0, top.center().y - 16.0), vec2(56.0, 32.0));
-    let sresp = ui.interact(share, ui.id().with("share"), Sense::click()).tip("Export and share");
+    let sresp = ui.interact(share, ui.id().with("share"), Sense::click()).tip("Share: live session, export");
     ui.painter().rect_filled(share, CornerRadius::same(6), if sresp.hovered() { t.accent_hover } else { ACCENT });
     ui.painter().text(share.center(), Align2::CENTER_CENTER, "Share", semibold(11.5), Color32::WHITE);
-    if sresp.clicked() {
-        app.ui.export_preview = true;
-    }
+    crate::live::share_popover(app, &sresp);
     // Play presents; its chevron opens the play menu (present, or preview in a pane).
     let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
     let (tri_r, chev_r) =
@@ -85,6 +80,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let c = tri.center();
     ui.painter().add(egui::Shape::closed_line(vec![c + vec2(-5.0, -7.0), c + vec2(7.0, 0.0), c + vec2(-5.0, 7.0)], Stroke::new(1.4, t.icon)));
     icons::paint(ui.painter(), Rect::from_center_size(play.center() + vec2(12.0, 0.0), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+    crate::live::people_bar(app, ui, Rect::from_min_max(pos2(top.min.x + 12.0, top.min.y), pos2(play.min.x - 6.0, top.max.y)));
     if presp.clicked() {
         app.run("proto.present", json!({}));
     }

@@ -25,6 +25,7 @@ pub mod guides;
 pub mod inspect;
 pub mod keymap;
 pub mod library;
+pub mod live;
 pub mod measure;
 pub mod params;
 pub mod plugins;
@@ -508,6 +509,8 @@ pub struct Session {
     pub libraries: library::Cache,
     /// Plugin modules loaded in this session and the last plugin run.
     pub plugins: plugins::Runtime,
+    /// The live session (collaboration): status, peers, presence.
+    pub live: live::Live,
 }
 
 impl Default for Session {
@@ -539,6 +542,7 @@ impl Session {
             message: None,
             libraries: library::Cache::default(),
             plugins: plugins::Runtime::default(),
+            live: live::Live::default(),
         }
     }
 
@@ -1098,6 +1102,8 @@ mod import_export_tests;
 mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]

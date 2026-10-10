@@ -139,6 +139,7 @@ The desktop app also offers a loopback-only control channel (`figcraft --control
 - **Runs in the browser:** the whole engine and UI compile to WebAssembly.
 - **Accessible:** screen readers get names, roles, values and states for the tools, layer rows, fields, dropdowns, tabs and menus (AccessKit on desktop), F6 moves the keyboard between the toolbar, layers, canvas and properties (Tab within them, Escape back to the canvas), the system's reduce-motion setting is honoured, and panel text meets WCAG AA contrast in both themes.
 - **Plugins:** sandboxed WebAssembly plugins (a metered, pure-Rust interpreter with a memory cap and no file or network access, in the browser too) that act through the same commands, each run one undo step, within the permissions their manifest asks for. A Rust SDK and two example plugins are in [`plugins/`](plugins); see [`docs/plugins.md`](docs/plugins.md).
+- **Live sessions (preview):** host the open file from the app (this machine or your local network), share the invite link, and see each other's cursors, selections and viewports live, with avatars and follow; editing sync comes next. See [`docs/collab-protocol.md`](docs/collab-protocol.md).
 - **Never crashes:** no `unwrap`, `expect` or `panic` in shipped code, enforced by clippy; commands run behind a guard so a bug fails one action, not your session.
 - **Clean-room:** implemented from public documentation and observed behaviour only. No proprietary code, file formats, icons or images.
 
@@ -165,7 +166,7 @@ New contributors and AI agents: start with [`AGENTS.md`](AGENTS.md), then [`docs
 Installers for macOS (universal, signed and notarized), Windows (x64, x86 and arm64), Linux (AppImage, `.deb`, `.rpm`, Flatpak and tarball), FreeBSD and the web are attached to each [GitHub release](https://github.com/storytold/figcraft/releases). Maintainers: [`docs/releasing.md`](docs/releasing.md) explains how releases are built, signed and published.
 
 > [!IMPORTANT]
-> **Status:** FigCraft is in early alpha. Most of Figma's editor surface exists in some form, and the main menu is almost fully wired ([`docs/parity.md`](docs/parity.md)), but that measures wiring, not behaviour. Multiplayer, comments, version history, plugin UIs beyond parameter forms and Dev Mode depth are not there yet. The honest, area-by-area picture is in the [roadmap](ROADMAP.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
+> **Status:** FigCraft is in early alpha. Most of Figma's editor surface exists in some form, and the main menu is almost fully wired ([`docs/parity.md`](docs/parity.md)), but that measures wiring, not behaviour. Multiplayer editing (live cursors are in preview), comments, version history, plugin UIs beyond parameter forms and Dev Mode depth are not there yet. The honest, area-by-area picture is in the [roadmap](ROADMAP.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
 
 ## The Crafting Apps
 

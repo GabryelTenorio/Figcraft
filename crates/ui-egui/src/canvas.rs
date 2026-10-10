@@ -139,6 +139,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         }
     }
     input(app, ui, &resp);
+    crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
     request_render(app, worker, ppp);
     // Every finished render is shown, even when a newer one is already on its way: renders finish
@@ -191,6 +192,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
     crate::comments::draw(app, &painter);
+    crate::live::draw(app, &painter, &ctx);
     crate::comments::popovers(app, &ctx);
     crate::versions::preview_banner(app, &ctx, rect);
     crate::dev_mode::focus_bar(app, &ctx, rect);
@@ -478,7 +480,7 @@ fn stroke(c: Color32, w: f32) -> Stroke {
 }
 
 /// A node's oriented outline in screen space.
-fn node_quad(app: &FigApp, doc: &Document, id: NodeId) -> Option<[Pos2; 4]> {
+pub(crate) fn node_quad(app: &FigApp, doc: &Document, id: NodeId) -> Option<[Pos2; 4]> {
     let n = doc.node(id)?;
     let w = doc.world_transform(id);
     let corners = [Point::new(0.0, 0.0), Point::new(n.width, 0.0), Point::new(n.width, n.height), Point::new(0.0, n.height)];

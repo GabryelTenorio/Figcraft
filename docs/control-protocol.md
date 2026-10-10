@@ -88,7 +88,11 @@ instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 `canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
-the system's accessibility setting turns the interface's animations off.
+the system's accessibility setting turns the interface's animations off. `live` is the live
+session as the window shows it: `status`, `role`, the number of `peers`, who you `follow`, the
+peers whose cursors are drawn on the canvas (`cursorsShown`) and whether the Join dialog is open
+(`joinDialog`); the session itself is `engine.execute {command: "collab.peers"}` (hosting and
+joining are `collab.host` and `collab.join`, see [mcp.md](mcp.md#live-sessions)).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 

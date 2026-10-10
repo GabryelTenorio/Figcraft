@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 figcraft-engine = { workspace = true }
 figcraft-ui-egui = { workspace = true }
+figcraft-collab-net = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }
 
