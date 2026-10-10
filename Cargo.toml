@@ -23,6 +23,7 @@ figcraft-svg = { path = "crates/svg" }
 figcraft-pdf = { path = "crates/pdf" }
 figcraft-format = { path = "crates/format" }
 figcraft-tools = { path = "crates/tools" }
+figcraft-collab = { path = "crates/collab" }
 figcraft-engine = { path = "crates/engine" }
 figcraft-ui-egui = { path = "crates/ui-egui" }
 figcraft-mcp = { path = "crates/mcp" }
@@ -35,6 +36,7 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
 proptest = "1"
 imbl = { version = "7", features = ["serde"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 # rendering / formats
 tiny-skia = "0.12"

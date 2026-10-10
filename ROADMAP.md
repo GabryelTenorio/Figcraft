@@ -233,8 +233,17 @@ dimension measured side by side.
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
    minutes, folded in the panel). Real-time collaboration is designed (`docs/collab-protocol.md`:
-   WebSocket sessions the app can host itself, server-ordered per-property changes, live cursors);
-   multiplayer and plugins are not built yet. 20–50 h.
+   WebSocket sessions the app can host itself, server-ordered per-property changes, live cursors)
+   and its core landed (`crates/collab`, no networking yet): client-scoped node ids, every saved
+   layer field and the document-level data (styles, variables, comments, images…) as synced
+   properties, diffs after a command that cost the size of the edit, fractional sibling positions,
+   a session server that orders and validates batches (cycles, deleted layers, id spaces, sizes)
+   and a client that shows its own edits at once and replays them over others'; derived data
+   (auto layout, instances, bindings) is repaired by the author after concurrent edits; binary
+   messages (a moved layer is 43 bytes, a cursor 23) with a JSON form; a randomized multi-client
+   test over real commands converges. *Left:* the WebSocket transport, hosting and joining from
+   the app, live cursors, per-user undo, reconnect, the browser client and a standalone server;
+   plugins. 20–50 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -381,4 +390,4 @@ Weighted feature depth ≈ **79%** (self-graded, from the table).
 | M5 Prototype & present | ~82% |
 | M6 Interop & dev mode | ~62% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |
-| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | protocol designed |
+| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | core done (ids, change sets, server ordering, convergence); networking next |

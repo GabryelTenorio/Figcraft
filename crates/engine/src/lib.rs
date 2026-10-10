@@ -13,6 +13,7 @@ pub mod arc_handles;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
+pub mod collab;
 pub mod component_codegen;
 pub mod components;
 pub mod devcompare;
@@ -37,6 +38,7 @@ pub mod tools;
 pub mod vectoredit;
 
 pub use cmd::{CommandSpec, all_commands, find_command};
+pub use figcraft_collab;
 pub use figcraft_doc as doc;
 pub use figcraft_svg::looks_like_svg;
 pub use tools::{PointerEvent, PointerKind, ToolId};
@@ -1054,6 +1056,8 @@ mod arc_handles_tests;
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
+#[cfg(test)]
+mod collab_tests;
 #[cfg(test)]
 mod comments_polish_tests;
 #[cfg(test)]

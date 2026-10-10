@@ -12,6 +12,7 @@ const TABLE: &[(&str, u8)] = &[
     ("layout", 2),
     ("text", 2),
     ("pathops", 2),
+    ("collab", 2),
     ("render", 3),
     ("format", 3),
     ("svg", 4),
@@ -58,6 +59,6 @@ pub fn check(root: &std::path::Path) -> bool {
 }
 
 fn same_layer_ok(from: &str, to: &str) -> bool {
-    // Within L0: color uses geom types; within L2: text/layout/pathops are independent.
+    // Within L0: color uses geom types; within L2: text/layout/pathops/collab are independent.
     matches!((from, to), ("figcraft-color", "figcraft-geom") | ("figcraft-render", "figcraft-format"))
 }

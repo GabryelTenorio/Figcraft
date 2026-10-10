@@ -282,10 +282,9 @@ impl Document {
     }
 
     /// Keep [`alloc_id`](Self::alloc_id) above `id` (for a document that reuses another's ids).
+    /// During a collaboration session only ids of this document's own client space count.
     pub fn reserve_ids(&mut self, id: NodeId) {
-        if id.0 >= self.next_id {
-            self.next_id = id.0.saturating_add(1);
-        }
+        self.next_id.reserve(id);
     }
 }
 

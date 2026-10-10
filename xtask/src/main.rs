@@ -58,7 +58,19 @@ fn ci() -> bool {
 }
 
 fn wasm() -> bool {
-    run(cargo().args(["check", "--target", "wasm32-unknown-unknown", "-p", "figcraft-engine", "-p", "figcraft-ui-egui", "-p", "figcraft-web"]))
+    run(cargo().args([
+        "check",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        "figcraft-collab",
+        "-p",
+        "figcraft-engine",
+        "-p",
+        "figcraft-ui-egui",
+        "-p",
+        "figcraft-web",
+    ]))
 }
 
 /// Engine/render timings (`figcraft-cli perf`) and UI frame timings (an ignored test driving the

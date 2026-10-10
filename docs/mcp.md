@@ -477,6 +477,13 @@ closing or saving a version ends the preview first, and `version.list` marks the
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
 
+### Collaboration changes
+
+`collab.diff {against? (undo: the last undoable action, the default | saved: since the last
+save)}` returns `{changes, count, bytes}`: the change batch a live session would send for that edit
+(per-property `create` / `set` / `delete` and document-level changes, see
+`docs/collab-protocol.md`) and its binary size. It changes nothing.
+
 ### Dev Mode
 
 - **Component code:** `inspect.code {id, language: react|swiftui|compose}` on a component, a
