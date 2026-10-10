@@ -235,6 +235,8 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
         "fontFamily" => "FONT_FAMILY",
         "fontStyle" => "FONT_STYLE",
         "stroke" | "strokes/0/color" => "STROKE_COLOR",
+        f if f.starts_with("effects/") && f.ends_with("/color") => "EFFECT_COLOR",
+        f if f.starts_with("effects/") => "EFFECT_FLOAT",
         "fill" | "fills" | "fills/0" | "fills/0/color" => match doc.node(node).map(|n| &n.kind) {
             Some(NodeKind::Text(_)) => "TEXT_FILL",
             Some(k) if k.is_frame_like() => "FRAME_FILL",
