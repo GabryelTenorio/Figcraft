@@ -205,7 +205,25 @@ names; modes chosen on layers inside the screen still win); `{type: "conditional
 "else"). Expressions are `{value: {type: number|string|boolean|color|alias, value}}` (`alias` reads
 a variable) or `{op: {op, args}}` with `add` (text joins when a string is involved), `subtract`,
 `multiply`, `divide`, `equals`, `notEqual`, `less`, `lessOrEqual`, `greater`, `greaterOrEqual`,
-`and`, `or`, `not` and `negate`. Flows `proto.flow.add` / `rename` / `remove`,
+`and`, `or`, `not` and `negate`. Expressions can also be written as text: `expression: "count + 1"`
+on a set variable action, or `expression: "count >= 3 and not done"` on a conditional block, in
+place of `expr` / `condition` (variables by name, `{name}` for any name; numbers, `"text"`,
+`true` / `false`, `#RRGGBB`; `or` / `||`, `and` / `&&`, `not` / `!`, `==` (or `=`), `!=`, `<`,
+`<=`, `>`, `>=`, `+` (joins text), `-`, `*`, `/` and brackets). Text expressions are checked: a
+condition must give true or false and a set variable's expression a value the variable can hold,
+otherwise the command fails with what's wrong (`Something is missing at the end`, `No variable
+\`x\``, `Can't compare a number with text`). Single actions, also inside conditionals, are edited
+with `proto.action.add {id?, index, path?, action}` (→ `{path}`), `proto.action.set {index, path,
+action}`, `proto.action.remove {index, path}` and `proto.action.move {index, path, to}`, where
+`index` is the interaction and `path` the action: `[i]` the interaction's action `i`, `[i, b, j]`
+action `j` of block `b` of the conditional action `i`, and so on (for `add`, where it goes:
+`[i, b, n]` appends to a block with `n` actions; default: after the last action). A conditional's
+blocks: `proto.conditional.addBlock {index, path, else?, expression? | condition?}` adds an else if
+(before the else; by default the first boolean variable equal to its value) or with `else: true`
+the else, `proto.conditional.setCondition {index, path, block, expression | condition}` and
+`proto.conditional.removeBlock {index, path, block}` (removing the if when only an else is left
+removes the whole conditional). Every one is an undo step and applies to all `ids` given (layers
+with the same interactions). Flows `proto.flow.add` / `rename` / `remove`,
 and the device, its rotation and the background `proto.settings {device?, background?,
 rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 16 Pro Max`,
 `Android Compact`, `iPad mini`, `MacBook Air`, `Desktop` or `Custom size`; `rotation` `portrait` or
@@ -219,11 +237,16 @@ in the file) the presented frame is instead resized to the device's screen, or w
 the presenter's window at 100%, and its constraints and auto layout respond as when it is resized
 in the editor (an axis it hugs keeps hugging its content); the file's frames don't change. `proto.present {start?}` plays the prototype full-window and `proto.preview
 {start?}` in a resizable pane over the canvas that follows edits live; `proto.closePreview` closes
-it. `proto.presentOptions {scale?, deviceFrame?}` sets how the full-window presenter sizes the
-prototype (`fit` scales it down to fit, `fitWidth` fills the width, `fill` covers the window,
-`actual` shows it at 100%; what overflows pans) and whether it draws the device; the options are
-kept for later presentations (in the presenter Z cycles them and R restarts). The player's state is
-in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`) when attached, and
+it. `proto.presentOptions {scale?, deviceFrame?, hotspotHints?, inspect?}` sets how the
+full-window presenter sizes the prototype (`fit` scales it down to fit, `fitWidth` fills the width,
+`fill` covers the window, `actual` shows it at 100%; what overflows pans), whether it draws the
+device, whether a click where nothing reacts briefly flashes the screen's hotspots (the layers with
+interactions, on by default; also in the presenter's Options menu) and whether its Inspect panel
+shows the size, colours and typography of the layer under the pointer (also the Inspect button in
+its bar); the options are kept for later presentations (in the presenter Z cycles them and R
+restarts). The player's state is
+in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`, the screen's
+`hotspots` and whether they are flashing, the `inspected` layer) when attached, and
 `ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
 The presenter's Options menu offers Responsive next to the size options (without a device) or
 Responsive / Fixed size (on one), the same `proto.settings {responsive}`; its flow picker lists each

@@ -4,12 +4,13 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::proto::{Action, Direction, Easing, Interaction, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{Action, ConditionalBlock, Direction, Easing, Interaction, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
+use crate::proto_editor::{Cx, Slot, set_action};
 use crate::right::{menu_item, row};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
@@ -81,19 +82,6 @@ fn trigger_summary(t: &Trigger) -> String {
     }
 }
 
-const ACTIONS: [&str; 10] = [
-    "Navigate to",
-    "Change to",
-    "Back",
-    "Scroll to",
-    "Open link",
-    "Open overlay",
-    "Swap overlay",
-    "Close overlay",
-    "Set variable",
-    "Set variable mode",
-];
-
 const TRANSITIONS: [&str; 8] = ["Instant", "Dissolve", "Smart animate", "Move in", "Move out", "Push", "Slide in", "Slide out"];
 
 fn transition_of(label: &str, cur: Transition) -> Transition {
@@ -144,7 +132,7 @@ fn name_of(doc: &Document, id: NodeId) -> String {
 }
 
 /// One-line action summary ("Navigate to Frame 2").
-fn action_summary(doc: &Document, a: &Action) -> String {
+pub(crate) fn action_summary(doc: &Document, a: &Action) -> String {
     let vars = &doc.variables;
     match a {
         Action::OpenUrl { url } if !url.is_empty() => format!("Open link {url}"),
@@ -171,9 +159,20 @@ fn action_summary(doc: &Document, a: &Action) -> String {
     }
 }
 
+/// A variable value as a set variable action stores it.
+pub(crate) fn value_json(v: &VariableValue) -> Value {
+    match v {
+        VariableValue::Color(c) => json!(c.to_css_hex()),
+        VariableValue::Number(n) => json!(n),
+        VariableValue::Boolean(b) => json!(b),
+        VariableValue::String(s) => json!(s),
+        VariableValue::Alias(_) => Value::Null,
+    }
+}
+
 /// A default action of the kind labelled `label` (None when it needs a destination and there is
 /// none).
-fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Option<&Action>) -> Option<Action> {
+pub(crate) fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Option<&Action>) -> Option<Action> {
     let own = doc.top_level_frame(node);
     let frames = frames_for(doc, page);
     let cur_dest = cur.and_then(|a| a.dest()).filter(|d| frames.contains(d));
@@ -197,13 +196,7 @@ fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Optio
         "Close overlay" => Action::CloseOverlay,
         "Set variable" => {
             let v = doc.variables.variables.first()?;
-            let value = match v.values.values().next() {
-                Some(VariableValue::Color(c)) => json!(c.to_css_hex()),
-                Some(VariableValue::Number(n)) => json!(n),
-                Some(VariableValue::Boolean(b)) => json!(b),
-                Some(VariableValue::String(s)) => json!(s),
-                _ => Value::Null,
-            };
+            let value = value_json(&figcraft_engine::cmd::proto_actions::start_value(&doc.variables, v));
             Action::SetVariable { variable: v.id.clone(), value, expr: None }
         }
         "Set variable mode" => {
@@ -212,13 +205,19 @@ fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Optio
             let m = c.modes.get(1).or(c.modes.first())?;
             Action::SetVariableMode { collection: c.id.clone(), mode: m.id.clone() }
         }
+        "Conditional" => Action::Conditional {
+            blocks: vec![ConditionalBlock {
+                condition: Some(figcraft_engine::cmd::proto_actions::default_condition(&doc.variables)),
+                actions: vec![],
+            }],
+        },
         _ => return None,
     })
 }
 
 /// The layers an edit of `node`'s interactions applies to: the whole selection when it includes
 /// `node` and every selected layer has the same interactions, else just `node`.
-fn targets_for(app: &FigApp, node: NodeId) -> Vec<NodeId> {
+pub(crate) fn targets_for(app: &FigApp, node: NodeId) -> Vec<NodeId> {
     let Ok(ds) = app.session.ds() else { return vec![node] };
     let sel = &ds.selection;
     let first = ds.doc.node(node).map(|n| &n.interactions);
@@ -574,7 +573,9 @@ fn interactions(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, nod
 #[allow(clippy::too_many_arguments)]
 fn editor_popover(app: &mut FigApp, ctx: &egui::Context, doc: &Document, page: NodeId, node: NodeId, k: usize, it: &Interaction, at: Pos2) {
     let t = Tokens::get(ctx);
-    let width = 264.0;
+    // Escape in a field (it cancels the edit) doesn't close the editor.
+    let typing = ctx.egui_wants_keyboard_input();
+    let width = 280.0;
     let screen = ctx.content_rect();
     let pos = pos2(at.x - width, at.y.min(screen.max.y - 420.0).max(screen.min.y + 48.0));
     let mut close = false;
@@ -600,22 +601,35 @@ fn editor_popover(app: &mut FigApp, ctx: &egui::Context, doc: &Document, page: N
                     close = true;
                 }
                 widgets::separator(ui);
-                trigger_rows(app, ui, node, k, it);
-                widgets::separator(ui);
-                action_rows(app, ui, doc, page, node, k, it);
-                if !matches!(
-                    it.actions.first(),
-                    Some(Action::OpenUrl { .. } | Action::SetVariable { .. } | Action::SetVariableMode { .. } | Action::CloseOverlay)
-                ) {
+                // Long action lists (conditionals) scroll inside the window. (An area's UI is as tall as
+                // it was last frame: the minimum lets the list grow when an action opens.)
+                let max_h = (screen.max.y - pos.y - 64.0).max(160.0);
+                egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
+                    trigger_rows(app, ui, node, k, it);
                     widgets::separator(ui);
-                    animation_rows(app, ui, node, k, it);
-                }
-                ui.add_space(8.0);
+                    widgets::sublabels(ui, if it.actions.len() > 1 { "Actions" } else { "Action" }, None);
+                    let cx = Cx { doc, page, node, k };
+                    crate::proto_editor::action_list(app, ui, &cx, &it.actions, &[]);
+                    if figcraft_doc::proto::walk(&it.actions).any(animates) {
+                        widgets::separator(ui);
+                        animation_rows(app, ui, node, k, it);
+                    }
+                    ui.add_space(8.0);
+                });
             });
     });
-    if close || (ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !capturing(ctx)) {
+    let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !typing && !capturing(ctx) && !crate::variable_ui::picker_open(ctx);
+    if close || escape {
         open_editor(ctx, None);
     }
+}
+
+/// Whether the action plays an animation (the interaction's transition applies to it).
+fn animates(a: &Action) -> bool {
+    !matches!(
+        a,
+        Action::OpenUrl { .. } | Action::SetVariable { .. } | Action::SetVariableMode { .. } | Action::CloseOverlay | Action::Conditional { .. }
+    )
 }
 
 fn capture_id() -> Id {
@@ -711,6 +725,7 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
     }
 }
 
+/// A destination picker for the action at `slot`: `make` builds the action for the destination.
 #[allow(clippy::too_many_arguments)]
 fn dest_dropdown(
     app: &mut FigApp,
@@ -720,8 +735,7 @@ fn dest_dropdown(
     cur: Option<NodeId>,
     label: &str,
     make: impl Fn(NodeId) -> Action,
-    node: NodeId,
-    k: usize,
+    slot: &Slot,
 ) {
     widgets::sublabels(ui, label, None);
     row(ui, 32.0, |ui| {
@@ -733,7 +747,7 @@ fn dest_dropdown(
                     let n = name_of(doc, *d);
                     let mark = if Some(*d) == cur { format!("✓ {n}") } else { n };
                     if menu_item(ui, &mark, "") {
-                        patch(app, node, k, json!({"action": make(*d)}));
+                        set_action(app, slot, make(*d));
                         ui.close();
                     }
                 }
@@ -742,113 +756,52 @@ fn dest_dropdown(
     });
 }
 
-fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node: NodeId, k: usize, it: &Interaction) {
-    let t = Tokens::get(ui.ctx());
-    let action = it.actions.first().cloned().unwrap_or(Action::Back);
-    widgets::sublabels(ui, "Action", None);
-    row(ui, 32.0, |ui| {
-        let resp = widgets::dropdown(ui, action.label(), ui.available_width(), None);
-        egui::Popup::menu(&resp).show(|ui| {
-            for (i, l) in ACTIONS.iter().enumerate() {
-                if matches!(i, 2 | 4 | 5 | 8) {
-                    ui.separator();
-                }
-                if menu_item(ui, l, "") {
-                    match action_of(l, doc, page, node, Some(&action)) {
-                        Some(a) => patch(app, node, k, json!({"action": a})),
-                        None => app.toast(match *l {
-                            "Change to" => "Change to needs a layer inside a variant",
-                            "Set variable" => "Create a variable first",
-                            "Set variable mode" => "Create a variable collection first",
-                            _ => "There's no destination for that action",
-                        }),
-                    }
-                    ui.close();
-                }
-            }
-        });
-    });
+/// The settings of the action at `slot` (set variable and conditional actions have their own
+/// editors in `proto_editor`).
+pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, slot: &Slot, action: &Action) {
+    let node = slot.node;
     let frames = frames_for(doc, page);
-    match &action {
+    match action {
         Action::Navigate { dest, preserve_scroll } => {
             let (dest, preserve_scroll) = (*dest, *preserve_scroll);
-            dest_dropdown(
-                app,
-                ui,
-                doc,
-                &nav_targets(doc, page),
-                Some(dest),
-                "Destination",
-                |d| Action::Navigate { dest: d, preserve_scroll },
-                node,
-                k,
-            );
+            let mk = |d| Action::Navigate { dest: d, preserve_scroll };
+            dest_dropdown(app, ui, doc, &nav_targets(doc, page), Some(dest), "Destination", mk, slot);
             row(ui, 28.0, |ui| {
                 if widgets::checkbox(ui, preserve_scroll, "Preserve scroll position") {
-                    patch(app, node, k, json!({"action": Action::Navigate { dest, preserve_scroll: !preserve_scroll }}));
+                    set_action(app, slot, Action::Navigate { dest, preserve_scroll: !preserve_scroll });
                 }
             });
         }
-        Action::SwapOverlay { dest } => dest_dropdown(app, ui, doc, &frames, Some(*dest), "Overlay", |d| Action::SwapOverlay { dest: d }, node, k),
+        Action::SwapOverlay { dest } => dest_dropdown(app, ui, doc, &frames, Some(*dest), "Overlay", |d| Action::SwapOverlay { dest: d }, slot),
         Action::ChangeTo { dest } => {
             let vs = variants_for(doc, node);
-            dest_dropdown(app, ui, doc, &vs, Some(*dest), "Variant", |d| Action::ChangeTo { dest: d }, node, k);
+            dest_dropdown(app, ui, doc, &vs, Some(*dest), "Variant", |d| Action::ChangeTo { dest: d }, slot);
         }
         Action::ScrollTo { dest } => {
             let layers: Vec<NodeId> = doc.top_level_frame(node).map(|f| doc.subtree(f).into_iter().skip(1).take(400).collect()).unwrap_or_default();
-            dest_dropdown(app, ui, doc, &layers, Some(*dest), "Scroll to layer", |d| Action::ScrollTo { dest: d }, node, k);
+            dest_dropdown(app, ui, doc, &layers, Some(*dest), "Scroll to layer", |d| Action::ScrollTo { dest: d }, slot);
         }
         Action::OpenUrl { url } => {
             widgets::sublabels(ui, "Link", None);
             row(ui, 32.0, |ui| {
-                if let Some(u) = widgets::text_field(ui, Id::new(("proto_url", node, k)), url, ui.available_width(), "https://")
+                if let Some(u) = widgets::text_field(ui, slot.id("proto_url"), url, ui.available_width(), "https://")
                     && &u != url
                 {
-                    patch(app, node, k, json!({"action": Action::OpenUrl { url: u.trim().to_string() }}));
-                }
-            });
-        }
-        Action::SetVariable { variable, value, expr } => {
-            let vars = doc.variables.variables.clone();
-            widgets::sublabels(ui, "Variable", None);
-            row(ui, 32.0, |ui| {
-                let name = doc.variables.get(variable).map(|v| v.name.clone()).unwrap_or_else(|| "Choose variable".into());
-                let resp = widgets::dropdown(ui, &name, ui.available_width(), None);
-                egui::Popup::menu(&resp).show(|ui| {
-                    for v in &vars {
-                        if menu_item(ui, &v.name, "") {
-                            patch(app, node, k, json!({"action": {"type": "setVariable", "variable": v.id, "value": value, "expr": expr}}));
-                            ui.close();
-                        }
-                    }
-                });
-            });
-            row(ui, 32.0, |ui| {
-                widgets::label(ui, "Value", t.text_secondary);
-                // An expression shows as text; typing a value replaces it.
-                let shown = match (expr, value) {
-                    (Some(e), _) => e.display(&doc.variables),
-                    (None, Value::String(s)) => s.clone(),
-                    (None, Value::Null) => String::new(),
-                    (None, other) => other.to_string(),
-                };
-                if let Some(s) = widgets::text_field(ui, Id::new(("proto_varval", node, k)), &shown, ui.available_width(), "Value") {
-                    let v = serde_json::from_str::<Value>(s.trim()).ok().filter(|v| !v.is_string()).unwrap_or(Value::String(s));
-                    patch(app, node, k, json!({"action": {"type": "setVariable", "variable": variable, "value": v}}));
+                    set_action(app, slot, Action::OpenUrl { url: u.trim().to_string() });
                 }
             });
         }
         Action::OpenOverlay { dest, position, close_on_outside, background } => {
             let (dest, position, close_on_outside, background) = (*dest, *position, *close_on_outside, *background);
             let mk = move |d: NodeId| Action::OpenOverlay { dest: d, position, close_on_outside, background };
-            dest_dropdown(app, ui, doc, &frames, Some(dest), "Overlay", mk, node, k);
+            dest_dropdown(app, ui, doc, &frames, Some(dest), "Overlay", mk, slot);
             widgets::sublabels(ui, "Overlay position", None);
             row(ui, 32.0, |ui| {
                 let resp = widgets::dropdown(ui, position.label(), ui.available_width(), None);
                 egui::Popup::menu(&resp).show(|ui| {
                     for p in OverlayPosition::ALL {
                         if menu_item(ui, p.label(), "") {
-                            patch(app, node, k, json!({"action": Action::OpenOverlay { dest, position: p, close_on_outside, background }}));
+                            set_action(app, slot, Action::OpenOverlay { dest, position: p, close_on_outside, background });
                             ui.close();
                         }
                     }
@@ -856,37 +809,31 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
             });
             row(ui, 28.0, |ui| {
                 if widgets::checkbox(ui, close_on_outside, "Close when clicking outside") {
-                    patch(app, node, k, json!({"action": Action::OpenOverlay { dest, position, close_on_outside: !close_on_outside, background }}));
+                    set_action(app, slot, Action::OpenOverlay { dest, position, close_on_outside: !close_on_outside, background });
                 }
             });
             row(ui, 28.0, |ui| {
                 if widgets::checkbox(ui, background.is_some(), "Add background behind overlay") {
                     let bg = if background.is_some() { None } else { Some(figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25)) };
-                    patch(app, node, k, json!({"action": Action::OpenOverlay { dest, position, close_on_outside, background: bg }}));
+                    set_action(app, slot, Action::OpenOverlay { dest, position, close_on_outside, background: bg });
                 }
             });
             if let Some(bg) = background {
                 row(ui, 32.0, |ui| {
                     widgets::swatch(ui, &Paint::solid(bg), 16.0);
-                    if let Some(h) = widgets::text_field(ui, Id::new(("proto_ovbg", node, k)), &bg.to_hex(), 96.0, "")
+                    if let Some(h) = widgets::text_field(ui, slot.id("proto_ovbg"), &bg.to_hex(), 96.0, "")
                         && let Some(c) = figcraft_color::Color::from_hex(&h)
                     {
-                        patch(app, node, k, json!({"action": Action::OpenOverlay { dest, position, close_on_outside, background: Some(c) }}));
+                        set_action(app, slot, Action::OpenOverlay { dest, position, close_on_outside, background: Some(c) });
                     }
-                    let mut alpha = (bg.a * 100.0).round();
-                    if let Some(e) = widgets::number_field(ui, Id::new(("proto_ovbg_a", node, k)), Lead::None, Some(f64::from(alpha)), "%", 64.0, 1.0)
-                    {
+                    let alpha = (bg.a * 100.0).round();
+                    if let Some(e) = widgets::number_field(ui, slot.id("proto_ovbg_a"), Lead::None, Some(f64::from(alpha)), "%", 64.0, 1.0) {
                         let v = match e {
                             FieldEdit::Set(v) | FieldEdit::Scrub(v, _) => v,
                         };
                         if v.is_finite() {
-                            alpha = v.clamp(0.0, 100.0) as f32;
-                            patch(
-                                app,
-                                node,
-                                k,
-                                json!({"action": Action::OpenOverlay { dest, position, close_on_outside, background: Some(bg.with_alpha(alpha / 100.0)) }}),
-                            );
+                            let a = v.clamp(0.0, 100.0) as f32 / 100.0;
+                            set_action(app, slot, Action::OpenOverlay { dest, position, close_on_outside, background: Some(bg.with_alpha(a)) });
                         }
                     }
                 });
@@ -903,7 +850,7 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                         if menu_item(ui, &c.name, "")
                             && let Some(m) = c.modes.first()
                         {
-                            patch(app, node, k, json!({"action": Action::SetVariableMode { collection: c.id.clone(), mode: m.id.clone() }}));
+                            set_action(app, slot, Action::SetVariableMode { collection: c.id.clone(), mode: m.id.clone() });
                             ui.close();
                         }
                     }
@@ -917,30 +864,15 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                 egui::Popup::menu(&resp).show(|ui| {
                     for m in modes {
                         if menu_item(ui, &m.name, "") {
-                            patch(app, node, k, json!({"action": Action::SetVariableMode { collection: collection.clone(), mode: m.id.clone() }}));
+                            set_action(app, slot, Action::SetVariableMode { collection: collection.clone(), mode: m.id.clone() });
                             ui.close();
                         }
                     }
                 });
             });
         }
-        Action::Conditional { blocks } => {
-            // Read-only: the branches and what each runs.
-            for (i, b) in blocks.iter().enumerate() {
-                let head = match (&b.condition, i) {
-                    (Some(c), 0) => format!("If {}", c.display(&doc.variables)),
-                    (Some(c), _) => format!("Else if {}", c.display(&doc.variables)),
-                    (None, _) => "Else".to_string(),
-                };
-                widgets::sublabels(ui, &head, None);
-                let lines: Vec<String> =
-                    if b.actions.is_empty() { vec!["Nothing".to_string()] } else { b.actions.iter().map(|a| action_summary(doc, a)).collect() };
-                for l in lines {
-                    row(ui, 24.0, |ui| widgets::label(ui, &l, t.text_secondary));
-                }
-            }
-        }
-        Action::Back | Action::CloseOverlay => {}
+        // Edited by `proto_editor`; Back and Close overlay have no settings.
+        Action::SetVariable { .. } | Action::Conditional { .. } | Action::Back | Action::CloseOverlay => {}
     }
 }
 
