@@ -58,7 +58,10 @@ fn scene(cut_sensitive: bool) -> Scene {
         let inner = d.create(page, NodeKind::Rectangle, "Inner", 180.0, 150.0, 70.0, 50.0).unwrap();
         solid(d.get_mut(inner).unwrap(), "FFFFFF");
         d.get_mut(inner).unwrap().effects.push(Effect::inner_shadow());
-        d.get_mut(inner).unwrap().effects.push(Effect { kind: EffectKind::Noise { size: 1.0, density: 0.3, color: Color::BLACK }, visible: true });
+        d.get_mut(inner).unwrap().effects.push(Effect {
+            kind: EffectKind::Noise(figcraft_doc::Noise { size: 1.0, density: 0.3, color: Color::BLACK, ..Default::default() }),
+            visible: true,
+        });
         let glass = d.create(page, NodeKind::Rectangle, "Glass", 120.0, 280.0, 120.0, 40.0).unwrap();
         d.get_mut(glass).unwrap().fills = vec![Paint::solid(Color::new(1.0, 1.0, 1.0, 0.3))];
         d.get_mut(glass).unwrap().effects.push(Effect { kind: EffectKind::BackgroundBlur { radius: 8.0 }, visible: true });

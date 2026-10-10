@@ -237,6 +237,21 @@ pub fn specs() -> Vec<CommandSpec> {
                 })
             }
         ),
+        spec!(
+            "text.preview",
+            "Preview text change",
+            "{command: style.apply|library.applyStyle|text.setVariations|text.style, params}  shows what the command would do on the canvas without an undo step (a hovered text style or named instance, a dragged axis slider), in place of an earlier preview; text.endPreview or any other command ends it, so running the command for real commits it as one undo step",
+            false,
+            |s, p| {
+                let c = req_string("text.preview", p, "command")?;
+                let params = get(p, "params").cloned().unwrap_or_else(|| json!({}));
+                crate::textpreview::show(s, &c, &params)?;
+                Ok(json!({"previewing": crate::textpreview::active(s)}))
+            }
+        ),
+        spec!("text.endPreview", "End text preview", "{}  puts the document back as it was before text.preview → {ended}", false, |s, _| {
+            Ok(json!({"ended": crate::textpreview::end(s)}))
+        }),
         spec!("text.set", "Set text", "{id?, characters}", true, |s, p| {
             let c = string(p, "characters").or_else(|| string(p, "text")).ok_or_else(|| bad("text.set", "`characters` required"))?;
             let ids = req_targets("text.set", s, p)?;

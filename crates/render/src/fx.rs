@@ -180,33 +180,6 @@ pub fn mask_by(p: &mut Pixmap, m: &Pixmap, invert: bool) {
     }
 }
 
-/// Deterministic per-pixel noise (hash), for the Noise effect.
-pub fn noise(p: &mut Pixmap, shape: &Pixmap, density: f64, color: [f32; 4], seed: u32, scale: f64) {
-    let w = p.width() as usize;
-    let cell = scale.max(0.5);
-    let density = density.clamp(0.0, 1.0);
-    for (i, (px, sp)) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().zip(shape.data().chunks_exact(4)).enumerate() {
-        let sa = f32::from(sp.get(3).copied().unwrap_or(0)) / 255.0;
-        if sa <= 0.0 {
-            continue;
-        }
-        let (x, y) = ((i % w) as f64 / cell, (i / w.max(1)) as f64 / cell);
-        let mut hsh = (x as u32).wrapping_mul(73_856_093) ^ (y as u32).wrapping_mul(19_349_663) ^ seed.wrapping_mul(83_492_791);
-        hsh ^= hsh >> 13;
-        hsh = hsh.wrapping_mul(0x5bd1_e995);
-        hsh ^= hsh >> 15;
-        let v = f64::from(hsh & 0xffff) / 65535.0;
-        if v < density {
-            let a = color[3] * sa;
-            let src = [color[0] * a, color[1] * a, color[2] * a, a];
-            for (c, s) in px.iter_mut().zip(src) {
-                let d = f32::from(*c) / 255.0;
-                *c = ((s + d * (1.0 - a)) * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

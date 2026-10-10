@@ -154,7 +154,7 @@ fn exports_never_use_lod() {
     crate::render_nodes_into(&d, &[card], &v, &mut exact);
     assert_eq!(png.data(), exact.data());
     let mut preview = Pixmap::new(v.width, v.height).unwrap();
-    let ctx = crate::draw::Ctx { doc: &d, scale, outline_mode: false, skip: &[], lod: true };
+    let ctx = crate::draw::Ctx { doc: &d, scale, outline_mode: false, skip: &[], lod: true, under: None };
     let parent = d.world_transform(p);
     crate::draw::draw_node(&ctx, &mut preview, card, v.transform() * parent, 0);
     assert_ne!(png.data(), preview.data(), "the preview of the same area is approximated");
@@ -193,9 +193,10 @@ fn images_and_masks_take_the_exact_path() {
     let img = image::RgbaImage::from_fn(8, 8, |x, y| image::Rgba([(x * 30) as u8, (y * 30) as u8, 90, 255]));
     let mut bytes = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
-    d.images.insert("img".into(), ImageData { bytes: Arc::new(bytes), width: 8, height: 8 });
+    // Its own id: image ids key the shared decode cache (see band_tests).
+    d.images.insert("lod-tests-photo".into(), ImageData { bytes: Arc::new(bytes), width: 8, height: 8 });
     let photo = d.create(p, NodeKind::Rectangle, "Photo", 0.0, 0.0, 20.0, 20.0).unwrap();
-    d.get_mut(photo).unwrap().fills = vec![Paint::image("img", ImageScaleMode::Fill)];
+    d.get_mut(photo).unwrap().fills = vec![Paint::image("lod-tests-photo", ImageScaleMode::Fill)];
     let group = d.create(p, NodeKind::Group, "Masked", 40.0, 0.0, 20.0, 20.0).unwrap();
     let mask = d.create(group, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "Mask", 0.0, 0.0, 20.0, 20.0).unwrap();
     d.get_mut(mask).unwrap().is_mask = true;

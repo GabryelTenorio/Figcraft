@@ -1,14 +1,18 @@
-//! The style picker: the popover a Fill, Stroke, Effects or Layout grid section's Styles button
-//! opens, laid out like the variable picker. Search; styles grouped by the folders of their
-//! `/`-separated names (folders collapse); a list or, for colour styles, a grid of swatches. Click
-//! applies a style; its edit button (or a right-click) edits the name, description and values; `+`
-//! creates a style from the selection's current values; the detach button unlinks it. Colour slots
-//! also list colour variables to bind (this file's, then each enabled library's).
+//! The style browser: the popover a Fill, Stroke, Effects, Layout grid or Typography section's
+//! Styles button opens, laid out like the variable picker. Search; this file's styles, then each
+//! enabled library's published ones, grouped by the folders of their `/`-separated names (folders
+//! collapse); a list or, for colour and text styles, a grid. Text styles show in their own font,
+//! and while the pointer is over one the canvas shows it on the selected text (or the selected
+//! chars of the text being edited). Click applies a style (a library's is copied in, linked); a
+//! local style's edit button (or a right-click) edits its name, description and values; `+`
+//! creates a style from the selection (for text, the selected chars); the detach button unlinks
+//! it. Colour slots also list colour variables to bind (this file's, then each enabled library's).
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::{Document, GridKind, Node, NodeId, Style, StyleKind, VariableType};
-use serde_json::json;
+use figcraft_doc::{Document, GridKind, Node, NodeId, PublishedLibrary, Style, StyleKind, TextStyle, VariableType, trim_num};
+use figcraft_engine::library;
+use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::colorpicker::PickerTarget;
@@ -20,8 +24,14 @@ use crate::widgets;
 const W: f32 = 240.0;
 /// Height of a list row.
 const ROW_H: f32 = 26.0;
+/// Height of a text style's list row (its name in its own font).
+const TEXT_ROW_H: f32 = 32.0;
 /// Side of a swatch in the grid view.
 const SWATCH: f32 = 24.0;
+/// A text style's tile in the grid view.
+const TILE: egui::Vec2 = egui::vec2(54.0, 44.0);
+/// Largest size a text style's name previews at in the list (the grid's "Ag" goes to 24).
+const LIST_PREVIEW_MAX: f64 = 16.0;
 
 /// A style slot on a layer: what a style picker lists and what a style chip shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +40,7 @@ pub enum StyleSlot {
     Stroke,
     Effect,
     Grid,
+    Text,
 }
 
 impl StyleSlot {
@@ -39,6 +50,7 @@ impl StyleSlot {
             "stroke" => Some(StyleSlot::Stroke),
             "effect" => Some(StyleSlot::Effect),
             "grid" => Some(StyleSlot::Grid),
+            "text" => Some(StyleSlot::Text),
             _ => None,
         }
     }
@@ -50,6 +62,7 @@ impl StyleSlot {
             StyleSlot::Stroke => "stroke",
             StyleSlot::Effect => "effect",
             StyleSlot::Grid => "grid",
+            StyleSlot::Text => "text",
         }
     }
 
@@ -59,6 +72,7 @@ impl StyleSlot {
             StyleSlot::Stroke => n.styles.stroke.clone(),
             StyleSlot::Effect => n.styles.effect.clone(),
             StyleSlot::Grid => n.styles.grid.clone(),
+            StyleSlot::Text => n.styles.text.clone(),
         }
     }
 
@@ -66,21 +80,29 @@ impl StyleSlot {
         matches!(self, StyleSlot::Fill | StyleSlot::Stroke)
     }
 
+    /// Whether the slot's styles also show as a grid (swatches, "Ag" tiles).
+    fn has_grid(self) -> bool {
+        self.paints() || self == StyleSlot::Text
+    }
+
     fn title(self) -> &'static str {
         match self {
             StyleSlot::Fill | StyleSlot::Stroke => "Color styles",
             StyleSlot::Effect => "Effect styles",
             StyleSlot::Grid => "Grid styles",
+            StyleSlot::Text => "Text styles",
         }
     }
 
-    /// `style.create {type}` for this slot (taken from the layer's fills, strokes, effects or grids).
+    /// `style.create {type}` for this slot (taken from the layer's fills, strokes, effects, grids
+    /// or text).
     fn create_type(self) -> &'static str {
         match self {
             StyleSlot::Fill => "paint",
             StyleSlot::Stroke => "stroke",
             StyleSlot::Effect => "effect",
             StyleSlot::Grid => "grid",
+            StyleSlot::Text => "text",
         }
     }
 
@@ -90,6 +112,7 @@ impl StyleSlot {
             StyleSlot::Fill | StyleSlot::Stroke => "Color",
             StyleSlot::Effect => "Effect",
             StyleSlot::Grid => "Grid",
+            StyleSlot::Text => "Text",
         }
     }
 
@@ -99,11 +122,16 @@ impl StyleSlot {
             (StyleKind::Paint { .. }, StyleSlot::Fill | StyleSlot::Stroke)
                 | (StyleKind::Effect { .. }, StyleSlot::Effect)
                 | (StyleKind::Grid { .. }, StyleSlot::Grid)
+                | (StyleKind::Text { .. }, StyleSlot::Text)
         )
     }
 
     fn icon(self) -> Icon {
-        if self == StyleSlot::Grid { Icon::Grid } else { Icon::Effects }
+        match self {
+            StyleSlot::Grid => Icon::Grid,
+            StyleSlot::Text => Icon::Text,
+            _ => Icon::Effects,
+        }
     }
 }
 
@@ -151,15 +179,33 @@ fn editing(s: &Style) -> Editing {
     Editing { id: s.id.clone(), name: s.name.clone(), description: s.description.clone(), focus: false }
 }
 
-/// The style `slot` of every one of `ids` is linked to, if they agree.
-fn linked_style(doc: &Document, ids: &[NodeId], slot: StyleSlot) -> Option<String> {
-    crate::right::common(doc, ids, |n| slot.linked(n)).flatten()
+/// The style `slot` of `ids` links to: `Some(Some(id))` one style, `Some(None)` none, None when
+/// they differ. Text goes by chars: the selected chars of the text being edited, else every char.
+fn link_of(app: &FigApp, doc: &Document, ids: &[NodeId], slot: StyleSlot) -> Option<Option<String>> {
+    if slot != StyleSlot::Text {
+        return crate::right::common(doc, ids, |n| slot.linked(n));
+    }
+    let range = figcraft_engine::textedit::selected_range(&app.session);
+    let styles = crate::typography::target_styles(doc, ids, range);
+    let mut links = styles.iter().map(|s| s.style_id.clone());
+    let Some(first) = links.next() else { return Some(None) };
+    links.all(|l| l == first).then_some(first)
 }
 
-/// The applied style's name (click opens the picker) with a detach button.
+/// The text style the targeted chars of `ids` link to (see [`link_of`]).
+pub fn text_link(app: &FigApp, doc: &Document, ids: &[NodeId]) -> Option<Option<String>> {
+    link_of(app, doc, ids, StyleSlot::Text)
+}
+
+/// The applied style's name (click opens the picker) with a detach button; for text, "Mixed"
+/// when the chars link to different styles (or some to none).
 pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot: StyleSlot) {
     let t = Tokens::get(ui.ctx());
-    let Some(name) = linked_style(doc, ids, slot).and_then(|s| doc.style(&s).map(|st| st.name.clone())) else { return };
+    let (name, mixed) = match link_of(app, doc, ids, slot) {
+        Some(Some(id)) => (doc.style(&id).map_or_else(|| "Missing style".to_string(), |st| st.name.clone()), false),
+        None if slot == StyleSlot::Text => ("Mixed".to_string(), true),
+        _ => return,
+    };
     let mut open_it = false;
     crate::right::row(ui, 32.0, |ui| {
         let w = (ui.available_width() - 32.0).max(40.0);
@@ -167,11 +213,14 @@ pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot:
         if resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), Icon::Styles, t.icon_secondary);
-        let galley = ui.painter().layout(name.clone(), regular(11.0), t.text, r.width() - 32.0);
-        ui.painter().galley(pos2(r.min.x + 26.0, r.center().y - galley.size().y / 2.0), galley, t.text);
-        open_it = resp.on_hover_text("Change style").clicked();
-        if icons::button(ui, Icon::Detach, 24.0, false, "Detach style").clicked() {
+        let icon = if slot == StyleSlot::Text { Icon::Text } else { Icon::Styles };
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), icon, t.icon_secondary);
+        let col = if mixed { t.text_secondary } else { t.text };
+        crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 26.0, r.center().y), &name, regular(11.0), col, r.width() - 32.0);
+        let tip = if mixed { "The selection uses several text styles: click to apply one" } else { "Change style" };
+        open_it = resp.on_hover_text(tip).clicked();
+        let detach = if mixed { "Detach styles" } else { "Detach style" };
+        if icons::button(ui, Icon::Detach, 24.0, false, detach).clicked() {
             app.run("style.detach", json!({"ids": ids, "which": slot.key()}));
         }
     });
@@ -180,19 +229,58 @@ pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot:
     }
 }
 
+/// A listed style: by its library's id (None: this file's) and its id there.
+#[derive(Clone, Debug, PartialEq)]
+struct Key {
+    library: Option<String>,
+    style: String,
+}
+
+impl Key {
+    /// What `local` (a style in this document) is: a library style's copy, or this file's own.
+    fn of_local(doc: &Document, local: &str) -> Key {
+        match doc.libraries.style_import(local) {
+            Some(r) => Key { library: Some(r.library.clone()), style: r.key.clone() },
+            None => Key { library: None, style: local.to_string() },
+        }
+    }
+
+    /// The command (and its params) applying this style to `ids`.
+    fn apply(&self, ids: &[NodeId], slot: StyleSlot) -> (&'static str, Value) {
+        let mut q = match &self.library {
+            Some(lib) => json!({"library": lib, "style": self.style, "ids": ids}),
+            None => json!({"ids": ids, "style": self.style}),
+        };
+        if slot.paints() {
+            q["target"] = json!(slot.key());
+        }
+        (if self.library.is_some() { "library.applyStyle" } else { "style.apply" }, q)
+    }
+}
+
 /// What the user asked the picker to do this frame.
 enum Act {
-    Apply(String),
+    Apply(Key),
     Bind(crate::variable_ui::Pick),
     Create,
     Detach,
     Edit(String),
     Back,
     EditPaint(String, usize),
+    /// A text style's new definition (from the editor's fields).
+    SetText(String, TextStyle),
     UpdateFromSelection(String),
     Delete(String),
     ToggleFolder(String),
     ToggleView,
+}
+
+/// What a listing reports besides acts: the style under the pointer, and the preview budget.
+struct Frame {
+    act: Option<Act>,
+    hover: Option<Key>,
+    /// Text previews still allowed to render this frame.
+    budget: usize,
 }
 
 /// An icon button on the dark popover.
@@ -238,6 +326,48 @@ fn next_name(doc: &Document, base: &str) -> String {
     (1..).map(|n| format!("{base} {n}")).find(|n| doc.styles.iter().all(|s| &s.name != n)).unwrap_or_else(|| base.to_string())
 }
 
+/// Styles by folder, folders in order of first appearance, top-level styles first.
+fn by_folder<'a>(styles: impl Iterator<Item = &'a Style>) -> Vec<(&'a str, Vec<&'a Style>)> {
+    let mut groups: Vec<(&str, Vec<&Style>)> = Vec::new();
+    for s in styles {
+        let f = folder(&s.name);
+        match groups.iter_mut().find(|(g, _)| *g == f) {
+            Some((_, list)) => list.push(s),
+            None => groups.push((f, vec![s])),
+        }
+    }
+    groups.sort_by_key(|(f, _)| !f.is_empty());
+    groups
+}
+
+/// A text style's definition, if `s` is one.
+fn text_def(s: &Style) -> Option<&TextStyle> {
+    match &s.kind {
+        StyleKind::Text { style } => Some(style),
+        _ => None,
+    }
+}
+
+/// "32/Auto": a text style's size and line height.
+fn text_meta(def: &TextStyle) -> String {
+    format!("{}/{}", trim_num(def.font_size), def.line_height.label())
+}
+
+/// A text style's sample (`text` in its own font at most `max` big), painted from `left_center`;
+/// falls back to plain UI text until the preview renders (or when the font is missing).
+fn text_sample(ui: &Ui, def: &TextStyle, text: &str, max: f64, left_center: egui::Pos2, max_w: f32, max_h: f32, budget: &mut usize) {
+    let t = Tokens::get(ui.ctx());
+    let shown = TextStyle { font_size: def.font_size.clamp(6.0, max), ..def.clone() };
+    match crate::font_preview::texture(ui.ctx(), &shown, text, budget) {
+        Some(tex) => {
+            crate::font_preview::paint(ui.painter(), &tex, left_center, max_w, max_h, t.menu_text);
+        }
+        None => {
+            crate::bidi::paint_name(ui.painter(), left_center, text, regular(11.0), t.menu_text, max_w);
+        }
+    }
+}
+
 /// Draw a style's preview (its first paint, or the slot's icon) centred in `r`.
 fn preview(ui: &Ui, r: Rect, s: &Style, slot: StyleSlot) {
     let t = Tokens::get(ui.ctx());
@@ -250,68 +380,133 @@ fn preview(ui: &Ui, r: Rect, s: &Style, slot: StyleSlot) {
     }
 }
 
-/// One style in the list: preview, name, a check when applied and an edit button on hover.
-fn style_row(ui: &mut Ui, s: &Style, slot: StyleSlot, applied: bool, editable: bool, act: &mut Option<Act>) {
+/// Click, right-click and hover on a listed style become acts.
+fn react(resp: &Response, key: Key, editable: bool, out: &mut Frame) {
+    if resp.hovered() {
+        out.hover = Some(key.clone());
+    }
+    if resp.secondary_clicked() && editable {
+        out.act = Some(Act::Edit(key.style));
+    } else if resp.clicked() {
+        out.act = Some(Act::Apply(key));
+    }
+}
+
+/// One style in the list: preview (a text style: its name in its own font and its size), name,
+/// a check when applied and an edit button on hover.
+fn style_row(ui: &mut Ui, s: &Style, key: Key, slot: StyleSlot, applied: bool, editable: bool, out: &mut Frame) {
     let t = Tokens::get(ui.ctx());
-    let (r, resp) = ui.allocate_exact_size(vec2(W, ROW_H), Sense::click());
+    let h = if slot == StyleSlot::Text { TEXT_ROW_H } else { ROW_H };
+    let (r, resp) = ui.allocate_exact_size(vec2(W, h), Sense::click());
     let edit_r = Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), vec2(22.0, 22.0));
     let hovered = resp.hovered() || ui.rect_contains_pointer(edit_r);
     if hovered {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
-    preview(ui, Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), s, slot);
-    let galley = ui.painter().layout(leaf(&s.name).to_string(), regular(11.0), t.menu_text, W - 64.0);
-    ui.painter().galley(pos2(r.min.x + 26.0, r.center().y - galley.size().y / 2.0), galley, t.menu_text);
+    match text_def(s) {
+        Some(def) => {
+            let meta = text_meta(def);
+            let meta_w = ui.painter().layout_no_wrap(meta.clone(), regular(10.0), t.menu_dim).size().x;
+            ui.painter().text(
+                pos2(edit_r.min.x - 4.0, r.center().y),
+                Align2::RIGHT_CENTER,
+                meta,
+                regular(10.0),
+                if hovered { t.menu_text } else { t.menu_dim },
+            );
+            let max_w = edit_r.min.x - 12.0 - meta_w - (r.min.x + 8.0);
+            text_sample(ui, def, leaf(&s.name), LIST_PREVIEW_MAX, pos2(r.min.x + 8.0, r.center().y), max_w, h - 4.0, &mut out.budget);
+        }
+        None => {
+            preview(ui, Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), s, slot);
+            crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 26.0, r.center().y), leaf(&s.name), regular(11.0), t.menu_text, W - 64.0);
+        }
+    }
     if hovered && editable {
         if menu_icon(ui, edit_r, Icon::Adjust, "Edit style", false).clicked() {
-            *act = Some(Act::Edit(s.id.clone()));
+            out.act = Some(Act::Edit(s.id.clone()));
             return;
         }
     } else if applied {
         icons::paint(ui.painter(), edit_r.shrink(5.0), Icon::Check, t.menu_text);
     }
-    let resp = if s.description.is_empty() { resp } else { resp.on_hover_text(&s.description) };
-    if resp.secondary_clicked() && editable {
-        *act = Some(Act::Edit(s.id.clone()));
-    } else if resp.clicked() {
-        *act = Some(Act::Apply(s.id.clone()));
-    }
+    let tip = match (s.description.is_empty(), text_def(s)) {
+        (true, None) => None,
+        (true, Some(def)) => Some(format!("{}\n{} {} · {}", s.name, def.font_family, def.font_style, text_meta(def))),
+        (false, _) => Some(s.description.clone()),
+    };
+    let resp = match tip {
+        Some(tip) => resp.on_hover_text(tip),
+        None => resp,
+    };
+    react(&resp, key, editable, out);
 }
 
-/// Colour styles as a grid of swatches (name on hover).
-fn swatch_grid(ui: &mut Ui, list: &[&Style], applied: Option<&str>, editable: impl Fn(&str) -> bool, act: &mut Option<Act>) {
+/// Colour styles as swatches and text styles as "Ag" tiles in their own font (names on hover).
+fn style_grid(ui: &mut Ui, list: &[(&Style, Key)], applied: Option<&Key>, editable: impl Fn(&Key) -> bool, out: &mut Frame) {
     let t = Tokens::get(ui.ctx());
-    let per_row = ((W - 8.0 + 6.0) / (SWATCH + 6.0)).floor().max(1.0) as usize;
+    let text = list.first().is_some_and(|(s, _)| text_def(s).is_some());
+    let cell = if text { TILE } else { vec2(SWATCH, SWATCH) };
+    let per_row = ((W - 8.0 + 6.0) / (cell.x + 6.0)).floor().max(1.0) as usize;
     for chunk in list.chunks(per_row) {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             ui.spacing_mut().item_spacing.x = 6.0;
-            for s in chunk {
-                let (r, resp) = ui.allocate_exact_size(vec2(SWATCH, SWATCH), Sense::click());
-                preview(ui, r, s, StyleSlot::Fill);
-                if applied == Some(s.id.as_str()) {
-                    ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(4), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
-                } else if resp.hovered() {
+            for (s, key) in chunk {
+                let (r, resp) = ui.allocate_exact_size(cell, Sense::click());
+                match text_def(s) {
+                    Some(def) => {
+                        let fill = if resp.hovered() { t.menu_hover } else { Color32::from_white_alpha(14) };
+                        ui.painter().rect_filled(r, CornerRadius::same(5), fill);
+                        let sample_w = ui.painter().layout_no_wrap("Ag".into(), regular(18.0), t.menu_text).size().x;
+                        text_sample(
+                            ui,
+                            def,
+                            "Ag",
+                            24.0,
+                            pos2(r.center().x - sample_w / 2.0, r.center().y),
+                            r.width() - 6.0,
+                            r.height() - 4.0,
+                            &mut out.budget,
+                        );
+                    }
+                    None => preview(ui, r, s, StyleSlot::Fill),
+                }
+                if applied == Some(key) {
+                    ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(5), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+                } else if resp.hovered() && !text {
                     ui.painter().rect_stroke(r.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, t.menu_text), egui::StrokeKind::Inside);
                 }
-                let resp = resp.on_hover_text(&s.name);
-                if resp.secondary_clicked() && editable(&s.id) {
-                    *act = Some(Act::Edit(s.id.clone()));
-                } else if resp.clicked() {
-                    *act = Some(Act::Apply(s.id.clone()));
-                }
+                let tip = match text_def(s) {
+                    Some(def) => format!("{}\n{} {} · {}", s.name, def.font_family, def.font_style, text_meta(def)),
+                    None => s.name.clone(),
+                };
+                let resp = resp.on_hover_text(tip);
+                react(&resp, key.clone(), editable(key), out);
             }
         });
         ui.add_space(2.0);
     }
 }
 
-/// The style list: header, search, folders of styles and (colour slots) colour variables.
-fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut Option<Act>) {
+/// The styles a source offers (this file's, or a library's published ones) that the slot holds
+/// and the search matches.
+fn offered<'a>(doc: &'a Document, lib: Option<&'a PublishedLibrary>, slot: StyleSlot, q: &str) -> Vec<&'a Style> {
+    let matches = |s: &&Style| slot.holds(&s.kind) && (q.is_empty() || s.name.to_lowercase().contains(q));
+    match lib {
+        Some(l) => l.doc.styles.iter().filter(|s| l.manifest.style(&s.id).is_some_and(|x| x.published)).filter(matches).collect(),
+        None => library::local_styles(doc).filter(matches).collect(),
+    }
+}
+
+/// The style list: header, search, this file's and the libraries' styles by folder, and (colour
+/// slots) colour variables.
+fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
     let t = Tokens::get(ui.ctx());
     let slot = p.slot;
-    let applied = linked_style(doc, &p.ids, slot);
-    let grid = slot.paints() && app.ui.style_grid;
+    let link = link_of(app, doc, &p.ids, slot);
+    let applied = link.clone().flatten().map(|id| Key::of_local(doc, &id));
+    let grid = slot.has_grid() && app.ui.style_grid;
     // Header: title, then view toggle, detach and create.
     let (hr, _) = ui.allocate_exact_size(vec2(W, 24.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + 2.0, hr.center().y), Align2::LEFT_CENTER, slot.title(), semibold(11.0), t.menu_text);
@@ -321,16 +516,17 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut 
         x -= 26.0;
         r
     };
-    if menu_icon(ui, slot_rect(), Icon::Plus, "Create style", false).clicked() {
-        *act = Some(Act::Create);
+    let create_tip = if slot == StyleSlot::Text { "Create style from the selected text" } else { "Create style" };
+    if menu_icon(ui, slot_rect(), Icon::Plus, create_tip, false).clicked() {
+        out.act = Some(Act::Create);
     }
-    if applied.is_some() && menu_icon(ui, slot_rect(), Icon::Detach, "Detach style", false).clicked() {
-        *act = Some(Act::Detach);
+    if link != Some(None) && menu_icon(ui, slot_rect(), Icon::Detach, "Detach style", false).clicked() {
+        out.act = Some(Act::Detach);
     }
-    if slot.paints() {
+    if slot.has_grid() {
         let (icon, tip) = if grid { (Icon::ViewList, "Show as list") } else { (Icon::ViewGrid, "Show as grid") };
         if menu_icon(ui, slot_rect(), icon, tip, false).clicked() {
-            *act = Some(Act::ToggleView);
+            out.act = Some(Act::ToggleView);
         }
     }
     ui.add_space(4.0);
@@ -340,52 +536,75 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut 
     }
     ui.add_space(4.0);
     let q = p.query.trim().to_lowercase();
-    let matches = |name: &str| q.is_empty() || name.to_lowercase().contains(&q);
-    // Styles by folder, folders in order of first appearance.
-    let mut groups: Vec<(&str, Vec<&Style>)> = Vec::new();
-    for s in doc.styles.iter().filter(|s| slot.holds(&s.kind) && matches(&s.name)) {
-        let f = folder(&s.name);
-        match groups.iter_mut().find(|(g, _)| *g == f) {
-            Some((_, list)) => list.push(s),
-            None => groups.push((f, vec![s])),
+    let libs = crate::variable_ui::libraries(app, doc);
+    let mut sources: Vec<(Option<&PublishedLibrary>, Vec<&Style>)> = vec![(None, offered(doc, None, slot, &q))];
+    for l in &libs {
+        let list = offered(doc, Some(l), slot, &q);
+        if !list.is_empty() {
+            sources.push((Some(l.as_ref()), list));
         }
     }
-    groups.sort_by_key(|(f, _)| !f.is_empty());
-    let editable = |id: &str| !figcraft_engine::library::is_remote_style(doc, id);
-    let libs = if slot.paints() { crate::variable_ui::libraries(app, doc) } else { Vec::new() };
-    let colors =
-        if slot.paints() { crate::variable_ui::groups(doc, &libs, |_, v| v.kind == VariableType::Color && matches(&v.name)) } else { Vec::new() };
+    let colors = if slot.paints() {
+        crate::variable_ui::groups(doc, &libs, |_, v| v.kind == VariableType::Color && (q.is_empty() || v.name.to_lowercase().contains(&q)))
+    } else {
+        Vec::new()
+    };
     egui::ScrollArea::vertical().id_salt("style_picker_scroll").max_height(320.0).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        if groups.is_empty() {
-            let any = doc.styles.iter().any(|s| slot.holds(&s.kind));
-            caption(ui, if any { "No matching styles" } else { "No styles yet. Click + to create one from the selection." });
+        if sources.iter().all(|(_, l)| l.is_empty()) {
+            let any = library::local_styles(doc).any(|s| slot.holds(&s.kind));
+            let hint = match (any, slot) {
+                (true, _) => "No matching styles",
+                (false, StyleSlot::Text) => "No text styles yet. Click + to create one from the selected text.",
+                (false, _) => "No styles yet. Click + to create one from the selection.",
+            };
+            caption(ui, hint);
         }
-        for (f, list) in &groups {
-            if !f.is_empty() {
-                // Searching shows every match, folders open.
-                let closed = q.is_empty() && app.ui.style_folds.contains(*f);
-                let (r, resp) = ui.allocate_exact_size(vec2(W, ROW_H), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
-                }
-                let chevron = Rect::from_center_size(pos2(r.min.x + 10.0, r.center().y), vec2(10.0, 10.0));
-                icons::paint(ui.painter(), chevron, if closed { Icon::ChevronRight } else { Icon::Chevron }, t.menu_dim);
-                let label = f.split('/').map(str::trim).collect::<Vec<_>>().join(" / ");
-                ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.menu_dim);
-                if resp.clicked() && q.is_empty() {
-                    *act = Some(Act::ToggleFolder(f.to_string()));
-                }
-                if closed {
-                    continue;
-                }
+        for (lib, list) in &sources {
+            if let Some(l) = lib {
+                ui.add_space(6.0);
+                caption(ui, &l.manifest.name);
+            } else if list.is_empty() {
+                continue;
+            } else if sources.len() > 1 {
+                caption(ui, "This file");
             }
-            if grid {
-                ui.add_space(4.0);
-                swatch_grid(ui, list, applied.as_deref(), editable, act);
-            } else {
-                for s in list {
-                    style_row(ui, s, slot, applied.as_deref() == Some(s.id.as_str()), editable(&s.id), act);
+            let lib_id = lib.map(|l| l.manifest.id.clone());
+            for (f, styles) in by_folder(list.iter().copied()) {
+                let fold = match &lib_id {
+                    Some(id) => format!("{id}/{f}"),
+                    None => f.to_string(),
+                };
+                if !f.is_empty() {
+                    // Searching shows every match, folders open.
+                    let closed = q.is_empty() && app.ui.style_folds.contains(&fold);
+                    let (r, resp) = ui.allocate_exact_size(vec2(W, ROW_H), Sense::click());
+                    if resp.hovered() {
+                        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+                    }
+                    let chevron = Rect::from_center_size(pos2(r.min.x + 10.0, r.center().y), vec2(10.0, 10.0));
+                    icons::paint(ui.painter(), chevron, if closed { Icon::ChevronRight } else { Icon::Chevron }, t.menu_dim);
+                    let label = f.split('/').map(str::trim).collect::<Vec<_>>().join(" / ");
+                    crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 22.0, r.center().y), &label, regular(11.0), t.menu_dim, W - 26.0);
+                    if resp.clicked() && q.is_empty() {
+                        out.act = Some(Act::ToggleFolder(fold.clone()));
+                    }
+                    if closed {
+                        continue;
+                    }
+                }
+                let keyed: Vec<(&Style, Key)> = styles.into_iter().map(|s| (s, Key { library: lib_id.clone(), style: s.id.clone() })).collect();
+                // Library styles are read-only here.
+                let editable = |k: &Key| k.library.is_none();
+                if grid {
+                    ui.add_space(4.0);
+                    style_grid(ui, &keyed, applied.as_ref(), editable, out);
+                } else {
+                    for (s, key) in keyed {
+                        let on = applied.as_ref() == Some(&key);
+                        let can_edit = editable(&key);
+                        style_row(ui, s, key, slot, on, can_edit, out);
+                    }
                 }
             }
         }
@@ -398,7 +617,7 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut 
             let all = lib.map_or(&doc.variables, |l| &l.doc.variables);
             for v in vars {
                 if crate::variable_ui::variable_row(ui, all, v, W) {
-                    *act = Some(Act::Bind(crate::variable_ui::Pick { library: lib.map(|l| l.manifest.id.clone()), id: v.id.clone() }));
+                    out.act = Some(Act::Bind(crate::variable_ui::Pick { library: lib.map(|l| l.manifest.id.clone()), id: v.id.clone() }));
                 }
             }
         }
@@ -430,20 +649,93 @@ fn grid_label(g: &figcraft_doc::LayoutGrid) -> String {
     }
 }
 
-/// Editing one style: name, description, its values (paints open the colour picker), update from
-/// the selection, delete.
-fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut Option<Act>) {
+/// A text style's typography in the editor: a sample, then font, style, size, line height and
+/// letter spacing; a change redefines the style (every linked char follows).
+fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
+    let t = Tokens::get(ui.ctx());
+    let (r, _) = ui.allocate_exact_size(vec2(W, 40.0), Sense::hover());
+    ui.painter().rect_filled(r, CornerRadius::same(5), Color32::from_white_alpha(14));
+    text_sample(ui, def, "Ag", 28.0, pos2(r.min.x + 10.0, r.center().y), 60.0, r.height() - 4.0, &mut out.budget);
+    let summary = format!("{} {}\n{}", def.font_family, def.font_style, text_meta(def));
+    let g = ui.painter().layout(summary, regular(10.5), t.menu_dim, W - 80.0);
+    ui.painter().galley(pos2(r.min.x + 72.0, r.center().y - g.size().y / 2.0), g, t.menu_dim);
+    ui.add_space(6.0);
+    let set = |out: &mut Frame, f: &dyn Fn(&mut TextStyle)| {
+        let mut d = def.clone();
+        f(&mut d);
+        if d != *def {
+            out.act = Some(Act::SetText(id.to_string(), d));
+        }
+    };
+    let half = (W - 8.0) / 2.0;
+    // The dropdowns' menus open outside the dark scope (they're regular popups).
+    let (family_resp, style_resp) = crate::theme::on_dark(ui, |ui| {
+        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+        let family_resp = widgets::elided_dropdown(ui, &def.font_family, W).on_hover_text("Font");
+        let mut style_resp = None;
+        ui.horizontal(|ui| {
+            style_resp = Some(widgets::elided_dropdown(ui, &def.font_style, half).on_hover_text("Font style"));
+            if let Some(widgets::FieldEdit::Set(v) | widgets::FieldEdit::Scrub(v, true)) =
+                widgets::number_field(ui, Id::new(("ts_size", id)), widgets::Lead::Text("Size"), Some(def.font_size), "", half, 1.0)
+            {
+                set(out, &|d| d.font_size = v.clamp(1.0, 5000.0));
+            }
+        });
+        ui.horizontal(|ui| {
+            if let Some(v) = widgets::text_field(ui, Id::new(("ts_lh", id)), &def.line_height.label(), half, "Line height")
+                && let Some(lh) = crate::typography::parse_line_height(&v, Some(def.line_height)).and_then(|v| serde_json::from_value(v).ok())
+            {
+                set(out, &|d| d.line_height = lh);
+            }
+            if let Some(v) = widgets::text_field(ui, Id::new(("ts_ls", id)), &def.letter_spacing.label(), half, "Letter spacing")
+                && let Some(ls) = crate::typography::parse_letter_spacing(&v, Some(def.letter_spacing)).and_then(|v| serde_json::from_value(v).ok())
+            {
+                set(out, &|d| d.letter_spacing = ls);
+            }
+        });
+        (family_resp, style_resp)
+    });
+    egui::Popup::menu(&family_resp).width(260.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()) {
+            set(out, &|d| {
+                d.font_family = f.clone();
+                let styles = figcraft_text::family_styles(&f);
+                if !styles.is_empty() && !styles.contains(&d.font_style) {
+                    d.set_font_style(styles.iter().find(|s| s.eq_ignore_ascii_case("Regular")).or(styles.first()).cloned().unwrap_or_default());
+                }
+            });
+            ui.close();
+        }
+    });
+    if let Some(sr) = style_resp {
+        egui::Popup::menu(&sr).width(200.0).show(|ui| {
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                for s in figcraft_text::family_styles(&def.font_family) {
+                    let mark = if def.font_style == s { "✓ " } else { "   " };
+                    if crate::right::menu_item(ui, &format!("{mark}{s}"), "") {
+                        set(out, &|d| d.set_font_style(s.clone()));
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
+}
+
+/// Editing one style: name, description, its values (paints open the colour picker; text styles
+/// have their typography), update from the selection, delete.
+fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
     let t = Tokens::get(ui.ctx());
     let slot = p.slot;
     let has_selection = !p.ids.is_empty();
     let Some(e) = p.edit.as_mut() else { return };
     let Some(style) = doc.style(&e.id).cloned() else {
-        *act = Some(Act::Back);
+        out.act = Some(Act::Back);
         return;
     };
     let (hr, _) = ui.allocate_exact_size(vec2(W, 24.0), Sense::hover());
     if menu_icon(ui, Rect::from_min_size(hr.min, vec2(24.0, 24.0)), Icon::ChevronLeft, "Back to styles", false).clicked() {
-        *act = Some(Act::Back);
+        out.act = Some(Act::Back);
     }
     ui.painter().text(pos2(hr.min.x + 30.0, hr.center().y), Align2::LEFT_CENTER, "Edit style", semibold(11.0), t.menu_text);
     ui.add_space(6.0);
@@ -471,7 +763,7 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut Option<Act>) {
                 for (i, paint) in paints.iter().enumerate().rev() {
                     let label = format!("{}  {:.0}%", paint.label(), paint.opacity * 100.0);
                     if property_row(ui, &label, Some(paint), slot) {
-                        *act = Some(Act::EditPaint(style.id.clone(), i));
+                        out.act = Some(Act::EditPaint(style.id.clone(), i));
                     }
                 }
             }
@@ -485,16 +777,16 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut Option<Act>) {
                     property_row(ui, &grid_label(g), None, slot);
                 }
             }
-            StyleKind::Text { .. } => {}
+            StyleKind::Text { style: def } => text_properties(ui, &style.id, def, out),
         }
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         if has_selection && menu_button(ui, "Update from selection").on_hover_text("Take the values from the first selected layer").clicked() {
-            *act = Some(Act::UpdateFromSelection(style.id.clone()));
+            out.act = Some(Act::UpdateFromSelection(style.id.clone()));
         }
         if menu_button(ui, "Delete").on_hover_text("Delete the style (layers keep their values)").clicked() {
-            *act = Some(Act::Delete(style.id.clone()));
+            out.act = Some(Act::Delete(style.id.clone()));
         }
     });
 }
@@ -518,7 +810,7 @@ fn commit_edit(app: &mut FigApp, doc: &Document, e: &Editing) {
 /// The picker popover (call once per frame).
 pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let Some(mut p) = app.ui.style_picker.take() else { return };
-    let Ok(doc) = app.session.ds().map(|d| d.doc.clone()) else { return };
+    let Ok(doc) = app.session.ds().map(|d| d.text_preview.clone().unwrap_or_else(|| d.doc.clone())) else { return };
     // A new selection closes the picker (it acts on the layers it was opened for).
     if app.session.selection() != p.ids {
         if let Some(e) = &p.edit {
@@ -534,14 +826,14 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         x -= 260.0;
     }
     let y = p.y.clamp(screen.min.y + 48.0, (screen.max.y - 460.0).max(screen.min.y + 48.0));
-    let mut act = None;
+    let mut out = Frame { act: None, hover: None, budget: 4 };
     let area = egui::Area::new(Id::new("style_picker_area")).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ctx, |ui| {
         egui::Frame::NONE.fill(t.menu).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
             ui.set_width(W);
             if p.edit.is_some() {
-                editor(ui, &doc, &mut p, &mut act);
+                editor(ui, &doc, &mut p, &mut out);
             } else {
-                listing(app, ui, &doc, &mut p, &mut act);
+                listing(app, ui, &doc, &mut p, &mut out);
             }
         });
     });
@@ -552,22 +844,30 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         Stroke::new(1.0, Color32::from_black_alpha(40)),
         egui::StrokeKind::Inside,
     );
-    // Clicks in the colour picker editing this picker's style keep it open.
+    // Clicks in the colour picker editing this picker's style, or in a menu the editor opened,
+    // keep it open.
     let picker_rect =
         app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(Id::new("color_picker"))));
+    let in_popup = egui::Popup::is_any_open(ctx);
     let outside = ctx.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pos| !rect.contains(pos) && !picker_rect.is_some_and(|r| r.contains(pos)))
-    });
-    let mut close = outside || ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    }) && !in_popup;
+    let mut close = outside || (ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !in_popup);
     let ids = p.ids.clone();
     let slot = p.slot;
-    match act {
-        Some(Act::Apply(style)) => {
-            let mut q = json!({"ids": ids, "style": style});
-            if slot.paints() {
-                q["target"] = json!(slot.key());
-            }
-            app.run("style.apply", q);
+    // The canvas shows the text style under the pointer on the selected text.
+    if slot == StyleSlot::Text
+        && !close
+        && out.act.is_none()
+        && let Some(key) = &out.hover
+    {
+        let (cmd, params) = key.apply(&ids, slot);
+        app.preview_text(ctx, cmd, params);
+    }
+    match out.act {
+        Some(Act::Apply(key)) => {
+            let (cmd, params) = key.apply(&ids, slot);
+            app.run(cmd, params);
             close = true;
         }
         Some(Act::Bind(pick)) => {
@@ -596,6 +896,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 commit_edit(app, &doc, e);
             }
             app.ui.picker = Some(PickerTarget::Style { id, index });
+        }
+        Some(Act::SetText(id, def)) => {
+            app.run("style.update", json!({"style": id, "value": def}));
         }
         Some(Act::UpdateFromSelection(id)) => {
             app.run("style.update", json!({"style": id, "from": ids.first()}));

@@ -20,6 +20,8 @@
 
 #[cfg(test)]
 mod conditional_tests;
+#[cfg(test)]
+mod effects_tests;
 mod props;
 mod proto;
 #[cfg(test)]
@@ -588,7 +590,7 @@ impl<'a> Ctx<'a> {
                 "effect" | "effects" => (StyleKind::Effect { effects: n.effects.clone() }, &mut n.styles.effect),
                 "grid" | "grids" => (StyleKind::Grid { grids: n.grids.clone() }, &mut n.styles.grid),
                 "text" => match &n.kind {
-                    NodeKind::Text(t) => (StyleKind::Text { style: t.style.clone() }, &mut n.styles.text),
+                    NodeKind::Text(t) => (StyleKind::Text { style: t.style.as_text_style() }, &mut n.styles.text),
                     _ => continue,
                 },
                 _ => continue,

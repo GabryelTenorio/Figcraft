@@ -5,11 +5,9 @@
 //! edits apply to the range (`text.style`, `text.setVariations`); otherwise they apply to whole
 //! layers. Differing values show "Mixed".
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use figcraft_color::{Color, Paint};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
@@ -49,7 +47,7 @@ fn uniform<T: PartialEq + Clone>(styles: &[TextStyle], f: impl Fn(&TextStyle) ->
 
 /// The character styles the panel shows: the edited range's spans, else every span of every
 /// selected text layer.
-fn target_styles(doc: &Document, ids: &[NodeId], range: Option<(NodeId, usize, usize)>) -> Vec<TextStyle> {
+pub(crate) fn target_styles(doc: &Document, ids: &[NodeId], range: Option<(NodeId, usize, usize)>) -> Vec<TextStyle> {
     let mut out: Vec<TextStyle> = Vec::new();
     let mut push = |s: &TextStyle| {
         if !out.contains(s) {
@@ -77,7 +75,6 @@ fn target_styles(doc: &Document, ids: &[NodeId], range: Option<(NodeId, usize, u
 }
 
 pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
     let ids: Vec<NodeId> = sel.iter().copied().filter(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)))).collect();
     if ids.is_empty() {
         return;
@@ -86,25 +83,57 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     let range = figcraft_engine::textedit::selected_range(&app.session);
     let editing = range.is_some();
     let styles = target_styles(doc, &ids, range);
-    let apply_style = |app: &mut FigApp, key: &str, v: Value| {
-        if let Some((id, a, b)) = range
-            && a != b
-        {
-            app.run("text.style", json!({"id": id, "start": a, "end": b, key: v}));
-        } else {
-            app.set_props(&ids, json!({ key: v }));
-        }
-    };
+    let apply_style = |app: &mut FigApp, key: &str, v: Value| commit_text(app, &ids, range, json!({ key: v }));
 
     let hdr = widgets::section_header(ui, "Typography", &[(Icon::Variable, "Apply variable to text"), (Icon::Styles, "Text styles")], false);
     if hdr == Some(0) {
         crate::variable_ui::open_at_pointer(ui, &ids, "characters", VariableType::String);
     }
+    if hdr == Some(1) {
+        crate::style_picker::open(app, ui, &ids, crate::style_picker::StyleSlot::Text);
+    }
     crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text), f32::INFINITY);
+    // A text style: its chip stands for the font rows (they show again when the chars differ).
+    crate::style_picker::chip(app, ui, doc, &ids, crate::style_picker::StyleSlot::Text);
+    if !matches!(crate::style_picker::text_link(app, doc, &ids), Some(Some(_))) {
+        font_rows(app, ui, &ids, &styles, editing, &apply_style);
+    }
+    paragraph_rows(app, ui, doc, &ids, &styles, &apply_style);
+}
+
+/// Set character `props` on the selected chars of the text being edited, else on whole layers
+/// (through `node.set`, which records overrides inside instances).
+fn commit_text(app: &mut FigApp, ids: &[NodeId], range: Option<(NodeId, usize, usize)>, props: Value) {
+    match range {
+        Some((_, a, b)) if a != b => {
+            app.run("text.style", text_style_params(ids, range, props));
+        }
+        _ => app.set_props(ids, props),
+    }
+}
+
+/// `text.style` params for `props` on the selected chars of the text being edited, else on the
+/// whole of every layer in `ids` (previews; commits go through [`commit_text`]).
+fn text_style_params(ids: &[NodeId], range: Option<(NodeId, usize, usize)>, mut props: Value) -> Value {
+    match range {
+        Some((id, a, b)) if a != b => {
+            props["id"] = json!(id);
+            props["start"] = json!(a);
+            props["end"] = json!(b);
+        }
+        _ => props["ids"] = json!(ids),
+    }
+    props
+}
+
+/// The font rows: family, style and size, line height and letter spacing.
+fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle], editing: bool, apply_style: &dyn Fn(&mut FigApp, &str, Value)) {
+    let t = Tokens::get(ui.ctx());
+    let range = figcraft_engine::textedit::selected_range(&app.session);
 
     // Font family.
-    let family = uniform(&styles, |s| s.font_family.clone());
-    let fstyle = uniform(&styles, |s| s.font_style.clone());
+    let family = uniform(styles, |s| s.font_family.clone());
+    let fstyle = uniform(styles, |s| s.font_style.clone());
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
         let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
@@ -131,22 +160,26 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     for s in list {
                         let mark = if fstyle.as_deref() == Some(s.as_str()) { "✓ " } else { "   " };
-                        if menu_item(ui, &format!("{mark}{s}"), "") {
+                        let (clicked, hovered) = menu_item_hover(ui, &format!("{mark}{s}"));
+                        if clicked {
                             apply_style(app, "fontStyle", json!(s));
                             ui.close();
+                        } else if hovered {
+                            // The canvas shows the style (a variable font's named instance too).
+                            app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, json!({"fontStyle": s})));
                         }
                     }
                 });
             }
             None => widgets::label(ui, "Pick one font family first", t.text_tertiary),
         });
-        let size = uniform(&styles, |s| s.font_size);
+        let size = uniform(styles, |s| s.font_size);
         ui.spacing_mut().item_spacing.x = 0.0;
         // The whole layer's size can follow a variable; a selected range just takes a value.
         let e = if editing {
             widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
         } else {
-            crate::variable_ui::number_field(app, ui, &ids, "fontSize", Id::new("ty_size"), Lead::None, size, "", half - 20.0)
+            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::new("ty_size"), Lead::None, size, "", half - 20.0)
         };
         match e {
             Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
@@ -173,33 +206,44 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
 
     // Line height + letter spacing.
     row(ui, 32.0, |ui| {
-        let lh = uniform(&styles, |s| s.line_height);
+        let lh = uniform(styles, |s| s.line_height);
         let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
         let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: "Line height" };
-        if let Some(v) = spacing_field(app, ui, &ids, &field, &lh_label, half, editing)
+        if let Some(v) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
             && let Some(v) = parse_line_height(&v, lh)
         {
             apply_style(app, "lineHeight", v);
         }
-        let ls = uniform(&styles, |s| s.letter_spacing);
+        let ls = uniform(styles, |s| s.letter_spacing);
         let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
         let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: "Letter spacing" };
-        if let Some(v) = spacing_field(app, ui, &ids, &field, &ls_label, half, editing)
+        if let Some(v) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
             && let Some(v) = parse_letter_spacing(&v, ls)
         {
             apply_style(app, "letterSpacing", v);
         }
     });
+}
 
+/// Paragraph spacing, resizing, alignment and the Type settings popover.
+fn paragraph_rows(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    doc: &Document,
+    ids: &[NodeId],
+    styles: &[TextStyle],
+    apply_style: &dyn Fn(&mut FigApp, &str, Value),
+) {
+    let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     // Paragraph spacing + resizing.
-    let ps = common(doc, &ids, |n| n.kind.text().map(|t| t.paragraph_spacing.to_bits())).flatten().map(f64::from_bits);
-    let resize = common(doc, &ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
+    let ps = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_spacing.to_bits())).flatten().map(f64::from_bits);
+    let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
     row(ui, 32.0, |ui| {
         let ps_label = ps.map(trim_num).unwrap_or_else(|| MIXED.into());
         if let Some(v) = lead_field(ui, Id::new("ty_ps"), LeadGlyph::ParagraphSpacing, &ps_label, half, "Paragraph spacing")
             && let Some(v) = widgets::eval(&v, ps)
         {
-            app.set_props(&ids, json!({"paragraphSpacing": v.clamp(0.0, 10_000.0)}));
+            app.set_props(ids, json!({"paragraphSpacing": v.clamp(0.0, 10_000.0)}));
         }
         let items = [(Icon::Hug, "Auto width"), (Icon::LayoutV, "Auto height"), (Icon::Fixed, "Fixed size"), (Icon::Dots, "Truncate text")];
         let active = resize.map(|r| match r {
@@ -210,12 +254,12 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         });
         if let Some(i) = widgets::segmented(ui, &items, active, (half / 4.0).floor()) {
             let v = ["widthAndHeight", "height", "none", "truncate"].get(i).copied().unwrap_or("none");
-            app.set_props(&ids, json!({"textAutoResize": v}));
+            app.set_props(ids, json!({"textAutoResize": v}));
         }
     });
 
     // Alignment + Type settings.
-    let align = common(doc, &ids, |n| n.kind.text().map(|t| (t.align_h, t.align_v))).flatten();
+    let align = common(doc, ids, |n| n.kind.text().map(|t| (t.align_h, t.align_v))).flatten();
     row(ui, 32.0, |ui| {
         let items = [
             (Icon::TextAlignLeft, "Align left"),
@@ -231,7 +275,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         });
         if let Some(i) = widgets::segmented(ui, &items, active, 24.0) {
             let v = ["left", "center", "right", "justified"].get(i).copied().unwrap_or("left");
-            app.set_props(&ids, json!({"textAlign": v}));
+            app.set_props(ids, json!({"textAlign": v}));
         }
         let items = [(Icon::TextTop, "Align top"), (Icon::TextMiddle, "Align middle"), (Icon::TextBottom, "Align bottom")];
         let active = align.map(|(_, v)| match v {
@@ -241,7 +285,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         });
         if let Some(i) = widgets::segmented(ui, &items, active, 24.0) {
             let v = ["top", "middle", "bottom"].get(i).copied().unwrap_or("top");
-            app.set_props(&ids, json!({"textAlignVertical": v}));
+            app.set_props(ids, json!({"textAlignVertical": v}));
         }
         let open_id = Id::new("ty_settings_open");
         let open = egui::Popup::is_id_open(ui.ctx(), open_id);
@@ -250,8 +294,14 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
             .id(open_id)
             .width(264.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| type_settings(app, ui, doc, &ids, &styles, editing, &apply_style));
+            .show(|ui| type_settings(app, ui, doc, ids, styles, apply_style));
     });
+}
+
+/// A menu item that also reports the pointer being over it: (clicked, hovered).
+fn menu_item_hover(ui: &mut Ui, label: &str) -> (bool, bool) {
+    let r = crate::right::menu_row(ui, label, "", |_, _, _| {});
+    (r.clicked(), r.hovered())
 }
 
 /// Run `cmd` as a live preview while scrubbing; the gesture becomes one undo step when `done`.
@@ -281,7 +331,6 @@ fn type_settings(
     doc: &Document,
     ids: &[NodeId],
     styles: &[TextStyle],
-    editing: bool,
     apply_style: &dyn Fn(&mut FigApp, &str, Value),
 ) {
     let t = Tokens::get(ui.ctx());
@@ -355,19 +404,23 @@ fn type_settings(
             }
             _ => {}
         }
-        let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new("Max lines").font(regular(11.0)).color(t.text)));
-            let shown = max.map(f64::from).filter(|m| *m > 0.0);
-            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                widgets::number_field(ui, Id::new("ty_maxlines"), Lead::None, shown, "", w - 118.0, 1.0)
-            {
-                app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
-            }
-        });
+        // Max lines only matter while truncating; no limit shows "Auto".
+        if resize == Some(TextAutoResize::Truncate) {
+            let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new("Max lines").font(regular(11.0)).color(t.text)));
+                let shown = max.map(f64::from).filter(|m| *m > 0.0);
+                let empty = if max.is_some() { "Auto" } else { MIXED };
+                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+                    widgets::number_field_or(ui, Id::new("ty_maxlines"), shown, empty, w - 118.0, 1.0)
+                {
+                    app.run("text.maxLines", json!({"ids": ids, "lines": v.round().clamp(0.0, 10_000.0)}));
+                }
+            });
+        }
     } else if let (2, Some(face)) = (tab, &vf) {
-        variable_axes(app, ui, ids, styles, face, editing);
+        variable_axes(app, ui, ids, styles, face);
     } else {
         // Which features the font has (first style shown).
         let face = uniform(styles, |s| (s.font_family.clone(), s.font_style.clone())).and_then(|(f, s)| figcraft_text::find_face(&f, &s));
@@ -389,11 +442,15 @@ fn type_settings(
     }
 }
 
-/// Type settings ▸ Variable: a slider and a field per visible axis of the variable font (values
-/// the style name implies show until changed; "Mixed" when the shown styles differ).
-fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle], face: &figcraft_text::Face, editing: bool) {
+/// Type settings ▸ Variable: the font's named instances, then a slider and a field per visible
+/// axis (values the style name implies show until changed; "Mixed" when the shown styles differ).
+/// The canvas previews a hovered instance and a dragged slider or field live; letting go commits
+/// one undo step, Escape cancels.
+fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle], face: &figcraft_text::Face) {
     let t = Tokens::get(ui.ctx());
+    let range = figcraft_engine::textedit::selected_range(&app.session);
     widgets::label(ui, &face.family, t.text_secondary);
+    named_instances(app, ui, ids, range, styles, face);
     // Each style's axis values; a style drawn by another face (e.g. a separate italic file) is mixed.
     let per_style: Vec<Option<Vec<f64>>> = styles
         .iter()
@@ -403,19 +460,29 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
     let field_w = 52.0;
     let label_w = 84.0;
     let slider_w = (w - label_w - field_w - 12.0).max(40.0);
+    let cancel_id = Id::new("ty_axis_cancelled");
+    // A cancelled gesture ends when the pointer is let go.
+    if !ui.input(|i| i.pointer.any_down()) {
+        ui.data_mut(|d| d.remove::<bool>(cancel_id));
+    }
     for (i, axis) in face.axes.iter().enumerate().filter(|(_, a)| !a.hidden) {
         let first = per_style.first().cloned().flatten().and_then(|v| v.get(i).copied());
         let value = first.filter(|v0| per_style.iter().all(|vs| vs.as_ref().and_then(|v| v.get(i)).is_some_and(|v| (v - v0).abs() < 1e-9)));
-        let value = value.map(|v| round_axis(axis, v));
-        // (value, gesture ended, live preview while dragging)
-        let mut set: Option<(Value, bool, bool)> = None;
+        // While a drag previews, the controls show the dragged value (the panel shows the document).
+        let live_id = Id::new(("ty_axis_live", &axis.tag));
+        if app.ui.text_preview.is_none() {
+            ui.data_mut(|d| d.remove::<f64>(live_id));
+        }
+        let shown = ui.data(|d| d.get_temp::<f64>(live_id)).or(value).map(|v| round_axis(axis, v));
+        // (value, gesture ended)
+        let mut set: Option<(Value, bool)> = None;
         ui.add_space(2.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let (lr, _) = ui.allocate_exact_size(vec2(label_w, FIELD_H), Sense::hover());
             let name = ui.painter().layout(axis.name.clone(), regular(11.0), t.text, label_w);
             let tip = format!(
-                "{} ({}): {} – {}, default {}. Double-click the slider to go back to the style's value.",
+                "{} ({}): {} – {}, default {}. Double-click the slider to go back to the style's value; Escape while dragging cancels.",
                 axis.name,
                 axis.tag,
                 trim_num(axis.min),
@@ -424,25 +491,42 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
             );
             ui.interact(lr, Id::new(("ty_axis_label", &axis.tag)), Sense::hover()).on_hover_text(tip);
             ui.painter().galley(pos2(lr.min.x, lr.center().y - name.size().y / 2.0), name, t.text);
-            match axis_slider(ui, Id::new(("ty_axis_slider", &axis.tag)), axis, value, slider_w) {
-                Some((Some(v), done)) => set = Some((json!(round_axis(axis, v)), done, true)),
-                Some((None, _)) => set = Some((Value::Null, true, false)),
+            match axis_slider(ui, Id::new(("ty_axis_slider", &axis.tag)), axis, shown, slider_w) {
+                Some((Some(v), done)) => set = Some((json!(round_axis(axis, v)), done)),
+                Some((None, _)) => set = Some((Value::Null, true)),
                 None => {}
             }
             let step = if axis.max - axis.min > 20.0 { 1.0 } else { 0.1 };
-            match widgets::number_field(ui, Id::new(("ty_axis_field", &axis.tag)), Lead::None, value, "", field_w, step) {
-                Some(FieldEdit::Set(v)) => set = Some((json!(axis.clamp(round_axis(axis, v))), true, false)),
-                Some(FieldEdit::Scrub(v, done)) => set = Some((json!(axis.clamp(round_axis(axis, v))), done, true)),
+            match widgets::number_field(ui, Id::new(("ty_axis_field", &axis.tag)), Lead::None, shown, "", field_w, step) {
+                Some(FieldEdit::Set(v)) => set = Some((json!(axis.clamp(round_axis(axis, v))), true)),
+                Some(FieldEdit::Scrub(v, done)) => set = Some((json!(axis.clamp(round_axis(axis, v))), done)),
                 None => {}
             }
         });
-        if let Some((v, done, preview)) = set {
-            let params = json!({"ids": ids, "variations": {axis.tag.clone(): v}});
-            if preview && !editing {
-                live(app, "Variable font axis", "text.setVariations", params, done);
-            } else {
-                app.run("text.setVariations", params);
+        let Some((v, done)) = set else { continue };
+        // Escape cancels a previewing gesture (egui may end the drag on it too): the preview ends
+        // and the rest of the gesture is ignored until the pointer is let go.
+        let previewing = ui.data(|d| d.get_temp::<f64>(live_id)).is_some();
+        if previewing && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            ui.data_mut(|d| {
+                d.insert_temp(cancel_id, true);
+                d.remove::<f64>(live_id);
+            });
+            app.end_text_preview(ui.ctx());
+            continue;
+        }
+        if ui.data(|d| d.get_temp::<bool>(cancel_id)).unwrap_or(false) {
+            continue;
+        }
+        let params = json!({"ids": ids, "variations": {axis.tag.clone(): v}});
+        if done {
+            ui.data_mut(|d| d.remove::<f64>(live_id));
+            app.run("text.setVariations", params);
+        } else {
+            if let Some(x) = v.as_f64() {
+                ui.data_mut(|d| d.insert_temp(live_id, x));
             }
+            app.preview_text(ui.ctx(), "text.setVariations", params);
         }
     }
     if styles.iter().any(|s| !s.variations.is_empty()) {
@@ -452,6 +536,52 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
             app.run("text.setVariations", json!({"ids": ids, "variations": {}, "replace": true}));
         }
     }
+}
+
+/// The variable font's named instances as a menu: the one the text shows ("Custom" once an axis
+/// moved), hovering one previews it on the canvas, clicking applies it (its custom axis values go).
+fn named_instances(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    range: Option<(NodeId, usize, usize)>,
+    styles: &[TextStyle],
+    face: &figcraft_text::Face,
+) {
+    if face.instances.is_empty() {
+        return;
+    }
+    let current = uniform(styles, |s| (s.variations.is_empty(), s.font_style.clone()));
+    let label = match &current {
+        Some((true, st)) if face.instance(st).is_some() => st.clone(),
+        Some(_) => "Custom".to_string(),
+        None => MIXED.to_string(),
+    };
+    ui.add_space(4.0);
+    // An inline list (a menu would close the Type settings popover it opens from).
+    let open_id = Id::new("ty_instances_open");
+    let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    if widgets::elided_dropdown(ui, &label, ui.available_width()).on_hover_text("Named instance").clicked() {
+        open = !open;
+    }
+    if open {
+        ui.add_space(2.0);
+        egui::ScrollArea::vertical().id_salt("ty_instances").max_height(220.0).show(ui, |ui| {
+            for inst in &face.instances {
+                let mark = if label == inst.name { "✓ " } else { "   " };
+                let (clicked, hovered) = menu_item_hover(ui, &format!("{mark}{}", inst.name));
+                let props = json!({"fontStyle": inst.name, "fontVariations": null});
+                if clicked {
+                    commit_text(app, ids, range, props);
+                    open = false;
+                } else if hovered {
+                    app.preview_text(ui.ctx(), "text.style", text_style_params(ids, range, props));
+                }
+            }
+        });
+    }
+    ui.data_mut(|d| d.insert_temp(open_id, open));
+    ui.add_space(2.0);
 }
 
 /// Axis values snap to whole numbers on wide axes (weight, width…) and tenths on narrow ones.
@@ -676,7 +806,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
 
 /// "Auto", "24", "150%" → the `lineHeight` value. A bare number keeps the current unit when it is
 /// a percentage, else means pixels.
-fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
+pub(crate) fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
     let s = s.trim();
     if s.is_empty() || s.eq_ignore_ascii_case("auto") {
         return Some(json!("auto"));
@@ -700,7 +830,7 @@ fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
 
 /// "2%", "1.5px", "-0.5" → the `letterSpacing` value. A bare number keeps the current unit
 /// (percent by default).
-fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Option<Value> {
+pub(crate) fn parse_letter_spacing(s: &str, cur: Option<LetterSpacing>) -> Option<Value> {
     let s = s.trim();
     if let Some(p) = s.strip_suffix('%') {
         return widgets::eval(p.trim(), None).filter(|v| v.is_finite()).map(|v| json!(format!("{}%", trim_num(v))));
@@ -739,7 +869,7 @@ enum PickRow {
 }
 
 /// The searchable family list. Returns the family picked.
-fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<String> {
+pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let q_id = Id::new("font_query");
     let mut q: String = ui.data(|d| d.get_temp(q_id)).unwrap_or_default();
@@ -771,7 +901,6 @@ fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<
         return None;
     }
     rows.extend(matches.into_iter().map(PickRow::Family));
-    let previews = Previews::get(ui.ctx());
     let mut budget = 4;
     let mut picked = None;
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show_rows(ui, ROW, rows.len(), |ui, range| {
@@ -797,15 +926,16 @@ fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<
                         );
                     }
                     let text_min = pos2(rect.min.x + 22.0, rect.min.y);
-                    match previews.texture(ui.ctx(), f, &mut budget) {
+                    match crate::font_preview::family(ui.ctx(), f, 13.0, &mut budget) {
                         Some(tex) => {
-                            let ppp = ui.ctx().pixels_per_point().max(0.5);
-                            let size = tex.size_vec2() / ppp;
-                            let avail = rect.max.x - text_min.x - 6.0;
-                            let shown = vec2(size.x.min(avail), size.y.min(ROW));
-                            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(shown.x / size.x.max(1.0), shown.y / size.y.max(1.0)));
-                            let r = Rect::from_min_size(pos2(text_min.x, rect.center().y - shown.y / 2.0), shown);
-                            ui.painter().image(tex.id(), r, uv, col);
+                            crate::font_preview::paint(
+                                ui.painter(),
+                                &tex,
+                                pos2(text_min.x, rect.center().y),
+                                rect.max.x - text_min.x - 6.0,
+                                ROW,
+                                col,
+                            );
                         }
                         None => {
                             ui.painter().text(pos2(text_min.x, rect.center().y), Align2::LEFT_CENTER, f, regular(12.0), col);
@@ -818,70 +948,7 @@ fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool) -> Option<
             }
         }
     });
-    if budget == 0 {
-        ui.ctx().request_repaint();
-    }
     picked
-}
-
-/// Family-name previews drawn in their own font by FigCraft's text engine (rendered lazily, a
-/// few per frame, cached for the session). `None` = no usable preview: the name shows plain.
-#[derive(Clone, Default)]
-struct Previews(Arc<Mutex<HashMap<String, Option<egui::TextureHandle>>>>);
-
-impl Previews {
-    fn get(ctx: &egui::Context) -> Previews {
-        ctx.data_mut(|d| d.get_temp_mut_or_default::<Previews>(Id::new("font_previews")).clone())
-    }
-
-    fn texture(&self, ctx: &egui::Context, family: &str, budget: &mut usize) -> Option<egui::TextureHandle> {
-        let mut map = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(t) = map.get(family) {
-            return t.clone();
-        }
-        if *budget == 0 {
-            return None;
-        }
-        *budget -= 1;
-        let tex = render_preview(ctx, family);
-        if map.len() > 2000 {
-            map.clear();
-        }
-        map.insert(family.to_string(), tex.clone());
-        tex
-    }
-}
-
-fn render_preview(ctx: &egui::Context, family: &str) -> Option<egui::TextureHandle> {
-    // Only when the family resolves to itself and can draw its own name (not symbol fonts).
-    let styles = figcraft_text::family_styles(family);
-    let style = styles.iter().find(|s| s.eq_ignore_ascii_case("Regular")).or(styles.first())?.clone();
-    let face = figcraft_text::find_face(family, &style)?;
-    if !face.family.eq_ignore_ascii_case(family) || !family.chars().all(|c| c == ' ' || face.has_char(c)) {
-        return None;
-    }
-    let mut doc = Document::new("preview");
-    let page = doc.first_page()?;
-    let id = doc.alloc_id();
-    let mut td = TextData::new(family);
-    td.style.font_family = family.to_string();
-    td.style.font_style = style;
-    td.style.font_size = 13.0;
-    let mut n = Node::new(id, NodeKind::Text(td), "preview", 1.0, 1.0);
-    n.fills = vec![Paint::solid(Color::WHITE)];
-    let (w, h) = figcraft_text::auto_size(&n)?;
-    n.width = w.min(400.0);
-    n.height = h.min(40.0);
-    doc.insert(n, page, None).ok()?;
-    let ppp = f64::from(ctx.pixels_per_point()).clamp(1.0, 3.0);
-    let pix = figcraft_render::render_node(&doc, id, ppp)?;
-    let (pw, ph) = (pix.width() as usize, pix.height() as usize);
-    let rgba = figcraft_render::to_rgba8(&pix);
-    if rgba.len() != pw * ph * 4 {
-        return None;
-    }
-    let img = egui::ColorImage::from_rgba_unmultiplied([pw, ph], &rgba);
-    Some(ctx.load_texture(format!("font-preview-{family}"), img, egui::TextureOptions::LINEAR))
 }
 
 #[cfg(test)]

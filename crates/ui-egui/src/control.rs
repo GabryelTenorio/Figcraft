@@ -9,6 +9,8 @@
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
+//! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}]}`
+//!   — raw pointer and key events for the next frame, as if from the window (panels, popovers)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
@@ -189,6 +191,48 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 None => Err(format!("unknown key `{key}`")),
             }
         }
+        "ui.input" => {
+            let list = p
+                .get("events")
+                .and_then(Value::as_array)
+                .ok_or("`events` required: [{move|down|up: [x, y]} | {key, shift?, alt?, cmd?} | {text} | {leave: true}]")?;
+            let pos = |v: &Value| -> Option<egui::Pos2> {
+                let a = v.as_array()?;
+                Some(egui::pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))
+            };
+            let mut events = Vec::new();
+            for e in list.iter().take(256) {
+                let button = if e.get("button").and_then(Value::as_str) == Some("secondary") {
+                    egui::PointerButton::Secondary
+                } else {
+                    egui::PointerButton::Primary
+                };
+                let command = b(e, "cmd") || b(e, "ctrl");
+                let mods = egui::Modifiers { alt: b(e, "alt"), ctrl: command, shift: b(e, "shift"), mac_cmd: false, command };
+                if let Some(p) = e.get("move").and_then(pos) {
+                    events.push(egui::Event::PointerMoved(p));
+                } else if let Some((p, pressed)) =
+                    e.get("down").and_then(pos).map(|p| (p, true)).or_else(|| e.get("up").and_then(pos).map(|p| (p, false)))
+                {
+                    events.push(egui::Event::PointerMoved(p));
+                    events.push(egui::Event::PointerButton { pos: p, button, pressed, modifiers: mods });
+                } else if let Some(k) = e.get("key").and_then(Value::as_str) {
+                    let key = egui::Key::from_name(k).ok_or_else(|| format!("unknown key `{k}`"))?;
+                    for pressed in [true, false] {
+                        events.push(egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: mods });
+                    }
+                } else if let Some(t) = e.get("text").and_then(Value::as_str) {
+                    events.push(egui::Event::Text(t.to_string()));
+                } else if b(e, "leave") {
+                    events.push(egui::Event::PointerGone);
+                } else {
+                    return Err(format!("unknown input event {e}"));
+                }
+            }
+            app.control_input.extend(events);
+            ctx.request_repaint();
+            Ok(json!({"queued": list.len().min(256)}))
+        }
         "ui.type" => {
             let text = p.get("text").and_then(Value::as_str).ok_or("`text` required")?;
             figcraft_engine::textedit::insert(&mut app.session, text).map_err(|e| e.to_string())?;
@@ -333,7 +377,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 };
                 player.ok_or("nothing is presented")?.scroll_to(at(0), at(1));
             }
-            // The style picker: a slot (fill, stroke, effect, grid) opens it for the selection, null
+            // The style picker: a slot (fill, stroke, effect, grid, text) opens it for the selection, null
             // closes it; `stylePickerEdit` (a style id or name) opens its editor; `stylePickerView`
             // is `list` or `grid`.
             if let Some(v) = p.get("stylePicker") {

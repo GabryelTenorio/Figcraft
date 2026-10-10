@@ -230,6 +230,8 @@ fn css_decls(n: &Node) -> String {
         match e.kind {
             EffectKind::LayerBlur { radius } => out.push_str(&format!("filter: blur({}px);\n", num(radius / 2.0))),
             EffectKind::BackgroundBlur { radius } => out.push_str(&format!("backdrop-filter: blur({}px);\n", num(radius / 2.0))),
+            // CSS has no refraction: the frost is the nearest.
+            EffectKind::Glass(ref g) => out.push_str(&format!("backdrop-filter: blur({}px);\n", num(g.sanitized().frost / 2.0))),
             _ => {}
         }
     }

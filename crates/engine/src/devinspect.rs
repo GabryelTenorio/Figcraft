@@ -186,19 +186,46 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
         strokes.push(prop("Weight", format!("{} {align}", num(n.stroke.weight))).token(variable(doc, n, "strokeWeight")));
         out.push(Section { title: "Strokes", rows: strokes });
     }
+    // A grain size: one number, or across × down.
+    let grain = |(sx, sy): (f64, f64)| if sx == sy { num(sx) } else { format!("{}×{}", num(sx), num(sy)) };
+    let pct = |v: f64| (v * 100.0).round();
     let effects: Vec<Prop> = n
         .effects
         .iter()
         .filter(|e| e.visible)
-        .filter_map(|e| match &e.kind {
+        .map(|e| match &e.kind {
             EffectKind::DropShadow(s) | EffectKind::InnerShadow(s) => {
                 let label = if matches!(e.kind, EffectKind::DropShadow(_)) { "Drop shadow" } else { "Inner shadow" };
                 let v = format!("{} {} {} {} {}", num(s.offset.0), num(s.offset.1), num(s.radius), num(s.spread), color_text(s.color));
-                Some(prop(label, v).color(s.color))
+                prop(label, v).color(s.color)
             }
-            EffectKind::LayerBlur { radius } => Some(prop("Layer blur", num(*radius))),
-            EffectKind::BackgroundBlur { radius } => Some(prop("Background blur", num(*radius))),
-            _ => None,
+            EffectKind::LayerBlur { radius } => prop("Layer blur", num(*radius)),
+            EffectKind::BackgroundBlur { radius } => prop("Background blur", num(*radius)),
+            EffectKind::Noise(nz) => {
+                let colors = match nz.mode {
+                    NoiseMode::Mono => color_text(nz.color),
+                    NoiseMode::Duo => format!("{} {}", color_text(nz.color), color_text(nz.secondary)),
+                    NoiseMode::Multi => format!("{}%", pct(f64::from(nz.opacity))),
+                };
+                let row = prop("Noise", format!("{} {} {}% {colors}", nz.mode.label(), grain(nz.grain()), pct(nz.density)));
+                if nz.mode == NoiseMode::Multi { row } else { row.color(nz.color) }
+            }
+            EffectKind::Texture(t) => {
+                prop("Texture", format!("{} {}{}", grain(t.grain()), num(t.radius), if t.clip_to_shape { " clipped" } else { "" }))
+            }
+            EffectKind::Glass(g) => prop(
+                "Glass",
+                format!(
+                    "{}° {}% refraction {}% depth {} dispersion {}% frost {} splay {}%",
+                    num(g.light_angle),
+                    pct(g.light_intensity),
+                    pct(g.refraction),
+                    num(g.depth),
+                    pct(g.dispersion),
+                    num(g.frost),
+                    pct(g.splay)
+                ),
+            ),
         })
         .collect();
     if !effects.is_empty() {

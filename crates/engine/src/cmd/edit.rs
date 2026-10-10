@@ -201,17 +201,44 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "effect.add",
             "Add effect",
-            "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture), effect? {..}}",
+            "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture|glass), effect? {..}}",
             true,
             effect_add
         ),
         spec!("effect.remove", "Remove effect", "{ids?, index}", true, |s, p| {
-            let i = req_num("effect.remove", p, "index")? as usize;
+            let i = req_index("effect.remove", p, "index")?;
             for id in req_targets("effect.remove", s, p)? {
                 let n = s.doc_mut()?.get_mut(id)?;
                 if i < n.effects.len() {
                     n.effects.remove(i);
+                    // Its bindings go with it; later effects' move down one.
+                    super::styles::remap_effect_bindings(n, |k| match k.cmp(&i) {
+                        std::cmp::Ordering::Less => Some(k),
+                        std::cmp::Ordering::Equal => None,
+                        std::cmp::Ordering::Greater => Some(k - 1),
+                    });
                 }
+            }
+            ok()
+        }),
+        spec!("effect.move", "Move effect", "{ids?, from, to} (indices in the effect list, bottom first)", true, |s, p| {
+            let from = req_index("effect.move", p, "from")?;
+            let to = req_index("effect.move", p, "to")?;
+            for id in req_targets("effect.move", s, p)? {
+                let n = s.doc_mut()?.get_mut(id)?;
+                if from >= n.effects.len() || to >= n.effects.len() || from == to {
+                    continue;
+                }
+                let e = n.effects.remove(from);
+                n.effects.insert(to, e);
+                // Bindings follow their effects.
+                super::styles::remap_effect_bindings(n, |k| {
+                    if k == from {
+                        return Some(to);
+                    }
+                    let k = if k > from { k - 1 } else { k };
+                    Some(if k >= to { k + 1 } else { k })
+                });
             }
             ok()
         }),
@@ -984,6 +1011,13 @@ fn paint_list(s: &mut Session, p: &Value, fills: bool, add: bool) -> Result<Valu
             let idx = num(p, "index").map(|x| x as usize).unwrap_or(list.len().saturating_sub(1));
             if idx < list.len() {
                 list.remove(idx);
+                // A binding on the first paint's colour belongs to the paint just removed.
+                if idx == 0 {
+                    let keys: &[&str] = if fills { &["fill", "fills", "fills/0", "fills/0/color"] } else { &["stroke", "strokes/0/color"] };
+                    for k in keys {
+                        n.bound.remove(*k);
+                    }
+                }
             }
         }
     }
@@ -1038,17 +1072,10 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
 fn effect_add(s: &mut Session, p: &Value) -> Result<Value> {
     let e: Effect = match get(p, "effect") {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("effect.add", e.to_string()))?,
-        None => match string(p, "type").unwrap_or_else(|| "dropShadow".into()).to_ascii_lowercase().replace(['_', ' ', '-'], "").as_str() {
-            "dropshadow" => Effect::drop_shadow(),
-            "innershadow" => Effect::inner_shadow(),
-            "layerblur" | "blur" => Effect::layer_blur(),
-            "backgroundblur" => Effect::background_blur(),
-            "noise" => {
-                Effect { kind: EffectKind::Noise { size: 0.5, density: 0.5, color: figcraft_color::Color::new(0.0, 0.0, 0.0, 0.25) }, visible: true }
-            }
-            "texture" => Effect { kind: EffectKind::Texture { size: 0.5, radius: 4.0 }, visible: true },
-            other => return Err(bad("effect.add", format!("unknown effect type `{other}`"))),
-        },
+        None => {
+            let ty = string(p, "type").unwrap_or_else(|| "dropShadow".into());
+            Effect::of_type(&ty).ok_or_else(|| bad("effect.add", format!("unknown effect type `{ty}`")))?
+        }
     };
     for i in req_targets("effect.add", s, p)? {
         s.doc_mut()?.get_mut(i)?.effects.push(e.clone());

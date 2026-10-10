@@ -61,8 +61,18 @@ dimension measured side by side.
    font, named instances as styles, Type settings ▸ Variable sliders, per-range axis values applied
    to shaping, outlines and PDF), range-aware Typography panel with "Mixed". Range fills in the Fill
    section. Right-to-left and mixed-direction text (Unicode bidi: Arabic shaping, mirrored brackets,
-   caret, clicks and selection follow the runs; arrow keys move visually). *Left:* axis hover
-   preview, right-to-left layer names in the panels, visual QA. 5–8 h.
+   caret, clicks and selection follow the runs; arrow keys move visually). Right-to-left and
+   mixed-direction names in the panels (layers, pages, Assets, tabs, the file header, canvas frame
+   titles: visual order, joined Arabic, the ellipsis at a right-to-left name's left end; rename fields
+   whose caret, clicks, drags and arrow keys follow the shown text; system fonts for scripts the UI
+   fonts lack). The text style browser in the Typography section (list and grid views in each
+   style's own font, search, folders, this file's and enabled libraries' styles, apply, detach, edit
+   the typography, create from the selected chars, hover to preview on the canvas, "Mixed" when the
+   chars use several styles); text styles link chars, not just layers (editing what a style sets
+   unlinks the chars edited). Live previews of a hovered named instance or font style and of a
+   dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
+   paragraph's font, renames start with the name selected and centred, Max lines shows while
+   truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
@@ -169,7 +179,9 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA).
+- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
+  inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
+  text details (right-to-left list markers).
 - **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
   history are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
@@ -185,7 +197,11 @@ dimension measured side by side.
   sets (variants), instances with per-layer overrides, slices; fills (solid, linear/radial/angular/
   diamond gradients, images with fill/fit/crop/tile + adjustments), multiple strokes with
   inside/center/outside alignment, per-side weights, dashes, caps/arrowheads, joins; effects (drop
-  and inner shadow with spread, layer blur, background blur, noise, texture); corner radii with
+  and inner shadow with spread that offsets the outline exactly: ellipses, stars, vectors, text;
+  layer blur; background blur that sees the whole backdrop, inside clipping frames, faded groups
+  and masks too; noise in mono, duo and multi colour with grain size, density and blend mode;
+  texture with clip to shape; glass with light angle and intensity, refraction, depth, dispersion,
+  frost and splay; the same in PNG, PDF and SVG exports); corner radii with
   smoothing; constraints; auto layout (horizontal, vertical, wrap, grid; hug/fill/fixed; min/max;
   absolute children); layout grids; export settings; prototype interactions, flows and transitions;
   paint/text/effect/grid styles; variables with collections, modes and aliases.
@@ -218,9 +234,9 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 73% | frame guides | 2–4 |
+| Canvas & navigation | 6 | 75% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
-| Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
+| Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 80% | stroke styles, arrowhead previews in the menus | 2–3 |
@@ -229,7 +245,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
-| Styles & variables | 5 | 84% | bindings that follow effects when they are reordered, grid and component property bindings | 1–2 |
+| Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
 | Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |

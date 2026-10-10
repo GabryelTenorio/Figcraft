@@ -751,6 +751,41 @@ impl Document {
         if self.current_page.is_none_or(|p| !self.pages.contains(&p)) {
             self.current_page = self.pages.first().copied();
         }
+        self.link_layer_text_styles();
+    }
+
+    /// Text layers linked to a text style whose chars carry no link (files from before per-char
+    /// links, importers that link layers): the chars showing the style link to it, and the layer
+    /// stays linked only if they all do.
+    pub fn link_layer_text_styles(&mut self) {
+        let defs: BTreeMap<String, TextStyle> = self
+            .styles
+            .iter()
+            .filter_map(|s| match &s.kind {
+                StyleKind::Text { style } => Some((s.id.clone(), style.clone())),
+                _ => None,
+            })
+            .collect();
+        let legacy = |n: &Node| match &n.kind {
+            NodeKind::Text(t) => n.styles.text.is_some() && t.spans().iter().all(|(_, _, s)| s.style_id.is_none()),
+            _ => false,
+        };
+        let ids: Vec<NodeId> = self.nodes.iter().filter(|(_, n)| legacy(n)).map(|(k, _)| *k).collect();
+        for id in ids {
+            let Some(n) = self.nodes.get_mut(&id) else { continue };
+            let n = Arc::make_mut(n);
+            let sid = n.styles.text.clone().unwrap_or_default();
+            if let NodeKind::Text(t) = &mut n.kind {
+                if let Some(def) = defs.get(&sid) {
+                    t.each_style(|s| {
+                        if s.shows_text_style(def) {
+                            s.style_id = Some(sid.clone());
+                        }
+                    });
+                }
+                n.styles.text = t.text_style_link().flatten().map(str::to_string);
+            }
+        }
     }
 
     /// Hit test: the topmost visible, unlocked node under `pt` on `page` for a click.
@@ -777,6 +812,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 mod colors_tests;
 #[cfg(test)]
 mod diff_tests;
+#[cfg(test)]
+mod effects_tests;
 #[cfg(test)]
 mod proto_expr_tests;
 #[cfg(test)]

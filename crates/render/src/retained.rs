@@ -61,10 +61,10 @@ struct Sensitive {
     backdrop_blur: f64,
 }
 
-/// Noise is seeded by its layer's pixels, which start where a render cuts the layer: noisy layers
-/// are redrawn whole.
+/// Grain effects (noise, texture) work on their layer's pixels, which end where a render cuts the
+/// layer (texture scatters pixels from across the cut): grainy layers are redrawn whole.
 fn sensitive(doc: &Document) -> Sensitive {
-    let noisy = doc.nodes().filter(|n| n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::Noise { .. })));
+    let noisy = doc.nodes().filter(|n| n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::Noise(_) | EffectKind::Texture(_))));
     Sensitive { areas: noisy.filter_map(|n| draw::paint_bounds(doc, n.id)).collect(), backdrop_blur: crate::max_backdrop_blur(doc) }
 }
 

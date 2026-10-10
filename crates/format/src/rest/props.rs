@@ -4,8 +4,9 @@
 use figcraft_doc::color::{BlendMode, Color, ColorStop, Gradient, GradientKind, ImageFilters, ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::geom::Affine;
 use figcraft_doc::{
-    AutoLayout, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, GridAlign, GridKind, HConstraint,
-    LayoutGrid, LayoutMode, MainAlign, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, VConstraint,
+    AutoLayout, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass, GridAlign, GridKind,
+    HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, Texture,
+    VConstraint,
 };
 use serde_json::Value;
 
@@ -216,12 +217,65 @@ fn effect(cx: &mut Ctx, e: &Value) -> Option<Effect> {
         "INNER_SHADOW" => EffectKind::InnerShadow(shadow()),
         "LAYER_BLUR" => EffectKind::LayerBlur { radius },
         "BACKGROUND_BLUR" => EffectKind::BackgroundBlur { radius },
+        "NOISE" => {
+            let d = Noise::default();
+            let (size, size_y) = noise_size(e, d.size);
+            EffectKind::Noise(Noise {
+                mode: match text(e, "noiseType") {
+                    Some("DUOTONE") => NoiseMode::Duo,
+                    Some("MULTITONE") => NoiseMode::Multi,
+                    _ => NoiseMode::Mono,
+                },
+                size,
+                size_y,
+                density: num(e, "density").map_or(d.density, |v| v.clamp(0.0, 1.0)),
+                color: e.get("color").and_then(color).unwrap_or(d.color),
+                secondary: e.get("secondaryColor").and_then(color).unwrap_or(d.secondary),
+                opacity: num(e, "opacity").map_or(d.opacity, |v| v.clamp(0.0, 1.0) as f32),
+                blend: paint_blend(e),
+            })
+        }
+        "TEXTURE" => {
+            let d = Texture::default();
+            let (size, size_y) = noise_size(e, d.size);
+            EffectKind::Texture(Texture {
+                size,
+                size_y,
+                radius: len(e, "radius").unwrap_or(d.radius),
+                clip_to_shape: flag(e, "clipToShape").unwrap_or(false),
+            })
+        }
+        "GLASS" => {
+            let d = Glass::default();
+            EffectKind::Glass(
+                Glass {
+                    light_angle: num(e, "lightAngle").unwrap_or(d.light_angle),
+                    light_intensity: num(e, "lightIntensity").unwrap_or(d.light_intensity),
+                    refraction: num(e, "refraction").unwrap_or(d.refraction),
+                    depth: num(e, "depth").unwrap_or(d.depth),
+                    dispersion: num(e, "dispersion").unwrap_or(d.dispersion),
+                    frost: len(e, "radius").unwrap_or(d.frost),
+                    splay: num(e, "splay").unwrap_or(d.splay),
+                }
+                .sanitized(),
+            )
+        }
         other => {
             cx.warn(format!("{} effects are not supported and were skipped", clip_str(other)));
             return None;
         }
     };
     Some(Effect { kind, visible: flag(e, "visible").unwrap_or(true) })
+}
+
+/// A noise or texture effect's grain size: `noiseSize` on both axes, or `noiseSizeVector`.
+fn noise_size(e: &Value, default: f64) -> (f64, Option<f64>) {
+    let size = len(e, "noiseSize").unwrap_or(default);
+    match e.get("noiseSizeVector").and_then(vec2) {
+        Some((x, y)) if x != y => (x.clamp(0.0, MAX_SIZE), Some(y.clamp(0.0, MAX_SIZE))),
+        Some((x, _)) => (x.clamp(0.0, MAX_SIZE), None),
+        None => (size, None),
+    }
 }
 
 // ---- strokes, corners, constraints ----

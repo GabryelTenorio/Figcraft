@@ -366,6 +366,9 @@ pub struct Node {
     pub mask_type: MaskType,
     #[serde(default, skip_serializing_if = "is_default")]
     pub grids: Vec<LayoutGrid>,
+    /// A frame's ruler guides, in its own coordinates (a page's are in [`NodeKind::Page`]).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub guides: Vec<Guide>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub exports: Vec<ExportSetting>,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -495,6 +498,7 @@ impl Node {
             is_mask: false,
             mask_type: MaskType::Alpha,
             grids: Vec::new(),
+            guides: Vec::new(),
             exports: Vec::new(),
             interactions: Vec::new(),
             overflow: Default::default(),
@@ -525,6 +529,21 @@ impl Node {
         matches!(self.kind, NodeKind::Page { .. })
     }
 
+    /// The ruler guides on this page or frame, in its own coordinates.
+    pub fn guides(&self) -> &[Guide] {
+        match &self.kind {
+            NodeKind::Page { guides, .. } => guides,
+            _ => &self.guides,
+        }
+    }
+
+    pub fn guides_mut(&mut self) -> &mut Vec<Guide> {
+        match &mut self.kind {
+            NodeKind::Page { guides, .. } => guides,
+            _ => &mut self.guides,
+        }
+    }
+
     /// Whether painted strokes are present.
     pub fn has_visible_stroke(&self) -> bool {
         self.strokes.iter().any(|p| p.visible) && self.stroke.weight > 0.0
@@ -546,6 +565,23 @@ impl Node {
             0.0
         };
         let fx = self.effects.iter().map(Effect::reach).fold(0.0, f64::max);
-        stroke + fx
+        stroke + fx + self.spread_miter_reach()
+    }
+
+    /// How much further than its spread a drop shadow can reach at the outline's sharp corners:
+    /// spread moves the edges out in parallel and they meet in a mitre (see
+    /// [`SPREAD_MITER_LIMIT`]). Rectangles, frames and ellipses grow by exactly the spread.
+    fn spread_miter_reach(&self) -> f64 {
+        if matches!(self.kind, NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Section { .. }) || self.kind.is_frame_like() {
+            return 0.0;
+        }
+        self.effects
+            .iter()
+            .filter(|e| e.visible)
+            .filter_map(|e| match &e.kind {
+                EffectKind::DropShadow(s) if s.spread.is_finite() => Some(s.spread.max(0.0) * (SPREAD_MITER_LIMIT - 1.0)),
+                _ => None,
+            })
+            .fold(0.0, f64::max)
     }
 }
