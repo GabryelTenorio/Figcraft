@@ -416,6 +416,8 @@ pub struct Prefs {
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
     pub theme: String,
+    /// The name comments are signed with (and whose comments count as yours).
+    pub user_name: String,
 }
 
 impl Default for Prefs {
@@ -429,6 +431,7 @@ impl Default for Prefs {
             number_keys_opacity: true,
             show_dimensions: true,
             theme: "light".into(),
+            user_name: cmd::comment::DEFAULT_AUTHOR.into(),
         }
     }
 }
@@ -899,6 +902,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     // 5. Ready-for-dev layers whose contents changed show "Changed".
     mark_dev_changes(doc, before, &touched);
     doc.take_dirty();
+    // 5. Comment pins follow their layers to other pages and stay put when the layers are deleted.
+    cmd::comment::follow_anchors(doc, before);
 }
 
 /// Flag the frames and sections marked ready for dev (before this edit) that contain a layer whose
@@ -937,6 +942,10 @@ mod al_keys_tests;
 mod al_nesting_tests;
 #[cfg(test)]
 mod autosave_tests;
+#[cfg(test)]
+mod binding_lists_tests;
+#[cfg(test)]
+mod comments_polish_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]

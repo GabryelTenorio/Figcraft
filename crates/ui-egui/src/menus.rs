@@ -45,7 +45,10 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
         }
         // Text from elsewhere when it's newer than our copy, or when we have nothing to paste.
         if let Some(text) = sys_text.filter(|_| app.ui.last_copy.is_some() || app.session.clipboard.nodes.is_empty()) {
-            if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
+            // A comment's link opens its thread.
+            if text.trim().starts_with("figcraft://comment/") {
+                app.run("comment.open", json!({"link": text.trim()}));
+            } else if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
                 app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));

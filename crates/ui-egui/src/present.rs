@@ -177,11 +177,13 @@ pub struct PresentView {
     pub scale: PresentScale,
     /// Draw the device's body around its screen.
     pub device_frame: bool,
+    /// Show the comments on the presented frame (Shift+C).
+    pub comments: bool,
 }
 
 impl Default for PresentView {
     fn default() -> Self {
-        Self { scale: PresentScale::Fit, device_frame: true }
+        Self { scale: PresentScale::Fit, device_frame: true, comments: false }
     }
 }
 
@@ -266,6 +268,8 @@ pub struct Presenter {
     wheel: Option<(Scroller, (f64, f64))>,
     /// The frame shown last in each section (navigating to a section returns there).
     sections: HashMap<NodeId, NodeId>,
+    /// The frame shown last, where it was placed and what it could draw into (comment pins go there).
+    shown: Option<(NodeId, Place, Rect)>,
 }
 
 impl Presenter {
@@ -317,6 +321,7 @@ impl Presenter {
             fling: None,
             wheel: None,
             sections: HashMap::new(),
+            shown: None,
         }
     }
 
@@ -519,6 +524,7 @@ impl Presenter {
             "viewport": doc.and_then(|d| viewport(d, self.current)).map(|v| [v.0, v.1]),
             "scale": self.view.scale.id(),
             "deviceFrame": self.view.device_frame,
+            "comments": self.view.comments,
             "deviceColor": doc.and_then(|d| page_settings(d, self.current).device_color()).map(|c| c.name),
             "responsive": self.fit.map(|f| [f.0, f.1]),
             "frameSize": doc.and_then(|d| d.node(self.current)).map(|n| [n.width, n.height]),
@@ -1458,6 +1464,8 @@ enum BarAction {
     Options,
     /// Turn responsive presentation on or off (saved in the file: `proto.settings`).
     Responsive(bool),
+    /// Show or hide the comments on the presented frame.
+    Comments,
 }
 
 /// The full-window presenter (while `app.ui.present` is set). Escape or Close ends it.
@@ -1469,9 +1477,24 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         pres.sync(&ds.doc, now);
     }
     let mut action = None;
+    // Typing a reply to a comment keeps the keys from the prototype; Shift+C shows the comments.
+    let typing = ctx.egui_wants_keyboard_input();
+    if !typing && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::C)) {
+        action = Some(BarAction::Comments);
+    }
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
-        action = player(&mut pres, ui, ui.max_rect(), now, FULL);
+        action = player(&mut pres, ui, ui.max_rect(), now, Chrome { keys: !typing, ..FULL }).or(action);
     });
+    if action == Some(BarAction::Comments) {
+        pres.view.comments = !pres.view.comments;
+    }
+    if pres.view.comments
+        && let Some((frame, place, clip)) = pres.shown
+    {
+        crate::comments::presenter(app, &ctx, frame, place, clip);
+    } else if app.ui.comments.open.is_some() {
+        app.ui.comments.close();
+    }
     for u in pres.urls.drain(..) {
         app.services.open_url(&u);
     }
@@ -1731,6 +1754,7 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         input(p, &ctx, &l, over, chrome.keys && (!chrome.pane || over), chrome.pane, now);
     }
     let Some(l) = layout(p, area, chrome) else { return action };
+    p.shown = Some((p.current, l.place, l.clip.intersect(area)));
     let painter = ui.painter_at(area);
     let body = l.device.zip(l.color);
     if l.device.is_some() {
@@ -1789,7 +1813,12 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     let buttons: &[(BarAction, &str, Icon)] = if chrome.pane {
         &[(BarAction::Close, "Close preview", Icon::Close), (BarAction::Present, "Present", Icon::Play), (BarAction::Restart, "Restart", Icon::Reset)]
     } else {
-        &[(BarAction::Close, "Close", Icon::Close), (BarAction::Restart, "Restart", Icon::Reset), (BarAction::Options, "Options", Icon::Dots)]
+        &[
+            (BarAction::Close, "Close", Icon::Close),
+            (BarAction::Restart, "Restart", Icon::Reset),
+            (BarAction::Options, "Options", Icon::Dots),
+            (BarAction::Comments, "Comments", Icon::Comment),
+        ]
     };
     let mut x = bar.max.x - if chrome.pane { 6.0 } else { 8.0 };
     for (act, label, icon) in buttons {
@@ -1800,8 +1829,14 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         if chrome.pane {
             resp = resp.on_hover_text(*label);
         }
-        if resp.hovered() {
+        let on = *act == BarAction::Comments && p.view.comments;
+        if on {
+            ui.painter().rect_filled(br, CornerRadius::same(5), ACCENT);
+        } else if resp.hovered() {
             ui.painter().rect_filled(br, CornerRadius::same(5), hover);
+        }
+        if *act == BarAction::Comments {
+            resp = resp.on_hover_text("Show comments (Shift+C)");
         }
         if chrome.pane {
             icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);

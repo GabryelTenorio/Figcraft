@@ -129,6 +129,13 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                ui.label("Your name in comments");
+                if let Some(name) = crate::widgets::text_field(ui, egui::Id::new("pref_user_name"), &prefs.user_name, 160.0, "You") {
+                    app.run("pref.userName", json!({"name": name}));
+                }
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
                 ui.label("Nudge amount");
                 let mut small = prefs.nudge_small;
                 let mut big = prefs.nudge_big;
