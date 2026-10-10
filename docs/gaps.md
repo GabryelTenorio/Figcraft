@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the 2026-10-10 re-measure; every known shortfall ranked with evidence and estimate) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (marked beta blockers after the alpha gate) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -10,10 +10,12 @@ everywhere unless marked measured.
 
 ## Ranked
 
+No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passes. Beta blockers are marked.
+
 | # | Gap | Kind | Hours | Doc |
 |---|---|---|---|---|
-| 1 | `.fig` files can't be opened | File format | 30–60 | [file-format-parity](file-format-parity.md) |
-| 2 | No real-time multiplayer or sharing | Feature | 60–110 | [collaboration-parity](collaboration-parity.md) |
+| 1 | `.fig` files can't be opened (**beta blocker**) | File format | 30–60 | [file-format-parity](file-format-parity.md) |
+| 2 | No real-time multiplayer or sharing (**beta blocker**) | Feature | 60–110 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
 | 5 | No localization layer; English only | Localization | 60–100 | [localization-parity](localization-parity.md) |
@@ -207,4 +209,5 @@ everywhere unless marked measured.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Marked beta blockers; no alpha blockers (the alpha gate passes) |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure against Figma desktop 126.10.7 (replaces the gap list that lived in ROADMAP.md) |

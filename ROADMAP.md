@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~29 points and ~210–380 h away (one Opus 5.5 agent; ~45–85 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against Figma desktop 126.10.7; moved the rubric and area detail to docs/target-app-parity.md, gaps to docs/gaps.md, milestones to docs/roadmap.md) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha gate added: passes, stage stays alpha) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -29,7 +29,7 @@ lines, a typical feature PR 1–2.5 h). Details and what needs a human:
 **Alpha.** Core workflows exist end to end (frames, shapes, vectors, text, auto layout, components
 with variants and overrides, styles, variables, prototyping, Dev Mode, SVG/PNG/JPG/PDF), but
 FigCraft can't open Figma's own `.fig` files, has no multiplayer, and nothing has been checked
-against real Figma documents. Ready-for-real-work is ~46%, inside alpha's ~35–75% band. Beta needs
+against real Figma documents. Ready-for-real-work is ~46%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is missing, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
 ~75% **and** reliable `.fig` import: the `.fig` reader (30–60 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
 basic multiplayer (40–70 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
@@ -131,6 +131,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Alpha gate (core workflows) checked under the revised stage rules: passes, stays alpha |
 | 2026-10-10 | major | Rewritten to the craftrules progress-docs shape after a full re-measure; rubric, area narrative and inventory moved to docs/target-app-parity.md, gaps to docs/gaps.md, milestones to docs/roadmap.md. Depth ~79% (self-graded, 16 areas) → ready for real work ~46% (all dimensions); full parity 115–195 h → 420–790 h |
 | 2026-10-10 | minor | Day-2 refreshes after each batch of PRs (depth 58% → 79%) |
 | 2026-10-09 | major | First roadmap |

@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against Figma desktop 126.10.7; merged the ROADMAP rubric and assessment into this file; areas Figma users rely on that the old rubric left out are now weighted) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage checked against the alpha gate: stays alpha; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -20,7 +20,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 | Ready for real work | **~46%** | estimated (dimension table below) |
 | Remaining to beta | **~210–380 h** one Opus 5.5 agent (~45–85 h wall-clock with 5 parallel agents) | estimated |
 | Remaining to full parity | **~420–790 h** one agent (~100–180 h wall-clock with 5 parallel agents) | estimated |
-| Stage | **alpha** (see [ROADMAP](../ROADMAP.md#stage)) | |
+| Stage | **alpha**: the alpha gate passes ([roadmap](roadmap.md#alpha-gate)); `.fig` import and multiplayer are beta gaps (see [ROADMAP](../ROADMAP.md#stage)) | |
 
 The previous figures (ROADMAP of 2026-10-10, "feature depth ~79%", "full parity 115–195 h") were
 self-graded against a 16-area rubric that left out, by design, multiplayer, plugins, cloud
@@ -451,4 +451,5 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Stage checked against the alpha gate: stays alpha |
 | 2026-10-10 | major | Created from the ROADMAP's parity rubric, honest assessment and area narrative. Full re-measure against Figma desktop 126.10.7: added multiplayer, plugins, team libraries, Figma Draw extras and AI as weighted areas; split breadth from ready-for-real-work; core depth re-graded ~79% → ~67%; hours calibrated from git history; full parity 115–195 h → 420–790 h |

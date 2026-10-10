@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created; milestones moved from ROADMAP.md, next steps re-planned from the 2026-10-10 re-measure) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the alpha gate; stage stays alpha) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -18,6 +18,28 @@ are one Opus 5.5 agent; most milestones split across 4–6 agents on disjoint cr
 4. **Localization layer**, then Figma's own languages first (ja, ko, es, pt-BR, fr, de): 15–25 h
    for the layer, 3–5 h per language plus native review.
 5. **Multiplayer M9** per [`collab-protocol.md`](collab-protocol.md): 60–110 h.
+
+## Alpha gate
+
+The core workflows a Figma Design user runs every day, checked end to end on macOS (the main
+platform) with work saved to `.figcraft` and reopened. Evidence is the repo's tests and the
+builders' side-by-side checks with synthetic files; nothing has been run on real Figma files yet.
+
+| Workflow | Works end to end? | Evidence | Hours to pass |
+|---|---|---|---|
+| Design screens: frames, shapes, vectors, text, auto layout, styles; save, reopen, export assets | yes | tools and panels in `crates/engine` and `crates/ui-egui`; `.figcraft` round trips (`crates/format/src/large_tests.rs`); PNG/JPG/SVG/PDF export tests | — |
+| Build and use a design system: components, variants, properties, variables and modes, libraries | yes | `components_scale_tests.rs` (300 components, 2,000 instances), `library_tests.rs`, `library_variables_tests.rs`; libraries are local files, not shared | — |
+| Prototype and present: interactions, flows, overlays, smart animate, variables | yes | `proto_*_tests.rs`, `present_*_tests.rs` | — |
+| Hand off to developers: Dev Mode inspect, code, measurements, asset export, ready for dev | yes | `devinspect_tests.rs`, `component_codegen_tests.rs`, `devcompare_tests.rs`, `annotations_tests.rs` | — |
+| Review with others: comments, versions, sharing the work | partial (not blocking) | comments with threads, mentions and resolve plus version history work inside a file (`comments_tests.rs`, `version_tests.rs`); the file is shared by passing it along; no real-time co-editing or share links ([collaboration-parity](collaboration-parity.md)) | beta gap: 60–110 |
+| Continue existing Figma work (open `.fig`) | no (beta gap) | no `.fig` reader; REST JSON import works for files fetched through Figma's API ([file-format-parity](file-format-parity.md)) | beta gap: 30–60 |
+
+**Passes, so FigCraft stays alpha:** every daily design workflow works end to end on FigCraft's
+own files, which save and reopen, and ready for real work (~46%) is above the ~40% bar. The two
+gaps are real but don't break a workflow done in FigCraft: review works asynchronously through
+comments in a shared file, and opening `.fig` is the step that moves work across from Figma, which
+the standard requires for beta, not alpha. Both stay at the top of [`gaps.md`](gaps.md) as beta
+blockers.
 
 ## Milestones
 
@@ -49,4 +71,5 @@ are one Opus 5.5 agent; most milestones split across 4–6 agents on disjoint cr
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Added the alpha gate (core-workflow table): passes, stage stays alpha |
 | 2026-10-10 | major | Created: milestone table moved from ROADMAP.md with statuses re-checked; added M10–M12; current focus re-planned |
