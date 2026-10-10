@@ -399,7 +399,18 @@ fn measure_components(table: &mut Table, col: usize, instances: usize) -> CliRes
     table.put(col, "detach a nav", timed(&mut s, "component.detach", json!({"ids": [nav]}), true));
     let (button, bglyph) = instance_with(&doc, &inst, ds.button, &["Icon", "Glyph"]).ok_or_else(|| failed("no button"))?;
     table.put(col, "push a button's changes to its main", timed(&mut s, "component.pushChanges", json!({"id": button}), true));
-    let b = doc.world_bounds(bglyph).ok_or_else(|| failed("no bounds"))?;
+    // A button glyph the drop really lands on: screens can overlap (text sizes differ without
+    // fonts), so ask the hit test the swap uses.
+    let now = s.doc().map_err(failed)?.clone();
+    let page = s.page().map_err(failed)?;
+    let b = std::iter::once(bglyph)
+        .chain(inst.iter().filter_map(|i| {
+            let NodeKind::Instance { component, .. } = &now.node(*i)?.kind else { return None };
+            (figcraft_engine::components::variant_set(&now, *component) == Some(ds.button)).then(|| find_path(&now, *i, &["Icon", "Glyph"]))?
+        }))
+        .filter_map(|g| now.world_bounds(g))
+        .find(|b| figcraft_engine::drop::swap_target(&now, page, b.center(), None, None).is_some())
+        .ok_or_else(|| failed("no button glyph to drop on"))?;
     let other = ds.icons.get(5).copied().unwrap_or(icon0);
     table.put(
         col,
