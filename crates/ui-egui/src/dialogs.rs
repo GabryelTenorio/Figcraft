@@ -3,7 +3,6 @@
 use egui::{Align2, Color32, Context, CornerRadius, RichText, Sense, Stroke, vec2};
 use figcraft_color::ColorProfile;
 use figcraft_doc::{ExportFormat, ExportSetting, ExportSize};
-use figcraft_engine::catalog::MENU;
 use figcraft_engine::cmd::file::{export_jobs, exportable_layers};
 use serde_json::json;
 
@@ -11,11 +10,10 @@ use crate::FigApp;
 use crate::export_panel::{export_layers, save_one, suggested_name};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
-use crate::toolbar::pretty_shortcut;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn window<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
+pub(crate) fn window<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
     let t = Tokens::get(ctx);
     egui::Window::new(title)
         .collapsible(false)
@@ -49,11 +47,12 @@ impl AboutTab {
 pub const ABOUT_WIDTH: f32 = 640.0;
 
 /// The About window's tab row, drawn like the Design / Prototype tabs of the right panel.
-fn about_tabs(ui: &mut egui::Ui, t: &Tokens, current: &mut AboutTab) {
+/// A row of tabs (the About window's, the shortcuts panel's): the current one highlighted.
+pub(crate) fn tab_strip<T: Copy + PartialEq>(ui: &mut egui::Ui, t: &Tokens, tabs: &[T], label: fn(T) -> &'static str, current: &mut T) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        for tab in AboutTab::ALL {
-            let label = tab.label();
+        for &tab in tabs {
+            let label = label(tab);
             let active = *current == tab;
             let galley = ui.painter().layout_no_wrap(label.into(), semibold(11.0), if active { t.text } else { t.text_secondary });
             let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 16.0, 24.0), Sense::click());
@@ -95,7 +94,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         let mut open = true;
         window("About FigCraft", ctx).open(&mut open).show(ctx, |ui| {
             ui.set_width(ABOUT_WIDTH);
-            about_tabs(ui, &t, &mut app.ui.about_tab);
+            tab_strip(ui, &t, &AboutTab::ALL, AboutTab::label, &mut app.ui.about_tab);
             ui.add_space(12.0);
             match app.ui.about_tab {
                 AboutTab::About => about_body(ui, &t),
@@ -159,30 +158,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             app.ui.preferences = false;
         }
     }
-    if app.ui.shortcuts_panel {
-        let mut open = true;
-        egui::Window::new("Keyboard shortcuts").open(&mut open).default_size(vec2(720.0, 420.0)).show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.columns(3, |cols| {
-                    let items: Vec<_> = MENU.iter().filter(|m| !m.shortcut.is_empty()).collect();
-                    let per = items.len().div_ceil(3);
-                    for (ci, col) in cols.iter_mut().enumerate() {
-                        for m in items.iter().skip(ci * per).take(per) {
-                            col.horizontal(|ui| {
-                                ui.label(RichText::new(m.label).font(regular(11.0)));
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(pretty_shortcut(m.shortcut)).color(t.text_secondary).font(regular(11.0)));
-                                });
-                            });
-                        }
-                    }
-                });
-            });
-        });
-        if !open {
-            app.ui.shortcuts_panel = false;
-        }
-    }
+    crate::shortcuts_panel::show(app, ctx);
     if let Some((mut find, mut replace)) = app.ui.find.clone() {
         let mut open = true;
         let mut action = None;

@@ -138,7 +138,7 @@ Or in a project's `.mcp.json`:
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
-| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (menu shortcuts, tool keys, Escape, Delete, arrows; text editing keys while editing text). |
+| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
 
@@ -158,6 +158,24 @@ first.
 along the flow, to the previous/next row of a wrapping layout, to the neighbouring grid cell, and,
 at the end of a flow or across a row's axis, into the neighbouring nested auto layout frame when the
 frame around flows that way (a list of rows: Down moves an item into the row below).
+
+### Keyboard shortcuts
+
+The default shortcuts live in one table (`figcraft_engine::keymap`), grouped like the public shortcut
+reference (Essential, Tools, View, Zoom, Text, Shape, Selection, Edit, Transform, Arrange,
+Components, Prototype) with the macOS keys and, where they differ, the Windows/Linux keys (for
+example Use as mask is ⌃⌘M on macOS and Ctrl+Alt+M elsewhere; Bring to front ⌥⌘] and
+Ctrl+Shift+]). `list_commands` reports each command's first key for the platform the server runs
+on; `key` resolves keys the way the canvas does. Commands behind keys:
+
+- `object.opacityKeys {digits, ids?}`: the opacity number keys. One digit is tens of percent (`"0"`
+  is 100%); two digits are the exact percentage (`"45"` is 45%, `"05"` is 5%), what typing two
+  digits in quick succession does on the canvas.
+- `view.zoomAt {x, y, out?, width?, height?}`: the zoom tool (hold Z on the canvas; Alt zooms out).
+  A point zooms one step in (or out) keeping that page point in place; an area fills the view.
+- `view.designPrototype` (`Shift+E`), `view.devMode` (`Shift+D`) and `view.leftSidebar`
+  (`Shift+Cmd+\`) switch the right panel's tab or hide the left sidebar in the app (no-ops headless).
+- `doc.nextTab` / `doc.previousTab` (`Ctrl+Tab` / `Ctrl+Shift+Tab`): the next or previous open file.
 
 ### Editing vectors
 

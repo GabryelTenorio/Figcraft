@@ -136,7 +136,8 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         }
         "edit.paste" => paste(app, None),
         "file.close" if app.session.ds().map(|d| d.is_dirty()).unwrap_or(false) => {
-            app.toast("Unsaved changes: save first (⌘S), or close the tab with ⌥-click to discard");
+            let save = pretty_shortcut(crate::shortcuts::shortcut("file.save").unwrap_or(""));
+            app.toast(format!("Unsaved changes: save first ({save}), or close the tab with {}-click to discard", pretty_shortcut("Alt")));
         }
         _ => {
             app.run(id, json!({}));
@@ -171,7 +172,7 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
             }
             last_sep = false;
             let enabled = available(m.id);
-            if item(ui, m.label, m.shortcut, enabled, false, &t) && enabled {
+            if item(ui, m.label, crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
                 clicked = Some(m.id);
             }
         } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
@@ -294,7 +295,13 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         t.menu_dim,
                     );
                     ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Actions…", regular(12.0), t.menu_dim);
-                    ui.painter().text(pos2(r.max.x - 10.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut("Cmd+K"), regular(12.0), t.menu_dim);
+                    ui.painter().text(
+                        pos2(r.max.x - 10.0, r.center().y),
+                        Align2::RIGHT_CENTER,
+                        pretty_shortcut(crate::shortcuts::shortcut("app.actions").unwrap_or("")),
+                        regular(12.0),
+                        t.menu_dim,
+                    );
                     if resp.clicked() {
                         app.ui.palette = Some(String::new());
                         close = true;
@@ -400,7 +407,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         separator(ui);
                         continue;
                     }
-                    let sc = figcraft_engine::catalog::shortcut(id).unwrap_or("");
+                    let sc = crate::shortcuts::shortcut(id).unwrap_or("");
                     if item(ui, label, sc, available(id), false, &t) {
                         if *id == "edit.paste" {
                             let p = app.to_page(pos);
@@ -514,11 +521,11 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                     let mut hits: Vec<(&str, &str, &str)> = figcraft_engine::all_commands()
                         .iter()
                         .filter(|c| ql.is_empty() || c.label.to_lowercase().contains(&ql) || c.id.to_lowercase().contains(&ql))
-                        .map(|c| (c.id, c.label, c.shortcut().unwrap_or("")))
+                        .map(|c| (c.id, c.label, crate::shortcuts::shortcut(c.id).unwrap_or("")))
                         .collect();
                     for m in MENU.iter().filter(|m| UI_COMMANDS.contains(&m.id)) {
                         if ql.is_empty() || m.label.to_lowercase().contains(&ql) {
-                            hits.push((m.id, m.label, m.shortcut));
+                            hits.push((m.id, m.label, crate::shortcuts::shortcut(m.id).unwrap_or("")));
                         }
                     }
                     hits.sort_by_key(|h| (!h.1.to_lowercase().starts_with(&ql), h.1.len()));

@@ -24,6 +24,9 @@ pub struct CanvasState {
     dragging: bool,
     space_pan: bool,
     middle_pan: Option<(Pos2, f64, f64)>,
+    /// The zoom tool (Z held): zooming out (Alt) or in, and where its drag started.
+    zoom_tool: Option<bool>,
+    zoom_drag: Option<Pos2>,
     pub last_pointer: Option<Point>,
     preedit: Option<PreeditView>,
 }
@@ -40,6 +43,8 @@ impl Default for CanvasState {
             dragging: false,
             space_pan: false,
             middle_pan: None,
+            zoom_tool: None,
+            zoom_drag: None,
             last_pointer: None,
             preedit: None,
         }
@@ -175,6 +180,14 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     overlays(app, &painter, &t);
+    // The zoom tool's area.
+    if let (Some(start), Some(p)) = (app.canvas.zoom_drag, ctx.input(|i| i.pointer.hover_pos())) {
+        let area = Rect::from_two_pos(start, p);
+        if area.width() > 4.0 || area.height() > 4.0 {
+            painter.rect_filled(area, CornerRadius::ZERO, ACCENT.gamma_multiply(0.1));
+            painter.rect_stroke(area, CornerRadius::ZERO, Stroke::new(1.0, ACCENT), StrokeKind::Inside);
+        }
+    }
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
     crate::comments::draw(app, &painter);
@@ -184,6 +197,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     if resp.hovered() {
         let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {
             if ctx.input(|i| i.pointer.any_down()) { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab }
+        } else if let Some(out) = app.canvas.zoom_tool {
+            if out { egui::CursorIcon::ZoomOut } else { egui::CursorIcon::ZoomIn }
         } else {
             match app.session.tool.overlay.cursor {
                 Cursor::Default => egui::CursorIcon::Default,
@@ -259,6 +274,31 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     app.canvas.submitted = Some(key);
 }
 
+/// The zoom tool while Z is held (Alt: zoom out): a click zooms a step about the pointer, a drag
+/// zooms to the dragged area. Takes the pointer from the other tools while it's active.
+fn zoom_tool(app: &mut FigApp, ui: &Ui, resp: &egui::Response, pos: Pos2, mods: egui::Modifiers, typing: bool) -> bool {
+    let held = !typing && !mods.command && ui.input(|i| i.key_down(egui::Key::Z));
+    app.canvas.zoom_tool = held.then_some(mods.alt);
+    let Some(start) = app.canvas.zoom_drag.or_else(|| (held && resp.hovered() && ui.input(|i| i.pointer.primary_pressed())).then_some(pos)) else {
+        return held;
+    };
+    app.canvas.zoom_drag = Some(start);
+    let area = Rect::from_two_pos(start, pos);
+    if ui.input(|i| i.pointer.primary_down()) {
+        return true;
+    }
+    app.canvas.zoom_drag = None;
+    let (a, b) = (app.to_page(area.min), app.to_page(area.max));
+    let params = if area.width() > 4.0 && area.height() > 4.0 {
+        json!({"x": a.x, "y": a.y, "width": b.x - a.x, "height": b.y - a.y})
+    } else {
+        let p = app.to_page(pos);
+        json!({"x": p.x, "y": p.y, "out": mods.alt})
+    };
+    app.run("view.zoomAt", params);
+    true
+}
+
 fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     if crate::proto_canvas::input(app, ui, resp) {
         return;
@@ -308,6 +348,9 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
             ds.view.cy -= f64::from(dy) / z;
             ds.revision += 1;
         }
+    }
+    if zoom_tool(app, ui, resp, pos, mods, editing_text || typing_elsewhere) {
+        return;
     }
     // Middle-button / space panning.
     let middle_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle));

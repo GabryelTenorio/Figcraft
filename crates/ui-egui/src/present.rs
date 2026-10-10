@@ -1427,9 +1427,6 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
     Some(Layout { disp, scale, place, screen, clip, device, landscape, color, overlays, closing })
 }
 
-/// The keys that present the current frame full-window.
-pub const PRESENT_SHORTCUT: &str = "Alt+Cmd+Enter";
-
 /// Where the player sits: the whole window or the preview pane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Chrome {

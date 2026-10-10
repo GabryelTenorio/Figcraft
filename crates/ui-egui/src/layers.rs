@@ -163,7 +163,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         app.ui.pages_open = !app.ui.pages_open;
     }
     let sr = Rect::from_center_size(pos2(hr.max.x - 50.0, hr.center().y), vec2(24.0, 24.0));
-    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).on_hover_text("Find  ⌘F");
+    let sresp = ui.interact(sr, ui.id().with("lsearch"), Sense::click()).on_hover_text(crate::shortcuts::tip("Find", "edit.findReplace"));
     if sresp.hovered() {
         ui.painter().rect_filled(sr, CornerRadius::same(5), t.hover);
     }

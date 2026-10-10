@@ -120,7 +120,9 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         });
     }
     row(ui, 32.0, |ui| {
-        let fit = ui.add_sized(vec2(col * 2.0 + 8.0, widgets::FIELD_H), egui::Button::new("Resize to fit")).on_hover_text("Fit to contents  ⌥⇧⌘R");
+        let fit = ui
+            .add_sized(vec2(col * 2.0 + 8.0, widgets::FIELD_H), egui::Button::new("Resize to fit"))
+            .on_hover_text(crate::shortcuts::tip("Fit to contents", "object.resizeToFit"));
         if fit.clicked() {
             app.run("object.resizeToFit", json!({"ids": ids}));
         }

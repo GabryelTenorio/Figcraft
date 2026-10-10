@@ -108,27 +108,16 @@ impl ToolId {
             ToolId::ShapeBuilder => "Shape builder",
         }
     }
+    /// The tool's key (from [`crate::keymap`]; empty when it has none).
     pub fn shortcut(self) -> &'static str {
-        match self {
-            ToolId::Move => "V",
-            ToolId::Scale => "K",
-            ToolId::Hand => "H",
-            ToolId::Frame => "F",
-            ToolId::Section => "Shift+S",
-            ToolId::Slice => "S",
-            ToolId::Rectangle => "R",
-            ToolId::Line => "L",
-            ToolId::Arrow => "Shift+L",
-            ToolId::Ellipse => "O",
-            ToolId::Pen => "P",
-            ToolId::Pencil => "Shift+P",
-            ToolId::Text => "T",
-            ToolId::Comment => "C",
-            ToolId::Eyedropper => "I",
-            ToolId::ShapeBuilder => "Shift+M",
-            _ => "",
-        }
+        let id = self.id();
+        crate::keymap::KEYS
+            .iter()
+            .find(|b| if self == ToolId::Eyedropper { b.id == "edit.pickColor" } else { b.id.strip_prefix("tool.") == Some(id) })
+            .and_then(|b| b.keys(crate::keymap::Platform::current()).first().copied())
+            .unwrap_or("")
     }
+
     fn draws_shape(self) -> bool {
         matches!(
             self,

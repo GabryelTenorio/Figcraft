@@ -194,6 +194,8 @@ pub fn specs() -> Vec<CommandSpec> {
             s.active = i;
             ok()
         }),
+        spec!("doc.nextTab", "Next tab", "{}", false, |s, _| cycle_doc(s, 1)),
+        spec!("doc.previousTab", "Previous tab", "{}", false, |s, _| cycle_doc(s, -1)),
         spec!("doc.list", "List documents", "{}", false, |s, _| {
             Ok(Value::Array(
                 s.docs
@@ -919,6 +921,16 @@ fn close(s: &mut Session, p: &Value) -> Result<Value> {
         s.active = s.docs.len().saturating_sub(1);
     }
     ok()
+}
+
+/// Ctrl+Tab / Ctrl+Shift+Tab: the next or previous open document, wrapping around.
+fn cycle_doc(s: &mut Session, dir: i64) -> Result<Value> {
+    let n = s.docs.len() as i64;
+    if n == 0 {
+        return Err(crate::EngineError::NoDocument);
+    }
+    s.active = (s.active as i64 + dir).rem_euclid(n) as usize;
+    Ok(json!({"index": s.active}))
 }
 
 #[cfg(test)]

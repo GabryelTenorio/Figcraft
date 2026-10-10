@@ -174,8 +174,18 @@ dimension measured side by side.
    background blurs as images; checked by rendering the PDFs back against PNG exports.
    *Left:* .fig import (best effort), variable mode lookups in prototype expressions, PDF print
    options (bleed, CMYK). 10–20 h.
-7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
-   (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
+7. **Look & feel and interaction-fidelity pass**: *landed:* keyboard shortcuts audited against the
+   public shortcut reference: one keymap (`figcraft_engine::keymap`) drives the menus, the canvas,
+   the control channel and MCP, with macOS and Windows/Linux keys where they differ (mask, bring to
+   front/back, distribute, tidy up, layout grids, pixel preview), Text-only and canvas-only bindings
+   (Cmd/Ctrl+K: link while typing, Actions on the canvas), Cmd/Ctrl+/ for Actions, `+`/`-` zoom,
+   Shift+0/1/2 from any layout, Cmd/Ctrl+0, hold Z for the zoom tool (Alt zooms out, drag an area),
+   two quick digits for an exact opacity, boolean keys (Alt+Shift+U/S/I/E), remove fill/stroke
+   (Alt+/, Shift+/), outlines on Shift+Cmd+O, pixel grid on Cmd+', Shift+E / Shift+D / Shift+Cmd+   panel keys, Ctrl+Tab between files, B for the paint bucket in vector edit mode; the Keyboard
+   shortcuts panel docks at the bottom with a tab per group and search, keycaps per platform.
+   *Left:* tool by tool, panel by panel against the incumbent (cursors, modifier keys while
+   dragging such as Ctrl to ignore snapping on macOS, hover states, menus, popovers); multiplayer
+   cursor keys wait for multiplayer. 40–60 h.
 8. **Collaboration (local):** comments landed: pins pinned to frames and layers that move with them
    (to other pages too) and stay where they were when the layer is deleted, your pins dragged onto
    another frame, crowded pins clustered when zoomed out (a click zooms them apart), Shift+C to show
@@ -258,7 +268,8 @@ dimension measured side by side.
   with pinned properties drawn as callouts on the canvas, a ready-for-dev list, CSS/HTML/React/SwiftUI/Compose
   code where components take their properties as parameters and instances are calls), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
-  context menu, Actions palette (⌘K), keyboard shortcuts from the catalog, presentation player with
+  context menu, Actions palette (⌘K), keyboard shortcuts from one keymap per platform (a tabbed,
+  searchable Keyboard shortcuts panel), presentation player with
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).

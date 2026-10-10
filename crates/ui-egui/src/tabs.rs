@@ -97,7 +97,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         }
         // New tab.
         let nr = Rect::from_center_size(pos2(x + 20.0, rect.center().y), vec2(28.0, 28.0));
-        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).on_hover_text("New design file  ⌘N");
+        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).on_hover_text(crate::shortcuts::tip("New design file", "file.new"));
         if nresp.hovered() {
             ui.painter().rect_filled(nr, CornerRadius::same(5), t.hover);
         }
@@ -125,7 +125,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             let dirty = app.session.docs.get(i).is_some_and(|d| d.is_dirty());
             if dirty {
                 app.ui.find = None;
-                app.toast("Unsaved changes: save first, or close again with ⌥ to discard");
+                app.toast(format!("Unsaved changes: save first, or close again with {} to discard", crate::toolbar::pretty_shortcut("Alt")));
                 if ui.input(|inp| inp.modifiers.alt) {
                     app.run("file.close", json!({"index": i, "force": true}));
                 }

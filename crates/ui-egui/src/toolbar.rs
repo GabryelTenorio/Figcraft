@@ -86,7 +86,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         }
     }
     // Resources (components, plugins) opens the Assets panel; Actions palette.
-    for (icon, tip, id) in [(Icon::Assets, "Resources  ⇧I", "resources"), (Icon::Actions, "Actions  ⌘K", "actions")] {
+    for (icon, tip, id) in [
+        (Icon::Assets, crate::shortcuts::key_tip("Resources", "Shift+I"), "resources"),
+        (Icon::Actions, crate::shortcuts::tip("Actions", "app.actions"), "actions"),
+    ] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let resp = ui.interact(r, ui.id().with(id), Sense::click()).on_hover_text(tip);
         if resp.hovered() {
@@ -150,7 +153,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().text(hr.center(), Align2::CENTER_CENTER, "?", crate::theme::regular(15.0), t.text);
     crate::right::menu_popup(&hresp).show(|ui| {
         for (l, c) in [("Keyboard shortcuts", "help.shortcuts"), ("Help page", "help.page"), ("About FigCraft", "help.about")] {
-            if crate::right::menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
+            if crate::right::menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
                 app.run(c, json!({}));
                 ui.close();
             }
@@ -328,30 +331,7 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
     }
 }
 
-/// "Shift+Cmd+K" → "⇧⌘K" on macOS.
+/// "Shift+Cmd+K" → "⇧⌘K" on macOS, "Ctrl+Shift+K" elsewhere.
 pub fn pretty_shortcut(s: &str) -> String {
-    if s.is_empty() {
-        return String::new();
-    }
-    let mac = cfg!(target_os = "macos");
-    if !mac {
-        return s.replace("Cmd", "Ctrl");
-    }
-    let mut out = String::new();
-    for part in s.split('+') {
-        out.push_str(match part {
-            "Shift" => "⇧",
-            "Cmd" => "⌘",
-            "Alt" => "⌥",
-            "Ctrl" => "⌃",
-            "Delete" => "⌫",
-            "Enter" => "↵",
-            "Escape" => "Esc",
-            "Tab" => "⇥",
-            "PageUp" => "⇞",
-            "PageDown" => "⇟",
-            other => other,
-        });
-    }
-    out
+    figcraft_engine::keymap::display(s, crate::shortcuts::platform())
 }

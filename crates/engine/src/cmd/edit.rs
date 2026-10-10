@@ -161,6 +161,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("object.toggleVisible", "Show/Hide selection", "{ids?, visible?}", true, |s, p| toggle(s, p, "visible")),
         spec!("object.toggleLock", "Lock/Unlock selection", "{ids?, locked?}", true, |s, p| toggle(s, p, "locked")),
         spec!("object.hideOthers", "Hide other layers", "{}", true, hide_others),
+        spec!(
+            "object.opacityKeys",
+            "Opacity from number keys",
+            "{digits (\"1\"…\"9\": 10%…90%, \"0\": 100%; two digits: that percentage, \"45\" is 45%), ids?}",
+            true,
+            opacity_keys
+        ),
         spec!("object.removeFill", "Remove fill", "{ids?}", true, |s, p| {
             for i in req_targets("object.removeFill", s, p)? {
                 s.doc_mut()?.get_mut(i)?.fills.clear();
@@ -726,6 +733,32 @@ fn select_same(s: &mut Session, same: impl Fn(&Node, &Node) -> bool) -> Result<V
     let ids: Vec<NodeId> = doc.subtree(page).into_iter().filter(|i| *i != page && doc.node(*i).is_some_and(|n| same(&first, n))).collect();
     s.set_selection(ids.clone());
     Ok(json!({"selection": ids}))
+}
+
+/// The opacity number keys give: one digit is tens of percent (0 is 100%), two digits typed in
+/// quick succession the exact percentage.
+pub fn opacity_from_digits(digits: &str) -> Option<f32> {
+    let mut n = 0u32;
+    let mut count = 0;
+    for c in digits.chars() {
+        n = n * 10 + c.to_digit(10)?;
+        count += 1;
+    }
+    match count {
+        1 if n == 0 => Some(1.0),
+        1 => Some(n as f32 / 10.0),
+        2 => Some(n as f32 / 100.0),
+        _ => None,
+    }
+}
+
+fn opacity_keys(s: &mut Session, p: &Value) -> Result<Value> {
+    let digits = req_string("object.opacityKeys", p, "digits")?;
+    let o = opacity_from_digits(&digits).ok_or_else(|| bad("object.opacityKeys", "`digits` must be one or two digits"))?;
+    for i in req_targets("object.opacityKeys", s, p)? {
+        s.doc_mut()?.get_mut(i)?.opacity = o;
+    }
+    Ok(json!({"opacity": o}))
 }
 
 fn nudge(s: &mut Session, p: &Value) -> Result<Value> {
