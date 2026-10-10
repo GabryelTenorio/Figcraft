@@ -77,9 +77,15 @@ dimension measured side by side.
    canvas; fill menu in the properties panel; drops from the Assets panel and the canvas land in
    slots); nested overrides kept when the main moves or swaps a nested instance, and on nested
    instances copied out of an instance (re-linked to their own main); canvas drags can no longer
-   pull layers out of an instance. Explicit variable modes in the Design panel: a frame's
-   mode per collection, Auto (inherited) or its own.
-   *Left:* library variables (and their collections in the mode picker). 2–4 h.
+   pull layers out of an instance; library variables (publishing includes the file's variable
+   collections with their modes, aliases and scopes, versioned per variable and collection, without
+   variables hidden from publishing; files using the library see its collections read-only under
+   the library's name in the Variables editor and the variable pickers; binding, aliasing or setting
+   a library collection's mode on a frame copies the variables in as read-only linked copies, so the
+   file renders without the library; library components keep their variable bindings and modes;
+   "Library updates available" covers changed variables and bound layers follow). Explicit variable
+   modes in the Design panel: a frame's mode per collection, Auto (inherited) or its own.
+   *Left:* library collections in the Design panel's mode picker. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -126,8 +132,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes (in progress); library variables; responsive
-  presentation.
+  a real-file corpus); variable width strokes (in progress); responsive presentation.
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 

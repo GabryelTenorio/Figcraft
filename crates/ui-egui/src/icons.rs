@@ -1,10 +1,29 @@
 //! FigCraft's icon set, drawn in code from simple primitives on a 16×16 grid. Original artwork
 //! (MIT OR Apache-2.0): no third-party icons are used anywhere.
+//!
+//! The grid is pixel-exact at 16 px: 1-unit strokes sit on half coordinates (pixel centres) and
+//! fills on whole ones. Larger boxes scale by whole steps and smaller ones are hinted: straight
+//! strokes snap to the pixel grid so they stay one sharp pixel wide at any size.
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, pos2, vec2};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Icon {
+use egui::{Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
+
+macro_rules! icons {
+    ($($(#[$m:meta])* $name:ident,)*) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+        pub enum Icon {
+            $($(#[$m])* $name,)*
+        }
+
+        impl Icon {
+            /// Every icon, in declaration order (the icon gallery, tests).
+            pub const ALL: &[Icon] = &[$(Icon::$name,)*];
+        }
+    };
+}
+
+icons! {
     Move,
     Scale,
     Hand,
@@ -143,633 +162,786 @@ pub enum Icon {
     ViewGrid,
 }
 
+/// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
+fn arc_pts(cx: f32, cy: f32, r: f32, a0: f32, a1: f32) -> impl Iterator<Item = (f32, f32)> {
+    let n = ((a1 - a0).abs() * r * 1.5).ceil().clamp(6.0, 48.0) as usize;
+    (0..=n).map(move |i| {
+        let t = a0 + (a1 - a0) * i as f32 / n as f32;
+        (cx + r * t.cos(), cy + r * t.sin())
+    })
+}
+
+/// A capsule (stadium) outline from `a` to `b` with radius `r`.
+fn capsule(a: (f32, f32), b: (f32, f32), r: f32) -> Vec<(f32, f32)> {
+    let th = (b.1 - a.1).atan2(b.0 - a.0);
+    arc_pts(b.0, b.1, r, th - FRAC_PI_2, th + FRAC_PI_2).chain(arc_pts(a.0, a.1, r, th + FRAC_PI_2, th + 3.0 * FRAC_PI_2)).collect()
+}
+
+/// Triangles of a simple polygon (ear clipping); empty when it can't be split.
+fn triangulate(v: &[Pos2]) -> Vec<u32> {
+    let n = v.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let area: f32 = (0..n).map(|i| v[i].x * v[(i + 1) % n].y - v[(i + 1) % n].x * v[i].y).sum();
+    let mut idx: Vec<usize> = if area >= 0.0 { (0..n).collect() } else { (0..n).rev().collect() };
+    let cross = |a: Pos2, b: Pos2, c: Pos2| (b - a).x * (c - b).y - (b - a).y * (c - b).x;
+    let mut out = Vec::with_capacity((n - 2) * 3);
+    while idx.len() > 3 {
+        let m = idx.len();
+        let ear = (0..m).find(|&i| {
+            let (ia, ib, ic) = (idx[(i + m - 1) % m], idx[i], idx[(i + 1) % m]);
+            let (a, b, c) = (v[ia], v[ib], v[ic]);
+            cross(a, b, c) > 0.0
+                && !idx
+                    .iter()
+                    .any(|&k| k != ia && k != ib && k != ic && cross(a, b, v[k]) >= 0.0 && cross(b, c, v[k]) >= 0.0 && cross(c, a, v[k]) >= 0.0)
+        });
+        let Some(i) = ear else { return Vec::new() };
+        out.extend([idx[(i + m - 1) % m] as u32, idx[i] as u32, idx[(i + 1) % m] as u32]);
+        idx.remove(i);
+    }
+    out.extend(idx.iter().map(|&i| i as u32));
+    out
+}
+
 struct P<'a> {
     painter: &'a Painter,
     o: Pos2,
     s: f32,
+    /// One physical pixel, in points.
+    px: f32,
     stroke: Stroke,
     color: Color32,
 }
 
 impl P<'_> {
-    fn p(&self, x: f32, y: f32) -> Pos2 {
+    fn raw(&self, x: f32, y: f32) -> Pos2 {
         pos2(self.o.x + x * self.s, self.o.y + y * self.s)
     }
-    fn line(&self, x0: f32, y0: f32, x1: f32, y1: f32) {
-        self.painter.line_segment([self.p(x0, y0), self.p(x1, y1)], self.stroke);
+    /// A stroke coordinate on the pixel grid: centred on a pixel for odd widths, on an edge for even.
+    fn snap_c(&self, v: f32) -> f32 {
+        let odd = (self.stroke.width / self.px).round() as i32 % 2 == 1;
+        let off = if odd { 0.5 } else { 0.0 };
+        ((v / self.px - off).round() + off) * self.px
     }
+    /// A fill edge on the pixel grid.
+    fn snap_e(&self, v: f32) -> f32 {
+        (v / self.px).round() * self.px
+    }
+    /// A hinted stroke vertex.
+    fn sp(&self, x: f32, y: f32) -> Pos2 {
+        let q = self.raw(x, y);
+        pos2(self.snap_c(q.x), self.snap_c(q.y))
+    }
+    /// A straight stroke; axis-aligned ones are hinted (crossways onto pixel centres, lengthways
+    /// onto pixel edges so they end sharp).
+    fn line(&self, x0: f32, y0: f32, x1: f32, y1: f32) {
+        let (a, b) = (self.raw(x0, y0), self.raw(x1, y1));
+        let (a, b) = if y0 == y1 {
+            let y = self.snap_c(a.y);
+            (pos2(self.snap_e(a.x), y), pos2(self.snap_e(b.x), y))
+        } else if x0 == x1 {
+            let x = self.snap_c(a.x);
+            (pos2(x, self.snap_e(a.y)), pos2(x, self.snap_e(b.y)))
+        } else {
+            (a, b)
+        };
+        self.painter.line_segment([a, b], self.stroke);
+    }
+    /// A polyline of straight segments through hinted vertices.
     fn poly(&self, pts: &[(f32, f32)], closed: bool) {
-        let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.p(*x, *y)).collect();
+        let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.sp(x, y)).collect();
+        self.stroke_pts(v, closed);
+    }
+    /// A path with curves (arcs, capsules): drawn as given, unhinted.
+    fn path(&self, pts: &[(f32, f32)], closed: bool) {
+        let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.raw(x, y)).collect();
+        self.stroke_pts(v, closed);
+    }
+    fn stroke_pts(&self, v: Vec<Pos2>, closed: bool) {
         if closed {
             self.painter.add(Shape::closed_line(v, self.stroke));
         } else {
             self.painter.add(Shape::line(v, self.stroke));
         }
     }
-    fn fill_poly(&self, pts: &[(f32, f32)]) {
-        let v: Vec<Pos2> = pts.iter().map(|(x, y)| self.p(*x, *y)).collect();
-        self.painter.add(Shape::convex_polygon(v, self.color, Stroke::NONE));
+    /// A filled polygon, convex or not.
+    fn fill(&self, pts: &[(f32, f32)]) {
+        let v: Vec<Pos2> = pts.iter().map(|&(x, y)| self.raw(x, y)).collect();
+        let n = v.len();
+        let turn = |i: usize| {
+            let (a, b, c) = (v[i], v[(i + 1) % n], v[(i + 2) % n]);
+            (b - a).x * (c - b).y - (b - a).y * (c - b).x
+        };
+        let convex = n >= 3 && ((0..n).all(|i| turn(i) >= 0.0) || (0..n).all(|i| turn(i) <= 0.0));
+        if convex {
+            self.painter.add(Shape::convex_polygon(v, self.color, Stroke::NONE));
+            return;
+        }
+        let indices = triangulate(&v);
+        if !indices.is_empty() {
+            let mut mesh = Mesh::default();
+            for p in &v {
+                mesh.colored_vertex(*p, self.color);
+            }
+            mesh.indices = indices;
+            self.painter.add(Shape::mesh(mesh));
+        }
+        // A hairline around the mesh gives it the same soft edge as the convex fills.
+        self.painter.add(Shape::closed_line(v, Stroke::new(self.px, self.color)));
     }
     fn rect(&self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) {
-        let rr = Rect::from_min_max(self.p(x0, y0), self.p(x1, y1));
-        self.painter.rect_stroke(rr, egui::CornerRadius::same((r * self.s) as u8), self.stroke, egui::StrokeKind::Middle);
+        let rr = Rect::from_min_max(self.sp(x0, y0), self.sp(x1, y1));
+        self.painter.rect_stroke(rr, egui::CornerRadius::same((r * self.s).round() as u8), self.stroke, egui::StrokeKind::Middle);
     }
     fn fill_rect(&self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) {
-        let rr = Rect::from_min_max(self.p(x0, y0), self.p(x1, y1));
-        self.painter.rect_filled(rr, egui::CornerRadius::same((r * self.s) as u8), self.color);
+        let (a, b) = (self.raw(x0, y0), self.raw(x1, y1));
+        let rr = Rect::from_min_max(pos2(self.snap_e(a.x), self.snap_e(a.y)), pos2(self.snap_e(b.x), self.snap_e(b.y)));
+        self.painter.rect_filled(rr, egui::CornerRadius::same((r * self.s).round() as u8), self.color);
     }
     fn circle(&self, x: f32, y: f32, r: f32) {
-        self.painter.circle_stroke(self.p(x, y), r * self.s, self.stroke);
+        self.painter.circle_stroke(self.raw(x, y), r * self.s, self.stroke);
     }
     fn dot(&self, x: f32, y: f32, r: f32) {
-        self.painter.circle_filled(self.p(x, y), r * self.s, self.color);
+        self.painter.circle_filled(self.raw(x, y), r * self.s, self.color);
     }
     fn arc(&self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32) {
-        let n = 16;
-        let pts: Vec<(f32, f32)> = (0..=n)
-            .map(|i| {
-                let t = a0 + (a1 - a0) * i as f32 / n as f32;
-                (cx + r * t.cos(), cy + r * t.sin())
-            })
-            .collect();
-        self.poly(&pts, false);
+        self.path(&arc_pts(cx, cy, r, a0, a1).collect::<Vec<_>>(), false);
+    }
+    /// An open arrowhead at `tip` pointing along angle `dir`, arms `len` long.
+    fn head(&self, tip: (f32, f32), dir: f32, len: f32) {
+        let arm = |a: f32| (tip.0 + len * a.cos(), tip.1 + len * a.sin());
+        self.path(&[arm(dir + PI - FRAC_PI_4), tip, arm(dir + PI + FRAC_PI_4)], false);
+    }
+    /// An arc with an arrowhead at its end, pointing the way it runs.
+    fn arc_arrow(&self, cx: f32, cy: f32, r: f32, a0: f32, a1: f32) {
+        self.arc(cx, cy, r, a0, a1);
+        let tip = (cx + r * a1.cos(), cy + r * a1.sin());
+        let dir = a1 + if a1 > a0 { FRAC_PI_2 } else { -FRAC_PI_2 };
+        self.head(tip, dir, 2.6);
+    }
+    /// A rounded corner mark: an L at (`x`, `y`) opening towards (`dx`, `dy`), `len` long.
+    fn corner(&self, x: f32, y: f32, dx: f32, dy: f32, len: f32, r: f32) {
+        let a0 = 0.0f32.atan2(-dx);
+        let mut a1 = (-dy).atan2(0.0);
+        if a1 - a0 > PI {
+            a1 -= TAU;
+        } else if a0 - a1 > PI {
+            a1 += TAU;
+        }
+        let mut c = vec![(x, y + len * dy)];
+        c.extend(arc_pts(x + r * dx, y + r * dy, r, a0, a1));
+        c.push((x + len * dx, y));
+        self.path(&c, false);
+    }
+    /// Short dashes along the outline of a box (`n` per side).
+    fn dashed_box(&self, x0: f32, y0: f32, x1: f32, y1: f32, n: usize) {
+        let seg = |a: f32, b: f32, i: usize| {
+            let step = (b - a) / (2 * n - 1) as f32;
+            (a + 2.0 * i as f32 * step, a + (2 * i + 1) as f32 * step)
+        };
+        for i in 0..n {
+            let (a, b) = seg(x0 - 0.5, x1 + 0.5, i);
+            self.line(a, y0, b, y0);
+            self.line(a, y1, b, y1);
+            let (a, b) = seg(y0 - 0.5, y1 + 0.5, i);
+            self.line(x0, a, x0, b);
+            self.line(x1, a, x1, b);
+        }
     }
 }
 
 /// Paint `icon` centred in `rect` (a 16-unit glyph scaled to fit) in `color`.
 pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
-    let size = rect.width().min(rect.height());
-    let s = size / 16.0;
+    let ppp = painter.ctx().pixels_per_point();
+    let px = 1.0 / ppp;
+    // Physical pixels per grid unit: whole steps from 16 px up (quarter steps on fractional
+    // display scales), the exact fit below.
+    let k = rect.width().min(rect.height()) * ppp / 16.0;
+    let k = if k >= 1.0 { (k * 4.0).floor() / 4.0 } else { k };
+    let s = k * px;
+    let snap = |v: f32| (v * ppp).round() * px;
     let o = rect.center() - vec2(8.0 * s, 8.0 * s);
-    let w = (1.0 * s).clamp(1.0, 2.0);
-    let p = P { painter, o, s, stroke: Stroke::new(w, color), color };
+    let o = pos2(snap(o.x), snap(o.y));
+    let w = (k * 0.9).round().max(1.0) * px;
+    let p = P { painter, o, s, px, stroke: Stroke::new(w, color), color };
+    draw(&p, icon);
+}
+
+fn draw(p: &P, icon: Icon) {
     use Icon::*;
     match icon {
-        Move => p.fill_poly(&[(4.0, 2.5), (4.0, 13.0), (6.6, 10.6), (8.4, 14.2), (9.9, 13.5), (8.2, 10.0), (11.6, 9.8)]),
+        Move => p.fill(&[(4.0, 2.0), (4.0, 13.6), (6.9, 10.9), (8.8, 14.8), (10.6, 14.0), (8.7, 10.2), (12.6, 10.2)]),
         Scale => {
-            p.rect(2.5, 6.5, 9.5, 13.5, 0.0);
-            p.line(7.0, 9.0, 13.5, 2.5);
+            p.rect(2.5, 7.5, 8.5, 13.5, 0.0);
+            p.line(6.0, 10.0, 13.0, 3.0);
             p.poly(&[(9.5, 2.5), (13.5, 2.5), (13.5, 6.5)], false);
         }
         Hand => {
-            p.poly(&[(5.0, 8.5), (5.0, 4.0), (6.5, 4.0), (6.5, 7.5)], false);
-            p.poly(&[(6.5, 7.5), (6.5, 2.8), (8.0, 2.8), (8.0, 7.5)], false);
-            p.poly(&[(8.0, 7.5), (8.0, 3.5), (9.5, 3.5), (9.5, 8.0)], false);
-            p.poly(&[(9.5, 8.0), (9.5, 5.0), (11.0, 5.0), (11.0, 10.0), (9.5, 13.5), (6.0, 13.5), (3.5, 9.5), (4.5, 8.5), (5.0, 8.5)], false);
+            // An open hand: four fingers (the middle one tallest), then the palm and the thumb.
+            for (x, top) in [(4.5, 5.0), (6.5, 3.5), (8.5, 4.0), (10.5, 5.5)] {
+                let mut f = vec![(x, 8.0)];
+                f.extend(arc_pts(x + 1.0, top, 1.0, PI, TAU));
+                f.push((x + 2.0, 8.0));
+                p.path(&f, false);
+            }
+            let mut h = vec![(12.5, 8.0), (12.5, 10.0)];
+            h.extend(arc_pts(9.5, 10.0, 3.0, 0.0, FRAC_PI_2));
+            h.extend([(8.0, 13.0), (3.0, 9.4)]);
+            h.extend(arc_pts(3.6, 8.6, 1.0, 2.2, 5.3));
+            h.push((4.5, 8.5));
+            p.path(&h, false);
         }
         Frame => {
-            p.line(5.0, 2.0, 5.0, 14.0);
-            p.line(11.0, 2.0, 11.0, 14.0);
-            p.line(2.0, 5.0, 14.0, 5.0);
-            p.line(2.0, 11.0, 14.0, 11.0);
+            p.line(5.5, 2.0, 5.5, 14.0);
+            p.line(10.5, 2.0, 10.5, 14.0);
+            p.line(2.0, 5.5, 14.0, 5.5);
+            p.line(2.0, 10.5, 14.0, 10.5);
         }
         Section | Section2 => {
-            p.rect(2.5, 4.5, 13.5, 13.5, 1.5);
-            p.fill_rect(2.5, 2.5, 8.5, 5.5, 1.0);
+            p.rect(2.5, 5.5, 13.5, 13.5, 1.0);
+            p.fill_rect(2.0, 2.0, 9.0, 6.0, 1.0);
         }
         Slice => {
-            p.line(3.0, 13.0, 13.0, 3.0);
             p.rect(2.5, 2.5, 13.5, 13.5, 0.0);
+            p.line(2.5, 13.5, 13.5, 2.5);
         }
         Bend => {
             // A curve with a smooth point and its handle line.
-            let pts: Vec<(f32, f32)> = (0..=12)
+            let pts: Vec<(f32, f32)> = (0..=16)
                 .map(|i| {
-                    let t = i as f32 / 12.0;
+                    let t = i as f32 / 16.0;
                     let u = 1.0 - t;
-                    (u * u * 2.5 + 2.0 * u * t * 8.0 + t * t * 13.5, u * u * 13.0 + 2.0 * u * t * 1.5 + t * t * 13.0)
+                    (u * u * 2.5 + 2.0 * u * t * 8.0 + t * t * 13.5, u * u * 13.5 + 2.0 * u * t * 1.5 + t * t * 13.5)
                 })
                 .collect();
-            p.poly(&pts, false);
-            p.line(3.5, 7.25, 12.5, 7.25);
-            p.dot(3.5, 7.25, 1.2);
-            p.dot(12.5, 7.25, 1.2);
-            p.fill_rect(6.9, 6.15, 9.1, 8.35, 0.4);
+            p.path(&pts, false);
+            p.line(3.0, 7.5, 13.0, 7.5);
+            p.dot(3.0, 7.5, 1.3);
+            p.dot(13.0, 7.5, 1.3);
+            p.fill_rect(7.0, 6.0, 9.0, 9.0, 0.0);
         }
         PaintBucket => {
             p.poly(&[(2.5, 8.0), (7.5, 3.0), (12.5, 8.0), (7.5, 13.0)], true);
-            p.line(4.0, 6.5, 11.0, 6.5);
-            p.line(7.5, 3.0, 5.5, 1.0);
-            p.dot(13.5, 11.8, 1.4);
+            p.fill(&[(2.5, 8.0), (12.5, 8.0), (7.5, 13.0)]);
+            p.line(7.5, 3.0, 5.0, 0.5);
+            p.dot(13.5, 11.5, 1.5);
         }
         Lasso => {
-            let pts: Vec<(f32, f32)> = (0..=20)
-                .map(|i| {
-                    let a = i as f32 / 20.0 * std::f32::consts::TAU;
-                    (8.5 + 5.5 * a.cos(), 6.0 + 3.5 * a.sin())
-                })
-                .collect();
-            p.poly(&pts, true);
-            p.poly(&[(5.0, 8.8), (4.6, 11.0), (5.6, 12.6), (4.2, 14.5)], false);
+            p.path(&arc_pts(8.5, 6.5, 5.0, 0.0, TAU).map(|(x, y)| (x, 6.5 + (y - 6.5) * 0.7)).collect::<Vec<_>>(), true);
+            p.path(&[(5.0, 9.3), (4.5, 11.5), (6.0, 12.5), (4.5, 14.5)], false);
         }
         Cut => {
-            p.circle(4.5, 11.5, 2.2);
-            p.circle(11.5, 11.5, 2.2);
-            p.line(6.0, 9.8, 11.5, 2.5);
-            p.line(10.0, 9.8, 4.5, 2.5);
+            p.circle(4.5, 11.5, 2.0);
+            p.circle(11.5, 11.5, 2.0);
+            p.line(6.0, 10.0, 11.5, 2.5);
+            p.line(10.0, 10.0, 4.5, 2.5);
         }
-        Rectangle => p.rect(3.0, 3.0, 13.0, 13.0, 0.5),
-        Line => p.line(3.0, 13.0, 13.0, 3.0),
+        Rectangle => p.rect(2.5, 2.5, 13.5, 13.5, 1.0),
+        Line => p.line(2.5, 13.5, 13.5, 2.5),
         Arrow => {
-            p.line(3.0, 13.0, 13.0, 3.0);
-            p.poly(&[(8.0, 3.0), (13.0, 3.0), (13.0, 8.0)], false);
+            p.line(2.5, 13.5, 13.0, 3.0);
+            p.poly(&[(7.5, 2.5), (13.5, 2.5), (13.5, 8.5)], false);
         }
         Ellipse => p.circle(8.0, 8.0, 5.5),
         Polygon => p.poly(&[(8.0, 2.5), (13.5, 12.5), (2.5, 12.5)], true),
         Star => {
             let pts: Vec<(f32, f32)> = (0..10)
                 .map(|i| {
-                    let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::PI * i as f32 / 5.0;
-                    let r = if i % 2 == 0 { 6.0 } else { 2.6 };
-                    (8.0 + r * a.cos(), 8.5 + r * a.sin())
+                    let a = -FRAC_PI_2 + PI * i as f32 / 5.0;
+                    let r = if i % 2 == 0 { 6.0 } else { 2.7 };
+                    (8.0 + r * a.cos(), 8.6 + r * a.sin())
                 })
                 .collect();
-            p.poly(&pts, true);
+            p.path(&pts, true);
         }
         Image => {
             p.rect(2.5, 3.5, 13.5, 12.5, 1.0);
-            p.poly(&[(2.5, 11.0), (6.0, 7.5), (9.0, 10.5), (10.5, 9.0), (13.5, 12.0)], false);
-            p.dot(10.5, 6.0, 1.0);
+            p.poly(&[(2.5, 11.5), (6.0, 8.0), (9.0, 11.0), (10.5, 9.5), (13.5, 12.5)], false);
+            p.dot(10.5, 6.5, 1.1);
         }
         Pen => {
-            p.poly(&[(8.0, 2.0), (12.5, 9.0), (10.0, 13.5), (6.0, 13.5), (3.5, 9.0)], true);
-            p.line(8.0, 2.0, 8.0, 8.0);
-            p.dot(8.0, 9.0, 1.0);
+            p.poly(&[(8.0, 2.0), (12.5, 8.5), (10.5, 13.5), (5.5, 13.5), (3.5, 8.5)], true);
+            p.line(8.0, 2.0, 8.0, 7.0);
+            p.dot(8.0, 8.8, 1.2);
         }
         Pencil => {
-            p.poly(&[(3.0, 13.0), (4.0, 10.0), (11.0, 3.0), (13.0, 5.0), (6.0, 12.0)], true);
-            p.line(9.5, 4.5, 11.5, 6.5);
+            p.poly(&[(2.5, 13.5), (3.2, 10.3), (10.5, 3.0), (13.0, 5.5), (5.7, 12.8)], true);
+            p.line(9.0, 4.5, 11.5, 7.0);
         }
         Text => {
-            p.line(3.5, 3.5, 12.5, 3.5);
-            p.line(8.0, 3.5, 8.0, 13.0);
-            p.line(3.5, 3.5, 3.5, 5.0);
-            p.line(12.5, 3.5, 12.5, 5.0);
-            p.line(6.5, 13.0, 9.5, 13.0);
+            p.line(2.0, 3.5, 13.0, 3.5);
+            p.line(7.5, 3.0, 7.5, 13.0);
+            p.line(2.5, 3.0, 2.5, 6.0);
+            p.line(12.5, 3.0, 12.5, 6.0);
+            p.line(5.0, 12.5, 10.0, 12.5);
         }
         Comment => {
-            p.poly(
-                &[(8.0, 2.5), (11.5, 3.2), (13.3, 6.3), (12.8, 9.8), (10.0, 12.8), (8.0, 13.2), (2.8, 13.2), (2.8, 8.0), (3.6, 4.8), (5.5, 3.1)],
-                true,
-            );
+            let mut b: Vec<(f32, f32)> = arc_pts(8.5, 7.5, 5.0, 2.75, TAU + 1.95).collect();
+            b.push((2.5, 13.5));
+            p.path(&b, true);
         }
-        Actions => {
-            p.poly(&[(9.0, 2.0), (4.0, 9.0), (8.0, 9.0), (7.0, 14.0), (12.0, 7.0), (8.0, 7.0)], true);
-        }
-        Chevron => p.poly(&[(5.0, 6.5), (8.0, 9.5), (11.0, 6.5)], false),
-        ChevronUp => p.poly(&[(5.0, 9.5), (8.0, 6.5), (11.0, 9.5)], false),
-        ChevronRight => p.poly(&[(6.5, 5.0), (9.5, 8.0), (6.5, 11.0)], false),
-        ChevronLeft => p.poly(&[(9.5, 5.0), (6.5, 8.0), (9.5, 11.0)], false),
+        Actions => p.poly(&[(9.0, 2.0), (3.5, 9.0), (7.5, 9.0), (6.5, 14.0), (12.5, 7.0), (8.5, 7.0)], true),
+        Chevron => p.poly(&[(4.5, 6.0), (8.0, 9.5), (11.5, 6.0)], false),
+        ChevronUp => p.poly(&[(4.5, 10.0), (8.0, 6.5), (11.5, 10.0)], false),
+        ChevronRight => p.poly(&[(6.0, 4.5), (9.5, 8.0), (6.0, 11.5)], false),
+        ChevronLeft => p.poly(&[(10.0, 4.5), (6.5, 8.0), (10.0, 11.5)], false),
         Plus => {
-            p.line(8.0, 3.0, 8.0, 13.0);
-            p.line(3.0, 8.0, 13.0, 8.0);
+            p.line(7.5, 2.0, 7.5, 13.0);
+            p.line(2.0, 7.5, 13.0, 7.5);
         }
-        Minus => p.line(3.0, 8.0, 13.0, 8.0),
-        Eye => {
-            p.arc(8.0, 12.5, 7.0, -2.5, -0.64);
-            p.arc(8.0, 3.5, 7.0, 0.64, 2.5);
-            p.circle(8.0, 8.0, 2.0);
+        Minus => p.line(2.0, 7.5, 13.0, 7.5),
+        Eye | EyeOff => {
+            // An almond (two arcs meeting at the corners) with the pupil.
+            let (r, cy, half) = (7.0f32, 7.5f32, 5.5f32);
+            let a = (half / r).asin();
+            let d = r * a.cos();
+            let mut e: Vec<(f32, f32)> = arc_pts(8.0, cy + d, r, -FRAC_PI_2 - a, -FRAC_PI_2 + a).collect();
+            e.extend(arc_pts(8.0, cy - d, r, FRAC_PI_2 - a, FRAC_PI_2 + a));
+            p.path(&e, true);
+            if icon == Eye {
+                p.circle(8.0, cy, 2.0);
+            } else {
+                p.line(3.0, 13.0, 13.0, 2.0);
+            }
         }
-        EyeOff => {
-            p.arc(8.0, 12.5, 7.0, -2.5, -0.64);
-            p.arc(8.0, 3.5, 7.0, 0.64, 2.5);
-            p.line(3.0, 13.0, 13.0, 3.0);
-        }
-        Lock => {
+        Lock | Unlock => {
             p.rect(3.5, 7.5, 12.5, 13.5, 1.0);
-            p.arc(8.0, 7.5, 3.0, std::f32::consts::PI, std::f32::consts::TAU);
-        }
-        Unlock => {
-            p.rect(3.5, 7.5, 12.5, 13.5, 1.0);
-            p.arc(11.0, 7.5, 3.0, std::f32::consts::PI, std::f32::consts::TAU - 0.3);
+            p.dot(8.0, 10.5, 1.0);
+            if icon == Lock {
+                p.line(5.5, 7.5, 5.5, 5.5);
+                p.line(10.5, 7.5, 10.5, 5.5);
+                p.arc(8.0, 5.5, 2.5, PI, TAU);
+            } else {
+                p.line(10.5, 7.5, 10.5, 4.5);
+                p.arc(13.0, 4.5, 2.5, PI, TAU);
+            }
         }
         Component => {
             for (cx, cy) in [(8.0, 4.2), (11.8, 8.0), (8.0, 11.8), (4.2, 8.0)] {
-                p.fill_poly(&[(cx, cy - 2.4), (cx + 2.4, cy), (cx, cy + 2.4), (cx - 2.4, cy)]);
+                p.fill(&[(cx, cy - 2.5), (cx + 2.5, cy), (cx, cy + 2.5), (cx - 2.5, cy)]);
             }
         }
         ComponentSet => {
-            for (cx, cy) in [(8.0, 4.2), (11.8, 8.0), (8.0, 11.8), (4.2, 8.0)] {
-                p.poly(&[(cx, cy - 2.2), (cx + 2.2, cy), (cx, cy + 2.2), (cx - 2.2, cy)], true);
+            for (cx, cy) in [(8.0, 4.3), (11.7, 8.0), (8.0, 11.7), (4.3, 8.0)] {
+                p.path(&[(cx, cy - 2.2), (cx + 2.2, cy), (cx, cy + 2.2), (cx - 2.2, cy)], true);
             }
         }
-        Instance => p.poly(&[(8.0, 2.5), (13.5, 8.0), (8.0, 13.5), (2.5, 8.0)], true),
+        Instance => p.path(&[(8.0, 2.0), (14.0, 8.0), (8.0, 14.0), (2.0, 8.0)], true),
         Group => {
-            for (x0, y0, x1, y1) in [(3.0, 3.0, 6.0, 3.0), (10.0, 3.0, 13.0, 3.0), (3.0, 13.0, 6.0, 13.0), (10.0, 13.0, 13.0, 13.0)] {
-                p.line(x0, y0, x1, y1);
-            }
-            for (x0, y0, x1, y1) in [(3.0, 3.0, 3.0, 6.0), (13.0, 3.0, 13.0, 6.0), (3.0, 10.0, 3.0, 13.0), (13.0, 10.0, 13.0, 13.0)] {
-                p.line(x0, y0, x1, y1);
+            for (x, y, dx, dy) in [(2.5, 2.5, 1.0, 1.0), (13.5, 2.5, -1.0, 1.0), (2.5, 13.5, 1.0, -1.0), (13.5, 13.5, -1.0, -1.0)] {
+                p.poly(&[(x + 3.5 * dx, y), (x, y), (x, y + 3.5 * dy)], false);
             }
         }
         Vector => {
-            p.poly(&[(3.0, 12.0), (6.0, 4.0), (10.0, 12.0), (13.0, 4.0)], false);
-            p.dot(3.0, 12.0, 1.2);
-            p.dot(13.0, 4.0, 1.2);
+            p.path(&[(3.0, 12.5), (6.0, 4.0), (10.0, 12.0), (13.0, 3.5)], false);
+            p.fill_rect(1.5, 11.0, 4.5, 14.0, 0.0);
+            p.fill_rect(11.5, 2.0, 14.5, 5.0, 0.0);
         }
         Boolean | Union => {
             p.rect(2.5, 2.5, 9.5, 9.5, 0.0);
             p.rect(6.5, 6.5, 13.5, 13.5, 0.0);
         }
         Subtract => {
-            p.fill_rect(2.5, 2.5, 9.5, 9.5, 0.0);
+            p.fill_rect(2.0, 2.0, 10.0, 10.0, 0.0);
             p.rect(6.5, 6.5, 13.5, 13.5, 0.0);
         }
         Intersect => {
             p.rect(2.5, 2.5, 9.5, 9.5, 0.0);
             p.rect(6.5, 6.5, 13.5, 13.5, 0.0);
-            p.fill_rect(6.5, 6.5, 9.5, 9.5, 0.0);
+            p.fill_rect(6.0, 6.0, 10.0, 10.0, 0.0);
         }
         Exclude => {
-            p.fill_rect(2.5, 2.5, 9.5, 9.5, 0.0);
-            p.fill_rect(6.5, 6.5, 13.5, 13.5, 0.0);
+            p.fill_rect(2.0, 2.0, 10.0, 6.0, 0.0);
+            p.fill_rect(2.0, 6.0, 6.0, 10.0, 0.0);
+            p.fill_rect(10.0, 6.0, 14.0, 14.0, 0.0);
+            p.fill_rect(6.0, 10.0, 10.0, 14.0, 0.0);
+            p.rect(6.5, 6.5, 9.5, 9.5, 0.0);
         }
         Page => {
-            p.poly(&[(4.0, 2.5), (9.5, 2.5), (12.5, 5.5), (12.5, 13.5), (4.0, 13.5)], true);
+            p.poly(&[(3.5, 2.5), (9.5, 2.5), (12.5, 5.5), (12.5, 13.5), (3.5, 13.5)], true);
             p.poly(&[(9.5, 2.5), (9.5, 5.5), (12.5, 5.5)], false);
         }
-        Check => p.poly(&[(3.5, 8.5), (6.5, 11.5), (12.5, 4.5)], false),
+        Check => p.poly(&[(3.0, 8.5), (6.5, 12.0), (13.0, 4.5)], false),
         Close => {
             p.line(4.0, 4.0, 12.0, 12.0);
             p.line(12.0, 4.0, 4.0, 12.0);
         }
-        WinMinimize => p.line(3.5, 8.0, 12.5, 8.0),
-        WinMaximize => p.rect(3.5, 3.5, 12.5, 12.5, 0.5),
+        WinMinimize => p.line(3.0, 8.5, 13.0, 8.5),
+        WinMaximize => p.rect(3.5, 3.5, 12.5, 12.5, 0.0),
         WinRestore => {
             // A window in front of another.
-            p.rect(3.5, 5.5, 10.5, 12.5, 0.5);
-            p.line(5.5, 5.5, 5.5, 3.5);
-            p.line(5.5, 3.5, 12.5, 3.5);
-            p.line(12.5, 3.5, 12.5, 10.5);
-            p.line(12.5, 10.5, 10.5, 10.5);
+            p.rect(3.5, 5.5, 10.5, 12.5, 0.0);
+            p.poly(&[(5.5, 5.5), (5.5, 3.5), (12.5, 3.5), (12.5, 10.5), (10.5, 10.5)], false);
         }
         Search => {
-            p.circle(7.0, 7.0, 4.0);
-            p.line(10.0, 10.0, 13.5, 13.5);
+            p.circle(7.0, 7.0, 4.5);
+            p.line(10.5, 10.5, 14.0, 14.0);
         }
         Grid | LayoutGrid => {
-            for i in [3.0, 6.5, 10.0] {
-                for j in [3.0, 6.5, 10.0] {
-                    p.rect(i, j, i + 2.5, j + 2.5, 0.0);
+            for i in [2.5, 6.5, 10.5] {
+                for j in [2.5, 6.5, 10.5] {
+                    p.rect(i, j, i + 3.0, j + 3.0, 0.0);
                 }
             }
         }
         AlignLeft => {
             p.line(2.5, 2.0, 2.5, 14.0);
-            p.fill_rect(4.5, 4.0, 12.0, 6.5, 0.5);
-            p.fill_rect(4.5, 9.5, 9.0, 12.0, 0.5);
+            p.fill_rect(4.0, 4.0, 13.0, 7.0, 0.0);
+            p.fill_rect(4.0, 9.0, 9.0, 12.0, 0.0);
         }
         AlignHCenter => {
-            p.line(8.0, 2.0, 8.0, 14.0);
-            p.fill_rect(3.5, 4.0, 12.5, 6.5, 0.5);
-            p.fill_rect(5.5, 9.5, 10.5, 12.0, 0.5);
+            p.line(7.5, 2.0, 7.5, 14.0);
+            p.fill_rect(2.0, 4.0, 13.0, 7.0, 0.0);
+            p.fill_rect(4.0, 9.0, 11.0, 12.0, 0.0);
         }
         AlignRight => {
             p.line(13.5, 2.0, 13.5, 14.0);
-            p.fill_rect(4.0, 4.0, 11.5, 6.5, 0.5);
-            p.fill_rect(7.0, 9.5, 11.5, 12.0, 0.5);
+            p.fill_rect(3.0, 4.0, 12.0, 7.0, 0.0);
+            p.fill_rect(7.0, 9.0, 12.0, 12.0, 0.0);
         }
         AlignTop => {
             p.line(2.0, 2.5, 14.0, 2.5);
-            p.fill_rect(4.0, 4.5, 6.5, 12.0, 0.5);
-            p.fill_rect(9.5, 4.5, 12.0, 9.0, 0.5);
+            p.fill_rect(4.0, 4.0, 7.0, 13.0, 0.0);
+            p.fill_rect(9.0, 4.0, 12.0, 9.0, 0.0);
         }
         AlignVCenter => {
-            p.line(2.0, 8.0, 14.0, 8.0);
-            p.fill_rect(4.0, 3.5, 6.5, 12.5, 0.5);
-            p.fill_rect(9.5, 5.5, 12.0, 10.5, 0.5);
+            p.line(2.0, 7.5, 14.0, 7.5);
+            p.fill_rect(4.0, 2.0, 7.0, 13.0, 0.0);
+            p.fill_rect(9.0, 4.0, 12.0, 11.0, 0.0);
         }
         AlignBottom => {
             p.line(2.0, 13.5, 14.0, 13.5);
-            p.fill_rect(4.0, 4.0, 6.5, 11.5, 0.5);
-            p.fill_rect(9.5, 7.0, 12.0, 11.5, 0.5);
+            p.fill_rect(4.0, 3.0, 7.0, 12.0, 0.0);
+            p.fill_rect(9.0, 7.0, 12.0, 12.0, 0.0);
         }
         DistributeH | Gap => {
-            p.line(2.5, 3.0, 2.5, 13.0);
-            p.line(13.5, 3.0, 13.5, 13.0);
-            p.fill_rect(6.5, 5.0, 9.5, 11.0, 0.5);
+            p.line(2.5, 2.0, 2.5, 14.0);
+            p.line(13.5, 2.0, 13.5, 14.0);
+            p.fill_rect(6.0, 4.0, 10.0, 12.0, 0.0);
         }
         DistributeV => {
-            p.line(3.0, 2.5, 13.0, 2.5);
-            p.line(3.0, 13.5, 13.0, 13.5);
-            p.fill_rect(5.0, 6.5, 11.0, 9.5, 0.5);
+            p.line(2.0, 2.5, 14.0, 2.5);
+            p.line(2.0, 13.5, 14.0, 13.5);
+            p.fill_rect(4.0, 6.0, 12.0, 10.0, 0.0);
         }
-        Rotate => {
-            p.arc(8.0, 8.0, 5.0, -2.6, 2.2);
-            p.poly(&[(3.0, 2.5), (3.4, 5.5), (6.4, 5.0)], false);
-        }
+        Rotate => p.arc_arrow(8.0, 8.5, 5.0, -PI * 0.55, PI * 1.25),
+        Reset => p.arc_arrow(8.0, 8.5, 5.0, -PI * 0.45, -PI * 2.25),
         FlipH => {
-            p.line(8.0, 2.0, 8.0, 14.0);
-            p.poly(&[(6.0, 4.0), (2.5, 12.0), (6.0, 12.0)], true);
-            p.fill_poly(&[(10.0, 4.0), (13.5, 12.0), (10.0, 12.0)]);
+            for y in [1.0, 5.0, 9.0, 13.0] {
+                p.line(7.5, y, 7.5, y + 2.0);
+            }
+            p.poly(&[(5.5, 3.5), (5.5, 12.5), (1.5, 12.5)], true);
+            p.fill(&[(9.0, 3.0), (14.0, 13.0), (9.0, 13.0)]);
         }
         FlipV => {
-            p.line(2.0, 8.0, 14.0, 8.0);
-            p.poly(&[(4.0, 6.0), (12.0, 2.5), (12.0, 6.0)], true);
-            p.fill_poly(&[(4.0, 10.0), (12.0, 13.5), (12.0, 10.0)]);
+            for x in [1.0, 5.0, 9.0, 13.0] {
+                p.line(x, 7.5, x + 2.0, 7.5);
+            }
+            p.poly(&[(3.5, 5.5), (12.5, 5.5), (12.5, 1.5)], true);
+            p.fill(&[(3.0, 9.0), (13.0, 9.0), (13.0, 14.0)]);
         }
-        CornerRadius => p.poly(&[(3.0, 13.0), (3.0, 8.0), (3.4, 5.6), (5.6, 3.4), (8.0, 3.0), (13.0, 3.0)], false),
+        CornerRadius => p.corner(2.5, 2.5, 1.0, 1.0, 11.5, 6.0),
         IndependentCorners => {
-            for (a, b, c) in [
-                ((2.5, 6.0), (2.5, 2.5), (6.0, 2.5)),
-                ((10.0, 2.5), (13.5, 2.5), (13.5, 6.0)),
-                ((13.5, 10.0), (13.5, 13.5), (10.0, 13.5)),
-                ((6.0, 13.5), (2.5, 13.5), (2.5, 10.0)),
-            ] {
-                p.poly(&[a, b, c], false);
+            for (x, y, dx, dy) in [(2.5, 2.5, 1.0, 1.0), (13.5, 2.5, -1.0, 1.0), (2.5, 13.5, 1.0, -1.0), (13.5, 13.5, -1.0, -1.0)] {
+                p.corner(x, y, dx, dy, 4.0, 2.0);
             }
         }
         LinkOn | Link => {
-            p.rect(2.5, 6.0, 8.5, 10.0, 2.0);
-            p.rect(7.5, 6.0, 13.5, 10.0, 2.0);
+            p.path(&capsule((4.0, 12.0), (6.5, 9.5), 2.4), true);
+            p.path(&capsule((9.5, 6.5), (12.0, 4.0), 2.4), true);
+            p.line(6.2, 9.8, 9.8, 6.2);
         }
         LinkOff => {
-            p.rect(2.5, 6.0, 7.0, 10.0, 2.0);
-            p.rect(9.0, 6.0, 13.5, 10.0, 2.0);
+            p.path(&capsule((3.5, 12.5), (5.5, 10.5), 2.2), true);
+            p.path(&capsule((10.5, 5.5), (12.5, 3.5), 2.2), true);
+            p.line(9.5, 12.0, 9.5, 14.0);
+            p.line(12.0, 9.5, 14.0, 9.5);
+            p.line(2.0, 6.5, 4.0, 6.5);
+            p.line(6.5, 2.0, 6.5, 4.0);
         }
         LayoutH => {
-            p.fill_rect(2.5, 4.0, 6.5, 12.0, 1.0);
-            p.fill_rect(9.5, 4.0, 13.5, 12.0, 1.0);
+            p.fill_rect(2.0, 3.0, 7.0, 13.0, 1.0);
+            p.fill_rect(9.0, 3.0, 14.0, 13.0, 1.0);
         }
         LayoutV => {
-            p.fill_rect(4.0, 2.5, 12.0, 6.5, 1.0);
-            p.fill_rect(4.0, 9.5, 12.0, 13.5, 1.0);
+            p.fill_rect(3.0, 2.0, 13.0, 7.0, 1.0);
+            p.fill_rect(3.0, 9.0, 13.0, 14.0, 1.0);
         }
         LayoutWrap => {
-            p.poly(&[(2.5, 4.5), (12.0, 4.5), (13.5, 6.0), (13.5, 8.0), (12.0, 9.5), (4.0, 9.5)], false);
-            p.poly(&[(6.0, 7.5), (4.0, 9.5), (6.0, 11.5)], false);
+            let mut w = vec![(2.0, 4.5), (10.5, 4.5)];
+            w.extend(arc_pts(10.5, 7.5, 3.0, -FRAC_PI_2, FRAC_PI_2));
+            w.push((4.0, 10.5));
+            p.path(&w, false);
+            p.head((3.5, 10.5), PI, 2.8);
         }
         AutoLayout => {
             p.rect(2.5, 2.5, 13.5, 13.5, 2.0);
-            p.fill_rect(5.0, 5.0, 7.0, 11.0, 0.5);
-            p.fill_rect(9.0, 5.0, 11.0, 11.0, 0.5);
+            p.fill_rect(5.0, 5.0, 7.0, 11.0, 0.0);
+            p.fill_rect(9.0, 5.0, 11.0, 11.0, 0.0);
         }
         ClipContent => {
-            p.rect(3.5, 3.5, 12.5, 12.5, 0.5);
-            p.line(5.0, 1.5, 5.0, 3.5);
-            p.line(1.5, 5.0, 3.5, 5.0);
+            p.rect(4.5, 4.5, 13.5, 13.5, 0.0);
+            p.line(2.5, 1.0, 2.5, 11.0);
+            p.line(1.0, 2.5, 11.0, 2.5);
         }
-        Effects => {
-            p.circle(8.0, 8.0, 3.0);
+        Effects | Sun => {
+            p.circle(8.0, 8.0, if icon == Sun { 2.5 } else { 3.0 });
             for i in 0..8 {
-                let a = i as f32 * std::f32::consts::FRAC_PI_4;
-                p.line(8.0 + 4.8 * a.cos(), 8.0 + 4.8 * a.sin(), 8.0 + 6.2 * a.cos(), 8.0 + 6.2 * a.sin());
+                let a = i as f32 * FRAC_PI_4;
+                let (r0, r1) = if i % 2 == 0 { (4.8, 6.6) } else { (4.6, 5.8) };
+                p.line(8.0 + r0 * a.cos(), 8.0 + r0 * a.sin(), 8.0 + r1 * a.cos(), 8.0 + r1 * a.sin());
             }
         }
         Styles => {
             for (x, y) in [(5.0, 5.0), (11.0, 5.0), (5.0, 11.0), (11.0, 11.0)] {
-                p.dot(x, y, 2.0);
+                p.dot(x, y, 2.2);
             }
         }
         Menu => {
-            p.line(3.0, 4.5, 13.0, 4.5);
-            p.line(3.0, 8.0, 13.0, 8.0);
-            p.line(3.0, 11.5, 13.0, 11.5);
+            for y in [3.5, 7.5, 11.5] {
+                p.line(2.0, y, 14.0, y);
+            }
         }
-        Play => p.fill_poly(&[(5.0, 3.0), (13.0, 8.0), (5.0, 13.0)]),
+        Play => p.fill(&[(4.5, 2.5), (13.5, 8.0), (4.5, 13.5)]),
         Home => {
-            p.poly(&[(2.5, 7.5), (8.0, 2.5), (13.5, 7.5)], false);
-            p.poly(&[(4.0, 6.5), (4.0, 13.5), (12.0, 13.5), (12.0, 6.5)], false);
+            p.poly(&[(3.5, 13.5), (3.5, 7.0), (8.0, 2.8), (12.5, 7.0), (12.5, 13.5)], true);
+            p.poly(&[(6.5, 13.5), (6.5, 9.5), (9.5, 9.5), (9.5, 13.5)], false);
         }
         Bell => {
-            p.poly(
-                &[(4.0, 11.0), (4.0, 7.0), (5.5, 4.0), (8.0, 3.0), (10.5, 4.0), (12.0, 7.0), (12.0, 11.0), (13.0, 12.0), (3.0, 12.0), (4.0, 11.0)],
-                false,
-            );
-            p.arc(8.0, 12.5, 1.5, 0.0, std::f32::consts::PI);
+            let mut b = vec![(2.5, 11.5), (4.0, 10.0), (4.0, 7.0)];
+            b.extend(arc_pts(8.0, 7.0, 4.0, PI, TAU));
+            b.extend([(12.0, 10.0), (13.5, 11.5)]);
+            p.path(&b, true);
+            p.arc(8.0, 12.0, 1.8, 0.0, PI);
         }
         Panels => {
             p.rect(2.5, 3.5, 13.5, 12.5, 1.0);
-            p.line(5.5, 3.5, 5.5, 12.5);
-            p.line(10.5, 3.5, 10.5, 12.5);
+            p.line(5.5, 4.0, 5.5, 12.0);
+            p.line(10.5, 4.0, 10.5, 12.0);
         }
         Help => {
             p.circle(8.0, 8.0, 6.0);
-            p.arc(8.0, 6.5, 2.0, std::f32::consts::PI, std::f32::consts::TAU + 0.6);
-            p.line(8.0, 8.4, 8.0, 9.5);
-            p.dot(8.0, 11.5, 0.8);
+            p.arc(8.0, 6.4, 2.0, PI * 1.05, TAU + 0.7);
+            p.path(&[(9.5, 7.7), (8.0, 8.8), (8.0, 9.8)], false);
+            p.dot(8.0, 11.6, 0.9);
         }
         Dots => {
-            for x in [4.0, 8.0, 12.0] {
-                p.dot(x, 8.0, 1.1);
+            for x in [3.5, 8.0, 12.5] {
+                p.dot(x, 8.0, 1.25);
             }
         }
-        Mask => {
+        Mask | Opacity => {
             p.circle(8.0, 8.0, 5.5);
-            p.fill_poly(&[(8.0, 2.5), (10.5, 3.1), (12.4, 4.8), (13.5, 8.0), (12.4, 11.2), (10.5, 12.9), (8.0, 13.5)]);
+            let side = if icon == Mask { -FRAC_PI_2 } else { FRAC_PI_2 };
+            p.fill(&arc_pts(8.0, 8.0, 5.5, side, side + PI).collect::<Vec<_>>());
         }
         TextAlignLeft => {
-            for (y, x1) in [(4.0, 13.0), (7.0, 10.0), (10.0, 13.0), (13.0, 9.0)] {
-                p.line(3.0, y, x1, y);
+            for (y, x1) in [(3.5, 14.0), (6.5, 10.0), (9.5, 14.0), (12.5, 9.0)] {
+                p.line(2.0, y, x1, y);
             }
         }
         TextAlignCenter => {
-            for (y, h) in [(4.0, 5.0), (7.0, 3.5), (10.0, 5.0), (13.0, 3.0)] {
+            for (y, h) in [(3.5, 6.0), (6.5, 4.0), (9.5, 6.0), (12.5, 3.0)] {
                 p.line(8.0 - h, y, 8.0 + h, y);
             }
         }
         TextAlignRight => {
-            for (y, x0) in [(4.0, 3.0), (7.0, 6.0), (10.0, 3.0), (13.0, 7.0)] {
-                p.line(x0, y, 13.0, y);
+            for (y, x0) in [(3.5, 2.0), (6.5, 6.0), (9.5, 2.0), (12.5, 7.0)] {
+                p.line(x0, y, 14.0, y);
             }
         }
         TextAlignJustify => {
-            for y in [4.0, 7.0, 10.0, 13.0] {
-                p.line(3.0, y, 13.0, y);
+            for y in [3.5, 6.5, 9.5, 12.5] {
+                p.line(2.0, y, 14.0, y);
             }
         }
         TextTop => {
-            p.line(3.0, 3.0, 13.0, 3.0);
-            p.line(8.0, 5.5, 8.0, 13.0);
-            p.poly(&[(5.5, 8.0), (8.0, 5.5), (10.5, 8.0)], false);
+            p.line(2.0, 2.5, 14.0, 2.5);
+            p.line(7.5, 5.0, 7.5, 14.0);
+            p.head((7.5, 5.0), -FRAC_PI_2, 3.2);
         }
         TextMiddle => {
-            p.line(3.0, 8.0, 13.0, 8.0);
-            p.poly(&[(6.0, 3.0), (8.0, 5.5), (10.0, 3.0)], false);
-            p.poly(&[(6.0, 13.0), (8.0, 10.5), (10.0, 13.0)], false);
+            p.line(2.0, 7.5, 14.0, 7.5);
+            p.line(7.5, 1.0, 7.5, 5.0);
+            p.head((7.5, 5.0), FRAC_PI_2, 2.6);
+            p.line(7.5, 10.0, 7.5, 14.0);
+            p.head((7.5, 10.0), -FRAC_PI_2, 2.6);
         }
         TextBottom => {
-            p.line(3.0, 13.0, 13.0, 13.0);
-            p.line(8.0, 3.0, 8.0, 10.5);
-            p.poly(&[(5.5, 8.0), (8.0, 10.5), (10.5, 8.0)], false);
+            p.line(2.0, 13.5, 14.0, 13.5);
+            p.line(7.5, 2.0, 7.5, 11.0);
+            p.head((7.5, 11.0), FRAC_PI_2, 3.2);
         }
         Eyedropper => {
-            p.poly(&[(3.0, 13.0), (3.5, 10.5), (9.0, 5.0), (11.0, 7.0), (5.5, 12.5)], true);
-            p.line(9.5, 3.0, 13.0, 6.5);
-            p.line(8.0, 4.0, 12.0, 8.0);
+            p.poly(&[(2.5, 13.5), (3.0, 11.0), (8.5, 5.5), (10.5, 7.5), (5.0, 13.0)], true);
+            p.path(&capsule((10.5, 5.5), (12.0, 4.0), 1.6), true);
+            p.line(7.5, 4.5, 11.5, 8.5);
         }
         Code => {
-            p.poly(&[(5.5, 4.5), (2.5, 8.0), (5.5, 11.5)], false);
-            p.poly(&[(10.5, 4.5), (13.5, 8.0), (10.5, 11.5)], false);
+            p.poly(&[(5.5, 4.0), (2.0, 8.0), (5.5, 12.0)], false);
+            p.poly(&[(10.5, 4.0), (14.0, 8.0), (10.5, 12.0)], false);
+            p.line(9.0, 3.0, 7.0, 13.0);
         }
         Assets => {
-            p.fill_poly(&[(8.0, 2.5), (10.5, 5.0), (8.0, 7.5), (5.5, 5.0)]);
-            p.poly(&[(3.0, 8.5), (5.5, 11.0), (3.0, 13.5), (0.5, 11.0)], true);
-            p.rect(9.5, 9.0, 14.0, 13.5, 0.5);
+            p.path(&[(5.0, 2.0), (8.0, 5.0), (5.0, 8.0), (2.0, 5.0)], true);
+            p.circle(11.0, 5.0, 2.5);
+            p.rect(2.5, 9.5, 7.5, 13.5, 0.0);
+            p.poly(&[(11.0, 9.0), (13.5, 13.5), (8.5, 13.5)], true);
         }
         Library => {
-            p.poly(&[(8.0, 4.0), (5.5, 2.8), (2.0, 2.8), (2.0, 12.5), (5.5, 12.5), (8.0, 13.8)], false);
-            p.poly(&[(8.0, 4.0), (10.5, 2.8), (14.0, 2.8), (14.0, 12.5), (10.5, 12.5), (8.0, 13.8)], false);
-            p.line(8.0, 4.0, 8.0, 13.8);
+            p.poly(&[(7.5, 4.5), (5.5, 3.5), (1.5, 3.5), (1.5, 12.5), (5.5, 12.5), (7.5, 13.5)], false);
+            p.poly(&[(8.5, 4.5), (10.5, 3.5), (14.5, 3.5), (14.5, 12.5), (10.5, 12.5), (8.5, 13.5)], false);
+            p.line(7.5, 4.5, 7.5, 13.5);
+            p.line(8.5, 4.5, 8.5, 13.5);
         }
         Layers => {
             p.poly(&[(8.0, 2.5), (14.0, 5.5), (8.0, 8.5), (2.0, 5.5)], true);
-            p.poly(&[(2.0, 8.5), (8.0, 11.5), (14.0, 8.5)], false);
-        }
-        Opacity => {
-            p.circle(8.0, 8.0, 5.5);
-            p.fill_poly(&[(8.0, 2.5), (8.0, 13.5), (5.5, 12.9), (3.6, 11.2), (2.5, 8.0), (3.6, 4.8), (5.5, 3.1)]);
+            p.poly(&[(2.0, 8.0), (8.0, 11.0), (14.0, 8.0)], false);
+            p.poly(&[(2.0, 10.5), (8.0, 13.5), (14.0, 10.5)], false);
         }
         Blend => {
-            p.circle(6.0, 8.0, 3.8);
-            p.circle(10.0, 8.0, 3.8);
+            p.circle(6.0, 8.0, 4.0);
+            p.circle(10.0, 8.0, 4.0);
         }
         Export => {
-            p.line(8.0, 2.5, 8.0, 10.0);
-            p.poly(&[(5.0, 5.5), (8.0, 2.5), (11.0, 5.5)], false);
-            p.poly(&[(3.0, 9.0), (3.0, 13.5), (13.0, 13.5), (13.0, 9.0)], false);
+            p.line(7.5, 2.0, 7.5, 10.0);
+            p.head((7.5, 2.0), -FRAC_PI_2, 3.5);
+            p.poly(&[(2.5, 8.5), (2.5, 13.5), (12.5, 13.5), (12.5, 8.5)], false);
         }
-        StrokeIcon => p.rect(3.0, 3.0, 13.0, 13.0, 1.5),
-        Fill => p.fill_rect(3.0, 3.0, 13.0, 13.0, 1.5),
-        Sun => {
-            p.circle(8.0, 8.0, 2.8);
-            for i in 0..8 {
-                let a = i as f32 * std::f32::consts::FRAC_PI_4;
-                p.line(8.0 + 4.5 * a.cos(), 8.0 + 4.5 * a.sin(), 8.0 + 6.0 * a.cos(), 8.0 + 6.0 * a.sin());
-            }
+        StrokeIcon => p.rect(2.5, 2.5, 13.5, 13.5, 2.0),
+        Fill => p.fill_rect(2.0, 2.0, 14.0, 14.0, 2.0),
+        Moon => {
+            // A crescent: the outer rim, then the shadowing circle's edge back.
+            let mut m: Vec<(f32, f32)> = arc_pts(8.0, 8.0, 5.5, 0.166, TAU - 1.737).collect();
+            m.extend(arc_pts(11.0, 5.0, 4.6, -2.586, 1.016 - TAU));
+            p.path(&m, true);
         }
-        Moon => p.arc(8.0, 8.0, 5.0, 0.9, 5.4),
-        Undo => {
-            p.arc(9.0, 9.0, 4.5, -2.6, 1.6);
-            p.poly(&[(3.0, 3.5), (4.0, 7.0), (7.3, 6.0)], false);
-        }
-        Redo => {
-            p.arc(7.0, 9.0, 4.5, 1.5, 5.7);
-            p.poly(&[(13.0, 3.5), (12.0, 7.0), (8.7, 6.0)], false);
+        Undo | Redo => {
+            // A U-turn arrow: back along the top, round, and out along the bottom.
+            let undo = icon == Undo;
+            let f = |x: f32| if undo { x } else { 16.0 - x };
+            let mut u = vec![(f(3.0), 5.5), (f(9.5), 5.5)];
+            let a1 = if undo { FRAC_PI_2 } else { -3.0 * FRAC_PI_2 };
+            u.extend(arc_pts(f(9.5), 9.0, 3.5, -FRAC_PI_2, a1));
+            u.push((f(6.0), 12.5));
+            p.path(&u, false);
+            p.head((f(3.0), 5.5), if undo { PI } else { 0.0 }, 3.0);
         }
         Hug => {
-            p.poly(&[(2.5, 5.0), (5.0, 8.0), (2.5, 11.0)], false);
-            p.poly(&[(13.5, 5.0), (11.0, 8.0), (13.5, 11.0)], false);
-            p.line(5.0, 8.0, 11.0, 8.0);
+            p.poly(&[(2.5, 4.5), (5.5, 7.5), (2.5, 10.5)], false);
+            p.poly(&[(13.5, 4.5), (10.5, 7.5), (13.5, 10.5)], false);
+            p.line(6.0, 7.5, 10.0, 7.5);
         }
         FillContainer => {
-            p.poly(&[(5.0, 5.0), (2.5, 8.0), (5.0, 11.0)], false);
-            p.poly(&[(11.0, 5.0), (13.5, 8.0), (11.0, 11.0)], false);
-            p.line(2.5, 8.0, 13.5, 8.0);
+            p.poly(&[(5.0, 4.5), (2.0, 7.5), (5.0, 10.5)], false);
+            p.poly(&[(11.0, 4.5), (14.0, 7.5), (11.0, 10.5)], false);
+            p.line(2.0, 7.5, 14.0, 7.5);
         }
         Fixed => {
-            p.line(2.5, 4.0, 2.5, 12.0);
-            p.line(13.5, 4.0, 13.5, 12.0);
-            p.line(2.5, 8.0, 13.5, 8.0);
+            p.line(2.5, 4.0, 2.5, 11.0);
+            p.line(13.5, 4.0, 13.5, 11.0);
+            p.line(3.0, 7.5, 13.0, 7.5);
         }
         PaddingH => {
             p.rect(2.5, 3.5, 13.5, 12.5, 1.0);
-            p.fill_rect(5.0, 6.0, 11.0, 10.0, 0.5);
+            p.fill_rect(5.0, 6.0, 11.0, 10.0, 0.0);
         }
         PaddingV => {
             p.rect(3.5, 2.5, 12.5, 13.5, 1.0);
-            p.fill_rect(6.0, 5.0, 10.0, 11.0, 0.5);
-        }
-        Reset => {
-            p.arc(8.0, 8.0, 5.0, -2.2, 2.6);
-            p.poly(&[(2.8, 2.8), (3.3, 5.8), (6.3, 5.3)], false);
+            p.fill_rect(6.0, 5.0, 10.0, 11.0, 0.0);
         }
         Clock => {
-            // A dial with hands at ten past two-ish (version history).
-            p.circle(8.0, 8.0, 6.0);
-            p.line(8.0, 8.0, 8.0, 4.5);
-            p.line(8.0, 8.0, 10.5, 9.5);
+            p.circle(7.5, 7.5, 5.5);
+            p.line(7.5, 4.0, 7.5, 8.0);
+            p.line(7.5, 7.5, 10.0, 10.0);
         }
         ShapeBuilder | ShapeBuilderRemove => {
             // Two overlapping rings; their shared lens filled (merge) or crossed out (remove).
-            let (r, d) = (4.4f32, 2.0f32);
+            let (r, d) = (4.5f32, 2.0f32);
             let a = (d / r).acos();
             p.circle(8.0 - d, 8.0, r);
             p.circle(8.0 + d, 8.0, r);
-            let arc =
-                |cx: f32, t0: f32, t1: f32| (0..=8).map(move |i| t0 + (t1 - t0) * i as f32 / 8.0).map(move |t| (cx + r * t.cos(), 8.0 + r * t.sin()));
-            let lens: Vec<(f32, f32)> = arc(8.0 - d, -a, a).chain(arc(8.0 + d, std::f32::consts::PI - a, std::f32::consts::PI + a)).collect();
             if icon == ShapeBuilder {
-                p.fill_poly(&lens);
+                let lens: Vec<(f32, f32)> = arc_pts(8.0 - d, 8.0, r, -a, a).chain(arc_pts(8.0 + d, 8.0, r, PI - a, PI + a)).collect();
+                p.fill(&lens);
             } else {
                 p.line(6.2, 9.8, 9.8, 6.2);
             }
         }
         Eraser => {
             // A tilted block with a band near its tip, over a short trace line.
-            p.poly(&[(3.0, 10.0), (9.5, 3.5), (13.0, 7.0), (6.5, 13.5)], true);
-            p.line(6.2, 6.8, 9.7, 10.3);
-            p.line(6.5, 13.5, 13.5, 13.5);
+            p.poly(&[(2.5, 10.0), (9.5, 3.0), (13.5, 7.0), (7.0, 13.5), (6.0, 13.5)], true);
+            p.line(5.5, 7.0, 9.5, 11.0);
+            p.line(7.0, 13.5, 14.0, 13.5);
         }
         Variable => {
             // A hexagon with a dot: an original mark for "bind a value".
             let pts: Vec<(f32, f32)> = (0..6)
                 .map(|i| {
                     let a = std::f32::consts::FRAC_PI_3 * i as f32 + std::f32::consts::FRAC_PI_6;
-                    (8.0 + 5.8 * a.cos(), 8.0 + 5.8 * a.sin())
+                    (8.0 + 6.0 * a.cos(), 8.0 + 6.0 * a.sin())
                 })
                 .collect();
-            p.poly(&pts, true);
-            p.dot(8.0, 8.0, 1.6);
+            p.path(&pts, true);
+            p.dot(8.0, 8.0, 1.7);
         }
         Detach => {
-            p.poly(&[(8.0, 2.5), (13.5, 8.0), (8.0, 13.5), (2.5, 8.0)], true);
-            p.line(4.0, 12.0, 12.0, 4.0);
+            p.path(&[(8.0, 2.0), (14.0, 8.0), (8.0, 14.0), (2.0, 8.0)], true);
+            p.line(3.0, 13.0, 13.0, 3.0);
         }
         Swap => {
-            p.poly(&[(3.0, 5.5), (12.0, 5.5), (10.0, 3.5)], false);
-            p.poly(&[(13.0, 10.5), (4.0, 10.5), (6.0, 12.5)], false);
+            p.line(2.0, 4.5, 13.0, 4.5);
+            p.head((13.0, 4.5), 0.0, 2.8);
+            p.line(3.0, 11.5, 14.0, 11.5);
+            p.head((3.0, 11.5), PI, 2.8);
         }
         Prototype => {
             p.circle(4.5, 11.5, 2.0);
-            p.poly(&[(6.0, 10.0), (9.0, 6.0), (12.5, 4.0)], false);
-            p.poly(&[(10.0, 3.0), (12.8, 3.8), (12.0, 6.6)], false);
+            p.line(6.0, 10.0, 13.0, 3.0);
+            p.poly(&[(8.5, 2.5), (13.5, 2.5), (13.5, 7.5)], false);
         }
         Preview => {
             // A window with a title strip and a play triangle in it.
-            p.rect(2.5, 2.5, 13.5, 13.5, 2.0);
-            p.line(2.5, 5.0, 13.5, 5.0);
-            p.fill_poly(&[(6.5, 7.0), (10.5, 9.25), (6.5, 11.5)]);
+            p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
+            p.line(3.0, 5.5, 13.0, 5.5);
+            p.fill(&[(6.5, 7.5), (10.5, 10.0), (6.5, 12.5)]);
         }
         AbsolutePosition => {
             // The frame, a small layer near its top-right corner, and the two offsets pinning it.
-            p.rect(2.5, 2.5, 13.5, 13.5, 1.5);
-            p.fill_rect(7.0, 6.0, 10.5, 9.5, 0.5);
-            p.line(10.5, 7.75, 13.5, 7.75);
-            p.line(8.75, 2.5, 8.75, 6.0);
+            p.rect(2.5, 2.5, 13.5, 13.5, 1.0);
+            p.fill_rect(6.0, 6.0, 10.0, 10.0, 0.0);
+            p.line(10.0, 7.5, 13.0, 7.5);
+            p.line(7.5, 3.0, 7.5, 6.0);
         }
         Slot => {
-            for (a, b) in [(2.5, 5.0), (6.75, 9.25), (11.0, 13.5)] {
-                p.line(a, 2.5, b, 2.5);
-                p.line(a, 13.5, b, 13.5);
-                p.line(2.5, a, 2.5, b);
-                p.line(13.5, a, 13.5, b);
-            }
-            p.line(8.0, 5.5, 8.0, 10.5);
-            p.line(5.5, 8.0, 10.5, 8.0);
+            p.dashed_box(2.5, 2.5, 12.5, 12.5, 3);
+            p.line(7.5, 5.0, 7.5, 10.0);
+            p.line(5.0, 7.5, 10.0, 7.5);
         }
         Adjust => {
-            p.line(2.5, 5.0, 13.5, 5.0);
-            p.line(2.5, 11.0, 13.5, 11.0);
-            p.dot(10.0, 5.0, 2.0);
-            p.dot(6.0, 11.0, 2.0);
+            p.line(2.0, 4.5, 14.0, 4.5);
+            p.line(2.0, 11.5, 14.0, 11.5);
+            p.dot(10.5, 4.5, 2.2);
+            p.dot(5.5, 11.5, 2.2);
         }
         ViewList => {
-            for y in [4.0, 8.0, 12.0] {
-                p.fill_rect(2.5, y - 1.25, 5.0, y + 1.25, 0.5);
-                p.line(7.0, y, 13.5, y);
+            for y in [2.0, 6.0, 10.0] {
+                p.fill_rect(2.0, y, 5.0, y + 3.0, 0.0);
+                p.line(7.0, y + 1.5, 14.0, y + 1.5);
             }
         }
         ViewGrid => {
-            for (x, y) in [(2.5, 2.5), (9.0, 2.5), (2.5, 9.0), (9.0, 9.0)] {
-                p.rect(x, y, x + 4.5, y + 4.5, 1.0);
+            for (x, y) in [(2.5, 2.5), (9.5, 2.5), (2.5, 9.5), (9.5, 9.5)] {
+                p.rect(x, y, x + 4.0, y + 4.0, 1.0);
             }
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.
-            p.fill_rect(3.0, 2.0, 13.0, 5.5, 1.75);
-            p.fill_rect(3.0, 6.25, 10.5, 9.75, 1.75);
-            p.fill_rect(3.0, 10.5, 6.5, 14.0, 1.75);
+            p.fill_rect(3.0, 2.0, 13.0, 5.0, 1.0);
+            p.fill_rect(3.0, 6.5, 10.0, 9.5, 1.0);
+            p.fill_rect(3.0, 11.0, 6.0, 14.0, 1.0);
         }
     }
 }
@@ -789,6 +961,56 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, active: bool, tooltip: &
     };
     ui.painter().rect_filled(rect, egui::CornerRadius::same(5), bg);
     let col = if active { t.accent_text } else { t.icon };
-    paint(ui.painter(), rect.shrink(size * 0.17), icon, col);
+    // The glyph at its native 16 px in the usual buttons, smaller in compact ones.
+    let glyph = if size >= 22.0 { 16.0 } else { 12.0 };
+    paint(ui.painter(), Rect::from_center_size(rect.center(), Vec2::splat(glyph)), icon, col);
     if tooltip.is_empty() { resp } else { resp.on_hover_text(tooltip) }
+}
+
+/// Every icon at the sizes the UI uses, labelled: for reviewing the set (`ui.set {iconGallery}`).
+pub fn gallery(ctx: &egui::Context) {
+    let t = crate::theme::Tokens::get(ctx);
+    egui::Area::new(egui::Id::new("icon_gallery")).order(egui::Order::Foreground).fixed_pos(Pos2::ZERO).show(ctx, |ui| {
+        let screen = ctx.content_rect();
+        let (r, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click());
+        ui.painter().rect_filled(r, 0.0, t.panel);
+        let cols = ((screen.width() - 20.0) / 118.0).floor().max(1.0) as usize;
+        for (i, icon) in Icon::ALL.iter().enumerate() {
+            let x = 10.0 + (i % cols) as f32 * 118.0;
+            let y = 10.0 + (i / cols) as f32 * 70.0;
+            for (dx, size) in [(0.0, 12.0), (16.0, 16.0), (40.0, 24.0), (72.0, 32.0)] {
+                paint(ui.painter(), Rect::from_min_size(pos2(x + dx, y), Vec2::splat(size)), *icon, t.icon);
+            }
+            ui.painter().text(pos2(x, y + 40.0), egui::Align2::LEFT_TOP, format!("{icon:?}"), egui::FontId::proportional(10.0), t.text);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every icon paints at every size the UI uses (and odd positions) without panicking.
+    #[test]
+    fn every_icon_paints_at_every_size() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for &icon in Icon::ALL {
+                for size in [8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 32.0, 48.0] {
+                    paint(ui.painter(), Rect::from_min_size(pos2(3.3, 7.7), Vec2::splat(size)), icon, Color32::WHITE);
+                }
+            }
+        });
+        out.textures_delta.clear();
+        assert!(out.shapes.len() > Icon::ALL.len() * 10);
+    }
+
+    #[test]
+    fn concave_polygons_triangulate() {
+        let arrow = [pos2(4.0, 2.0), pos2(4.0, 13.6), pos2(6.9, 10.9), pos2(8.8, 14.8), pos2(10.6, 14.0), pos2(8.7, 10.2), pos2(12.6, 10.2)];
+        assert_eq!(triangulate(&arrow).len(), (arrow.len() - 2) * 3);
+        let rev: Vec<Pos2> = arrow.iter().rev().copied().collect();
+        assert_eq!(triangulate(&rev).len(), (arrow.len() - 2) * 3);
+        assert!(triangulate(&arrow[..2]).is_empty());
+    }
 }

@@ -168,8 +168,7 @@ fn build_listing(app: &FigApp, doc: &Document, q: &str, key: (u64, String, u64))
         let mut sec = Section { id: l.id.clone(), name: l.name.clone(), doc: None, error: None, tiles: Vec::new(), styles: Vec::new() };
         match app.session.libraries.cached(&l.path) {
             Some(Ok(lib)) if lib.manifest.id == l.id => {
-                let (c, s) = library::pending(doc, lib);
-                updates += c.len() + s.len();
+                updates += library::pending(doc, lib).count();
                 let m = &lib.manifest;
                 sec.name = m.name.clone();
                 sec.tiles = m
@@ -628,14 +627,13 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         None => format!("{} · not published", doc.name),
     };
     hint(ui, &status);
-    let (comps, styles) = library::publishable(doc);
-    if comps.is_empty() && styles.is_empty() {
-        hint(ui, "Create components or styles to publish them as a library.");
+    let all = library::publishable(doc);
+    if all.is_empty() {
+        hint(ui, "Create components, styles or variables to publish them as a library.");
         return;
     }
-    let (def_c, def_s) = library::default_selection(doc);
-    let mut picked_c = Vec::new();
-    let mut picked_s = Vec::new();
+    let def = library::default_selection(doc);
+    let mut include: Vec<Value> = Vec::new();
     let mut check = |ui: &mut Ui, key: String, default: bool, label: &str| -> bool {
         let on = form.picked.get(&key).copied().unwrap_or(default);
         let mut clicked = false;
@@ -649,21 +647,30 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         }
         on
     };
-    if !comps.is_empty() {
+    if !all.components.is_empty() {
         crate::widgets::sublabels(ui, "Components", None);
-        for c in &comps {
+        for c in &all.components {
             let name = doc.node(*c).map(|n| n.name.as_str()).unwrap_or_default();
-            if check(ui, format!("c{}", c.0), def_c.contains(c), name) {
-                picked_c.push(json!(c.0));
+            if check(ui, format!("c{}", c.0), def.components.contains(c), name) {
+                include.push(json!(c.0));
             }
         }
     }
-    if !styles.is_empty() {
+    if !all.styles.is_empty() {
         crate::widgets::sublabels(ui, "Styles", None);
-        for s in &styles {
+        for s in &all.styles {
             let name = doc.style(s).map(|x| x.name.as_str()).unwrap_or_default();
-            if check(ui, format!("s{s}"), def_s.contains(s), name) {
-                picked_s.push(json!(s));
+            if check(ui, format!("s{s}"), def.styles.contains(s), name) {
+                include.push(json!(s));
+            }
+        }
+    }
+    if !all.collections.is_empty() {
+        crate::widgets::sublabels(ui, "Variable collections", None);
+        for c in &all.collections {
+            let name = doc.variables.collection(c).map(|x| x.name.as_str()).unwrap_or_default();
+            if check(ui, format!("v{c}"), def.collections.contains(c), name) {
+                include.push(json!(c));
             }
         }
     }
@@ -676,7 +683,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         }
     });
     ui.add_space(8.0);
-    let any = !picked_c.is_empty() || !picked_s.is_empty();
+    let any = !include.is_empty();
     let mut publish = false;
     ui.horizontal(|ui| {
         ui.add_space(PAD);
@@ -684,7 +691,6 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     });
     ui.add_space(12.0);
     if publish {
-        let include: Vec<Value> = picked_c.into_iter().chain(picked_s).collect();
         let description = form.description.clone().unwrap_or(description);
         if let Some(r) = app.run("library.publish", json!({"description": description, "include": include})) {
             form = PublishForm::default();
@@ -713,9 +719,11 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         let (r, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
         let status = match app.session.libraries.cached(&l.path) {
             Some(Ok(lib)) if lib.manifest.id == l.id => {
-                let n = lib.manifest.components.iter().filter(|a| a.published).count();
-                let s = lib.manifest.styles.iter().filter(|a| a.published).count();
-                (format!("Version {} · {n} components · {s} styles", lib.manifest.version), t.text_secondary)
+                let m = &lib.manifest;
+                let n = m.components.iter().filter(|a| a.published).count();
+                let s = m.styles.iter().filter(|a| a.published).count();
+                let v = m.variables.iter().filter(|a| a.published).count();
+                (format!("Version {} · {n} components · {s} styles · {v} variables", m.version), t.text_secondary)
             }
             Some(Ok(_)) => ("The file now holds another library".into(), t.danger),
             Some(Err(e)) => (e.to_string(), t.danger),

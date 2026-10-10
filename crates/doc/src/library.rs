@@ -1,18 +1,20 @@
-//! Libraries: a file's published components and styles, and the libraries other files use.
+//! Libraries: a file's published components, styles and variables, and the libraries other files
+//! use.
 //!
 //! **Publishing** records a [`PublishedLibrary`] on the document: a [`LibraryManifest`] (id,
-//! version, the components, component sets and styles it offers, each stamped with the library
-//! version it last changed in) and a snapshot document holding just those assets and what they
-//! depend on. The format crate stores both next to `document.json`, so files using the library
+//! version, the components, component sets, styles, variable collections and variables it offers,
+//! each stamped with the library version it last changed in) and a snapshot document holding just
+//! those assets and what they depend on. The format crate stores both next to `document.json`, so files using the library
 //! only ever see what was published, never later unpublished edits.
 //!
 //! **Using** a library: a document lists the library files it has enabled ([`LibraryLink`]).
 //! Placing a library component copies it (with the components and styles it uses) into the
 //! document's *library store*: a hidden page-like root that is not in [`Document::pages`]. The
 //! copies are read-only "remote" main components, so their instances behave like any other
-//! instance. [`ImportedComponent`] / [`ImportedStyle`] records map each copy to its library asset
-//! and version; updating re-imports a copy in place, keeping its layer ids (and with them the
-//! overrides of its instances).
+//! instance. Library styles, variables and collections are copied into the document's styles and
+//! variables as linked, read-only copies. [`ImportedComponent`] / [`ImportedRecord`] records map
+//! each copy to its library asset and version; updating re-imports a copy in place, keeping its
+//! ids (and with them the overrides of instances and the bindings of layers).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -20,7 +22,7 @@ use std::sync::Arc;
 use figcraft_color::{Paint, PaintKind};
 use serde::{Deserialize, Serialize};
 
-use crate::{Document, Node, NodeId, NodeKind, StyleKind};
+use crate::{CollectionId, Document, Node, NodeId, NodeKind, StyleKind, VariableId};
 
 /// Name of the library store's root (never shown; older readers list it as a page).
 pub const STORE_NAME: &str = "Library components";
@@ -42,6 +44,10 @@ pub struct LibraryManifest {
     pub components: Vec<LibraryAsset>,
     /// Styles in the snapshot: the published ones and those the components use.
     pub styles: Vec<LibraryStyle>,
+    /// Variable collections in the snapshot: the published ones and those variables in it use.
+    pub collections: Vec<LibraryCollection>,
+    /// Variables in the snapshot: the published ones and those they alias or components bind.
+    pub variables: Vec<LibraryVariable>,
 }
 
 impl LibraryManifest {
@@ -51,6 +57,14 @@ impl LibraryManifest {
 
     pub fn style(&self, id: &str) -> Option<&LibraryStyle> {
         self.styles.iter().find(|s| s.id == id)
+    }
+
+    pub fn collection(&self, id: &str) -> Option<&LibraryCollection> {
+        self.collections.iter().find(|c| c.id == id)
+    }
+
+    pub fn variable(&self, id: &str) -> Option<&LibraryVariable> {
+        self.variables.iter().find(|v| v.id == id)
     }
 }
 
@@ -82,6 +96,35 @@ pub struct LibraryStyle {
     #[serde(rename = "type")]
     pub kind: String,
     pub version: u64,
+    pub published: bool,
+}
+
+/// A variable collection in a library snapshot.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibraryCollection {
+    pub id: CollectionId,
+    pub name: String,
+    /// The library version its name or modes last changed in.
+    pub version: u64,
+    /// Offered to files using the library; `false` for collections only other assets use.
+    pub published: bool,
+}
+
+/// A variable in a library snapshot.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LibraryVariable {
+    pub id: VariableId,
+    pub name: String,
+    /// Its collection's id in the snapshot.
+    pub collection: CollectionId,
+    /// color | number | string | boolean
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub version: u64,
+    /// Offered to files using the library; `false` for variables hidden from publishing that
+    /// published variables alias or published components bind.
     pub published: bool,
 }
 
@@ -130,17 +173,21 @@ pub struct ImportedComponent {
     pub ids: BTreeMap<NodeId, NodeId>,
 }
 
-/// A library style copied into the document's styles (a linked, read-only remote style).
+/// A library style, variable or variable collection copied into the document (a linked,
+/// read-only remote copy).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct ImportedStyle {
+pub struct ImportedRecord {
     pub library: String,
-    /// The style's id in the library.
+    /// Its id in the library.
     pub key: String,
-    /// The local style's id.
+    /// The local copy's id.
     pub local: String,
     pub version: u64,
 }
+
+/// A library style copied into the document's styles.
+pub type ImportedStyle = ImportedRecord;
 
 /// A document's library data: enabled libraries and the assets copied from them.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -151,11 +198,22 @@ pub struct Libraries {
     pub store: Option<NodeId>,
     pub components: Vec<ImportedComponent>,
     pub styles: Vec<ImportedStyle>,
+    /// Library variable collections copied into the document's variables.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub collections: Vec<ImportedRecord>,
+    /// Library variables copied into the document's variables.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variables: Vec<ImportedRecord>,
 }
 
 impl Libraries {
     pub fn is_empty(&self) -> bool {
-        self.enabled.is_empty() && self.store.is_none() && self.components.is_empty() && self.styles.is_empty()
+        self.enabled.is_empty()
+            && self.store.is_none()
+            && self.components.is_empty()
+            && self.styles.is_empty()
+            && self.collections.is_empty()
+            && self.variables.is_empty()
     }
 
     /// Serde helper: leave the field out of files that use no libraries.
@@ -175,6 +233,16 @@ impl Libraries {
     /// The import record of the local (remote) style `local`.
     pub fn style_import(&self, local: &str) -> Option<&ImportedStyle> {
         self.styles.iter().find(|s| s.local == local)
+    }
+
+    /// The import record of the local (remote) variable `local`.
+    pub fn variable_import(&self, local: &str) -> Option<&ImportedRecord> {
+        self.variables.iter().find(|s| s.local == local)
+    }
+
+    /// The import record of the local (remote) variable collection `local`.
+    pub fn collection_import(&self, local: &str) -> Option<&ImportedRecord> {
+        self.collections.iter().find(|s| s.local == local)
     }
 }
 

@@ -216,6 +216,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
             }
+            if let Some(h) = p.get("iconGallery").and_then(Value::as_bool) {
+                app.ui.icon_gallery = h;
+            }
             // Comment thread popover: an id opens it, null closes it.
             if let Some(v) = p.get("commentOpen") {
                 app.ui.comments.open = v.as_u64();
@@ -238,10 +241,18 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     ids: app.session.selection(),
                 });
             }
-            // The Variables editor: true / a collection (id or name) opens it, false closes it.
+            // The Variables editor: true / a collection (id or name) / {library, collection?} (an
+            // enabled library's, by id or name) opens it, false closes it.
             match p.get("variables") {
                 Some(Value::Bool(open)) => app.ui.variables = open.then(Default::default),
                 Some(Value::String(c)) => app.ui.variables = Some(crate::variables_panel::Editor::on(Some(c.clone()))),
+                Some(v @ Value::Object(_)) => {
+                    let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+                    app.ui.variables = Some(match text("library") {
+                        Some(lib) => crate::variables_panel::Editor::in_library(lib, text("collection")),
+                        None => crate::variables_panel::Editor::on(text("collection")),
+                    });
+                }
                 _ => {}
             }
             // Layers panel search: a string opens it with that filter, null closes it.

@@ -50,6 +50,7 @@ fn colourful() -> (Document, NodeId) {
         values: BTreeMap::from([("m1".to_string(), VariableValue::Color(RED))]),
         description: String::new(),
         scopes: None,
+        hidden_from_publishing: false,
     });
     d.document_colors.push(RED);
     (d, r)

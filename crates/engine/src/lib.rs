@@ -885,6 +885,8 @@ mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
 #[cfg(test)]
+mod library_variables_tests;
+#[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
 mod nested_override_tests;

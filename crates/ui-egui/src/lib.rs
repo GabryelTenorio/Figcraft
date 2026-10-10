@@ -144,6 +144,8 @@ pub struct UiState {
     pub home: bool,
     /// How the window's title bar is drawn (the desktop app sets it when it opens the window).
     pub title_bar: TitleBar,
+    /// Every icon on one screen, for reviewing the set (control channel `ui.set {iconGallery}`).
+    pub icon_gallery: bool,
     pub toast: Option<(String, f64)>,
     pub present: Option<present::Presenter>,
     /// The full-window presenter's options (how it sizes the prototype), kept between
@@ -214,6 +216,7 @@ impl Default for UiState {
             shortcuts_panel: false,
             home: false,
             title_bar: TitleBar::Native,
+            icon_gallery: false,
             toast: None,
             present: None,
             present_view: present::PresentView::default(),
@@ -457,6 +460,9 @@ impl FigApp {
         control::drain(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
             tabs::resize_edges(&ctx);
+        }
+        if self.ui.icon_gallery {
+            icons::gallery(&ctx);
         }
         theme::set_doc_profile(&ctx, self.session.doc().map_or(figcraft_color::ColorProfile::Srgb, |d| d.color_profile));
         // The Inspect tab measures on hover without Alt.
