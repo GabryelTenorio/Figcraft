@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use figcraft_color::Color;
+use figcraft_color::{Color, Paint, PaintKind};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
@@ -655,8 +655,19 @@ pub fn apply_bindings(doc: &mut Document) {
         let binds = n.bound.clone();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
+        let mut paint_sets: Vec<(bool, Color)> = Vec::new();
         for (field, var) in binds {
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
+            // The first fill's or stroke's colour (the rest of the list stays).
+            let paint = match field.as_str() {
+                "fill" | "fills" | "fills/0" | "fills/0/color" => Some(true),
+                "stroke" | "strokes/0/color" => Some(false),
+                _ => None,
+            };
+            if let (Some(fills), VariableValue::Color(c)) = (paint, &val) {
+                paint_sets.push((fills, *c));
+                continue;
+            }
             // `effects/<index>/<offsetX|offsetY|radius|spread|color>`: one effect's value.
             if let Some((i, prop)) = field.strip_prefix("effects/").and_then(|r| r.split_once('/'))
                 && let Ok(i) = i.parse::<usize>()
@@ -681,10 +692,57 @@ pub fn apply_bindings(doc: &mut Document) {
             sets.insert(key.to_string(), jv);
         }
         let _ = super::props::apply("variables", doc, id, &sets);
+        if !paint_sets.is_empty() {
+            apply_paint_bindings(doc, id, &paint_sets);
+        }
         if !effect_sets.is_empty() {
             apply_effect_bindings(doc, id, &effect_sets);
         }
     }
+}
+
+/// Write bound colours into a node's first fill (`true`) or stroke, keeping the rest of the list and
+/// the paint's opacity, visibility and blend mode (only what changed, so unchanged layers stay
+/// shared).
+fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, Color)]) {
+    let Some(n) = doc.node(id) else { return };
+    let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
+    for (is_fill, c) in sets {
+        let list = if *is_fill { &mut fills } else { &mut strokes };
+        match list.first_mut() {
+            Some(p) => p.kind = PaintKind::Solid { color: *c },
+            None => list.push(Paint::solid(*c)),
+        }
+    }
+    if doc.node(id).is_some_and(|n| n.fills != fills || n.strokes != strokes)
+        && let Ok(n) = doc.get_mut(id)
+    {
+        n.fills = fills;
+        n.strokes = strokes;
+    }
+}
+
+/// Keep a node's bindings on its effects' fields (`effects/<index>/<field>`) with their effects
+/// when the list changes: `map` gives an effect's new index, or None when it was removed.
+pub(crate) fn remap_effect_bindings(n: &mut Node, map: impl Fn(usize) -> Option<usize>) {
+    let moved: Vec<(String, Option<String>)> = n
+        .bound
+        .keys()
+        .filter_map(|k| {
+            let (i, field) = k.strip_prefix("effects/")?.split_once('/')?;
+            let i = i.parse::<usize>().ok()?;
+            Some((k.clone(), map(i).map(|j| format!("effects/{j}/{field}"))))
+        })
+        .collect();
+    let mut kept = Vec::new();
+    for (old, new) in moved {
+        if let Some(var) = n.bound.remove(&old)
+            && let Some(new) = new
+        {
+            kept.push((new, var));
+        }
+    }
+    n.bound.extend(kept);
 }
 
 /// Write bound values into a node's effects (only what changed, so unchanged layers stay shared).

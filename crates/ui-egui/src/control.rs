@@ -18,6 +18,7 @@
 //! - `app.quit {}`
 
 use egui::Context;
+use figcraft_engine::cmd::comment::{Filter, Sort};
 use figcraft_engine::{PointerEvent, PointerKind};
 use serde_json::{Value, json};
 
@@ -141,6 +142,11 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter).
             if app.session.tool_key(key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())? {
                 return Ok(json!({"ok": true}));
+            }
+            // The Comment tool's arrows step through the comment threads.
+            if app.session.tool.tool == figcraft_engine::ToolId::Comment && matches!(spec.as_str(), "ArrowUp" | "ArrowDown") {
+                let r = crate::comments::step(app, ctx, if spec == "ArrowUp" { -1 } else { 1 });
+                return Ok(json!({"comment": r.and_then(|v| v.get("id").cloned())}));
             }
             match crate::shortcuts::parse(&spec) {
                 Some(want) => {
@@ -273,8 +279,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             // Comment thread popover: an id opens it, null closes it.
             if let Some(v) = p.get("commentOpen") {
-                app.ui.comments.open = v.as_u64();
-                app.ui.comments.draft = None;
+                match v.as_u64() {
+                    Some(id) => app.ui.comments.show(id),
+                    None => app.ui.comments.close(),
+                }
             }
             if let Some(v) = p.get("commentDraft") {
                 match (v.get("x").and_then(Value::as_f64), v.get("y").and_then(Value::as_f64)) {
@@ -283,7 +291,39 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 }
             }
             if let Some(v) = p.get("showResolvedComments").and_then(Value::as_bool) {
-                app.ui.comments.show_resolved = v;
+                app.ui.comments.filter = if v { Filter::All } else { Filter::Open };
+            }
+            if let Some(v) = p.get("commentFilter").and_then(Value::as_str) {
+                app.ui.comments.filter = Filter::parse(v).ok_or("commentFilter: open|resolved|mine|unread|all")?;
+            }
+            if let Some(v) = p.get("commentSort").and_then(Value::as_str) {
+                app.ui.comments.sort = Sort::parse(v).ok_or("commentSort: date|page")?;
+            }
+            if let Some(v) = p.get("commentSearch").and_then(Value::as_str) {
+                app.ui.comments.search = v.to_string();
+            }
+            // The open thread's reply field, with the cursor at its end (an `@` there offers names).
+            if let Some(v) = p.get("commentReply").and_then(Value::as_str) {
+                app.ui.comments.reply = v.to_string();
+                if let Some(id) = app.ui.comments.open {
+                    crate::comments::focus_reply(ctx, id, v.chars().count());
+                }
+            }
+            // Edit a message of the open thread: its index (0: the first message); null stops.
+            if let Some(v) = p.get("commentEdit") {
+                app.ui.comments.editing = match (app.ui.comments.open, v.as_u64()) {
+                    (Some(id), Some(i)) => {
+                        let text = app.session.doc().ok().and_then(|d| d.comment(id)).and_then(|c| c.message(i as usize)).map(|m| m.text.clone());
+                        Some((id, i as usize, text.ok_or("commentEdit: no such message")?))
+                    }
+                    _ => None,
+                };
+            }
+            if let Some(v) = p.get("presentComments").and_then(Value::as_bool) {
+                app.ui.present_view.comments = v;
+                if let Some(pres) = app.ui.present.as_mut() {
+                    pres.view.comments = v;
+                }
             }
             // Colour picker on the selection's paint `{fills?, index?}`; null closes it.
             if let Some(v) = p.get("colorPicker") {
