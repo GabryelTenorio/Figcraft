@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and selection depth, effects fidelity (backdrop blur in clipping frames, exact shadow spread, glass, noise and texture), right-to-left names and the text style browser, comments polish, keyboard navigation in the layers panel, frame guides, 2x pixel preview, line-end previews)._
+_Last updated: 2026-10-11 (day 3: paint/effect/grid reordering and bindings, Dev Mode component code, annotations, ready for dev, compare and focus view, interaction-editor conditionals, arc handles, progressive blur, keyboard shortcut parity, SVG import fidelity, PDF print options, components at scale, accessibility, no idle redraws, WASM plugins, the collaboration protocol)._
 
 ## Where we are
 
@@ -17,7 +17,7 @@ _Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and sel
 |---|---|
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
-| Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
+| Menu/command breadth (`docs/parity.md`) | **98.5%** (200/203) of the catalogued menu tree has a command |
 | Feature depth (weighted rubric below) | **~79%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
 | Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
