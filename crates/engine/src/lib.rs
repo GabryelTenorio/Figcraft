@@ -1078,6 +1078,8 @@ mod proto_conditional_tests;
 #[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
+mod proto_polish_tests;
+#[cfg(test)]
 mod proto_present_tests;
 #[cfg(test)]
 mod proto_responsive_tests;

@@ -77,6 +77,8 @@ mod present_view_tests;
 #[cfg(test)]
 mod proto_editor_tests;
 #[cfg(test)]
+mod proto_reorder_tests;
+#[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
 mod shortcuts_tests;

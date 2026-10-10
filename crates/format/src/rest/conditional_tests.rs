@@ -144,9 +144,43 @@ fn unsupported_conditions_skip_the_whole_conditional() {
         on("AFTER_TIMEOUT", vec![set(SPACE, expr("ADDITION", vec![]))]),
     ]);
     assert!(button(&doc).interactions.is_empty(), "{:#?}", button(&doc).interactions);
-    for w in ["unsupported functions", "conditions that can't be evaluated", "variables that aren't in the variables JSON", "without a destination"] {
+    for w in ["variable mode lookups", "conditions that can't be evaluated", "variables that aren't in the variables JSON", "without a destination"] {
         assert!(has(&warnings, w), "{w}: {warnings:?}");
     }
+}
+
+#[test]
+fn variable_mode_lookups_read_a_variable_in_one_mode() {
+    let lookup = |v: &str, mode: Value| json!({"type": "EXPRESSION", "value": {"expressionFunction": "VAR_MODE_LOOKUP", "expressionArguments": [var(v), mode]}});
+    let (doc, warnings) = import_file(vec![
+        // The label as it reads in Light, whatever mode the button is in.
+        on("ON_CLICK", vec![set(LABEL, lookup(LABEL, data("STRING", json!("1:0"))))]),
+        on(
+            "ON_HOVER",
+            vec![json!({"type": "CONDITIONAL", "conditionalBlocks": [
+                {"condition": expr("EQUALS", vec![lookup(SPACE, json!({"value": "1:0"})), data("FLOAT", json!(8))]), "actions": [navigate("1:3")]}
+            ]})],
+        ),
+        // Not a mode of the variable's collection, or not a variable: skipped.
+        on("ON_PRESS", vec![set(LABEL, lookup(LABEL, data("STRING", json!("9:9"))))]),
+        on(
+            "ON_DRAG",
+            vec![set(
+                LABEL,
+                json!({"type": "EXPRESSION", "value": {"expressionFunction": "VAR_MODE_LOOKUP", "expressionArguments": [data("STRING", json!("1:0")), var(LABEL)]}}),
+            )],
+        ),
+    ]);
+    let its = &button(&doc).interactions;
+    assert_eq!(its.len(), 2, "{its:#?}");
+    let Action::SetVariable { expr: Some(e), .. } = &its[0].actions[0] else { panic!("{its:#?}") };
+    assert_eq!(e, &Expr::InMode { variable: LABEL.into(), mode: "1:0".into() });
+    // Dark is the default mode: the lookup still reads Light's value.
+    assert_eq!(e.eval(&doc.variables, &Default::default()), Some(VariableValue::String("Hello".into())));
+    assert_eq!(e.display(&doc.variables), "copy/label[Light]");
+    let Action::Conditional { blocks } = &its[1].actions[0] else { panic!() };
+    assert!(blocks[0].condition.as_ref().unwrap().holds(&doc.variables, &Default::default()));
+    assert!(has(&warnings, "variable mode lookups"), "{warnings:?}");
 }
 
 #[test]
@@ -181,6 +215,13 @@ fn junk_in_conditional_actions_never_panics() {
             ]})],
         ),
         on("ON_HOVER", vec![set(FLAG, expr("OR", vec![var(FLAG), expr("NEGATE", vec![var(FLAG)])]))]),
+        on(
+            "ON_PRESS",
+            vec![set(
+                LABEL,
+                json!({"type": "EXPRESSION", "value": {"expressionFunction": "VAR_MODE_LOOKUP", "expressionArguments": [var(LABEL), data("STRING", json!("1:1"))]}}),
+            )],
+        ),
     ]);
     let mut combined = base.clone();
     combined["meta"] = variables_json()["meta"].clone();

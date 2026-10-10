@@ -373,7 +373,8 @@ pub enum Action {
         dest: NodeId,
         #[serde(default)]
         position: OverlayPosition,
-        #[serde(default, alias = "closeOnOutside")]
+        /// A click outside the overlay closes it (on unless turned off, as new overlays start).
+        #[serde(default = "crate::node::yes", alias = "closeOnOutside")]
         close_on_outside: bool,
         /// Colour drawn behind the overlay (over the frame underneath); None = no background.
         #[serde(default)]
