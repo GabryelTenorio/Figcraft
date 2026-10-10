@@ -673,6 +673,11 @@ impl Session {
         let res = f(&mut doc, &mut sel);
         if res.is_ok() {
             normalize(&mut doc, &it.doc);
+            // The same preview again (a handle held still) keeps the document: a new one would
+            // re-render the canvas for nothing.
+            if doc == *ds.doc && sel == ds.selection {
+                return res;
+            }
             ds.doc = Arc::new(doc);
             ds.selection = sel;
             ds.clean_selection();
@@ -965,6 +970,8 @@ mod frame_guides_tests;
 #[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
+mod gesture_preview_tests;
+#[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
@@ -992,6 +999,8 @@ mod proto_present_tests;
 mod proto_responsive_tests;
 #[cfg(test)]
 mod proto_run_tests;
+#[cfg(test)]
+mod retained_walk_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]

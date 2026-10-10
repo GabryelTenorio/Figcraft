@@ -326,6 +326,8 @@ mod grain_tests;
 #[cfg(test)]
 mod lod_tests;
 #[cfg(test)]
+mod retained_edit_tests;
+#[cfg(test)]
 mod retained_tests;
 #[cfg(test)]
 mod spread_tests;

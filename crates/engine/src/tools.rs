@@ -156,7 +156,7 @@ pub enum PointerKind {
 }
 
 /// A pointer event in page coordinates (and screen coordinates for panning).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PointerEvent {
     pub kind: PointerKind,
     pub x: f64,
@@ -365,6 +365,8 @@ pub struct ToolState {
     /// The Scale tool's anchor: column and row (0 start, 1 middle, 2 end) of the point of the
     /// selection box that stays put (`tool.scaleAnchor`).
     pub scale_anchor: (u8, u8),
+    /// The last drag move handled (a held button repeats it every frame).
+    pub(crate) last_move: Option<PointerEvent>,
 }
 
 /// An anchor name (`tl`, `t`, `tr`, `l`, `c`, `r`, `bl`, `b`, `br`) as column and row (0 start,
@@ -719,6 +721,16 @@ impl Session {
 
     /// Feed one pointer event to the current tool.
     pub fn pointer(&mut self, ev: &PointerEvent) -> Result<()> {
+        // A held button sends the same move every frame: running the gesture again would only
+        // rebuild the same preview (a new document, and a canvas render, every frame).
+        if ev.kind != PointerKind::Move {
+            self.tool.last_move = None;
+        } else if self.tool.busy() {
+            if self.tool.last_move.as_ref() == Some(ev) {
+                return Ok(());
+            }
+            self.tool.last_move = Some(ev.clone());
+        }
         let tool = self.tool.tool;
         if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
             return Ok(());
