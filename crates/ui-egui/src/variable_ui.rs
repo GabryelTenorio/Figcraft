@@ -1,10 +1,14 @@
 //! Binding variables to properties from the Design panel: number fields show a variable button on
 //! hover and the bound variable's name once bound; colour fills bind through the style picker. The
-//! picker popover lists the document's variables of the matching type (and scope), by collection;
-//! the Variables editor uses it to pick alias targets too.
+//! picker popover lists the document's variables of the matching type (and scope), by collection,
+//! then those of each enabled library (picking one copies it in, linked and read-only); the
+//! Variables editor uses it to pick alias targets too.
+
+use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
-use figcraft_doc::{Document, ModeId, NodeId, VariableId, VariableType};
+use figcraft_doc::{Collection, Document, ModeId, NodeId, PublishedLibrary, Variable, VariableId, VariableType, VariableValue, Variables};
+use figcraft_engine::library;
 use serde_json::json;
 
 use crate::FigApp;
@@ -41,6 +45,86 @@ pub fn bound_name(doc: &Document, ids: &[NodeId], field: &str) -> Option<String>
         return None;
     }
     doc.variables.get(&first).map(|v| v.name.clone())
+}
+
+/// A variable a picker offers: one of this file's, or a published one of an enabled library.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pick {
+    /// The library's id; None for this file's variables.
+    pub library: Option<String>,
+    /// The variable's id (in the library for a library variable).
+    pub id: VariableId,
+}
+
+/// Bind `field` of `ids` to `pick` (a library variable is copied in first).
+pub fn bind(app: &mut FigApp, ids: &[NodeId], field: &str, pick: &Pick) {
+    match &pick.library {
+        Some(lib) => app.run("library.bindVariable", json!({"library": lib, "variable": pick.id, "ids": ids, "field": field})),
+        None => app.run("variable.bind", json!({"ids": ids, "field": field, "variable": pick.id})),
+    };
+}
+
+/// The enabled libraries this session has read, for pickers and the Variables editor.
+pub fn libraries(app: &FigApp, doc: &Document) -> Vec<Arc<PublishedLibrary>> {
+    library::read_libraries(&app.session.libraries, doc).map(|(_, lib)| lib.clone()).collect()
+}
+
+/// A variable group a picker lists: its library (None: this file), its collection and the
+/// variables offered.
+pub type Group<'a> = (Option<&'a PublishedLibrary>, &'a Collection, Vec<&'a Variable>);
+
+/// Every group a picker lists, with the variables passing `keep`: this file's collections first
+/// (never library copies), then each library's published ones. Empty groups are left out.
+pub fn groups<'a>(
+    doc: &'a Document,
+    libs: &'a [Arc<PublishedLibrary>],
+    keep: impl Fn(Option<&PublishedLibrary>, &Variable) -> bool,
+) -> Vec<Group<'a>> {
+    let mut out: Vec<Group<'a>> = Vec::new();
+    let local: Vec<&Variable> = doc.variables.variables.iter().filter(|v| !library::is_remote_variable(doc, &v.id)).collect();
+    for c in library::local_collections(doc) {
+        out.push((None, c, local.iter().copied().filter(|v| v.collection == c.id && keep(None, v)).collect()));
+    }
+    for lib in libs {
+        let offered: Vec<&Variable> = library::published_variables(lib).collect();
+        for c in library::published_collections(lib) {
+            out.push((Some(lib.as_ref()), c, offered.iter().copied().filter(|v| v.collection == c.id && keep(Some(lib), v)).collect()));
+        }
+    }
+    out.retain(|g| !g.2.is_empty());
+    out
+}
+
+/// A picker row: the variable's swatch (colours) or icon, its name and (other types) its value in
+/// the default modes; true when clicked.
+pub fn variable_row(ui: &mut Ui, vars: &Variables, v: &Variable, width: f32) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(width, 26.0), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+    }
+    let value = vars.resolve(&v.id, &std::collections::BTreeMap::new());
+    let lead = Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0));
+    match &value {
+        Some(VariableValue::Color(c)) => widgets::paint_swatch(ui.painter(), lead, &figcraft_color::Paint::solid(*c)),
+        _ => icons::paint(ui.painter(), lead.shrink(1.0), Icon::Variable, t.menu_text),
+    }
+    let name_r = Rect::from_min_max(pos2(r.min.x + 26.0, r.min.y), pos2(r.max.x - 6.0, r.max.y));
+    if let Some(val) = value.filter(|v| !matches!(v, VariableValue::Color(_))) {
+        ui.painter().text(pos2(r.max.x - 6.0, r.center().y), Align2::RIGHT_CENTER, val.display(), regular(11.0), t.menu_dim);
+    }
+    ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, &v.name, regular(11.0), t.menu_text);
+    resp.clicked()
+}
+
+/// A group's caption: the collection's name, after its library's name for library variables.
+pub fn group_caption(ui: &mut Ui, lib: Option<&PublishedLibrary>, coll: &Collection) {
+    let t = Tokens::get(ui.ctx());
+    let text = match lib {
+        Some(l) => format!("{} · {}", l.manifest.name, coll.name),
+        None => coll.name.clone(),
+    };
+    ui.label(egui::RichText::new(text).font(regular(10.0)).color(t.menu_dim));
 }
 
 /// Open the picker for `field` of `ids` at `at`.
@@ -133,20 +217,25 @@ pub fn bound_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kin
 pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     let Some(p) = ctx.data(|d| d.get_temp::<Picker>(picker_id())) else { return };
     let Ok(doc) = app.session.ds().map(|d| d.doc.clone()) else { return };
-    // Bindings offer variables scoped to the property; aliases, any that wouldn't loop.
-    let offered = |v: &figcraft_doc::Variable| match &p.target {
-        Target::Bind { ids, field } => {
-            ids.first().and_then(|id| figcraft_engine::cmd::variables::field_scope(&doc, *id, field)).is_none_or(|scope| v.in_scope(scope))
-        }
-        Target::Alias { variable, .. } => {
-            doc.variables.get(variable).is_some_and(|own| figcraft_engine::cmd::variables::alias_target(&doc.variables, own, &v.id).is_ok())
-        }
-    };
+    let libs = libraries(app, &doc);
     let t = Tokens::get(ctx);
     let query_id = Id::new("variable_picker_query");
     let mut query: String = ctx.data(|d| d.get_temp(query_id)).unwrap_or_default();
     let q = query.trim().to_lowercase();
-    let mut chosen: Option<String> = None;
+    // Bindings offer variables scoped to the property; aliases, any that wouldn't loop (library
+    // variables never lead back to this file's).
+    let (scope, own) = match &p.target {
+        Target::Bind { ids, field } => (ids.first().and_then(|id| figcraft_engine::cmd::variables::field_scope(&doc, *id, field)), None),
+        Target::Alias { variable, .. } => (None, doc.variables.get(variable)),
+    };
+    let keep = |lib: Option<&PublishedLibrary>, v: &Variable| {
+        v.kind == p.kind
+            && (q.is_empty() || v.name.to_lowercase().contains(&q))
+            && scope.is_none_or(|s| v.in_scope(s))
+            && (lib.is_some() || own.is_none_or(|o| figcraft_engine::cmd::variables::alias_target(&doc.variables, o, &v.id).is_ok()))
+    };
+    let groups = groups(&doc, &libs, keep);
+    let mut chosen: Option<Pick> = None;
     let mut close = false;
     let area = egui::Area::new(Id::new("variable_picker_area")).order(egui::Order::Foreground).fixed_pos(p.at + vec2(0.0, 4.0)).show(ctx, |ui| {
         egui::Frame::NONE.fill(t.menu).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
@@ -160,57 +249,25 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
                 r.request_focus();
             }
             ui.add_space(4.0);
-            let mut any = false;
             egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                for c in &doc.variables.collections {
-                    let vars: Vec<_> = doc
-                        .variables
-                        .variables
-                        .iter()
-                        .filter(|v| v.collection == c.id && v.kind == p.kind && (q.is_empty() || v.name.to_lowercase().contains(&q)) && offered(v))
-                        .collect();
-                    if vars.is_empty() {
-                        continue;
-                    }
-                    any = true;
-                    ui.label(egui::RichText::new(&c.name).font(regular(10.0)).color(t.menu_dim));
+                for (lib, c, vars) in &groups {
+                    group_caption(ui, *lib, c);
+                    let all = lib.map_or(&doc.variables, |l| &l.doc.variables);
                     for v in vars {
-                        let (r, resp) = ui.allocate_exact_size(vec2(224.0, 26.0), Sense::click());
-                        if resp.hovered() {
-                            ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
-                        }
-                        let modes = std::collections::BTreeMap::new();
-                        let value = doc.variables.resolve(&v.id, &modes);
-                        match &value {
-                            Some(figcraft_doc::VariableValue::Color(c)) => {
-                                let sw = Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0));
-                                widgets::paint_swatch(ui.painter(), sw, &figcraft_color::Paint::solid(*c));
-                            }
-                            _ => icons::paint(
-                                ui.painter(),
-                                Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(12.0, 12.0)),
-                                Icon::Variable,
-                                t.menu_text,
-                            ),
-                        }
-                        ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, &v.name, regular(11.0), t.menu_text);
-                        if let Some(val) = value.filter(|v| !matches!(v, figcraft_doc::VariableValue::Color(_))) {
-                            ui.painter().text(pos2(r.max.x - 6.0, r.center().y), Align2::RIGHT_CENTER, val.display(), regular(11.0), t.menu_dim);
-                        }
-                        if resp.clicked() {
-                            chosen = Some(v.id.clone());
+                        if variable_row(ui, all, v, 224.0) {
+                            chosen = Some(Pick { library: lib.map(|l| l.manifest.id.clone()), id: v.id.clone() });
                         }
                     }
                 }
             });
-            if !any {
+            if groups.is_empty() {
                 let kind = match p.kind {
                     VariableType::Color => "colour",
                     VariableType::Number => "number",
                     VariableType::String => "string",
                     VariableType::Boolean => "boolean",
                 };
-                let msg = if doc.variables.variables.iter().any(|v| v.kind == p.kind) {
+                let msg = if groups_any_kind(&doc, &libs, p.kind) {
                     format!("No {kind} variables fit here.")
                 } else {
                     format!("No {kind} variables yet. Create them in Local variables.")
@@ -230,11 +287,16 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) || clicked_outside {
         close = true;
     }
-    if let Some(var) = chosen {
-        match &p.target {
-            Target::Bind { ids, field } => app.run("variable.bind", json!({"ids": ids, "field": field, "variable": var})),
-            Target::Alias { variable, mode } => app.run("variable.set", json!({"variable": variable, "mode": mode, "value": {"alias": var}})),
-        };
+    if let Some(pick) = chosen {
+        match (&p.target, &pick.library) {
+            (Target::Bind { ids, field }, _) => bind(app, ids, field, &pick),
+            (Target::Alias { variable, mode }, None) => {
+                app.run("variable.set", json!({"variable": variable, "mode": mode, "value": {"alias": pick.id}}));
+            }
+            (Target::Alias { variable, mode }, Some(lib)) => {
+                app.run("library.aliasVariable", json!({"library": lib, "alias": pick.id, "variable": variable, "mode": mode}));
+            }
+        }
         close = true;
     }
     if close {
@@ -245,4 +307,9 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     } else {
         ctx.data_mut(|d| d.insert_temp(query_id, query));
     }
+}
+
+/// Whether this file or a library offers any variable of `kind`.
+fn groups_any_kind(doc: &Document, libs: &[Arc<PublishedLibrary>], kind: VariableType) -> bool {
+    !groups(doc, libs, |_, v| v.kind == kind).is_empty()
 }

@@ -1,5 +1,7 @@
-//! Library commands: publish this file as a library; enable, use and update other library files.
+//! Library commands: publish this file as a library; enable, use and update other library files
+//! (their components, styles and variables).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use figcraft_doc::*;
@@ -22,14 +24,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "library.publish",
             "Publish library",
-            "{description?, include? [component/set ids, style ids or names: exactly these], exclude? [same]}  publishes this file's components, component sets and styles (by default all but names starting with . or _, or what the last publish offered) as a new library version; save the file so other files see it",
+            "{description?, include? [component/set ids, style ids, variable collection ids or names: exactly these], exclude? [same]}  publishes this file's components, component sets, styles and variable collections (by default all but names starting with . or _, or what the last publish offered; variables hidden from publishing stay out unless something published uses them) as a new library version; save the file so other files see it",
             true,
             publish_cmd
         ),
         spec!(
             "library.list",
             "List libraries",
-            "{assets? (also list each library's components and styles, and what this file can publish)}  → enabled libraries (version, updates, errors) and this file's published library",
+            "{assets? (also list each library's components, styles, variable collections and variables, and what this file can publish)}  → enabled libraries (version, updates, errors) and this file's published library",
             false,
             list
         ),
@@ -41,11 +43,17 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             remove
         ),
-        spec!("library.updates", "Library updates", "{}  → the components and styles with a newer published version", false, updates),
+        spec!(
+            "library.updates",
+            "Library updates",
+            "{}  → the components, styles, variable collections and variables with a newer published version",
+            false,
+            updates
+        ),
         spec!(
             "library.acceptUpdates",
             "Accept library updates",
-            "{ids? [library ids; all when omitted]}  pulls updated components and styles in (instances keep their overrides)",
+            "{ids? [library ids; all when omitted]}  pulls updated components, styles, variable collections and variables in (instances keep their overrides; bound layers follow)",
             true,
             accept
         ),
@@ -75,7 +83,53 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             apply_style
         ),
+        spec!(
+            "library.importVariable",
+            "Import library variable",
+            "{library, variable (id or name of a published variable)}  → {variable (local, read-only linked copy to use with variable.bind, or as an alias in variable.set)}",
+            true,
+            |s, p| {
+                let (lib, key) = variable_arg(s, "library.importVariable", p, "variable")?;
+                Ok(json!({"variable": import_variable(s, &lib, &key)?}))
+            }
+        ),
+        spec!(
+            "library.bindVariable",
+            "Bind library variable",
+            "{library, variable (id or name of a published variable), field (as variable.bind), ids?}  copies the variable in (linked, read-only) and binds it",
+            true,
+            |s, p| {
+                let (lib, key) = variable_arg(s, "library.bindVariable", p, "variable")?;
+                let local = import_variable(s, &lib, &key)?;
+                super::styles::bind(s, &with(p, &["ids", "id", "field"], json!({"variable": local})))?;
+                Ok(json!({"variable": local}))
+            }
+        ),
+        spec!(
+            "library.aliasVariable",
+            "Alias library variable",
+            "{library, alias (id or name of a published variable of the same type), variable (a local variable), mode? (default first)}  copies the library variable in (linked, read-only) and makes the local variable's value an alias of it",
+            true,
+            alias
+        ),
+        spec!(
+            "library.setVariableMode",
+            "Set library variable mode",
+            "{library, collection (id or name of a published collection), mode (id or name), ids? (frames; the page when omitted)}  copies the collection in (linked, read-only) and sets its mode on the frames",
+            true,
+            set_mode
+        ),
     ]
+}
+
+/// `base` with `p`'s values of `keys` (those it has).
+fn with(p: &Value, keys: &[&str], mut base: Value) -> Value {
+    for k in keys {
+        if let Some(v) = get(p, k) {
+            base[*k] = v.clone();
+        }
+    }
+    base
 }
 
 /// An enabled library of the active document (`library` param), read from its file.
@@ -105,42 +159,101 @@ fn component_arg(s: &mut Session, cmd: &str, p: &Value) -> Result<(LibraryLink, 
     Ok((link, lib, key))
 }
 
+/// The `library` and a published variable named by `param` (id, else name): (library, the
+/// variable's id in the library).
+fn variable_arg(s: &mut Session, cmd: &str, p: &Value, param: &str) -> Result<(Arc<PublishedLibrary>, VariableId)> {
+    let (link, lib) = library(s, cmd, p)?;
+    let key = req_string(cmd, p, param)?;
+    let id = published_variables(&lib).find(|v| v.id == key).or_else(|| published_variables(&lib).find(|v| v.name == key)).map(|v| v.id.clone());
+    let id = id.ok_or_else(|| bad(cmd, format!("\"{}\" publishes no variable `{key}`", link.name)))?;
+    Ok((lib, id))
+}
+
+/// Copy library variable `key` in (with what it aliases); its local id.
+fn import_variable(s: &mut Session, lib: &PublishedLibrary, key: &str) -> Result<VariableId> {
+    let map = import_variables(s.doc_mut()?, lib, &BTreeSet::from([key.to_string()]), &BTreeSet::new(), false);
+    map.variables.get(key).cloned().ok_or_else(|| EngineError::Other("the variable didn't import".into()))
+}
+
+fn alias(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.aliasVariable";
+    let own = req_string(cmd, p, "variable")?;
+    let doc = s.doc()?;
+    let kind = doc.variables.get(&own).filter(|v| !is_remote_variable(doc, &v.id)).map(|v| v.kind);
+    let kind = kind.ok_or_else(|| bad(cmd, format!("no local variable `{own}`")))?;
+    let (lib, key) = variable_arg(s, cmd, p, "alias")?;
+    if lib.doc.variables.get(&key).is_some_and(|v| v.kind != kind) {
+        return Err(bad(cmd, "the library variable has another type"));
+    }
+    let local = import_variable(s, &lib, &key)?;
+    super::styles::var_set(s, &with(p, &["variable", "mode"], json!({"value": {"alias": local}})))?;
+    Ok(json!({"variable": local}))
+}
+
+fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.setVariableMode";
+    let (link, lib) = library(s, cmd, p)?;
+    let key = req_string(cmd, p, "collection")?;
+    let coll = published_collections(&lib)
+        .find(|c| c.id == key)
+        .or_else(|| published_collections(&lib).find(|c| c.name == key))
+        .ok_or_else(|| bad(cmd, format!("\"{}\" publishes no variable collection `{key}`", link.name)))?;
+    let m = req_string(cmd, p, "mode")?;
+    let mode = coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?;
+    let key = coll.id.clone();
+    let map = import_variables(s.doc_mut()?, &lib, &BTreeSet::new(), &BTreeSet::from([key.clone()]), false);
+    let local = map.collections.get(&key).cloned().ok_or_else(|| EngineError::Other("the collection didn't import".into()))?;
+    super::styles::set_mode(s, &with(p, &["ids", "id"], json!({"collection": local, "mode": mode})))?;
+    Ok(json!({"collection": local}))
+}
+
 fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "library.publish";
     let doc = s.doc()?;
-    let (comps_all, styles_all) = publishable(doc);
-    let pick = |key: &str| -> Result<(Vec<NodeId>, Vec<String>)> {
-        let Some(v) = get(p, key) else { return Ok((Vec::new(), Vec::new())) };
-        let Value::Array(items) = v else { return Err(bad(cmd, format!("`{key}` must be an array of component ids and style ids or names"))) };
-        let (mut c, mut st) = (Vec::new(), Vec::new());
+    let all = publishable(doc);
+    let coll_named = |c: &String, t: &str| doc.variables.collections.iter().any(|x| x.id == *c && x.name == t);
+    let count = |s: &Selection| s.components.len() + s.styles.len() + s.collections.len();
+    let pick = |key: &str| -> Result<Selection> {
+        let mut sel = Selection::default();
+        let Some(v) = get(p, key) else { return Ok(sel) };
+        let Value::Array(items) = v else {
+            return Err(bad(cmd, format!("`{key}` must be an array of component ids and style or variable collection ids or names")));
+        };
         for item in items {
             let text = item.as_str().map(str::trim);
-            let before = (c.len(), st.len());
-            if let Some(t) = text.filter(|t| styles_all.iter().any(|x| x == t)) {
-                st.push(t.to_string());
-            } else if let Some(i) = id_of(item).filter(|i| comps_all.contains(i)) {
-                c.push(i);
+            let before = count(&sel);
+            if let Some(t) = text.filter(|t| all.styles.iter().any(|x| x == t)) {
+                sel.styles.push(t.to_string());
+            } else if let Some(t) = text.filter(|t| all.collections.iter().any(|x| x == t)) {
+                sel.collections.push(t.to_string());
+            } else if let Some(i) = id_of(item).filter(|i| all.components.contains(i)) {
+                sel.components.push(i);
             } else if let Some(t) = text {
-                c.extend(comps_all.iter().filter(|i| doc.node(**i).is_some_and(|n| n.name == t)));
-                st.extend(styles_all.iter().filter(|x| doc.style(x).is_some_and(|y| y.name == t)).cloned());
+                sel.components.extend(all.components.iter().filter(|i| doc.node(**i).is_some_and(|n| n.name == t)));
+                sel.styles.extend(all.styles.iter().filter(|x| doc.style(x).is_some_and(|y| y.name == t)).cloned());
+                sel.collections.extend(all.collections.iter().filter(|c| coll_named(c, t)).cloned());
             }
-            if (c.len(), st.len()) == before {
-                return Err(bad(cmd, format!("{item} is not a local component, component set or style of this file")));
+            if count(&sel) == before {
+                return Err(bad(cmd, format!("{item} is not a local component, component set, style or variable collection of this file")));
             }
         }
-        Ok((c, st))
+        Ok(sel)
     };
-    let (mut comps, mut styles) = if get(p, "include").is_some() { pick("include")? } else { default_selection(doc) };
-    let (xc, xs) = pick("exclude")?;
-    comps.retain(|c| !xc.contains(c));
-    styles.retain(|x| !xs.contains(x));
+    let mut sel = if get(p, "include").is_some() { pick("include")? } else { default_selection(doc) };
+    let x = pick("exclude")?;
+    sel.components.retain(|c| !x.components.contains(c));
+    sel.styles.retain(|s| !x.styles.contains(s));
+    sel.collections.retain(|c| !x.collections.contains(c));
     let description = string(p, "description").map(|d| d.trim().chars().take(MAX_DESCRIPTION).collect());
-    let lib = publish(doc, &comps, &styles, description, s.ds()?.uid)?;
+    let lib = publish(doc, &sel, description, s.ds()?.uid)?;
+    let m = &lib.manifest;
     let out = json!({
-        "id": lib.manifest.id,
-        "version": lib.manifest.version,
-        "components": comps.len(),
-        "styles": styles.len(),
+        "id": m.id,
+        "version": m.version,
+        "components": sel.components.len(),
+        "styles": sel.styles.len(),
+        "collections": sel.collections.len(),
+        "variables": m.variables.iter().filter(|v| v.published).count(),
     });
     s.doc_mut()?.published = Some(Arc::new(lib));
     Ok(out)
@@ -148,9 +261,12 @@ fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn assets_json(lib: &PublishedLibrary) -> Value {
     let m = &lib.manifest;
+    let modes = |c: &str| lib.doc.variables.collection(c).map(|c| c.modes.iter().map(|x| json!({"id": x.id, "name": x.name})).collect::<Vec<_>>());
     json!({
         "components": m.components.iter().filter(|a| a.published).map(|a| json!({"id": a.id, "name": a.name, "set": a.set, "version": a.version})).collect::<Vec<_>>(),
         "styles": m.styles.iter().filter(|x| x.published).map(|x| json!({"id": x.id, "name": x.name, "type": x.kind, "version": x.version})).collect::<Vec<_>>(),
+        "collections": m.collections.iter().filter(|x| x.published).map(|x| json!({"id": x.id, "name": x.name, "modes": modes(&x.id), "version": x.version})).collect::<Vec<_>>(),
+        "variables": m.variables.iter().filter(|x| x.published).map(|x| json!({"id": x.id, "name": x.name, "type": x.kind, "collection": x.collection, "version": x.version})).collect::<Vec<_>>(),
     })
 }
 
@@ -162,14 +278,11 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
         let mut e = json!({"id": l.id, "name": l.name, "path": l.path, "seenVersion": l.version});
         match s.libraries.load(&l.path) {
             Ok(lib) if lib.manifest.id == l.id => {
-                let (c, st) = pending(s.doc()?, &lib);
                 e["version"] = json!(lib.manifest.version);
                 e["description"] = json!(lib.manifest.description);
-                e["updates"] = json!(c.len() + st.len());
-                if with_assets {
-                    let a = assets_json(&lib);
-                    e["components"] = a["components"].clone();
-                    e["styles"] = a["styles"].clone();
+                e["updates"] = json!(pending(s.doc()?, &lib).count());
+                if with_assets && let (Value::Object(e), Value::Object(a)) = (&mut e, assets_json(&lib)) {
+                    e.extend(a);
                 }
             }
             Ok(lib) => e["error"] = json!(format!("the file now holds another library (\"{}\")", lib.manifest.name)),
@@ -181,7 +294,8 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let published = doc.published.as_ref().map(|lib| {
         let m = &lib.manifest;
         let mut v = json!({"id": m.id, "name": m.name, "version": m.version, "description": m.description, "time": m.time,
-            "components": m.components.iter().filter(|a| a.published).count(), "styles": m.styles.iter().filter(|x| x.published).count()});
+            "components": m.components.iter().filter(|a| a.published).count(), "styles": m.styles.iter().filter(|x| x.published).count(),
+            "collections": m.collections.iter().filter(|x| x.published).count(), "variables": m.variables.iter().filter(|x| x.published).count()});
         if with_assets {
             v["assets"] = assets_json(lib);
         }
@@ -189,11 +303,11 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     });
     let mut res = json!({"libraries": out, "published": published});
     if with_assets {
-        let (comps, styles) = default_selection(doc);
-        let (all_c, all_s) = publishable(doc);
+        let (def, all) = (default_selection(doc), publishable(doc));
         res["publishable"] = json!({
-            "components": all_c.iter().filter_map(|c| doc.node(*c).map(|n| json!({"id": c, "name": n.name, "selected": comps.contains(c)}))).collect::<Vec<_>>(),
-            "styles": all_s.iter().filter_map(|x| doc.style(x).map(|st| json!({"id": st.id, "name": st.name, "selected": styles.contains(x)}))).collect::<Vec<_>>(),
+            "components": all.components.iter().filter_map(|c| doc.node(*c).map(|n| json!({"id": c, "name": n.name, "selected": def.components.contains(c)}))).collect::<Vec<_>>(),
+            "styles": all.styles.iter().filter_map(|x| doc.style(x).map(|st| json!({"id": st.id, "name": st.name, "selected": def.styles.contains(x)}))).collect::<Vec<_>>(),
+            "collections": all.collections.iter().filter_map(|x| doc.variables.collection(x).map(|c| json!({"id": c.id, "name": c.name, "selected": def.collections.contains(x)}))).collect::<Vec<_>>(),
         });
     }
     Ok(res)
@@ -253,19 +367,24 @@ fn updates(s: &mut Session, _p: &Value) -> Result<Value> {
                 continue;
             }
         };
-        let doc = s.doc()?;
-        let (comps, styles) = pending(doc, &lib);
-        if comps.is_empty() && styles.is_empty() {
+        let p = pending(s.doc()?, &lib);
+        if p.is_empty() {
             continue;
         }
-        count += comps.len() + styles.len();
-        let name = |r: &ImportedComponent| lib.manifest.component(r.key).map(|a| a.name.clone()).unwrap_or_default();
+        count += p.count();
+        let m = &lib.manifest;
+        let name = |r: &ImportedComponent| m.component(r.key).map(|a| a.name.clone()).unwrap_or_default();
+        let rows = |list: &[ImportedRecord], name: &dyn Fn(&str) -> Option<String>| {
+            list.iter().map(|r| json!({"id": r.local, "key": r.key, "name": name(&r.key)})).collect::<Vec<_>>()
+        };
         out.push(json!({
             "id": l.id,
-            "name": lib.manifest.name,
-            "version": lib.manifest.version,
-            "components": comps.iter().map(|r| json!({"id": r.root, "key": r.key, "name": name(r)})).collect::<Vec<_>>(),
-            "styles": styles.iter().map(|r| json!({"id": r.local, "key": r.key, "name": lib.manifest.style(&r.key).map(|x| x.name.clone())})).collect::<Vec<_>>(),
+            "name": m.name,
+            "version": m.version,
+            "components": p.components.iter().map(|r| json!({"id": r.root, "key": r.key, "name": name(r)})).collect::<Vec<_>>(),
+            "styles": rows(&p.styles, &|k| m.style(k).map(|x| x.name.clone())),
+            "collections": rows(&p.collections, &|k| m.collection(k).map(|x| x.name.clone())),
+            "variables": rows(&p.variables, &|k| m.variable(k).map(|x| x.name.clone())),
         }));
     }
     Ok(json!({"count": count, "libraries": out, "errors": errors}))
@@ -286,7 +405,7 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
             .collect::<Result<_>>()?,
         None => s.doc()?.libraries.enabled.clone(),
     };
-    let (mut comps, mut styles, mut skipped) = (0, 0, Vec::new());
+    let (mut done, mut skipped) = (Pending::default(), Vec::new());
     for l in links {
         let lib = match library(s, cmd, &json!({"library": l.id})) {
             Ok((_, lib)) => lib,
@@ -296,11 +415,19 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
             }
             Err(e) => return Err(e),
         };
-        let (c, st) = accept_updates(s.doc_mut()?, &lib)?;
-        comps += c;
-        styles += st;
+        let p = accept_updates(s.doc_mut()?, &lib)?;
+        done.components.extend(p.components);
+        done.styles.extend(p.styles);
+        done.collections.extend(p.collections);
+        done.variables.extend(p.variables);
     }
-    Ok(json!({"components": comps, "styles": styles, "skipped": skipped}))
+    Ok(json!({
+        "components": done.components.len(),
+        "styles": done.styles.len(),
+        "collections": done.collections.len(),
+        "variables": done.variables.len(),
+        "skipped": skipped,
+    }))
 }
 
 fn place(s: &mut Session, p: &Value) -> Result<Value> {
@@ -332,12 +459,6 @@ fn apply_style(s: &mut Session, p: &Value) -> Result<Value> {
         .into_values()
         .next()
         .ok_or_else(|| EngineError::Other("the style didn't import".into()))?;
-    let mut q = json!({"style": local});
-    for k in ["ids", "id", "target"] {
-        if let Some(v) = get(p, k) {
-            q[k] = v.clone();
-        }
-    }
-    super::styles::apply(s, &q)?;
+    super::styles::apply(s, &with(p, &["ids", "id", "target"], json!({"style": local})))?;
     Ok(json!({"style": local}))
 }

@@ -24,33 +24,83 @@ fn window<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
 }
 
+/// The About window's tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AboutTab {
+    #[default]
+    About,
+    Contributors,
+    Models,
+}
+
+impl AboutTab {
+    pub const ALL: [AboutTab; 3] = [AboutTab::About, AboutTab::Contributors, AboutTab::Models];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AboutTab::About => "About",
+            AboutTab::Contributors => "Contributors",
+            AboutTab::Models => "Models",
+        }
+    }
+}
+
+/// The About window's width, the same on every tab (the Contributors table needs the room).
+pub const ABOUT_WIDTH: f32 = 640.0;
+
+/// The About window's tab row, drawn like the Design / Prototype tabs of the right panel.
+fn about_tabs(ui: &mut egui::Ui, t: &Tokens, current: &mut AboutTab) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for tab in AboutTab::ALL {
+            let label = tab.label();
+            let active = *current == tab;
+            let galley = ui.painter().layout_no_wrap(label.into(), semibold(11.0), if active { t.text } else { t.text_secondary });
+            let (r, resp) = ui.allocate_exact_size(vec2(galley.size().x + 16.0, 24.0), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label));
+            if active || resp.hovered() {
+                ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+            }
+            ui.painter().galley(egui::pos2(r.min.x + 8.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+            if resp.clicked() {
+                *current = tab;
+            }
+        }
+    });
+}
+
+/// About ▸ About: the logo, version, blurb and links.
+fn about_body(ui: &mut egui::Ui, t: &Tokens) {
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
+        ui.painter().rect_filled(r, CornerRadius::same(10), ACCENT);
+        icons::paint(ui.painter(), r.shrink(10.0), Icon::Logo, Color32::WHITE);
+        ui.vertical(|ui| {
+            ui.label(RichText::new("FigCraft").font(semibold(18.0)));
+            ui.label(RichText::new(format!("Version {VERSION}")).color(t.text_secondary));
+        });
+    });
+    ui.add_space(12.0);
+    ui.label("Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.");
+    ui.add_space(8.0);
+    ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
+    ui.hyperlink_to("Join us on Discord", "https://discord.gg/artcraft");
+    ui.add_space(8.0);
+    ui.label(RichText::new("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.").color(t.text_secondary).font(regular(11.0)));
+}
+
 pub fn show(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     if app.ui.about {
         let mut open = true;
         window("About FigCraft", ctx).open(&mut open).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(48.0, 48.0), Sense::hover());
-                ui.painter().rect_filled(r, CornerRadius::same(10), ACCENT);
-                icons::paint(ui.painter(), r.shrink(10.0), Icon::Logo, Color32::WHITE);
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("FigCraft").font(semibold(18.0)));
-                    ui.label(RichText::new(format!("Version {VERSION}")).color(t.text_secondary));
-                });
-            });
+            ui.set_width(ABOUT_WIDTH);
+            about_tabs(ui, &t, &mut app.ui.about_tab);
             ui.add_space(12.0);
-            ui.label("Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.");
-            ui.add_space(8.0);
-            ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
-            ui.hyperlink_to("Join us on Discord", "https://discord.gg/artcraft");
-            ui.add_space(8.0);
-            ui.label(RichText::new("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.").color(t.text_secondary).font(regular(11.0)));
-            let credits = crate::credits::CONTRIBUTORS;
-            if !credits.is_empty() {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Contributors").font(semibold(12.0)));
-                ui.label(credits.iter().map(|c| format!("@{c}")).collect::<Vec<_>>().join(" · "));
+            match app.ui.about_tab {
+                AboutTab::About => about_body(ui, &t),
+                AboutTab::Contributors => crate::credits::contributors_ui(ui),
+                AboutTab::Models => crate::credits::models_ui(ui),
             }
         });
         if !open {

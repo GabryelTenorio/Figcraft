@@ -303,7 +303,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
     });
     widgets::separator(ui);
     // Local variables & styles.
-    let vars = doc.variables.variables.len();
+    let vars = doc.variables.variables.iter().filter(|v| !figcraft_engine::library::is_remote_variable(doc, &v.id)).count();
     widgets::section_header(ui, "Local variables", &[], vars == 0);
     row(ui, 32.0, |ui| {
         let r = widgets::dropdown(ui, &format!("Open variables ({vars})"), 200.0, Some(Icon::Styles));

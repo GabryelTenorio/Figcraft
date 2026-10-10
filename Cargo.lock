@@ -1091,6 +1091,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_extras"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05cbdc785020861553f230f23d330ba1fb72613b9d8e0e457f3bdc8ba6db6dcf"
+dependencies = [
+ "ahash",
+ "egui",
+ "enum-map",
+ "itertools",
+ "log",
+ "profiling",
+]
+
+[[package]]
 name = "egui_glow"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,6 +1138,26 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
+
+[[package]]
+name = "enum-map"
+version = "2.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6866f3bfdf8207509a033af1a75a7b08abda06bbaaeae6669323fd5a097df2e9"
+dependencies = [
+ "enum-map-derive",
+]
+
+[[package]]
+name = "enum-map-derive"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f282cfdfe92516eb26c2af8589c274c7c17681f5ecc03c18255fe741c6aa64eb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "enumflags2"
@@ -1280,7 +1314,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "figcraft"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arboard",
  "eframe",
@@ -1299,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-doc",
  "figcraft-engine",
@@ -1313,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-color"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kurbo",
  "serde",
@@ -1322,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-doc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-color",
  "figcraft-geom",
@@ -1334,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "figcraft-color",
@@ -1356,7 +1390,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-format"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-doc",
  "image",
@@ -1368,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-geom"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kurbo",
  "serde",
@@ -1376,7 +1410,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-layout"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1384,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "figcraft-doc",
@@ -1399,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-pathops"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1408,7 +1442,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-pdf"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-color",
  "figcraft-doc",
@@ -1425,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crc32fast",
  "figcraft-color",
@@ -1441,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-svg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "figcraft-color",
@@ -1454,7 +1488,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-text"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1466,10 +1500,11 @@ dependencies = [
 
 [[package]]
 name = "figcraft-ui-egui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "egui",
+ "egui_extras",
  "figcraft-color",
  "figcraft-doc",
  "figcraft-engine",
@@ -1481,11 +1516,12 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]
 name = "figcraft-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "egui",
@@ -5252,7 +5288,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "figcraft-color",
  "figcraft-doc",

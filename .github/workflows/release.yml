@@ -293,8 +293,9 @@ jobs:
     name: FreeBSD x86_64
     needs: version
     # GitHub has no FreeBSD runners: build in a FreeBSD 14.3 VM, the same image and packages as
-    # .github/workflows/freebsd.yml.
-    runs-on: ubuntu-latest
+    # .github/workflows/freebsd.yml. A private repo's ubuntu-latest has 2 vCPUs and 7 GB, too small
+    # for this VM (QEMU "cannot set up guest memory"), so it runs on the org's 16-core larger runner.
+    runs-on: github-ubuntu-16core
     timeout-minutes: 180
     # No `environment: release`: this job signs nothing, so it gets no release secrets.
     env:

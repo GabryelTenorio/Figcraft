@@ -216,6 +216,7 @@ fn variables_resolve_modes_and_aliases() {
         values: vals,
         description: String::new(),
         scopes: None,
+        hidden_from_publishing: false,
     });
     let mut alias = std::collections::BTreeMap::new();
     alias.insert("light".to_string(), VariableValue::Alias("bg".into()));
@@ -227,6 +228,7 @@ fn variables_resolve_modes_and_aliases() {
         values: alias,
         description: String::new(),
         scopes: None,
+        hidden_from_publishing: false,
     });
     let mut modes = std::collections::BTreeMap::new();
     assert_eq!(v.resolve("surface", &modes), Some(VariableValue::Color(Color::WHITE)));
@@ -243,6 +245,7 @@ fn variables_resolve_modes_and_aliases() {
         values: cyc,
         description: String::new(),
         scopes: None,
+        hidden_from_publishing: false,
     });
     assert_eq!(v.resolve("loop", &std::collections::BTreeMap::new()), None);
 }

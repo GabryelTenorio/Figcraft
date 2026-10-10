@@ -15,7 +15,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.update",
             "Edit variable",
-            "{variable, name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers)}",
+            "{variable, name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers), hiddenFromPublishing? (left out when the file is published as a library)}",
             true,
             update
         ),
@@ -81,6 +81,9 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(sc) = scopes {
         slot.scopes = sc;
+    }
+    if let Some(h) = boolean(p, "hiddenFromPublishing") {
+        slot.hidden_from_publishing = h;
     }
     ok()
 }

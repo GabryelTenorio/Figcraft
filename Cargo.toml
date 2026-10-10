@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 # default-members = ["crates/*", "apps/figcraft", "apps/figcraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -52,6 +52,7 @@ crc32fast = "1"
 
 # ui
 egui = "0.36"
+egui_extras = { version = "0.36", default-features = false }
 eframe = { version = "0.36", default-features = false }
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false }
