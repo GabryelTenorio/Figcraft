@@ -245,7 +245,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
-| Strokes | 3 | 80% | stroke styles, arrowhead previews in the menus | 2–3 |
+| Strokes | 3 | 82% | stroke styles | 1–2 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
