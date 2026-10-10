@@ -321,72 +321,72 @@ pub struct Node {
     pub name: String,
     #[serde(flatten)]
     pub kind: NodeKind,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<NodeId>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub children: Vec<NodeId>,
-    #[serde(default = "yes")]
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
     pub visible: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub locked: bool,
-    #[serde(default = "one")]
+    #[serde(default = "one", skip_serializing_if = "is_one")]
     pub opacity: f32,
-    #[serde(default = "pass")]
+    #[serde(default = "pass", skip_serializing_if = "is_pass")]
     pub blend: BlendMode,
     /// Transform relative to the parent (the page for top-level nodes).
-    #[serde(default = "identity")]
+    #[serde(default = "identity", skip_serializing_if = "is_identity")]
     pub transform: Affine,
     pub width: f64,
     pub height: f64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub fills: Vec<Paint>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub strokes: Vec<Paint>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub stroke: StrokeProps,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub effects: Vec<Effect>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub corners: Corners,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub constraints: Constraints,
     /// Auto layout (frame-like nodes only).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub layout: Option<AutoLayout>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub child_layout: ChildLayout,
     /// Clip content (frames).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub clip: bool,
     /// This node masks the siblings above it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub is_mask: bool,
     /// How a mask masks: by its alpha, its outline, or its luminance.
     #[serde(default, skip_serializing_if = "MaskType::is_alpha")]
     pub mask_type: MaskType,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub grids: Vec<LayoutGrid>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub exports: Vec<ExportSetting>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub interactions: Vec<Interaction>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub overflow: Overflow,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub scroll_position: ScrollPosition,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub styles: StyleRefs,
     /// Variable bindings: field name ("fills/0/color", "width", "cornerRadius", "characters", …) → id.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub bound: BTreeMap<String, VariableId>,
     /// Explicit variable modes (collection → mode) set on this container.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub var_modes: BTreeMap<CollectionId, ModeId>,
     /// Lock aspect ratio when resizing from the panel.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub constrain_proportions: bool,
     /// Inside an instance: the node of the main component this one mirrors.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub source: Option<NodeId>,
     /// A nested instance inside a main component whose properties show on the main's instances.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -397,15 +397,15 @@ pub struct Node {
     pub dev_status: DevStatus,
     /// Inside an instance: property groups overridden locally ("fills", "characters", …; "slot":
     /// this slot holds the instance's own content).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub overrides: BTreeSet<String>,
     /// Component property references: which property controls this node's
     /// "visible" (boolean), "characters" (text) or "mainComponent" (instance swap), or which slot
     /// property this frame is ("slot").
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub prop_refs: BTreeMap<String, String>,
     /// Free-form plugin / agent data.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub plugin_data: BTreeMap<String, String>,
 }
 
@@ -420,6 +420,26 @@ fn pass() -> BlendMode {
 }
 fn identity() -> Affine {
     Affine::IDENTITY
+}
+
+// Fields at their default value are left out of the JSON (the file is several times smaller and
+// faster to write and read); reading fills them back in from the same defaults.
+
+/// Whether `v` is its type's default (what `#[serde(default)]` reads back for a missing field).
+pub(crate) fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
+}
+fn is_yes(v: &bool) -> bool {
+    *v == yes()
+}
+fn is_one(v: &f32) -> bool {
+    *v == one()
+}
+fn is_pass(v: &BlendMode) -> bool {
+    *v == pass()
+}
+fn is_identity(v: &Affine) -> bool {
+    *v == identity()
 }
 
 impl Node {
@@ -513,13 +533,14 @@ impl Node {
     /// Maximum distance (in local units) painting can reach outside the node box.
     pub fn paint_reach(&self) -> f64 {
         let stroke = if self.has_visible_stroke() {
-            let w = self.stroke.sides.map(|s| s.iter().copied().fold(0.0, f64::max)).unwrap_or(self.stroke.weight);
+            let w = self.stroke.sides.map(|s| s.iter().copied().fold(0.0, f64::max)).unwrap_or_else(|| self.stroke.max_weight());
             let base = match self.stroke.align {
                 StrokeAlign::Inside => 0.0,
                 StrokeAlign::Center => w / 2.0,
                 StrokeAlign::Outside => w,
             };
-            let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w * 3.0 } else { w };
+            // Arrowheads are sized by the weight, whatever a width profile does.
+            let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w.max(self.stroke.weight) * 3.0 } else { w };
             base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * self.stroke.miter_limit.clamp(1.0, 4.0)
         } else {
             0.0

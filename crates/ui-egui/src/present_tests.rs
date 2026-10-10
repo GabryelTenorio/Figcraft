@@ -9,20 +9,20 @@ use serde_json::{Value, json};
 
 use crate::{FigApp, NoServices};
 
-struct Ui {
-    ctx: egui::Context,
-    app: FigApp,
-    time: f64,
+pub(crate) struct Ui {
+    pub(crate) ctx: egui::Context,
+    pub(crate) app: FigApp,
+    pub(crate) time: f64,
 }
 
 impl Ui {
-    fn new(s: Session) -> Self {
+    pub(crate) fn new(s: Session) -> Self {
         let mut u = Self { ctx: egui::Context::default(), app: FigApp::new(s, Box::new(NoServices)), time: 0.0 };
         u.frames(3, Vec::new);
         u
     }
 
-    fn frame(&mut self, events: Vec<Event>) {
+    pub(crate) fn frame(&mut self, events: Vec<Event>) {
         self.time += 1.0 / 60.0;
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
@@ -30,13 +30,13 @@ impl Ui {
         self.ctx.run_ui(input, |ui| app.ui(ui)).textures_delta.clear();
     }
 
-    fn frames(&mut self, n: usize, events: impl Fn() -> Vec<Event>) {
+    pub(crate) fn frames(&mut self, n: usize, events: impl Fn() -> Vec<Event>) {
         for _ in 0..n {
             self.frame(events());
         }
     }
 
-    fn run(&mut self, cmd: &str, params: Value) -> Value {
+    pub(crate) fn run(&mut self, cmd: &str, params: Value) -> Value {
         let r = self.app.session.execute(cmd, &params).unwrap();
         self.app.handle_ui_requests();
         self.frame(vec![]);
@@ -44,39 +44,39 @@ impl Ui {
     }
 
     /// The preview pane's window on screen.
-    fn pane(&self) -> Rect {
+    pub(crate) fn pane(&self) -> Rect {
         self.ctx.memory(|m| m.area_rect(crate::present::pane_id())).expect("the pane is open")
     }
 
     /// The pane's player state (`ui.inspect` → `preview`).
-    fn preview(&self) -> Value {
+    pub(crate) fn preview(&self) -> Value {
         self.app.inspect()["preview"].clone()
     }
 
-    fn scroll_y(&self) -> f64 {
+    pub(crate) fn scroll_y(&self) -> f64 {
         self.preview()["scroll"][1].as_f64().unwrap()
     }
 
-    fn button(&mut self, p: Pos2, pressed: bool) {
+    pub(crate) fn button(&mut self, p: Pos2, pressed: bool) {
         self.frame(vec![
             Event::PointerMoved(p),
             Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },
         ]);
     }
 
-    fn key(&mut self, at: Pos2, key: Key) {
+    pub(crate) fn key(&mut self, at: Pos2, key: Key) {
         let k = |pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Default::default() };
         self.frame(vec![Event::PointerMoved(at), k(true), k(false)]);
     }
 }
 
-fn id(v: &Value) -> NodeId {
+pub(crate) fn id(v: &Value) -> NodeId {
     NodeId(v["id"].as_u64().unwrap())
 }
 
 /// An iPhone 16 page: screen A (393×2000, scrolls vertically, a tab bar fixed to its bottom, a
 /// rectangle selected inside it) and screen B.
-fn setup() -> (Ui, NodeId, NodeId, NodeId) {
+pub(crate) fn setup() -> (Ui, NodeId, NodeId, NodeId) {
     let mut s = Session::new();
     let ex = |s: &mut Session, c: &str, p: Value| s.execute(c, &p).unwrap();
     ex(&mut s, "proto.settings", json!({"device": "iPhone 16"}));
@@ -161,12 +161,13 @@ fn the_frame_scrolls_on_the_device_screen_by_wheel_and_drag() {
     u.button(c - vec2(0.0, 100.0), false);
     let dragged = u.scroll_y() - after_wheel;
     assert!(dragged > 100.0, "the screen is shown below 100%: {dragged}");
-    // Never past the end.
+    // Never past the end: dragged further it stretches, and springs back when let go.
     for _ in 0..20 {
         u.button(c, true);
         u.frame(vec![Event::PointerMoved(c - vec2(0.0, 300.0))]);
         u.button(c - vec2(0.0, 300.0), false);
     }
+    u.frames(90, Vec::new);
     assert_eq!(u.scroll_y(), 1148.0);
     // Navigating starts the next frame at the top.
     u.key(c, Key::ArrowRight);

@@ -228,6 +228,8 @@ pub struct Overlay {
     /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the
     /// paint bucket would fill (page-space polygons).
     pub vector_hover: Option<crate::vectoredit::VHit>,
+    /// Vector edit mode, Variable width tool: the width point, handle or path under the pointer.
+    pub width_hover: Option<crate::vectoredit::WHit>,
     pub lasso: Vec<[f64; 2]>,
     /// The eraser brush under the pointer (x, y, radius in page units).
     pub brush: Option<[f64; 3]>,

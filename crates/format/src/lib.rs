@@ -1,7 +1,8 @@
 //! The native `.figcraft` format.
 //!
 //! A zip archive holding `document.json` (the [`Document`] as JSON, with a `format`/`version`
-//! header), `images/<sha256>` for every image the document (or a saved version) uses, an optional
+//! header; layer fields at their default values are left out and read back as those defaults),
+//! `images/<sha256>` for every image the document (or a saved version) uses, an optional
 //! `thumbnail.png` and an optional version history: `versions/index.json` (`{"versions": [{id,
 //! name, description, time, images}]}`, oldest first) plus one `versions/<id>.json` snapshot per
 //! version (a `document.json` of its own). A published file also holds its library (see
@@ -22,6 +23,8 @@ use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 
 use figcraft_doc::{Document, ImageData};
+use serde::de::{Deserializer, IgnoredAny, MapAccess, Visitor};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sha2::Digest;
 
@@ -39,6 +42,8 @@ pub const MAX_VERSION_DESCRIPTION: usize = 2000;
 const MAX_VERSION_INDEX: u64 = 16 * 1024 * 1024;
 const MAX_VERSION_BYTES: u64 = 1024 * 1024 * 1024;
 const VERSION_INDEX: &str = "versions/index.json";
+/// Deflate level of JSON members (see [`json_options`]).
+const JSON_LEVEL: i64 = 3;
 
 #[derive(Debug)]
 pub enum FormatError {
@@ -168,16 +173,43 @@ pub(crate) fn image_data(data: Vec<u8>) -> ImageData {
     ImageData { bytes: Arc::new(data), width: w, height: h }
 }
 
+/// `document.json`: the format header, the image index and the document's own fields, written
+/// straight from the document (no intermediate JSON tree).
+#[derive(Serialize)]
+struct DocumentJson<'a> {
+    format: &'static str,
+    version: u32,
+    #[serde(rename = "imageIndex", serialize_with = "image_index")]
+    images: &'a BTreeMap<String, ImageData>,
+    #[serde(flatten)]
+    doc: &'a Document,
+}
+
+impl<'a> DocumentJson<'a> {
+    fn new(doc: &'a Document) -> Self {
+        Self { format: FORMAT, version: VERSION, images: &doc.images, doc }
+    }
+}
+
+/// The `imageIndex`: `[{hash, width, height}]` for every image the document holds.
+fn image_index<S: Serializer>(images: &&BTreeMap<String, ImageData>, s: S) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct Entry<'a> {
+        hash: &'a str,
+        width: u32,
+        height: u32,
+    }
+    s.collect_seq(images.iter().map(|(hash, i)| Entry { hash, width: i.width, height: i.height }))
+}
+
 /// Serialize the document (without images) to the JSON value stored in `document.json`.
 pub fn to_json(doc: &Document) -> Result<Value, FormatError> {
-    let mut v = serde_json::to_value(doc).map_err(|e| FormatError::Io(e.to_string()))?;
-    if let Some(o) = v.as_object_mut() {
-        o.insert("format".into(), json!(FORMAT));
-        o.insert("version".into(), json!(VERSION));
-        let images: Vec<Value> = doc.images.iter().map(|(k, i)| json!({"hash": k, "width": i.width, "height": i.height})).collect();
-        o.insert("imageIndex".into(), Value::Array(images));
-    }
-    Ok(v)
+    serde_json::to_value(DocumentJson::new(doc)).map_err(io_err)
+}
+
+/// Write the document (without images) as `document.json` content to `w`.
+pub fn write_json(doc: &Document, w: impl Write) -> Result<(), FormatError> {
+    serde_json::to_writer(w, &DocumentJson::new(doc)).map_err(io_err)
 }
 
 /// Parse `document.json` content.
@@ -188,24 +220,62 @@ pub fn from_json(text: &str) -> Result<(Document, Vec<String>), FormatError> {
 /// The image hashes a `document.json` lists in its `imageIndex` (`None` without one).
 type ImageIndex = Option<BTreeSet<String>>;
 
-/// Parse `document.json` content; also returns its [`ImageIndex`].
+/// The header of a `document.json` (its format version and image index), read in a pass that
+/// skips over everything else without building it.
+#[derive(Default)]
+struct Header {
+    version: Option<u64>,
+    images: ImageIndex,
+}
+
+impl<'de> Deserialize<'de> for Header {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct HeaderVisitor;
+        impl<'de> Visitor<'de> for HeaderVisitor {
+            type Value = Header;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a FigCraft document object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Header, A::Error> {
+                let mut h = Header::default();
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "version" => h.version = map.next_value::<Value>()?.as_u64(),
+                        "imageIndex" => {
+                            h.images = map
+                                .next_value::<Value>()?
+                                .as_array()
+                                .map(|a| a.iter().filter_map(|i| i.get("hash").and_then(Value::as_str).map(str::to_string)).collect());
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(h)
+            }
+        }
+        d.deserialize_map(HeaderVisitor)
+    }
+}
+
+/// Parse `document.json` content; also returns its [`ImageIndex`]. The header is checked first
+/// (a newer file is refused before its document is read), then the document is deserialized
+/// straight from the text.
 fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatError> {
-    let v: Value = serde_json::from_str(text).map_err(|e| FormatError::Corrupt(e.to_string()))?;
-    if let Some(ver) = v.get("version").and_then(Value::as_u64)
+    let corrupt = |e: serde_json::Error| FormatError::Corrupt(e.to_string());
+    let header: Header = serde_json::from_str(text).map_err(corrupt)?;
+    if let Some(ver) = header.version
         && ver > u64::from(VERSION)
     {
-        return Err(FormatError::Newer(ver as u32));
+        return Err(FormatError::Newer(u32::try_from(ver).unwrap_or(u32::MAX)));
     }
-    let index = v
-        .get("imageIndex")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|i| i.get("hash").and_then(Value::as_str).map(str::to_string)).collect());
-    let mut doc: Document = serde_json::from_value(v).map_err(|e| FormatError::Corrupt(e.to_string()))?;
+    let mut doc: Document = serde_json::from_str(text).map_err(corrupt)?;
     let issues = doc.validate();
     if !issues.is_empty() {
         doc.repair();
     }
-    Ok((doc, issues, index))
+    Ok((doc, issues, header.images))
 }
 
 fn io_err(e: impl std::fmt::Display) -> FormatError {
@@ -218,6 +288,21 @@ fn put<W: Write + Seek>(z: &mut zip::ZipWriter<W>, name: &str, opts: zip::write:
     z.write_all(bytes).map_err(io_err)
 }
 
+/// Add `doc` as a `document.json`-style member, serialized straight into the compressor.
+fn put_json<W: Write + Seek>(z: &mut zip::ZipWriter<W>, name: &str, doc: &Document) -> Result<(), FormatError> {
+    z.start_file(name, json_options()).map_err(io_err)?;
+    // The serializer writes many small pieces: batch them before they reach the compressor.
+    let mut w = std::io::BufWriter::with_capacity(1 << 16, z);
+    write_json(doc, &mut w)?;
+    w.flush().map_err(io_err)
+}
+
+/// How JSON members are compressed. Document JSON is very repetitive: a fast level compresses it
+/// nearly as well as the default one (about 15% larger) in half the time.
+pub(crate) fn json_options() -> zip::write::SimpleFileOptions {
+    zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).compression_level(Some(JSON_LEVEL))
+}
+
 /// Write a `.figcraft` archive to bytes.
 pub fn save_bytes(doc: &Document, thumbnail_png: Option<&[u8]>) -> Result<Vec<u8>, FormatError> {
     save_bytes_with_versions(doc, thumbnail_png, &[])
@@ -228,9 +313,8 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
-        let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        put(&mut z, "document.json", deflated, &serde_json::to_vec(&to_json(doc)?).map_err(io_err)?)?;
+        put_json(&mut z, "document.json", doc)?;
         // Every image once, whether the document or a version uses it.
         let mut written = BTreeSet::new();
         for (hash, img) in std::iter::once(&doc.images).chain(versions.iter().map(Version::images)).flatten() {
@@ -250,8 +334,8 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
                 }
                 let name = format!("versions/{}.json", v.id);
                 match &v.snapshot {
-                    Snapshot::Doc(d) => put(&mut z, &name, deflated, &serde_json::to_vec(&to_json(d)?).map_err(io_err)?)?,
-                    Snapshot::Stored { json, .. } => put(&mut z, &name, deflated, json)?,
+                    Snapshot::Doc(d) => put_json(&mut z, &name, d)?,
+                    Snapshot::Stored { json, .. } => put(&mut z, &name, json_options(), json)?,
                 }
                 let images: Vec<&String> = v.images().keys().collect();
                 let mut entry = json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images});
@@ -260,7 +344,7 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
                 }
                 index.push(entry);
             }
-            put(&mut z, VERSION_INDEX, deflated, &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
+            put(&mut z, VERSION_INDEX, json_options(), &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
         }
         if let Some(lib) = &doc.published {
             library::write(&mut z, lib, &written)?;
@@ -393,6 +477,8 @@ pub fn load_file(path: &std::path::Path) -> Result<(Document, Vec<String>), Form
     load_bytes(&bytes)
 }
 
+#[cfg(test)]
+mod large_tests;
 #[cfg(test)]
 mod version_tests;
 

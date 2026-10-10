@@ -78,6 +78,9 @@ pub struct StrokeProps {
     pub miter_limit: f64,
     /// Dash pattern (dash, gap, …); empty = solid.
     pub dashes: Vec<f64>,
+    /// Variable width: how the width changes along the path (`None` = uniform).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_profile: Option<WidthProfile>,
 }
 
 impl Default for StrokeProps {
@@ -91,7 +94,223 @@ impl Default for StrokeProps {
             join: StrokeJoin::Miter,
             miter_limit: 4.0,
             dashes: Vec::new(),
+            width_profile: None,
         }
+    }
+}
+
+impl StrokeProps {
+    /// The variable width profile, when there is one with points.
+    pub fn profile(&self) -> Option<&WidthProfile> {
+        self.width_profile.as_ref().filter(|p| !p.points.is_empty())
+    }
+
+    /// The widest the stroke gets anywhere along the path (the weight, scaled by a width profile).
+    pub fn max_weight(&self) -> f64 {
+        self.profile().map_or(self.weight, |p| self.weight * p.max_scale())
+    }
+}
+
+/// One point of a variable width profile.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WidthPoint {
+    /// Position along the path by length: 0 at its start, 1 at its end (each subpath on its own).
+    pub t: f64,
+    /// The stroke's width here as a multiple of the stroke weight.
+    pub scale: f64,
+}
+
+impl WidthPoint {
+    pub const fn new(t: f64, scale: f64) -> Self {
+        Self { t, scale }
+    }
+}
+
+/// A variable width profile: stroke widths at positions along the path, interpolated smoothly
+/// (monotone cubic, so the width never overshoots its neighbouring points) and held flat before
+/// the first and after the last point.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WidthProfile {
+    /// Sorted by `t` (see [`WidthProfile::sanitized`]).
+    pub points: Vec<WidthPoint>,
+}
+
+impl WidthProfile {
+    /// The most points a profile keeps.
+    pub const MAX_POINTS: usize = 64;
+    /// The widest a point can be, as a multiple of the stroke weight.
+    pub const MAX_SCALE: f64 = 1000.0;
+
+    /// A profile from `(t, scale)` pairs (sanitized).
+    pub fn new(points: impl IntoIterator<Item = (f64, f64)>) -> Self {
+        Self { points: points.into_iter().map(|(t, s)| WidthPoint::new(t, s)).collect() }.sanitized()
+    }
+
+    /// Uniform width with a point at each end (where the width tool starts from).
+    pub fn uniform() -> Self {
+        Self::new([(0.0, 1.0), (1.0, 1.0)])
+    }
+
+    /// Finite points only, `t` in 0..=1, scales in 0..=[`Self::MAX_SCALE`], sorted by `t`, at
+    /// most [`Self::MAX_POINTS`].
+    pub fn sanitized(&self) -> Self {
+        let mut points: Vec<WidthPoint> = self
+            .points
+            .iter()
+            .filter(|p| p.t.is_finite() && p.scale.is_finite())
+            .take(Self::MAX_POINTS)
+            .map(|p| WidthPoint::new(p.t.clamp(0.0, 1.0), p.scale.clamp(0.0, Self::MAX_SCALE)))
+            .collect();
+        points.sort_by(|a, b| a.t.total_cmp(&b.t));
+        Self { points }
+    }
+
+    /// The width scale at `t` (0..1 along the path).
+    pub fn scale_at(&self, t: f64) -> f64 {
+        let pts = &self.points;
+        let (Some(first), Some(last)) = (pts.first(), pts.last()) else { return 1.0 };
+        if !t.is_finite() || t <= first.t {
+            return first.scale;
+        }
+        if t >= last.t {
+            return last.scale;
+        }
+        let k = pts.partition_point(|p| p.t <= t).saturating_sub(1);
+        let (Some(a), Some(b)) = (pts.get(k), pts.get(k + 1)) else { return last.scale };
+        let h = b.t - a.t;
+        if h <= 1e-12 {
+            return b.scale;
+        }
+        let u = (t - a.t) / h;
+        let (u2, u3) = (u * u, u * u * u);
+        let w = (2.0 * u3 - 3.0 * u2 + 1.0) * a.scale
+            + (u3 - 2.0 * u2 + u) * h * self.tangent(k)
+            + (3.0 * u2 - 2.0 * u3) * b.scale
+            + (u3 - u2) * h * self.tangent(k + 1);
+        w.max(0.0)
+    }
+
+    /// Slope of the segment from point `i` to `i + 1` (0 when they share a position).
+    fn secant(&self, i: usize) -> f64 {
+        match (self.points.get(i), self.points.get(i + 1)) {
+            (Some(a), Some(b)) if b.t - a.t > 1e-12 => (b.scale - a.scale) / (b.t - a.t),
+            _ => 0.0,
+        }
+    }
+
+    /// Fritsch–Carlson style tangent at point `i`: one-sided at the ends, the harmonic mean of the
+    /// neighbouring slopes inside, flat at local extremes (keeps the curve monotone between points).
+    fn tangent(&self, i: usize) -> f64 {
+        let last = self.points.len().saturating_sub(1);
+        if i == 0 {
+            return self.secant(0);
+        }
+        if i >= last {
+            return self.secant(last.saturating_sub(1));
+        }
+        let (d0, d1) = (self.secant(i - 1), self.secant(i));
+        if d0 * d1 <= 0.0 { 0.0 } else { 2.0 * d0 * d1 / (d0 + d1) }
+    }
+
+    /// The largest scale (the interpolation never exceeds its points).
+    pub fn max_scale(&self) -> f64 {
+        self.points.iter().map(|p| p.scale).fold(0.0, f64::max)
+    }
+
+    /// Add a point (kept sorted); returns its index.
+    pub fn insert(&mut self, t: f64, scale: f64) -> usize {
+        let p = WidthPoint::new(
+            if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 },
+            if scale.is_finite() { scale.clamp(0.0, Self::MAX_SCALE) } else { 1.0 },
+        );
+        let i = self.points.partition_point(|q| q.t <= p.t);
+        self.points.insert(i, p);
+        i
+    }
+
+    /// Move point `i` along the path (kept between its neighbours, so indices stay put) and/or
+    /// change its scale. Returns false when there is no such point.
+    pub fn set_point(&mut self, i: usize, t: Option<f64>, scale: Option<f64>) -> bool {
+        let lo = i.checked_sub(1).and_then(|j| self.points.get(j)).map_or(0.0, |p| p.t);
+        let hi = self.points.get(i + 1).map_or(1.0, |p| p.t);
+        let Some(p) = self.points.get_mut(i) else { return false };
+        if let Some(t) = t.filter(|t| t.is_finite()) {
+            p.t = t.clamp(lo, hi.max(lo));
+        }
+        if let Some(s) = scale.filter(|s| s.is_finite()) {
+            p.scale = s.clamp(0.0, Self::MAX_SCALE);
+        }
+        true
+    }
+
+    /// The preset this profile is, if any.
+    pub fn preset(&self) -> Option<WidthPreset> {
+        WidthPreset::ALL.into_iter().find(|p| p.profile().as_ref() == Some(self))
+    }
+}
+
+/// The width profiles offered in the stroke settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WidthPreset {
+    Uniform,
+    /// Full width at the start, a point at the end.
+    Wedge,
+    /// Pointed at both ends, full width in between.
+    Taper,
+    /// Widest in the middle, pointed at both ends.
+    Eye,
+    /// Full width with rounded-off ends.
+    Rounded,
+    /// Thin in the middle, full width at the ends.
+    Pinch,
+}
+
+impl WidthPreset {
+    pub const ALL: [WidthPreset; 6] =
+        [WidthPreset::Uniform, WidthPreset::Wedge, WidthPreset::Taper, WidthPreset::Eye, WidthPreset::Rounded, WidthPreset::Pinch];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            WidthPreset::Uniform => "uniform",
+            WidthPreset::Wedge => "wedge",
+            WidthPreset::Taper => "taper",
+            WidthPreset::Eye => "eye",
+            WidthPreset::Rounded => "rounded",
+            WidthPreset::Pinch => "pinch",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WidthPreset::Uniform => "Uniform",
+            WidthPreset::Wedge => "Wedge",
+            WidthPreset::Taper => "Taper both ends",
+            WidthPreset::Eye => "Eye",
+            WidthPreset::Rounded => "Rounded",
+            WidthPreset::Pinch => "Pinch",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<WidthPreset> {
+        let s: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        WidthPreset::ALL
+            .into_iter()
+            .find(|p| p.id().eq_ignore_ascii_case(&s) || p.label().replace(' ', "").eq_ignore_ascii_case(&s))
+            .or_else(|| s.eq_ignore_ascii_case("bulge").then_some(WidthPreset::Eye))
+    }
+
+    /// The preset's profile (`None` = uniform).
+    pub fn profile(self) -> Option<WidthProfile> {
+        let pts: &[(f64, f64)] = match self {
+            WidthPreset::Uniform => return None,
+            WidthPreset::Wedge => &[(0.0, 1.0), (1.0, 0.0)],
+            WidthPreset::Taper => &[(0.0, 0.0), (0.2, 1.0), (0.8, 1.0), (1.0, 0.0)],
+            WidthPreset::Eye => &[(0.0, 0.0), (0.5, 1.0), (1.0, 0.0)],
+            WidthPreset::Rounded => &[(0.0, 0.3), (0.05, 0.8), (0.15, 1.0), (0.85, 1.0), (0.95, 0.8), (1.0, 0.3)],
+            WidthPreset::Pinch => &[(0.0, 1.0), (0.5, 0.25), (1.0, 1.0)],
+        };
+        Some(WidthProfile::new(pts.iter().copied()))
     }
 }
 

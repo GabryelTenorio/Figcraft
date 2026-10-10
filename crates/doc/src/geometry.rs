@@ -72,7 +72,7 @@ fn hits_node_itself(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64) -
                 return true;
             }
             // Near the outline.
-            let reach = (n.stroke.weight / 2.0).max(tol_l);
+            let reach = (n.stroke.max_weight() / 2.0).max(tol_l);
             if !path.bounding_box().inflate(reach, reach).contains(lp) {
                 return false;
             }

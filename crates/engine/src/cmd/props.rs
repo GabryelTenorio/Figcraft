@@ -11,7 +11,7 @@ use crate::{Result, bad};
 /// Keys `node.set` understands (documented for agents).
 pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (parent-relative), width, height, rotation (degrees), \
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], \
-strokeCap / startCap / endCap, strokeJoin, dashes [..], cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
+strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
 mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap, \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
@@ -114,6 +114,30 @@ fn four(v: &Value) -> Option<[f64; 4]> {
             }
         }
         other => f64_of(other).map(|x| [x; 4]),
+    }
+}
+
+pub(crate) const WIDTH_PROFILE_HELP: &str = "widthProfile: a preset (uniform|wedge|taper|eye|rounded|pinch), points [[t (0-1 along the path), scale (× stroke weight)], ...] or [{t, scale}], {preset} | {points}, or null (uniform)";
+
+/// A width profile from a preset name, points (`[[t, scale], ...]` or `[{t, scale}]`), `{preset}`
+/// / `{points}`, or null. `Some(None)` = uniform; `None` = not a profile.
+pub fn width_profile_of(v: &Value) -> Option<Option<WidthProfile>> {
+    match v {
+        Value::Null => Some(None),
+        Value::String(s) => WidthPreset::from_id(s).map(WidthPreset::profile),
+        Value::Array(a) => {
+            let pts = a
+                .iter()
+                .map(|p| match p {
+                    Value::Array(xy) => Some((xy.first().and_then(f64_of)?, xy.get(1).and_then(f64_of)?)),
+                    Value::Object(o) => Some((o.get("t").and_then(f64_of)?, o.get("scale").or_else(|| o.get("width")).and_then(f64_of)?)),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(Some(WidthProfile::new(pts)).filter(|p| !p.points.is_empty()))
+        }
+        Value::Object(o) => o.get("points").or_else(|| o.get("preset")).and_then(width_profile_of),
+        _ => None,
     }
 }
 
@@ -274,6 +298,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 let d: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(f64_of).map(|x| x.max(0.0)).collect()).unwrap_or_default();
                 doc.get_mut(id)?.stroke.dashes = d;
             }
+            "widthProfile" => doc.get_mut(id)?.stroke.width_profile = width_profile_of(v).ok_or_else(|| bad(cmd, WIDTH_PROFILE_HELP))?,
             "cornerRadius" => {
                 let r = four(v).ok_or_else(|| bad(cmd, "cornerRadius: n or [tl,tr,br,bl]"))?;
                 doc.get_mut(id)?.corners.radii = r.map(|x| x.max(0.0));
@@ -614,9 +639,8 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
 pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
-        "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides" => {
-            "strokes"
-        }
+        "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides"
+        | "widthProfile" => "strokes",
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",

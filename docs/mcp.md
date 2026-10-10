@@ -133,7 +133,7 @@ Or in a project's `.mcp.json`:
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id}` (converts shapes to vectors), `vector.edit.state` (page-space overlay, the
-local network and each point's handle mirroring), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser}`,
+local network, each point's handle mirroring and the width points), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser|width}`,
 `vector.edit.select {vertices?, segments?, add?}`, `vector.edit.selectAll`, `vector.edit.moveVertices`,
 `vector.edit.nudge`, `vector.edit.position {x?, y?}`, `vector.edit.setHandle`, `vector.edit.mirroring
 {mode: none|angle|angleAndLength}`, `vector.edit.smooth {smooth?}`, `vector.edit.bend`,
@@ -156,18 +156,31 @@ On the canvas (`pointer`), dragging points, handles and pen clicks snap to other
 midpoints (this vector's and other vectors'), the usual layer targets and the pixel grid; `cmd`
 held while dragging turns the object snapping off.
 
+Variable width strokes: `stroke.widthProfile {ids?, preset?: uniform|wedge|taper|eye|rounded|pinch,
+points?: [[t, scale], ...]}` (also `node.set {widthProfile}`; `t` runs 0–1 along each subpath by
+length, `scale` multiplies the stroke weight, widths in between are interpolated smoothly; no
+preset or points = uniform). While editing, the Variable width tool (`width`, ⇧W) drags width
+points: `vector.edit.widthPoint {t, width? (px) | scale?}` adds one, `{index, t?, width? | scale?}`
+moves or resizes it, `{action: "remove", index}` deletes it. Rendering, PNG/SVG/PDF export and
+`vector.outlineStroke` follow the profile.
+
 ### Prototypes
 
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
 the scroll position with `preserveScroll: true`), flows `proto.flow.add` / `rename` / `remove`,
-and the device and background `proto.settings {device?, background?}` (`None`, `iPhone 16`,
-`iPhone 16 Pro Max`, `Android Compact`, `iPad mini`, `MacBook Air`, `Desktop`). On a device the
+and the device, its rotation and the background `proto.settings {device?, background?,
+rotation?}` (`None`, `iPhone 16`, `iPhone 16 Pro Max`, `Android Compact`, `iPad mini`, `MacBook
+Air`, `Desktop`; `rotation` `portrait` or `landscape`, which turns phones and tablets). On a device the
 presented frame is sized to the device's screen: what doesn't fit is clipped, or scrolls when the
 frame's `overflow` allows it, while `fixed` layers stay on screen (pinned to the edges their
 constraints name). `proto.present {start?}` plays the prototype full-window and `proto.preview
 {start?}` in a resizable pane over the canvas that follows edits live; `proto.closePreview` closes
-it. The player's state is in `inspect_ui` (`presenter`, `preview`) when attached, and `ui.set
-{presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
+it. `proto.presentOptions {scale?, deviceFrame?}` sets how the full-window presenter sizes the
+prototype (`fit` scales it down to fit, `fitWidth` fills the width, `fill` covers the window,
+`actual` shows it at 100%; what overflows pans) and whether it draws the device; the options are
+kept for later presentations (in the presenter Z cycles them and R restarts). The player's state is
+in `inspect_ui` (`presenter`, `preview`: screen, scroll, `scale`, `zoom`, `pan`) when attached, and
+`ui.set {presentScroll: [x, y]}` scrolls its screen (see [control-protocol.md](control-protocol.md)).
 
 ### Local libraries
 
@@ -275,7 +288,8 @@ as `variables` (a path, or the JSON object or text) to `open_file`, `file.open` 
 put it next to the file as `<name>.variables.json` or `variables.json`, or embed its `meta` in the
 file JSON. Layers' `boundVariables` (sizes, gaps and padding, corner radii, opacity, stroke weight,
 visibility, text, font properties, single solid fills and strokes) and `explicitVariableModes` then
-link to them, so switching a mode with `variable.setMode` restyles the layers.
+link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
+frame back to Auto, inheriting its parent's mode).
 
 ### Version history
 

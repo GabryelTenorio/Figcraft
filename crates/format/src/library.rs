@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use figcraft_doc::{ImageData, LibraryManifest, NodeKind, PublishedLibrary, used_images};
 
-use crate::{FormatError, MAX_MEMBER, from_json, image_data, io_err, put, read_member, to_json};
+use crate::{FormatError, MAX_MEMBER, from_json, image_data, io_err, json_options, put, put_json, read_member};
 
 const MANIFEST: &str = "library/manifest.json";
 const SNAPSHOT: &str = "library/document.json";
@@ -45,10 +45,9 @@ fn is_valid_hash(h: &str) -> bool {
 
 /// Write the published library's entries. `written` are the images already in `images/`.
 pub(crate) fn write<W: Write + Seek>(z: &mut zip::ZipWriter<W>, lib: &PublishedLibrary, written: &BTreeSet<&String>) -> Result<(), FormatError> {
-    let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    put(z, MANIFEST, deflated, &serde_json::to_vec(&lib.manifest).map_err(io_err)?)?;
-    put(z, SNAPSHOT, deflated, &serde_json::to_vec(&to_json(&lib.doc)?).map_err(io_err)?)?;
+    put(z, MANIFEST, json_options(), &serde_json::to_vec(&lib.manifest).map_err(io_err)?)?;
+    put_json(z, SNAPSHOT, &lib.doc)?;
     for (hash, img) in &lib.doc.images {
         if !written.contains(hash) && is_valid_hash(hash) {
             put(z, &format!("{IMAGES}{hash}"), stored, &img.bytes)?;

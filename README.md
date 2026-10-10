@@ -88,7 +88,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Vectors without compromise</h3>
-      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes and per-side strokes. Rectangles with smooth (squircle) corners, polygons, stars and arcs.
+      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes, per-side strokes and variable width strokes (width profile presets, and a Variable width tool that drags width points along the path). Rectangles with smooth (squircle) corners, polygons, stars and arcs.
     </td>
     <td width="50%" valign="top">
       <h3>Paints and effects</h3>
