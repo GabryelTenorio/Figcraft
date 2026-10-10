@@ -172,24 +172,40 @@ pub fn specs() -> Vec<CommandSpec> {
                 ok()
             }
         ),
-        spec!("variable.setMode", "Set variable mode", "{ids? (frames/page), collection, mode}", true, |s, p| {
-            let c = req_string("variable.setMode", p, "collection")?;
-            let m = req_string("variable.setMode", p, "mode")?;
-            let doc = s.doc()?;
-            let coll = doc.variables.collection(&c).ok_or_else(|| bad("variable.setMode", "no such collection"))?;
-            let mode =
-                coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad("variable.setMode", "no such mode"))?;
-            let cid = coll.id.clone();
-            let mut ids = targets(s, p);
-            if ids.is_empty() {
-                ids = vec![s.page()?];
+        spec!(
+            "variable.setMode",
+            "Set variable mode",
+            "{ids? (frames/page), collection, mode (id or name; null: Auto, inherited from the parent)}",
+            true,
+            |s, p| {
+                let cmd = "variable.setMode";
+                let c = req_string(cmd, p, "collection")?;
+                let doc = s.doc()?;
+                let coll = doc.variables.collection(&c).ok_or_else(|| bad(cmd, "no such collection"))?;
+                // A null mode clears the explicit mode: the layer inherits it again.
+                let mode = match p.get("mode") {
+                    Some(Value::Null) => None,
+                    _ => {
+                        let m = req_string(cmd, p, "mode")?;
+                        Some(coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?)
+                    }
+                };
+                let cid = coll.id.clone();
+                let mut ids = targets(s, p);
+                if ids.is_empty() {
+                    ids = vec![s.page()?];
+                }
+                let doc = s.doc_mut()?;
+                for i in ids {
+                    let modes = &mut doc.get_mut(i)?.var_modes;
+                    match &mode {
+                        Some(m) => modes.insert(cid.clone(), m.clone()),
+                        None => modes.remove(&cid),
+                    };
+                }
+                ok()
             }
-            let doc = s.doc_mut()?;
-            for i in ids {
-                doc.get_mut(i)?.var_modes.insert(cid.clone(), mode.clone());
-            }
-            ok()
-        }),
+        ),
         spec!("variable.list", "List variables", "{}", false, |s, _| Ok(serde_json::to_value(&s.doc()?.variables).unwrap_or(Value::Null))),
     ]
 }

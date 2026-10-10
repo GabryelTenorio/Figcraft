@@ -77,8 +77,9 @@ dimension measured side by side.
    canvas; fill menu in the properties panel; drops from the Assets panel and the canvas land in
    slots); nested overrides kept when the main moves or swaps a nested instance, and on nested
    instances copied out of an instance (re-linked to their own main); canvas drags can no longer
-   pull layers out of an instance.
-   *Left:* library variables. 2–4 h.
+   pull layers out of an instance. Explicit variable modes in the Design panel: a frame's
+   mode per collection, Auto (inherited) or its own.
+   *Left:* library variables (and their collections in the mode picker). 2–4 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -87,8 +88,13 @@ dimension measured side by side.
    (or replace mixed ones); scrolling inside device frames (the frame sized to the device's screen,
    clipped or scrolling by wheel and drag, fixed layers pinned to the screen by their constraints,
    nested "Scroll to", preserve scroll position); a resizable preview pane over the canvas that
-   plays the selected frame and follows edits live. *Left:* device rotation and presentation
-   scaling options, scroll momentum. 1–3 h.
+   plays the selected frame and follows edits live; device rotation (phones and tablets turn to
+   landscape: saved in the file, imported from REST files, drawn turned in the presenter and the
+   pane); presentation options (fit, fit width, fill, 100%, with Z to cycle them and R to
+   restart, the device frame shown or hidden, kept between presentations; what overflows the
+   window pans); scroll momentum (drags fling and slow down the same at any frame rate, the wheel
+   coasts, a drag past the ends stretches and springs back). *Left:* responsive presentation
+   (frames resized to the window), device colours and custom device sizes. 1–2 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -120,7 +126,8 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes (in progress); library variables.
+  a real-file corpus); variable width strokes (in progress); library variables; responsive
+  presentation.
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
