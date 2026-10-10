@@ -781,3 +781,5 @@ mod colors_tests;
 mod diff_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod width_tests;

@@ -173,6 +173,11 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
 }
 
 pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
+    menu_item_with(ui, label, shortcut, |_, _, _| {})
+}
+
+/// A menu row with art drawn into it after the label (`art(painter, row rect, text colour)`).
+pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width().max(180.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
@@ -190,6 +195,7 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
             if resp.hovered() { Color32::WHITE } else { t.text_secondary },
         );
     }
+    art(ui.painter(), r, col);
     resp.clicked()
 }
 
@@ -819,7 +825,78 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     }
 }
 
-/// Advanced stroke settings: dash pattern, join and the end points of open paths.
+/// A width profile drawn as a filled band across `rect` (thickest point = full height); `None`
+/// draws a uniform stroke.
+pub(crate) fn profile_art(painter: &egui::Painter, rect: Rect, profile: Option<&WidthProfile>, col: Color32) {
+    const STEPS: u32 = 40;
+    let max = profile.map_or(1.0, WidthProfile::max_scale).max(1e-6);
+    let (cy, half) = (rect.center().y, rect.height() / 2.0);
+    let mut mesh = egui::Mesh::default();
+    let (mut top, mut bottom) = (Vec::new(), Vec::new());
+    for i in 0..=STEPS {
+        let t = f64::from(i) / f64::from(STEPS);
+        let s = profile.map_or(0.5, |p| p.scale_at(t) / max) as f32;
+        let x = rect.min.x + rect.width() * t as f32;
+        let h = (s * half).max(0.5);
+        top.push(pos2(x, cy - h));
+        bottom.push(pos2(x, cy + h));
+        mesh.colored_vertex(pos2(x, cy - h), col);
+        mesh.colored_vertex(pos2(x, cy + h), col);
+    }
+    for i in 0..STEPS {
+        let k = 2 * i;
+        mesh.add_triangle(k, k + 1, k + 2);
+        mesh.add_triangle(k + 1, k + 3, k + 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    // The mesh isn't anti-aliased: smooth its edges with hairlines.
+    for edge in [top, bottom] {
+        painter.add(egui::Shape::line(edge, Stroke::new(0.75, col)));
+    }
+}
+
+/// Stroke settings ▸ Width profile: the presets (each with its shape) and a flip.
+fn width_profile_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], profile: Option<Option<WidthProfile>>, half: f32) {
+    let t = Tokens::get(ui.ctx());
+    widgets::sublabels(ui, "Width profile", None);
+    row(ui, 32.0, |ui| {
+        let label = match &profile {
+            None => "Mixed",
+            Some(None) => WidthPreset::Uniform.label(),
+            Some(Some(p)) => p.preset().map_or("Custom", WidthPreset::label),
+        };
+        let resp = widgets::dropdown(ui, label, half * 2.0 + 8.0 - 32.0, None);
+        if let Some(p) = &profile {
+            let r = resp.rect;
+            let art = Rect::from_min_max(pos2(r.max.x - 22.0 - 56.0, r.center().y - 5.0), pos2(r.max.x - 22.0, r.center().y + 5.0));
+            profile_art(ui.painter(), art, p.as_ref(), t.icon_secondary);
+        }
+        egui::Popup::menu(&resp).show(|ui| {
+            for preset in WidthPreset::ALL {
+                let prof = preset.profile();
+                let art = |pt: &egui::Painter, r: Rect, col: Color32| {
+                    let a = Rect::from_min_max(pos2(r.max.x - 8.0 - 64.0, r.center().y - 5.0), pos2(r.max.x - 8.0, r.center().y + 5.0));
+                    profile_art(pt, a, prof.as_ref(), col);
+                };
+                if menu_item_with(ui, preset.label(), "", art) {
+                    app.run("stroke.widthProfile", json!({"ids": ids, "preset": preset.id()}));
+                    ui.close();
+                }
+            }
+        });
+        // Flip: the profile runs from the other end of the path.
+        let custom = profile.clone().flatten();
+        let flip = icons::button(ui, Icon::FlipH, 24.0, false, "Flip width profile");
+        if flip.clicked()
+            && let Some(p) = custom
+        {
+            let pts: Vec<[f64; 2]> = p.points.iter().rev().map(|q| [1.0 - q.t, q.scale]).collect();
+            app.run("stroke.widthProfile", json!({"ids": ids, "points": pts}));
+        }
+    });
+}
+
+/// Advanced stroke settings: dash pattern, width profile, join and the end points of open paths.
 fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
@@ -851,6 +928,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
             app.field(&ids, "dashes", e, |v| json!([dash, v.max(0.0)]));
         });
     }
+    width_profile_row(app, ui, &ids, st.as_ref().map(|s| s.profile().cloned()), half);
     let join = st.as_ref().map(|s| s.join);
     widgets::sublabels(ui, "Join", (join == Some(StrokeJoin::Miter)).then_some("Miter angle"));
     row(ui, 32.0, |ui| {

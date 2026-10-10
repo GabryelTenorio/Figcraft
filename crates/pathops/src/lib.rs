@@ -3,8 +3,12 @@
 //! - [`boolean`]: Union, Subtract, Intersect and Exclude over any number of closed paths (robust
 //!   sweep-line topology from `linesweeper`); results use the even-odd rule.
 //! - [`stroke_outline`]: a stroke as a fill, with Figma's Inside / Center / Outside alignment,
-//!   dashes, caps, joins and arrowheads.
+//!   dashes, caps, joins, arrowheads and variable width profiles ([`width`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+pub mod width;
+#[cfg(test)]
+mod width_tests;
 
 use figcraft_doc::{BoolOp, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps};
 use figcraft_geom::kurbo::{self, BezPath, Cap, Join, PathEl, PathSeg, Point, Shape, Vec2};
@@ -271,30 +275,34 @@ pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath
         .with_miter_limit(props.miter_limit.clamp(1.0, 100.0))
         .with_start_cap(kcap(props.cap_start))
         .with_end_cap(kcap(props.cap_end));
-    let dashes: Vec<f64> = props.dashes.iter().copied().filter(|d| d.is_finite() && *d >= 0.0).collect();
-    if !dashes.is_empty() && dashes.iter().sum::<f64>() > 0.01 {
-        let pat = if dashes.len() % 2 == 1 { [dashes.clone(), dashes].concat() } else { dashes };
+    if let Some(pat) = width::dash_pattern(props) {
         style = style.with_dashes(0.0, pat);
     }
     kurbo::stroke(path.iter(), &style, &kurbo::StrokeOpts::default(), 0.05)
 }
 
 /// The painted stroke area of a shape as a fill path (local coordinates). `closed` says whether the
-/// shape is closed (Inside/Outside only apply to closed shapes).
+/// shape is closed (Inside/Outside only apply to closed shapes). A width profile makes the width
+/// vary along the path (fill the result non-zero when centred).
 pub fn stroke_outline(path: &BezPath, props: &StrokeProps, closed_shape: bool) -> BezPath {
     let w = props.weight;
     if !(w.is_finite() && w > 0.0) {
         return BezPath::new();
     }
+    // Centred at `width` (twice the weight for Inside/Outside, which clip half of it away).
+    let centred = |width: f64| match props.profile() {
+        Some(p) => width::variable_outline(path, width, props, p).unwrap_or_else(|| stroke_center(path, width, props)),
+        None => stroke_center(path, width, props),
+    };
     let align = if closed_shape { props.align } else { StrokeAlign::Center };
     let mut out = match align {
-        StrokeAlign::Center => stroke_center(path, w, props),
+        StrokeAlign::Center => centred(w),
         StrokeAlign::Inside => {
-            let s = stroke_center(path, w * 2.0, props);
+            let s = centred(w * 2.0);
             binary(&s, path, linesweeper::BinaryOp::Intersection).unwrap_or(s)
         }
         StrokeAlign::Outside => {
-            let s = stroke_center(path, w * 2.0, props);
+            let s = centred(w * 2.0);
             binary(&s, path, linesweeper::BinaryOp::Difference).unwrap_or(s)
         }
     };

@@ -9,6 +9,9 @@ pub mod ops;
 mod pointer;
 #[cfg(test)]
 mod tests;
+mod width;
+#[cfg(test)]
+mod width_tests;
 
 use figcraft_doc::*;
 use figcraft_geom::{Affine, Point, Rect, Vec2};
@@ -20,6 +23,7 @@ use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
 pub(crate) use pointer::VGesture;
+pub use width::{WHit, WidthHandle, width_handles, width_hit, width_preview};
 
 /// The edit-mode tools (the toolbar shown while editing a vector).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Default)]
@@ -32,10 +36,12 @@ pub enum VTool {
     Lasso,
     Cut,
     Eraser,
+    /// Variable width: width points along the stroke.
+    Width,
 }
 
 impl VTool {
-    pub const ALL: [VTool; 7] = [VTool::Move, VTool::Pen, VTool::Bend, VTool::Paint, VTool::Lasso, VTool::Cut, VTool::Eraser];
+    pub const ALL: [VTool; 8] = [VTool::Move, VTool::Pen, VTool::Bend, VTool::Paint, VTool::Lasso, VTool::Cut, VTool::Eraser, VTool::Width];
     pub fn id(self) -> &'static str {
         match self {
             VTool::Move => "move",
@@ -45,6 +51,7 @@ impl VTool {
             VTool::Lasso => "lasso",
             VTool::Cut => "cut",
             VTool::Eraser => "eraser",
+            VTool::Width => "width",
         }
     }
     pub fn from_id(s: &str) -> Option<VTool> {
@@ -59,6 +66,7 @@ impl VTool {
             VTool::Lasso => "Lasso",
             VTool::Cut => "Cut",
             VTool::Eraser => "Eraser",
+            VTool::Width => "Variable width",
         }
     }
     /// Catalog-style shortcut ("Shift+B"); the Bend tool is held with Cmd (Ctrl elsewhere).
@@ -71,6 +79,7 @@ impl VTool {
             VTool::Lasso => "Q",
             VTool::Cut => "X",
             VTool::Eraser => "Shift+E",
+            VTool::Width => "Shift+W",
         }
     }
 }
@@ -87,11 +96,13 @@ pub struct VectorEdit {
     pub anchor: Option<usize>,
     /// Pen: the outgoing handle dragged out of `anchor`, used by the next segment.
     pub pen_out: Option<(f64, f64)>,
+    /// Variable width tool: the selected width point (an index into the stroke's profile).
+    pub width_point: Option<usize>,
 }
 
 impl VectorEdit {
     pub fn new(id: NodeId) -> Self {
-        Self { id, vertices: vec![], segments: vec![], tool: VTool::Move, anchor: None, pen_out: None }
+        Self { id, vertices: vec![], segments: vec![], tool: VTool::Move, anchor: None, pen_out: None, width_point: None }
     }
 
     /// Drop indices that no longer exist (after undo or an edit).
@@ -463,6 +474,12 @@ pub fn key(s: &mut Session, name: &str, shift: bool, alt: bool, cmd: bool) -> Re
                 end(s)?;
             }
         }
+        ("Backspace" | "Delete", false, false, false) if ve.tool == VTool::Width => {
+            // The selected width point (nothing else is selected with the Variable width tool).
+            if let Some(i) = ve.width_point {
+                s.execute("vector.edit.widthPoint", &json!({"action": "remove", "index": i}))?;
+            }
+        }
         ("Backspace" | "Delete", heal, false, false) => {
             s.execute(if heal { "vector.deleteHeal" } else { "vector.edit.delete" }, &json!({}))?;
         }
@@ -478,6 +495,7 @@ pub fn key(s: &mut Session, name: &str, shift: bool, alt: bool, cmd: bool) -> Re
         ("Q", false, false, false) => set_tool(s, VTool::Lasso)?,
         ("X", false, false, false) => set_tool(s, VTool::Cut)?,
         ("E", true, false, false) => set_tool(s, VTool::Eraser)?,
+        ("W", true, false, false) => set_tool(s, VTool::Width)?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -522,9 +540,10 @@ pub fn specs() -> Vec<CommandSpec> {
             let o = overlay(doc, &ve).map(|o| serde_json::to_value(o).unwrap_or(Value::Null)).unwrap_or(Value::Null);
             let net = network(doc, ve.id).map(|n| serde_json::to_value(n).unwrap_or(Value::Null)).unwrap_or(Value::Null);
             let mirroring: Vec<&str> = network(doc, ve.id).map(|n| (0..n.vertices.len()).map(|v| n.mirroring(v).id()).collect()).unwrap_or_default();
-            Ok(json!({"id": ve.id, "tool": ve.tool.id(), "overlay": o, "network": net, "mirroring": mirroring}))
+            Ok(json!({"id": ve.id, "tool": ve.tool.id(), "overlay": o, "network": net, "mirroring": mirroring,
+                "widthPoints": width_handles(doc, &ve, 1.0), "widthPoint": ve.width_point}))
         }),
-        spec!("vector.edit.tool", "Vector edit tool", "{tool: move|pen|bend|paint|lasso|cut}", false, |s, p| {
+        spec!("vector.edit.tool", "Vector edit tool", "{tool: move|pen|bend|paint|lasso|cut|eraser|width}", false, |s, p| {
             editing(s)?;
             let t = string(p, "tool").and_then(|t| VTool::from_id(&t)).ok_or_else(|| bad("vector.edit.tool", "unknown tool"))?;
             set_tool(s, t)?;
@@ -778,6 +797,9 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(json!({"ok": true}))
         }),
     ]
+    .into_iter()
+    .chain(width::specs())
+    .collect()
 }
 
 /// The paint bucket on node `id` at local point `lp`. A vector without fills gets the default

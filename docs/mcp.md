@@ -133,7 +133,7 @@ Or in a project's `.mcp.json`:
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
 `vector.edit.begin {id}` (converts shapes to vectors), `vector.edit.state` (page-space overlay, the
-local network and each point's handle mirroring), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser}`,
+local network, each point's handle mirroring and the width points), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser|width}`,
 `vector.edit.select {vertices?, segments?, add?}`, `vector.edit.selectAll`, `vector.edit.moveVertices`,
 `vector.edit.nudge`, `vector.edit.position {x?, y?}`, `vector.edit.setHandle`, `vector.edit.mirroring
 {mode: none|angle|angleAndLength}`, `vector.edit.smooth {smooth?}`, `vector.edit.bend`,
@@ -145,6 +145,14 @@ from the pen's open end; clicking a point connects or branches), `vector.edit.pe
 `vector.deleteHeal`, `vector.join` / `vector.smoothJoin` (join the selected points while editing),
 `vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
 `vector.edit.state`; local coordinates are the layer's own.
+
+Variable width strokes: `stroke.widthProfile {ids?, preset?: uniform|wedge|taper|eye|rounded|pinch,
+points?: [[t, scale], ...]}` (also `node.set {widthProfile}`; `t` runs 0–1 along each subpath by
+length, `scale` multiplies the stroke weight, widths in between are interpolated smoothly; no
+preset or points = uniform). While editing, the Variable width tool (`width`, ⇧W) drags width
+points: `vector.edit.widthPoint {t, width? (px) | scale?}` adds one, `{index, t?, width? | scale?}`
+moves or resizes it, `{action: "remove", index}` deletes it. Rendering, PNG/SVG/PDF export and
+`vector.outlineStroke` follow the profile.
 
 ### Prototypes
 

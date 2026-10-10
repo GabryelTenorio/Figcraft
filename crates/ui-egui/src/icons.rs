@@ -116,6 +116,8 @@ pub enum Icon {
     Variable,
     Clock,
     Eraser,
+    /// Variable width: a stroke swelling in the middle with a width handle above and below.
+    VariableWidth,
     /// Shape builder: merge regions (and the tool).
     ShapeBuilder,
     /// Shape builder: remove regions.
@@ -686,6 +688,19 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.poly(&[(3.0, 10.0), (9.5, 3.5), (13.0, 7.0), (6.5, 13.5)], true);
             p.line(6.2, 6.8, 9.7, 10.3);
             p.line(6.5, 13.5, 13.5, 13.5);
+        }
+        VariableWidth => {
+            // A lens-shaped stroke, thin at both ends, and a width handle on either side of its
+            // widest point.
+            let edge = |i: i32, side: f32| {
+                let f = i as f32 / 12.0;
+                (1.5 + 13.0 * f, 8.0 + side * 3.0 * (std::f32::consts::PI * f).sin())
+            };
+            let lens: Vec<(f32, f32)> = (0..=12).map(|i| edge(i, -1.0)).chain((0..=12).rev().map(|i| edge(i, 1.0))).collect();
+            p.fill_poly(&lens);
+            p.line(8.0, 2.0, 8.0, 14.0);
+            p.dot(8.0, 1.8, 1.5);
+            p.dot(8.0, 14.2, 1.5);
         }
         Variable => {
             // A hexagon with a dot: an original mark for "bind a value".

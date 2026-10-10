@@ -317,3 +317,5 @@ mod band_tests;
 mod retained_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod width_tests;

@@ -192,6 +192,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("fill.set", "Set fill", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, true)),
         spec!("stroke.set", "Set stroke", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, false)),
         spec!(
+            "stroke.widthProfile",
+            "Width profile",
+            "{ids?, preset? (uniform|wedge|taper|eye|rounded|pinch) | points? [[t (0-1 along each subpath), scale (× stroke weight)], ...]} — none = uniform",
+            true,
+            width_profile
+        ),
+        spec!(
             "effect.add",
             "Add effect",
             "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture), effect? {..}}",
@@ -927,6 +934,20 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = s.doc_mut()?;
     for i in ids {
         super::props::apply("node.set", doc, i, &props)?;
+    }
+    ok()
+}
+
+/// `stroke.widthProfile`: a preset or points (through `node.set`'s `widthProfile`, so instances
+/// record the override).
+fn width_profile(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "stroke.widthProfile";
+    let v = get(p, "preset").or_else(|| get(p, "points")).cloned().unwrap_or(Value::Null);
+    let ids = req_targets(cmd, s, p)?;
+    let props = serde_json::Map::from_iter([("widthProfile".to_string(), v)]);
+    let doc = s.doc_mut()?;
+    for i in ids {
+        super::props::apply(cmd, doc, i, &props)?;
     }
     ok()
 }

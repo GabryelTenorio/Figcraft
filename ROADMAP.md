@@ -43,8 +43,11 @@ dimension measured side by side.
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
    merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E), shape builder
-   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept).
-   *Left:* variable width strokes, transform box for several points, point snapping. 10–15 h.
+   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept),
+   variable width strokes (width profile presets with previews in the stroke settings, the Variable
+   width tool ⇧W: drag the path to add a width point, slide points, drag their handles, Delete;
+   smooth interpolation per subpath, dashes, caps and joins, canvas/PNG/SVG/PDF and outline stroke).
+   *Left:* transform box for several points, point snapping, one-sided widths. 7–11 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -120,7 +123,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes (in progress); library variables.
+  a real-file corpus); library variables.
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -169,9 +172,9 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 72% | frame guides, 2x pixel preview | 3–5 |
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
 | Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
-| Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
+| Shapes & vector | 8 | 66% | multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 7–11 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
-| Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
+| Strokes | 3 | 76% | stroke styles, arrowhead previews in the menus | 2–3 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |

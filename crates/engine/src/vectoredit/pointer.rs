@@ -52,6 +52,8 @@ pub(crate) enum VGesture {
         stamps: Vec<Point>,
         radius: f64,
     },
+    /// Variable width tool.
+    Width(super::width::WidthGesture),
 }
 
 /// Eraser brush radius in screen pixels.
@@ -144,9 +146,11 @@ impl Session {
     fn vector_hover(&mut self, ve: &VectorEdit, ev: &PointerEvent) -> Result<()> {
         let doc = self.doc()?.clone();
         let tol = 6.0 / ev.zoom.max(1e-6);
-        let h = hit(&doc, ve, ev.p(), tol);
+        let width_tool = ve.tool == VTool::Width;
+        let h = if width_tool { None } else { hit(&doc, ve, ev.p(), tol) };
         let ov = &mut self.tool.overlay;
         ov.vector_hover = h;
+        ov.width_hover = None;
         ov.face.clear();
         ov.rubber = None;
         ov.brush = (ve.tool == VTool::Eraser).then(|| [ev.x, ev.y, ERASER_PX / ev.zoom.max(1e-6)]);
@@ -187,6 +191,7 @@ impl Session {
                     self.tool.overlay.face = polys;
                 }
             }
+            VTool::Width => self.width_hover(ve, ev)?,
             _ => {}
         }
         if let Ok(ds) = self.ds_mut() {
@@ -352,6 +357,7 @@ impl Session {
                 })?;
                 self.vgesture(VGesture::Erase { stamps, radius });
             }
+            VTool::Width => self.width_down(ve, ev)?,
             VTool::Lasso => {
                 let base = if ev.shift { ve.vertices.clone() } else { vec![] };
                 self.tool.overlay.lasso = vec![[ev.x, ev.y]];
@@ -572,6 +578,7 @@ impl Session {
                 self.pen_state(plan, v, Some((d.x, d.y)))?;
                 self.vgesture(VGesture::Pen { plan, origin, out });
             }
+            VGesture::Width(g) => self.width_drag(ve, g, ev)?,
         }
         Ok(())
     }
@@ -603,6 +610,7 @@ impl Session {
             VGesture::Handle { .. } | VGesture::BendSegment { .. } | VGesture::Pen { .. } => self.commit_interaction()?,
             VGesture::Marquee { .. } | VGesture::Lasso { .. } => {}
             VGesture::Erase { .. } => self.commit_interaction()?,
+            VGesture::Width(g) => self.width_up(g)?,
         }
         if let Ok(ds) = self.ds_mut() {
             ds.revision += 1;
