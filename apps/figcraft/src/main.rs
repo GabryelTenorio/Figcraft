@@ -112,6 +112,15 @@ fn main() -> eframe::Result {
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
+    // The tab strip is the title bar: macOS keeps its window buttons inset into it; elsewhere the
+    // window is frameless and FigCraft draws the buttons and resize edges.
+    if cfg!(target_os = "macos") {
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+        fig.ui.title_bar = figcraft_ui_egui::TitleBar::Inset;
+    } else {
+        viewport = viewport.with_decorations(false);
+        fig.ui.title_bar = figcraft_ui_egui::TitleBar::Custom;
+    }
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

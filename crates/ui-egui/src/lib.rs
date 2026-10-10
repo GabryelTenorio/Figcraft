@@ -47,6 +47,8 @@ mod layers_drag_tests;
 mod perf_tests;
 #[cfg(test)]
 mod present_tests;
+#[cfg(test)]
+mod titlebar_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -103,6 +105,18 @@ pub enum LeftTab {
     Assets,
 }
 
+/// The window's title bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TitleBar {
+    /// The system draws it (and the browser): the tab strip sits below.
+    #[default]
+    Native,
+    /// A frameless window: the tab strip is the title bar, with our own window buttons and edges.
+    Custom,
+    /// macOS: the system's window buttons inset at the left of the tab strip.
+    Inset,
+}
+
 /// How often open documents get an autosave checkpoint (seconds).
 pub const AUTOSAVE_SECS: f64 = 30.0 * 60.0;
 
@@ -126,6 +140,8 @@ pub struct UiState {
     pub preferences: bool,
     pub shortcuts_panel: bool,
     pub home: bool,
+    /// How the window's title bar is drawn (the desktop app sets it when it opens the window).
+    pub title_bar: TitleBar,
     pub toast: Option<(String, f64)>,
     pub present: Option<present::Presenter>,
     /// The prototype preview pane floating over the canvas, when open.
@@ -192,6 +208,7 @@ impl Default for UiState {
             preferences: false,
             shortcuts_panel: false,
             home: false,
+            title_bar: TitleBar::Native,
             toast: None,
             present: None,
             preview: None,
@@ -417,6 +434,9 @@ impl FigApp {
         let t = theme::Tokens::get(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
+        if self.ui.title_bar == TitleBar::Custom {
+            tabs::resize_edges(&ctx);
+        }
         theme::set_doc_profile(&ctx, self.session.doc().map_or(figcraft_color::ColorProfile::Srgb, |d| d.color_profile));
         // The Inspect tab measures on hover without Alt.
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
