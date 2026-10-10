@@ -231,7 +231,18 @@ dimension measured side by side.
    Shift+C: read and reply). All of it through `comment.*` commands. Version history
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
-   minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
+   minutes, folded in the panel). Plugins landed: sandboxed WebAssembly plugins (a metered wasmi
+   interpreter with a memory cap and no WASI, also in the browser) whose API is the command
+   registry; each run is one undo step and is rolled back when it fails (error, trap, endless loop,
+   memory); a `figcraft-plugin.json` manifest declares menu commands with parameters and read or
+   write access with an optional command allowlist, and files, other documents, the undo history,
+   dialogs and other plugins are always off limits. Plugins ▸ Development ▸ Import plugin from
+   manifest… (kept in the preferences, the module re-read on every run), the installed plugins in
+   the Plugins menu with a parameters form drawn from the manifest, Run last plugin (⌥⌘P), Manage
+   plugins, and `plugin.*` commands for scripts, the CLI and MCP; a Rust SDK and two example
+   plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
+   plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
+   distribution. Multiplayer is not started. 18–45 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -279,14 +290,14 @@ dimension measured side by side.
   glass and progressive blur tuned side by side; the last
   text details (right-to-left list markers) and auto layout details (grid `fr` rows around
   fixed-size children).
-- **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
-  history are in).
+- **Then:** interop depth (6: .fig best effort), multiplayer (8; comments, version history and
+  plugins are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
 
-- **Architecture:** 13 crates with enforced layering (`cargo xtask layers`): geom, color, doc,
-  layout, text, pathops, render, format, svg, engine, ui-egui (+ mcp, pdf). Every action
+- **Architecture:** 14 crates with enforced layering (`cargo xtask layers`): geom, color, doc,
+  layout, text, pathops, plugin, render, format, svg, engine, ui-egui (+ mcp, pdf). Every action
   is a command (~330); undo is unlimited via structural sharing (`Arc` node snapshots); gestures are
   one undo step; `command.batch` runs several commands as one step.
 - **Document model:** pages, frames, groups, sections, rectangles, ellipses (arcs/rings), polygons,
@@ -359,7 +370,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |
 | Import/export | 6 | 71% | .fig import (best effort), SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
-| Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
+| Comments, versions, misc | 3 | 62% | multiplayer; plugin-defined UI at run time, plugin settings storage | 6–11 |
 
 Weighted feature depth ≈ **79%** (self-graded, from the table).
 

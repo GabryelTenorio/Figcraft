@@ -12,6 +12,7 @@ const TABLE: &[(&str, u8)] = &[
     ("layout", 2),
     ("text", 2),
     ("pathops", 2),
+    ("plugin", 2),
     ("render", 3),
     ("format", 3),
     ("svg", 4),

@@ -29,6 +29,7 @@ pub mod layout_panel;
 pub mod list_drag;
 pub mod measure_overlay;
 pub mod menus;
+pub mod plugins_ui;
 pub mod present;
 pub mod proto_canvas;
 pub mod proto_editor;
@@ -251,6 +252,10 @@ pub struct UiState {
     pub libraries: bool,
     /// Keyboard navigation: the region with the keyboard, keyboard mode (F6, Tab).
     pub nav: a11y::Nav,
+    /// The Manage plugins window is open.
+    pub plugins_window: bool,
+    /// A plugin command's parameters form, when open.
+    pub plugin_form: Option<plugins_ui::PluginForm>,
 }
 
 impl Default for UiState {
@@ -316,6 +321,8 @@ impl Default for UiState {
             next_autosave: 0.0,
             libraries: false,
             nav: a11y::Nav::default(),
+            plugins_window: false,
+            plugin_form: None,
         }
     }
 }
@@ -496,6 +503,7 @@ impl FigApp {
                     comments::start_draft(self, x, y);
                 }
                 "dialog.unsaved" => self.toast("This file has unsaved changes"),
+                "dialog.plugins" => self.ui.plugins_window = true,
                 _ => {}
             }
         }

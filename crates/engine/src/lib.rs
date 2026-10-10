@@ -25,6 +25,7 @@ pub mod keymap;
 pub mod library;
 pub mod measure;
 pub mod params;
+pub mod plugins;
 pub mod proto_run;
 pub mod shapebuilder;
 pub mod snap;
@@ -429,6 +430,9 @@ pub struct Prefs {
     /// Reduce motion: the interface's own animations are off (the system's setting turns them off
     /// too). Prototype transitions still play.
     pub reduce_motion: bool,
+    /// Installed plugins (Plugins menu), in menu order.
+    #[serde(serialize_with = "plugins::persisted")]
+    pub plugins: Vec<plugins::InstalledPlugin>,
 }
 
 impl Default for Prefs {
@@ -444,6 +448,7 @@ impl Default for Prefs {
             theme: "light".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
+            plugins: Vec::new(),
         }
     }
 }
@@ -490,6 +495,8 @@ pub struct Session {
     pub message: Option<String>,
     /// Library files read for the open documents.
     pub libraries: library::Cache,
+    /// Plugin modules loaded in this session and the last plugin run.
+    pub plugins: plugins::Runtime,
 }
 
 impl Default for Session {
@@ -520,6 +527,7 @@ impl Session {
             last_command: None,
             message: None,
             libraries: library::Cache::default(),
+            plugins: plugins::Runtime::default(),
         }
     }
 
@@ -771,30 +779,32 @@ impl Session {
 
     /// Run several commands as one undo step.
     pub fn batch(&mut self, label: &str, cmds: &[(String, Value)]) -> Result<Vec<Value>> {
-        let before = self.ds()?.doc.clone();
-        let sel = self.selection();
-        let page = self.page()?;
-        let mut out = Vec::new();
-        let saved_len = self.ds()?.history.undo.len();
-        for (id, p) in cmds {
-            match self.execute(id, p) {
-                Ok(v) => out.push(v),
-                Err(e) => {
-                    let ds = self.ds_mut()?;
-                    ds.doc = before;
-                    ds.selection = sel;
-                    ds.history.undo.truncate(saved_len);
-                    return Err(e);
-                }
-            }
-        }
+        self.grouped(label, |s| cmds.iter().map(|(id, p)| s.execute(id, p)).collect())
+    }
+
+    /// Run `f` as one undo step called `label`: the commands it executes push no steps of their
+    /// own, and when it fails the document, selection, page and history are put back.
+    pub fn grouped<T>(&mut self, label: &str, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         let ds = self.ds_mut()?;
+        let (before, sel, page, saved_len, uid) = (ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.uid);
+        // The steps inside are dropped again below, so they mustn't push the oldest ones out.
+        let limit = std::mem::replace(&mut ds.history.limit, usize::MAX);
+        let result = f(self);
+        let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) else { return result };
+        ds.history.limit = limit;
         ds.history.undo.truncate(saved_len);
-        if !Arc::ptr_eq(&before, &ds.doc) {
+        if result.is_err() {
+            ds.doc = before;
+            ds.selection = sel;
+            ds.page = page;
+        } else if !Arc::ptr_eq(&before, &ds.doc) {
             ds.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection: sel, page });
+            if ds.history.undo.len() > limit.max(1) {
+                ds.history.undo.remove(0);
+            }
             ds.history.redo.clear();
         }
-        Ok(out)
+        result
     }
 
     /// A summary for status displays.
@@ -1071,6 +1081,8 @@ mod paint_tests;
 mod pdf_print_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod plugins_tests;
 #[cfg(test)]
 mod progressive_blur_tests;
 #[cfg(test)]

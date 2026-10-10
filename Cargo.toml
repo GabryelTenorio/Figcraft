@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+# The plugin SDK and examples build for wasm32 in a workspace of their own (`cargo xtask plugins`).
+exclude = ["plugins"]
 # default-members = ["crates/*", "apps/figcraft", "apps/figcraft-cli", "xtask"]
 
 [workspace.package]
@@ -26,6 +28,7 @@ figcraft-tools = { path = "crates/tools" }
 figcraft-engine = { path = "crates/engine" }
 figcraft-ui-egui = { path = "crates/ui-egui" }
 figcraft-mcp = { path = "crates/mcp" }
+figcraft-plugin = { path = "crates/plugin" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
@@ -49,6 +52,12 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 base64 = "0.22"
 crc32fast = "1"
+
+# plugins: a pure-Rust, metered WebAssembly interpreter (no JIT; also runs in the web build). The
+# portable dispatch loop: tail-call dispatch relies on an LLVM optimisation that unoptimised and
+# debug builds may not do, and then a long-running plugin overflows the native stack.
+wasmi = { version = "2", default-features = false, features = ["std", "stable", "validate", "portable-dispatch"] }
+wat = "1.261"
 
 # ui
 egui = "0.36"

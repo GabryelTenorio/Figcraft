@@ -428,7 +428,9 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
         }
         None => {
             let (s, col) = if value.is_empty() { (placeholder, t.text_tertiary) } else { (value, t.text) };
-            ui.painter().text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
+            // Long text stays inside the field.
+            let painter = ui.painter().with_clip_rect(rect.shrink2(vec2(8.0, 0.0)));
+            painter.text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
         }
     }
     out

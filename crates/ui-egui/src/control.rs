@@ -275,8 +275,27 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("palette").and_then(Value::as_bool) {
                 app.ui.palette = if h { Some(String::new()) } else { None };
             }
-            if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
-                app.ui.main_menu = h;
+            // true / false, or a top-level menu to open it at ("Plugins").
+            match p.get("mainMenu") {
+                Some(Value::Bool(h)) => app.ui.main_menu = *h,
+                Some(Value::String(top)) => {
+                    app.ui.main_menu = true;
+                    crate::menus::open_main_menu(ctx, top);
+                }
+                _ => {}
+            }
+            if let Some(h) = p.get("pluginsWindow").and_then(Value::as_bool) {
+                app.ui.plugins_window = h;
+            }
+            // A plugin command's parameters form: {id, command?}; null closes it.
+            match p.get("pluginForm") {
+                Some(Value::Null) => app.ui.plugin_form = None,
+                Some(v @ Value::Object(_)) => {
+                    let id = v.get("id").and_then(Value::as_str).ok_or("pluginForm: {id, command?}")?;
+                    let command = v.get("command").and_then(Value::as_str).unwrap_or_default();
+                    crate::plugins_ui::start(app, id, command);
+                }
+                _ => {}
             }
             // Give a region the keyboard as F6 would: toolbar, layers, canvas or properties.
             if let Some(r) = p.get("focusRegion").and_then(Value::as_str) {
