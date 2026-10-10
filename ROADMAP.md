@@ -61,8 +61,18 @@ dimension measured side by side.
    font, named instances as styles, Type settings ▸ Variable sliders, per-range axis values applied
    to shaping, outlines and PDF), range-aware Typography panel with "Mixed". Range fills in the Fill
    section. Right-to-left and mixed-direction text (Unicode bidi: Arabic shaping, mirrored brackets,
-   caret, clicks and selection follow the runs; arrow keys move visually). *Left:* axis hover
-   preview, right-to-left layer names in the panels, visual QA. 5–8 h.
+   caret, clicks and selection follow the runs; arrow keys move visually). Right-to-left and
+   mixed-direction names in the panels (layers, pages, Assets, tabs, the file header, canvas frame
+   titles: visual order, joined Arabic, the ellipsis at a right-to-left name's left end; rename fields
+   whose caret, clicks, drags and arrow keys follow the shown text; system fonts for scripts the UI
+   fonts lack). The text style browser in the Typography section (list and grid views in each
+   style's own font, search, folders, this file's and enabled libraries' styles, apply, detach, edit
+   the typography, create from the selected chars, hover to preview on the canvas, "Mixed" when the
+   chars use several styles); text styles link chars, not just layers (editing what a style sets
+   unlinks the chars edited). Live previews of a hovered named instance or font style and of a
+   dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
+   paragraph's font, renames start with the name selected and centred, Max lines shows while
+   truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
@@ -161,7 +171,8 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
-  inner shadows under strokes (render order), progressive blur, glass tuned side by side.
+  inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
+  text details (right-to-left list markers).
 - **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 

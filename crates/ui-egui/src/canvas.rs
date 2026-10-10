@@ -571,7 +571,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             };
             if matches!(n.kind, NodeKind::Section { .. }) {
                 // Section titles are pills inside the top-left.
-                let galley = painter.layout_no_wrap(n.name.clone(), semibold(11.0), t.text);
+                let galley = crate::bidi::name_galley(painter, &n.name, semibold(11.0), t.text, 480.0);
                 let r = Rect::from_min_size(tl + vec2(0.0, 0.0), galley.size() + vec2(16.0, 8.0));
                 painter.rect_filled(r, CornerRadius::same(4), if selected { ACCENT } else { t.hover });
                 painter.galley(r.min + vec2(8.0, 4.0), galley, if selected { Color32::WHITE } else { t.text });
@@ -583,12 +583,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                     crate::icons::paint(painter, Rect::from_min_size(pos2(x, tl.y - 16.0), vec2(12.0, 12.0)), crate::icons::Icon::Component, col);
                     x += 14.0;
                 }
-                let galley = painter.layout(n.name.clone(), regular(11.0), col, max_w.max(20.0));
-                if galley.rows.len() <= 1 {
-                    let end = x + galley.size().x;
-                    painter.galley(pos2(x, tl.y - 16.0), galley, col);
-                    status_badge(painter, n.dev_status, pos2(end + 6.0, tl.y - 9.0));
-                }
+                // Names longer than the frame end in an ellipsis (a right-to-left name keeps its start).
+                let galley = crate::bidi::name_galley(painter, &n.name, regular(11.0), col, (max_w - (x - tl.x)).max(20.0));
+                let end = x + galley.size().x;
+                painter.galley(pos2(x, tl.y - 16.0), galley, col);
+                status_badge(painter, n.dev_status, pos2(end + 6.0, tl.y - 9.0));
             }
         }
     }

@@ -103,6 +103,19 @@ Or in a project's `.mcp.json`:
   `text.setVariations {variations, replace?}` merges instead. `text.fonts {family, style?, axes: true}`
   lists a font's axes and named instances (named instances are also valid `fontStyle` values).
   OpenType features: `features {"liga": false, "tnum": true}`.
+- **Text styles** link chars, not just layers: `style.apply {style, ids?, start?, end?}` with a text
+  style links chars `start`..`end` (while text is edited, the selected chars; else whole layers), and
+  `style.detach {which: "text", start?, end?}` unlinks them (values stay). A layer's `styles.text` is
+  the style all its chars share (none when they differ); `get_node` lists the linked chars as
+  `textStyleRanges` (`[start, end, style id]`).
+  Changing what a text style sets (font, size, line height, letter spacing, decoration, case, axis
+  values) on linked chars unlinks them; `style.update` moves every linked char. `style.create
+  {type: "text", name}` takes the selected chars while editing; a `value` may use the `node.set`
+  spellings (`{"fontSize": 32, "lineHeight": "120%", "letterSpacing": "2%"}`).
+- **Live previews**: `text.preview {command, params}` shows what `style.apply`,
+  `library.applyStyle`, `text.setVariations` or `text.style` would do on the canvas without an undo
+  step (in place of an earlier preview); `text.endPreview` puts the document back. Any other command
+  ends the preview first, so running the command for real commits it as one undo step.
 - Every mutation is one undo step (`batch` makes several one step). A failing command leaves the
   document as it was.
 - Programmatic calls never open dialogs.

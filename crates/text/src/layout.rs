@@ -137,7 +137,7 @@ impl Bidi {
 }
 
 /// Characters of right-to-left scripts and the explicit right-to-left marks.
-fn is_rtl_char(c: char) -> bool {
+pub(crate) fn is_rtl_char(c: char) -> bool {
     matches!(c as u32, 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF | 0x10800..=0x10FFF | 0x1E800..=0x1EFFF | 0x200F | 0x202B | 0x202E | 0x2067)
 }
 
@@ -378,7 +378,16 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             };
             let st_idx = items.get(*s).map(|it| it.style).unwrap_or(0);
             let at = items.get(*s).map(|it| it.char_start).unwrap_or(chars.len());
-            let marker_face = items.get(*s).map(|it| (it.face.clone(), it.coords.clone())).or_else(|| default_face.clone().map(|f| (f, no_coords())));
+            // The marker takes the paragraph style's own font (not a fallback the line's first
+            // char needed, e.g. for Hebrew), so every bullet and number of a list matches.
+            let own = faces.get(st_idx).cloned().flatten().filter(|f| marker.chars().all(|c| f.has_char(c)));
+            let marker_face = match (own, styles.get(st_idx)) {
+                (Some(f), Some(st)) => {
+                    let coords = f.coords(&f.axis_values(st));
+                    Some((f, coords))
+                }
+                _ => items.get(*s).map(|it| (it.face.clone(), it.coords.clone())).or_else(|| default_face.clone().map(|f| (f, no_coords()))),
+            };
             if let (Some(st), Some((face, coords))) = (styles.get(st_idx), marker_face) {
                 let size = sanitize_size(st.font_size);
                 let k = size / face.upem;

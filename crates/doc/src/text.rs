@@ -187,6 +187,10 @@ pub struct TextStyle {
     /// 550, `wdth`: 85). Empty = what the style name implies; axes the face lacks are ignored.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub variations: std::collections::BTreeMap<String, f64>,
+    /// The text style (shared style id) these chars are linked to. A layer's chars can link to
+    /// different styles; editing what a style sets unlinks the chars edited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style_id: Option<String>,
 }
 
 impl Default for TextStyle {
@@ -202,6 +206,7 @@ impl Default for TextStyle {
             fills: None,
             link: None,
             variations: std::collections::BTreeMap::new(),
+            style_id: None,
         }
     }
 }
@@ -221,6 +226,29 @@ impl TextStyle {
         self.font_style.to_ascii_lowercase().contains("italic")
             || self.variations.get("ital").is_some_and(|v| *v >= 0.5)
             || self.variations.get("slnt").is_some_and(|v| *v != 0.0)
+    }
+
+    /// Take what text style `def` sets (font, size, line height, letter spacing, decoration, case
+    /// and axis values) and link to it as `id`; fills and hyperlinks stay.
+    pub fn take_text_style(&mut self, def: &TextStyle, id: &str) {
+        *self = TextStyle { fills: self.fills.take(), link: self.link.take(), style_id: Some(id.to_string()), ..def.clone() };
+    }
+
+    /// Whether these chars show what text style `def` sets.
+    pub fn shows_text_style(&self, def: &TextStyle) -> bool {
+        self.font_family == def.font_family
+            && self.font_style == def.font_style
+            && self.font_size == def.font_size
+            && self.line_height == def.line_height
+            && self.letter_spacing == def.letter_spacing
+            && self.decoration == def.decoration
+            && self.case == def.case
+            && self.variations == def.variations
+    }
+
+    /// This style as a text style's definition (linked to nothing).
+    pub fn as_text_style(&self) -> TextStyle {
+        TextStyle { style_id: None, link: None, ..self.clone() }
     }
 
     /// Switch to the named style, dropping custom values of the axes the name implies.
@@ -424,6 +452,61 @@ impl TextData {
             r.end = new_end;
         }
         self.normalize();
+    }
+
+    /// Link chars `start..end` (all of them when the range is empty or the whole text) to text
+    /// style `id`, defined as `def`.
+    pub fn link_text_style(&mut self, start: usize, end: usize, def: &TextStyle, id: &str) {
+        self.restyle(start, end, |s| s.take_text_style(def, id));
+    }
+
+    /// Unlink chars `start..end` (all when empty or whole) from their text styles; values stay.
+    pub fn unlink_text_style(&mut self, start: usize, end: usize) {
+        self.restyle(start, end, |s| s.style_id = None);
+    }
+
+    /// The text style every char is linked to: `Some(None)` when none is, None when they differ.
+    pub fn text_style_link(&self) -> Option<Option<&str>> {
+        let mut spans = self.spans().into_iter().map(|(_, _, s)| s.style_id.as_deref());
+        let first = spans.next()?;
+        spans.all(|s| s == first).then_some(first)
+    }
+
+    /// Apply `f` to every distinct style (the base and each run) and merge runs that became equal.
+    pub(crate) fn each_style(&mut self, mut f: impl FnMut(&mut TextStyle)) {
+        f(&mut self.style);
+        for r in &mut self.runs {
+            f(&mut r.style);
+        }
+        self.normalize();
+    }
+
+    /// Whether any char links to text style `id`.
+    pub fn links_text_style(&self, id: &str) -> bool {
+        std::iter::once(&self.style).chain(self.runs.iter().map(|r| &r.style)).any(|s| s.style_id.as_deref() == Some(id))
+    }
+
+    /// Follow text style `id`'s new definition wherever chars link to it.
+    pub fn update_text_style(&mut self, id: &str, def: &TextStyle) {
+        self.each_style(|s| {
+            if s.style_id.as_deref() == Some(id) {
+                s.take_text_style(def, id);
+            }
+        });
+    }
+
+    /// Point text style links elsewhere: `f(id)` gives the new id, None unlinks (values stay).
+    pub fn map_text_styles(&mut self, f: impl Fn(&str) -> Option<String>) {
+        self.each_style(|s| s.style_id = s.style_id.as_deref().and_then(&f));
+    }
+
+    /// Unlink chars whose style is gone (`def` gives None) or that no longer show it (edited since).
+    pub fn check_text_styles<'a>(&mut self, def: impl Fn(&str) -> Option<&'a TextStyle>) {
+        self.each_style(|s| {
+            if s.style_id.as_deref().is_some_and(|id| !def(id).is_some_and(|d| s.shows_text_style(d))) {
+                s.style_id = None;
+            }
+        });
     }
 
     /// Whether every char shares one style (the panel shows "Mixed" otherwise).

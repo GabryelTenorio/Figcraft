@@ -217,13 +217,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                 rename_done = Some((id, new));
             }
         } else {
-            ui.painter().text(
-                pos2(r.min.x + 10.0, r.center().y),
-                Align2::LEFT_CENTER,
-                &name,
-                if id == cur { semibold(11.0) } else { regular(11.0) },
-                t.text,
-            );
+            let font = if id == cur { semibold(11.0) } else { regular(11.0) };
+            crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 10.0, r.center().y), &name, font, t.text, r.width() - 14.0);
         }
         if resp.clicked() {
             select = Some(id);
@@ -568,13 +563,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     regular(11.0)
                 };
                 let name = if n.name.is_empty() { n.kind.label().to_string() } else { n.name.clone() };
+                // Room left of the lock and eye buttons.
                 let max_w = (rr.max.x - 56.0 - name_x).max(20.0);
-                let galley = ui.painter().layout(name, font, col, max_w);
-                ui.painter().with_clip_rect(Rect::from_min_max(pos2(name_x, r.min.y), pos2(rr.max.x - 52.0, r.max.y))).galley(
-                    pos2(name_x, r.center().y - galley.size().y / 2.0),
-                    galley,
-                    col,
-                );
+                crate::bidi::paint_name(ui.painter(), pos2(name_x, r.center().y), &name, font, col, max_w);
             }
             // Lock / eye on hover (or when set).
             let show_lock = resp.hovered() || n.locked;
@@ -672,7 +663,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             n => format!("{n} layers"),
         };
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("layer_drag_ghost")));
-        let galley = painter.layout_no_wrap(label, regular(11.0), t.text);
+        let galley = crate::bidi::name_galley(&painter, &label, regular(11.0), t.text, 240.0);
         let r = Rect::from_min_size(p + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
         painter.rect_filled(r, CornerRadius::same(5), t.panel);
         painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);

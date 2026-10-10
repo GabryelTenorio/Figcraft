@@ -153,6 +153,11 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if !t.runs.is_empty() {
                 o.insert("styledRuns".into(), serde_json::to_value(&t.runs).unwrap_or(Value::Null));
             }
+            // Chars linked to text styles: [start, end, style id] (the layer as a whole: `styles.text`).
+            let linked: Vec<Value> = t.spans().into_iter().filter_map(|(a, b, s)| s.style_id.as_ref().map(|id| json!([a, b, id]))).collect();
+            if !linked.is_empty() {
+                o.insert("textStyleRanges".into(), Value::Array(linked));
+            }
         }
         NodeKind::Ellipse { start, sweep, inner } if (*sweep).abs() < std::f64::consts::TAU - 1e-9 || *inner > 0.0 => {
             o.insert("arc".into(), json!({"start": start.to_degrees(), "sweep": sweep.to_degrees(), "inner": inner}));

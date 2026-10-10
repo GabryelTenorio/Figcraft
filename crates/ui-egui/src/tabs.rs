@@ -62,9 +62,19 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 Icon::Logo,
                 crate::theme::ACCENT,
             );
-            let label = if d.is_dirty() { format!("{name} •") } else { name };
-            let galley = ui.painter().layout(label, regular(12.0), t.text, w - 60.0);
-            ui.painter().galley(pos2(r.min.x + 32.0, r.center().y - galley.size().y / 2.0), galley, t.text);
+            // The unsaved-changes dot follows the name on screen, whichever way the name reads.
+            let dirty = d.is_dirty();
+            let shown = crate::bidi::paint_name(
+                ui.painter(),
+                pos2(r.min.x + 32.0, r.center().y),
+                &name,
+                regular(12.0),
+                t.text,
+                w - if dirty { 72.0 } else { 60.0 },
+            );
+            if dirty {
+                ui.painter().text(pos2(shown.max.x + 4.0, r.center().y), Align2::LEFT_CENTER, "•", regular(12.0), t.text);
+            }
             let cr = Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(18.0, 18.0));
             if resp.hovered() || active {
                 let cresp = ui.interact(cr, ui.id().with(("tabclose", d.uid)), Sense::click());

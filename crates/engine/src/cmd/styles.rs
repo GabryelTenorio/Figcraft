@@ -32,22 +32,20 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             create
         ),
-        spec!("style.apply", "Apply style", "{ids?, style (id or name), target? (fill|stroke; paint styles)}", true, apply),
-        spec!("style.detach", "Detach style", "{ids?, which: fill|stroke|effect|grid|text}", true, |s, p| {
-            let which = req_string("style.detach", p, "which")?;
-            for i in req_targets("style.detach", s, p)? {
-                let n = s.doc_mut()?.get_mut(i)?;
-                match which.as_str() {
-                    "fill" => n.styles.fill = None,
-                    "stroke" => n.styles.stroke = None,
-                    "effect" => n.styles.effect = None,
-                    "grid" => n.styles.grid = None,
-                    "text" => n.styles.text = None,
-                    _ => return Err(bad("style.detach", "which: fill|stroke|effect|grid|text")),
-                }
-            }
-            ok()
-        }),
+        spec!(
+            "style.apply",
+            "Apply style",
+            "{ids?, style (id or name), target? (fill|stroke; paint styles), start?, end? (text styles: these chars; while editing text, the selected chars)}",
+            true,
+            apply
+        ),
+        spec!(
+            "style.detach",
+            "Detach style",
+            "{ids?, which: fill|stroke|effect|grid|text, start?, end? (text: these chars; while editing text, the selected chars)}",
+            true,
+            detach
+        ),
         spec!("style.update", "Edit style", "{style, name?, description?, value?, from? (node id: redefine from it)}", true, update),
         spec!("style.delete", "Delete style", "{style}", true, |s, p| {
             let id = req_string("style.delete", p, "style")?;
@@ -57,18 +55,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 return Err(EngineError::Disabled("style.delete".into(), crate::library::READ_ONLY.into()));
             }
             doc.styles.retain(|st| st.id != sid);
-            // Nodes keep their values but lose the link.
+            // Nodes (and text chars) keep their values but lose the link.
             for nid in doc.ids().collect::<Vec<_>>() {
                 if let Some(n) = doc.node(nid)
-                    && [&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text]
+                    && ([&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text]
                         .iter()
                         .any(|r| r.as_deref() == Some(sid.as_str()))
+                        || n.kind.text().is_some_and(|t| t.links_text_style(&sid)))
                 {
                     let n = doc.get_mut(nid)?;
                     for r in [&mut n.styles.fill, &mut n.styles.stroke, &mut n.styles.effect, &mut n.styles.grid, &mut n.styles.text] {
                         if r.as_deref() == Some(sid.as_str()) {
                             *r = None;
                         }
+                    }
+                    if let NodeKind::Text(t) = &mut n.kind {
+                        t.map_text_styles(|x| (x != sid).then(|| x.to_string()));
                     }
                 }
             }
@@ -171,11 +173,91 @@ fn next_style_id(doc: &Document) -> String {
     }
 }
 
+/// A text layer and the chars a command covers in it (None = all of them).
+pub(crate) type TextTarget = (NodeId, Option<(usize, usize)>);
+
+/// Text layers a text style command acts on, each with the chars it covers (None = the whole
+/// layer): chars `start..end` when given, else the selected chars of the text being edited (when
+/// it is the target), else every targeted layer.
+pub(crate) fn text_targets(cmd: &str, s: &Session, p: &Value) -> Result<Vec<TextTarget>> {
+    let at = |k: &str| num(p, k).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1e12) as usize);
+    let (start, end) = (at("start"), at("end"));
+    if start.is_some() || end.is_some() {
+        let range = (start.unwrap_or(0), end.unwrap_or(usize::MAX));
+        return Ok(req_targets(cmd, s, p)?.into_iter().map(|i| (i, Some(range))).collect());
+    }
+    let given = targets(s, p);
+    if let Some((id, a, b)) = crate::textedit::selected_range(s)
+        && a < b
+        && given == [id]
+    {
+        return Ok(vec![(id, Some((a, b)))]);
+    }
+    Ok(req_targets(cmd, s, p)?.into_iter().map(|i| (i, None)).collect())
+}
+
+/// A text style definition from JSON (`fontSize` or `font_size` keys; line height and letter
+/// spacing also as for `node.set`: "auto", 24, "150%", "2%").
+fn text_style_json(cmd: &str, v: &Value) -> Result<TextStyle> {
+    let snake =
+        |k: &str| k.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['_', c.to_ascii_lowercase()] } else { vec![c] }).collect::<String>();
+    let friendly = |k: &str, x: &Value| -> Value {
+        let parsed = match (k, x) {
+            (_, Value::Object(_)) => None,
+            ("line_height", x) => super::props::line_height(x).and_then(|l| serde_json::to_value(l).ok()),
+            ("letter_spacing", x) => super::props::letter_spacing(x).and_then(|l| serde_json::to_value(l).ok()),
+            _ => None,
+        };
+        parsed.unwrap_or_else(|| x.clone())
+    };
+    let v = match v {
+        Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (snake(k), friendly(&snake(k), x))).collect()),
+        other => other.clone(),
+    };
+    serde_json::from_value::<TextStyle>(v).map(|t| t.as_text_style()).map_err(|e| bad(cmd, e.to_string()))
+}
+
+/// The text style definition a layer's chars from `at` (None = its base style) show.
+fn text_style_of(n: &Node, at: Option<usize>) -> Option<TextStyle> {
+    let t = n.kind.text()?;
+    Some(at.map_or(&t.style, |a| t.style_at(a)).as_text_style())
+}
+
+fn detach(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.detach";
+    let which = req_string(cmd, p, "which")?;
+    if which == "text" {
+        for (i, range) in text_targets(cmd, s, p)? {
+            let doc = s.doc_mut()?;
+            match range {
+                Some((a, b)) => {
+                    if let NodeKind::Text(t) = &mut doc.get_mut(i)?.kind {
+                        t.unlink_text_style(a, b);
+                    }
+                }
+                None => apply_style_ref(doc, i, "textStyle", None)?,
+            }
+        }
+        return ok();
+    }
+    for i in req_targets(cmd, s, p)? {
+        let n = s.doc_mut()?.get_mut(i)?;
+        match which.as_str() {
+            "fill" => n.styles.fill = None,
+            "stroke" => n.styles.stroke = None,
+            "effect" => n.styles.effect = None,
+            "grid" => n.styles.grid = None,
+            _ => return Err(bad(cmd, "which: fill|stroke|effect|grid|text")),
+        }
+    }
+    ok()
+}
+
 fn kind_from_node(t: &str, n: &Node) -> Option<StyleKind> {
     Some(match t {
         "paint" | "color" | "fill" => StyleKind::Paint { paints: n.fills.clone() },
         "stroke" => StyleKind::Paint { paints: n.strokes.clone() },
-        "text" => StyleKind::Text { style: n.kind.text()?.style.clone() },
+        "text" => StyleKind::Text { style: text_style_of(n, None)? },
         "effect" => StyleKind::Effect { effects: n.effects.clone() },
         "grid" => StyleKind::Grid { grids: n.grids.clone() },
         _ => return None,
@@ -187,23 +269,35 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let t = req_string(cmd, p, "type")?.to_ascii_lowercase();
     let name = req_string(cmd, p, "name")?;
     let from = id(p, "from").or_else(|| s.selection().first().copied());
+    // A text style made while editing text takes (and links) the selected chars.
+    let range = match (t.as_str(), crate::textedit::selected_range(s)) {
+        ("text", Some((tid, a, b))) if a < b && from.is_none_or(|f| f == tid) && get(p, "value").is_none() => Some((tid, a, b)),
+        _ => None,
+    };
+    let from = range.map(|r| r.0).or(from);
     let doc = s.doc_mut()?;
     let kind = if let Some(v) = get(p, "value") {
         match t.as_str() {
             "paint" | "color" | "fill" => StyleKind::Paint { paints: paints_of(v).ok_or_else(|| bad(cmd, "value: paints"))? },
-            "text" => StyleKind::Text { style: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            "text" => StyleKind::Text { style: text_style_json(cmd, v)? },
             "effect" => StyleKind::Effect { effects: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
             "grid" => StyleKind::Grid { grids: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
             _ => return Err(bad(cmd, "type: paint|text|effect|grid")),
         }
+    } else if let Some((tid, a, _)) = range {
+        StyleKind::Text { style: doc.node(tid).and_then(|n| text_style_of(n, Some(a))).ok_or_else(|| bad(cmd, "not a text layer"))? }
     } else {
         let n = from.and_then(|f| doc.node(f)).ok_or_else(|| bad(cmd, "pass `value` or select a layer to take it from"))?;
         kind_from_node(&t, n).ok_or_else(|| bad(cmd, "that layer has no such property"))?
     };
     let sid = next_style_id(doc);
-    doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind });
-    // The source layer becomes linked to the new style.
-    if let Some(f) = from
+    doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind: kind.clone() });
+    // The source layer (or the selected chars) becomes linked to the new style.
+    if let (Some((tid, a, b)), StyleKind::Text { style }) = (range, &kind) {
+        if let NodeKind::Text(td) = &mut doc.get_mut(tid)?.kind {
+            td.link_text_style(a, b, style, &sid);
+        }
+    } else if let Some(f) = from
         && get(p, "value").is_none()
     {
         let field = match t.as_str() {
@@ -243,10 +337,10 @@ pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<
             n.styles.grid = Some(id.clone());
         }
         ("textStyle", Some(Style { kind: StyleKind::Text { style }, id, .. })) => {
+            // Every char takes the style's typography (their fills and links stay).
             if let NodeKind::Text(t) = &mut n.kind {
-                let keep_fills = t.style.fills.clone();
-                t.style = TextStyle { fills: keep_fills, ..style.clone() };
-                t.runs.clear();
+                let len = t.char_count();
+                t.link_text_style(0, len, style, id);
             }
             n.styles.text = Some(id.clone());
         }
@@ -254,7 +348,13 @@ pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<
         ("strokeStyle", None) => n.styles.stroke = None,
         ("effectStyle", None) => n.styles.effect = None,
         ("gridStyle", None) => n.styles.grid = None,
-        ("textStyle", None) => n.styles.text = None,
+        ("textStyle", None) => {
+            if let NodeKind::Text(t) = &mut n.kind {
+                let len = t.char_count();
+                t.unlink_text_style(0, len);
+            }
+            n.styles.text = None;
+        }
         _ => return Err(EngineError::Other(format!("style doesn't fit `{field}`"))),
     }
     Ok(())
@@ -263,9 +363,24 @@ pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<
 pub(crate) fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "style.apply";
     let st = req_string(cmd, p, "style")?;
+    let style = s.doc()?.style(&st).cloned().ok_or_else(|| bad(cmd, format!("no style `{st}`")))?;
+    // Text styles go on chars: a range, the selected chars of the edited text, or whole layers.
+    if let StyleKind::Text { style: def } = &style.kind {
+        for (i, range) in text_targets(cmd, s, p)? {
+            let doc = s.doc_mut()?;
+            match range {
+                Some((a, b)) => {
+                    if let NodeKind::Text(t) = &mut doc.get_mut(i)?.kind {
+                        t.link_text_style(a, b, def, &style.id);
+                    }
+                }
+                None => apply_style_ref(doc, i, "textStyle", Some(&style.id))?,
+            }
+        }
+        return ok();
+    }
     let ids = req_targets(cmd, s, p)?;
     let doc = s.doc_mut()?;
-    let style = doc.style(&st).cloned().ok_or_else(|| bad(cmd, format!("no style `{st}`")))?;
     let field = match (&style.kind, string(p, "target").as_deref()) {
         (StyleKind::Paint { .. }, Some("stroke")) => "strokeStyle",
         (StyleKind::Paint { .. }, _) => "fillStyle",
@@ -292,7 +407,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         let cur = doc.styles.get(idx).map(|x| x.kind.type_name()).unwrap_or("paint");
         Some(match cur {
             "paint" => StyleKind::Paint { paints: paints_of(v).ok_or_else(|| bad(cmd, "value: paints"))? },
-            "text" => StyleKind::Text { style: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
+            "text" => StyleKind::Text { style: text_style_json(cmd, v)? },
             "effect" => StyleKind::Effect { effects: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
             _ => StyleKind::Grid { grids: serde_json::from_value(v.clone()).map_err(|e| bad(cmd, e.to_string()))? },
         })
@@ -317,22 +432,72 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Re-apply style `sid` to every node linked to it.
+/// Re-apply style `sid` to every node (and text chars) linked to it.
 pub fn propagate_style(doc: &mut Document, sid: &str) {
+    let text_def = match doc.style(sid).map(|s| &s.kind) {
+        Some(StyleKind::Text { style }) => Some(style.clone()),
+        _ => None,
+    };
     let ids: Vec<NodeId> = doc.ids().collect();
     for i in ids {
         let Some(n) = doc.node(i) else { continue };
+        if let Some(def) = &text_def {
+            if n.kind.text().is_some_and(|t| t.links_text_style(sid))
+                && let Ok(n) = doc.get_mut(i)
+                && let NodeKind::Text(t) = &mut n.kind
+            {
+                t.update_text_style(sid, def);
+            }
+            continue;
+        }
         let refs = n.styles.clone();
-        for (field, r) in [
-            ("fillStyle", &refs.fill),
-            ("strokeStyle", &refs.stroke),
-            ("effectStyle", &refs.effect),
-            ("gridStyle", &refs.grid),
-            ("textStyle", &refs.text),
-        ] {
+        for (field, r) in [("fillStyle", &refs.fill), ("strokeStyle", &refs.stroke), ("effectStyle", &refs.effect), ("gridStyle", &refs.grid)] {
             if r.as_deref() == Some(sid) {
                 let _ = apply_style_ref(doc, i, field, Some(sid));
             }
+        }
+    }
+}
+
+/// Text style links follow edits (on `ids`): chars that no longer show their style's values (or
+/// whose style is gone) unlink, and a layer's link is the style all its chars share.
+pub fn sync_text_styles(doc: &mut Document, ids: &[NodeId]) {
+    let linked = |n: &Node| match &n.kind {
+        NodeKind::Text(t) => n.styles.text.is_some() || t.style.style_id.is_some() || t.runs.iter().any(|r| r.style.style_id.is_some()),
+        _ => false,
+    };
+    let ids: Vec<NodeId> = ids.iter().copied().filter(|i| doc.node(*i).is_some_and(linked)).collect();
+    if ids.is_empty() {
+        return;
+    }
+    let defs: BTreeMap<String, TextStyle> = doc
+        .styles
+        .iter()
+        .filter_map(|s| match &s.kind {
+            StyleKind::Text { style } => Some((s.id.clone(), style.clone())),
+            _ => None,
+        })
+        .collect();
+    for id in ids {
+        let Some(n) = doc.node(id) else { continue };
+        let NodeKind::Text(t) = &n.kind else { continue };
+        let mut t2 = t.clone();
+        // A layer linked as a whole whose chars carry no link yet (imported): they link now.
+        if let Some(sid) = &n.styles.text
+            && t2.text_style_link() == Some(None)
+            && let Some(def) = defs.get(sid)
+            && t2.spans().iter().all(|(_, _, s)| s.shows_text_style(def))
+        {
+            let len = t2.char_count();
+            t2.restyle(0, len, |s| s.style_id = Some(sid.clone()));
+        }
+        t2.check_text_styles(|sid| defs.get(sid));
+        let link = t2.text_style_link().flatten().map(str::to_string);
+        if (t2 != *t || link != n.styles.text)
+            && let Ok(n) = doc.get_mut(id)
+        {
+            n.styles.text = link;
+            n.kind = NodeKind::Text(t2);
         }
     }
 }
