@@ -178,7 +178,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         let h = (f64::from(v.height) / v.scale * zoom) as f32;
         painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
-    overlays(app, &painter, &t);
+    app.session.tool.labels = overlays(app, &painter, &t);
     // The zoom tool's area.
     if let (Some(start), Some(p)) = (app.canvas.zoom_drag, ctx.input(|i| i.pointer.hover_pos())) {
         let area = Rect::from_two_pos(start, p);
@@ -528,6 +528,28 @@ fn slot_badges(app: &FigApp, painter: &egui::Painter, doc: &Document, sel: &[Nod
     }
 }
 
+/// The instance an Alt-drop of a component from the Assets panel swaps: tinted and outlined in
+/// the component colour, with a "Swap instance" label above its top-left corner.
+fn swap_highlight(app: &FigApp, painter: &egui::Painter, doc: &Document, id: NodeId) {
+    let Some(q) = node_quad(app, doc, id) else { return };
+    // White on the component colour, in both themes (like the canvas's selection labels).
+    let ink = Color32::WHITE;
+    painter.add(Shape::convex_polygon(q.to_vec(), COMPONENT.gamma_multiply(0.12), Stroke::NONE));
+    quad(painter, q, stroke(COMPONENT, 2.0));
+    let galley = painter.layout_no_wrap("Swap instance".to_string(), semibold(10.0), ink);
+    let size = vec2(galley.size().x + 26.0, 18.0);
+    let top = Rect::from_points(&q).min;
+    let pill = Rect::from_min_size(pos2(top.x, top.y - size.y - 4.0), size);
+    painter.rect_filled(pill, CornerRadius::same(4), COMPONENT);
+    crate::icons::paint(
+        painter,
+        Rect::from_center_size(pos2(pill.min.x + 11.0, pill.center().y), vec2(10.0, 10.0)),
+        crate::icons::Icon::Instance,
+        ink,
+    );
+    painter.galley(pos2(pill.min.x + 20.0, pill.center().y - galley.size().y / 2.0), galley, ink);
+}
+
 /// The outline colour for a layer: purple for components, sets and instances and every layer in
 /// them, blue otherwise.
 fn outline_colour(doc: &Document, id: NodeId) -> Color32 {
@@ -578,8 +600,11 @@ fn outline_shape(app: &FigApp, doc: &Document, id: NodeId) -> Option<Vec<Vec<Pos
     Some(out)
 }
 
-fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
-    let Ok(ds) = app.session.ds() else { return };
+/// Everything drawn over the rendered page; returns the frame labels drawn (frame, corners on the
+/// page) for the engine to hit-test.
+fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [Point; 4])> {
+    let mut labels = Vec::new();
+    let Ok(ds) = app.session.ds() else { return labels };
     let doc = ds.doc.clone();
     let page = ds.page;
     let sel = ds.selection.clone();
@@ -608,8 +633,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     for c in &boards(&doc, page) {
         let Some(n) = doc.node(*c) else { continue };
         let Some(b) = doc.world_bounds(*c) else { continue };
-        // Off-screen frames draw neither grids nor a label (labels sit just above the frame).
-        let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand2(vec2(0.0, 20.0));
+        // Off-screen frames draw neither grids nor a label (labels sit just outside the frame).
+        let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand(20.0);
         if !on_screen.intersects(app.canvas.rect) {
             continue;
         }
@@ -630,50 +655,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             }
         }
         let labelled = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
-        if labelled {
-            let tl = app.to_screen(b.x0, b.y0);
-            let selected = sel.contains(c);
-            let hovered = ds.hover == Some(*c);
-            let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. });
-            let col = if is_comp {
-                COMPONENT
-            } else if selected || hovered {
-                ACCENT
-            } else {
-                t.text_secondary
-            };
-            if matches!(n.kind, NodeKind::Section { .. }) {
-                // Section titles are pills inside the top-left; a section hiding its contents shows
-                // an eye in its pill and says so in the middle.
-                let hidden = n.hides_contents();
-                let fg = if selected { Color32::WHITE } else { t.text };
-                let galley = crate::bidi::name_galley(painter, &n.name, semibold(11.0), fg, 480.0);
-                let eye = if hidden { 16.0 } else { 0.0 };
-                let r = Rect::from_min_size(tl, galley.size() + vec2(16.0 + eye, 8.0));
-                painter.rect_filled(r, CornerRadius::same(4), if selected { ACCENT } else { t.hover });
-                if hidden {
-                    let ir = Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(12.0, 12.0));
-                    crate::icons::paint(painter, ir, crate::icons::Icon::EyeOff, fg);
-                }
-                painter.galley(r.min + vec2(8.0 + eye, 4.0), galley, fg);
-                status_badge(painter, n, pos2(r.max.x + 6.0, r.center().y));
-                let body = Rect::from_two_pos(tl, app.to_screen(b.x1, b.y1));
-                if hidden && body.width() > 120.0 && body.height() > 60.0 {
-                    painter.text(body.center(), Align2::CENTER_CENTER, "Contents hidden", regular(11.0), t.text_tertiary);
-                }
-            } else {
-                let max_w = (b.width() * zoom) as f32;
-                let mut x = tl.x;
-                if is_comp {
-                    crate::icons::paint(painter, Rect::from_min_size(pos2(x, tl.y - 16.0), vec2(12.0, 12.0)), crate::icons::Icon::Component, col);
-                    x += 14.0;
-                }
-                // Names longer than the frame end in an ellipsis (a right-to-left name keeps its start).
-                let galley = crate::bidi::name_galley(painter, &n.name, regular(11.0), col, (max_w - (x - tl.x)).max(20.0));
-                let end = x + galley.size().x;
-                painter.galley(pos2(x, tl.y - 16.0), galley, col);
-                status_badge(painter, n, pos2(end + 6.0, tl.y - 9.0));
-            }
+        if labelled && let Some(q) = crate::frame_labels::draw(app, painter, t, &doc, *c, sel.contains(c), ds.hover == Some(*c)) {
+            labels.push((*c, q.map(|p| app.to_page(p))));
         }
     }
     // Prototype connections.
@@ -707,6 +690,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         quad(painter, q, stroke(if figcraft_engine::components::is_slot(&doc, d) { COMPONENT } else { ACCENT }, 1.0));
     }
     slot_badges(app, painter, &doc, &sel, ov.drop_target);
+    if let Some(t) = ov.swap_target {
+        swap_highlight(app, painter, &doc, t);
+    }
     if let Some([x0, y0, x1, y1]) = ov.insert_line {
         painter.line_segment([app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 2.0));
     }
@@ -877,6 +863,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     if view.rulers {
         rulers(app, painter, t, &doc, &sel);
     }
+    labels
 }
 
 /// A transform box (screen corners tl, tr, br, bl): its outline when `outline`, the first `handles`
@@ -1109,7 +1096,7 @@ fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
 
 /// A frame's or section's handoff status as a small pill left-centred on `at` ("Changed" once a
 /// ready-for-dev layer was edited).
-fn status_badge(painter: &egui::Painter, n: &figcraft_doc::Node, at: Pos2) {
+pub(crate) fn status_badge(painter: &egui::Painter, n: &figcraft_doc::Node, at: Pos2) {
     let (label, fill) = match n.dev_status {
         figcraft_doc::DevStatus::None => return,
         figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => ("Changed", crate::theme::DEV_CHANGED),

@@ -149,7 +149,10 @@ fn export_rows_add_step_up_and_update() {
     s.execute("export.update", &json!({"ids": [r], "index": 1, "size": "512w", "format": "webp", "suffix": "-wide"})).unwrap();
     s.execute("export.update", &json!({"ids": [r], "index": 2, "size": {"by": "height", "value": 64}, "format": "pdf"})).unwrap();
     let rows = exports(&s, r);
-    assert_eq!(rows[1], ExportSetting { size: ExportSize::Width { value: 512.0 }, suffix: "-wide".into(), format: ExportFormat::Webp });
+    assert_eq!(
+        rows[1],
+        ExportSetting { size: ExportSize::Width { value: 512.0 }, suffix: "-wide".into(), format: ExportFormat::Webp, ..Default::default() }
+    );
     assert_eq!((rows[2].size, rows[2].format), (ExportSize::Height { value: 64.0 }, ExportFormat::Pdf));
     for bad in [
         json!({"size": "0x"}),
@@ -223,7 +226,7 @@ fn export_sizes_parse_and_label() {
     for bad in ["", "x", "0x", "-1x", "NaNx", "infx", "65x", "20000w", "2q", "2xx"] {
         assert_eq!(ExportSize::parse(bad), None, "{bad}");
     }
-    let e = |size, suffix: &str, format| ExportSetting { size, suffix: suffix.into(), format };
+    let e = |size, suffix: &str, format| ExportSetting { size, suffix: suffix.into(), format, ..Default::default() };
     assert_eq!(e(ExportSize::Scale { value: 2.0 }, "", ExportFormat::Png).file_suffix(), "@2x");
     assert_eq!(e(ExportSize::Scale { value: 2.0 }, "", ExportFormat::Svg).file_suffix(), "");
     assert_eq!(e(ExportSize::Scale { value: 2.0 }, "-big", ExportFormat::Png).file_suffix(), "-big");

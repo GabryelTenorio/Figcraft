@@ -2,10 +2,9 @@
 
 use std::collections::HashMap;
 
-use figcraft_color::{BlendMode, Color, Gradient, GradientKind, ImagePaint, ImageScaleMode, Paint, PaintKind};
+use figcraft_color::{BlendMode, Gradient, GradientKind, ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::{Document, EffectKind, MaskType as DocMaskType, Node, NodeId, NodeKind, StrokeAlign};
 use figcraft_geom::{Affine, BezPath, Rect, Shape};
-use krilla::color::rgb;
 
 use crate::raster::Raster;
 use krilla::geom::{Path, PathBuilder, Size, Transform};
@@ -16,6 +15,7 @@ use krilla::paint::{Fill, FillRule, LinearGradient, Pattern, RadialGradient, Spr
 use krilla::surface::Surface;
 
 use crate::PdfOptions;
+use crate::print::Ink;
 
 /// Deepest node nesting drawn (the renderer's limit).
 pub(crate) const MAX_DEPTH: usize = 256;
@@ -35,6 +35,8 @@ pub(crate) struct Exporter<'a> {
     pub links: Vec<(Rect, String)>,
     /// Above zero while drawing into a soft mask (nothing there is visible or clickable).
     pub(crate) masking: usize,
+    /// The page's frame and the bleed its fills and clip reach out to.
+    pub bleed_root: Option<(NodeId, f64)>,
     pub(crate) fonts: HashMap<u32, Option<krilla::text::Font>>,
     images: HashMap<String, Option<(Image, u32, u32)>>,
 }
@@ -76,11 +78,6 @@ pub(crate) fn above<T: PartialOrd>(v: T, min: T) -> bool {
 pub(crate) fn norm(v: f32) -> NormalizedF32 {
     let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
     NormalizedF32::new(v).unwrap_or(NormalizedF32::ONE)
-}
-
-fn rgb(c: Color) -> rgb::Color {
-    let [r, g, b, _] = c.sanitized().to_rgba8();
-    rgb::Color::new(r, g, b)
 }
 
 /// The PDF blend mode for a non-normal blend (`None` = normal / pass through).
@@ -133,8 +130,9 @@ fn handle_frame(g: &Gradient, w: f64, h: f64) -> Affine {
     Affine::new([t.0 - f.0, t.1 - f.1, k.0 - f.0, k.1 - f.1, f.0, f.1])
 }
 
-/// A paint PDF can express directly (solid, linear, radial) on a w×h box, with its fill opacity.
-pub(crate) fn vector_paint(p: &Paint, w: f64, h: f64) -> Option<(krilla::paint::Paint, NormalizedF32)> {
+/// A paint PDF can express directly (solid, linear, radial) on a w×h box, in `ink`, with its fill
+/// opacity.
+pub(crate) fn vector_paint(p: &Paint, w: f64, h: f64, ink: Ink) -> Option<(krilla::paint::Paint, NormalizedF32)> {
     if !p.visible || !above(p.opacity, 0.0) {
         return None;
     }
@@ -142,7 +140,7 @@ pub(crate) fn vector_paint(p: &Paint, w: f64, h: f64) -> Option<(krilla::paint::
     match &p.kind {
         PaintKind::Solid { color } => {
             let a = color.a * op;
-            (a > 0.0).then(|| (rgb(*color).into(), norm(a)))
+            (a > 0.0).then(|| (ink.color(*color).into(), norm(a)))
         }
         PaintKind::Gradient(g) if matches!(g.kind, GradientKind::Linear | GradientKind::Radial) => {
             let frame = handle_frame(g, w.max(1e-6), h.max(1e-6));
@@ -152,7 +150,7 @@ pub(crate) fn vector_paint(p: &Paint, w: f64, h: f64) -> Option<(krilla::paint::
             let mut stops: Vec<Stop> = g
                 .sorted_stops()
                 .into_iter()
-                .map(|s| Stop { offset: norm(s.position), color: rgb(s.color).into(), opacity: norm(s.color.a * op) })
+                .map(|s| Stop { offset: norm(s.position), color: ink.color(s.color), opacity: norm(s.color.a * op) })
                 .collect();
             if stops.len() == 1
                 && let Some(only) = stops.first().cloned()
@@ -217,9 +215,16 @@ impl<'a> Exporter<'a> {
             page_ids: Vec::new(),
             links: Vec::new(),
             masking: 0,
+            bleed_root: None,
             fonts: HashMap::new(),
             images: HashMap::new(),
         }
+    }
+
+    /// The colour model of what's drawn now: CMYK when printing in it, but never in soft masks
+    /// (they aren't printed).
+    pub(crate) fn ink(&self) -> Ink {
+        if self.opts.print.cmyk && self.masking == 0 { Ink::Cmyk } else { Ink::Rgb }
     }
 
     /// Draw node `id`; `parent_xf` maps its parent's space to PDF page space. `as_mask` draws a
@@ -286,7 +291,13 @@ impl<'a> Exporter<'a> {
             NodeKind::Page { .. } | NodeKind::Group => self.children(s, n, xf, depth),
             NodeKind::Text(_) => crate::text::draw_text(self, s, n, xf, inner),
             _ => {
-                let outline = figcraft_render::node_outline(self.doc, n);
+                // The page's frame reaches out to the bleed (fills and clip; paints keep their box).
+                let outline = match self.bleed_root {
+                    Some((id, b)) if id == n.id && n.kind.is_frame_like() => {
+                        Some((Rect::new(-b, -b, w + b, h + b).to_path(0.1), figcraft_render::FillRule::Winding))
+                    }
+                    _ => figcraft_render::node_outline(self.doc, n),
+                };
                 let is_bool = matches!(n.kind, NodeKind::BooleanOp { .. });
                 let closed = figcraft_doc::geometry::is_closed(n) || is_bool;
                 if let Some((path, r)) = &outline
@@ -410,7 +421,7 @@ impl<'a> Exporter<'a> {
                 self.raster_paint(s, path, &kp, r, p, w, h, xf)
             }
             _ => {
-                if let Some((paint, opacity)) = vector_paint(p, w, h) {
+                if let Some((paint, opacity)) = vector_paint(p, w, h, self.ink()) {
                     s.set_fill(Some(Fill { paint, opacity, rule: r }));
                     s.draw_path(&kp);
                 }
@@ -424,7 +435,8 @@ impl<'a> Exporter<'a> {
 
     /// The PDF image for an image paint and its pixel size (cached per image + adjustments).
     fn image(&mut self, img: &ImagePaint) -> Option<(Image, u32, u32)> {
-        let key = format!("{}|{:?}", img.image, img.filters);
+        let ink = self.ink();
+        let key = format!("{}|{:?}|{ink:?}", img.image, img.filters);
         if let Some(i) = self.images.get(&key) {
             return i.clone();
         }
@@ -432,8 +444,8 @@ impl<'a> Exporter<'a> {
         // Decoding through the renderer checks the image is readable and applies adjustments.
         let made = figcraft_render::images::get(&img.image, data, &img.filters, self.doc.color_profile).map(|pm| {
             let (pw, ph) = (pm.width(), pm.height());
-            // Unadjusted images embed their original bytes (JPEG stays JPEG).
-            let original = data.filter(|_| img.filters.is_identity()).and_then(|d| {
+            // Unadjusted RGB images embed their original bytes (JPEG stays JPEG).
+            let original = data.filter(|_| img.filters.is_identity() && ink == Ink::Rgb).and_then(|d| {
                 let bytes = krilla::Data::from(d.bytes.clone());
                 match sniff(&d.bytes) {
                     Sniffed::Png => Image::from_png(bytes, true).ok(),
@@ -443,7 +455,7 @@ impl<'a> Exporter<'a> {
                     Sniffed::Other => None,
                 }
             });
-            let image = original.filter(|i| i.size() == (pw, ph)).unwrap_or_else(|| Image::from_rgba8(figcraft_render::to_rgba8(&pm), pw, ph));
+            let image = original.filter(|i| i.size() == (pw, ph)).unwrap_or_else(|| ink.bitmap(figcraft_render::to_rgba8(&pm), pw, ph));
             (image, pw, ph)
         });
         self.images.insert(key, made.clone());
@@ -507,7 +519,7 @@ impl<'a> Exporter<'a> {
         let Some(rect) = tiny_skia::Rect::from_xywh(bb.x0 as f32, bb.y0 as f32, bb.width() as f32, bb.height() as f32) else { return };
         pix.fill_rect(rect, &paint, tiny_skia::Transform::from_row(k as f32, 0.0, 0.0, k as f32, (-bb.x0 * k) as f32, (-bb.y0 * k) as f32), None);
         let Some(size) = Size::from_wh(pw as f32, ph as f32) else { return };
-        let image = Image::from_rgba8(figcraft_render::to_rgba8(&pix), pw, ph);
+        let image = self.ink().bitmap(figcraft_render::to_rgba8(&pix), pw, ph);
         s.push_clip_path(kp, &r);
         s.push_transform(&to_xf(Affine::translate((bb.x0, bb.y0)) * Affine::scale(1.0 / k)));
         s.draw_image(image, size);

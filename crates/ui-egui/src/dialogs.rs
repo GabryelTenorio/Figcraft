@@ -282,7 +282,8 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
     // With nothing selected, every layer on the page that has export settings.
     let with_settings = if sel.is_empty() { exportable_layers(&doc, page) } else { sel };
     let jobs = export_jobs(&doc, &with_settings);
-    let preset = |size: f64, format| ExportSetting { size: ExportSize::Scale { value: size }, suffix: String::new(), format };
+    let print = app.ui.pdf_print;
+    let preset = |size: f64, format| ExportSetting { size: ExportSize::Scale { value: size }, format, print, ..Default::default() };
     let presets = [
         preset(1.0, ExportFormat::Png),
         preset(2.0, ExportFormat::Png),
@@ -330,6 +331,12 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
             if resp.clicked() {
                 choice = Some(ExportChoice::Once(p.clone()));
             }
+        }
+        // The PDF preset's print options.
+        ui.add_space(6.0);
+        caption(ui, "PDF print options");
+        if let Some(next) = crate::export_panel::print_options(ui, egui::Id::new("export_dialog_print"), &print) {
+            app.ui.pdf_print = next;
         }
     });
     let close = choice.is_some() || !open;

@@ -68,8 +68,9 @@ fn used_components(doc: &Document, root: NodeId) -> BTreeSet<NodeId> {
             NodeKind::Component { props, .. } => {
                 for d in props.values() {
                     match d {
-                        PropDef::InstanceSwap { default } => {
+                        PropDef::InstanceSwap { default, preferred } => {
                             out.insert(*default);
+                            out.extend(preferred.iter().copied());
                         }
                         PropDef::Slot { preferred } => out.extend(preferred.iter().copied()),
                         _ => {}
@@ -687,13 +688,14 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
             }
         }
         NodeKind::Component { props, .. } => {
-            props.retain(|_, d| !matches!(d, PropDef::InstanceSwap { default } if !map.contains_key(default)));
+            props.retain(|_, d| !matches!(d, PropDef::InstanceSwap { default, .. } if !map.contains_key(default)));
             for d in props.values_mut() {
                 match d {
-                    PropDef::InstanceSwap { default } => {
+                    PropDef::InstanceSwap { default, preferred } => {
                         if let Some(l) = map.get(default) {
                             *default = *l;
                         }
+                        *preferred = preferred.iter().filter_map(|c| map.get(c).copied()).collect();
                     }
                     PropDef::Slot { preferred } => *preferred = preferred.iter().filter_map(|c| map.get(c).copied()).collect(),
                     _ => {}
@@ -954,7 +956,7 @@ pub fn merge_store(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, 
         return Ok(());
     }
     if other.library_store().is_some() {
-        merge_components(doc, other, map)?;
+        merge_components(doc, other, map, None)?;
     }
     let styles = new_records(&doc.libraries.styles, &other.libraries.styles, |l| doc.styles.iter().any(|s| s.id == l));
     let colls = new_records(&doc.libraries.collections, &other.libraries.collections, |l| doc.variables.collections.iter().any(|c| c.id == l));
@@ -971,11 +973,17 @@ pub fn merge_store(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, 
     Ok(())
 }
 
-/// The component copies of [`merge_store`].
-fn merge_components(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, NodeId>) -> Result<()> {
+/// The component copies of [`merge_store`] (only those rooted at `only` when given). Returns
+/// `other`'s ids of their layers → `doc`'s.
+fn merge_components(
+    doc: &mut Document,
+    other: &Document,
+    map: &BTreeMap<NodeId, NodeId>,
+    only: Option<&BTreeSet<NodeId>>,
+) -> Result<BTreeMap<NodeId, NodeId>> {
     let mut remote: BTreeMap<NodeId, NodeId> = BTreeMap::new();
     let mut fresh = Vec::new();
-    for r in other.libraries.components.iter().filter(|r| other.contains(r.root)) {
+    for r in other.libraries.components.iter().filter(|r| other.contains(r.root) && only.is_none_or(|o| o.contains(&r.root))) {
         match doc.libraries.components.iter().find(|m| m.library == r.library && m.key == r.key && doc.contains(m.root)) {
             Some(mine) => remote.extend(r.ids.iter().filter_map(|(lib, theirs)| mine.ids.get(lib).map(|l| (*theirs, *l)))),
             None => fresh.push(r.clone()),
@@ -1018,13 +1026,105 @@ fn merge_components(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId,
             n.source = source;
         }
     }
+    Ok(remote)
+}
+
+/// When layers copied from another document `src` are pasted into `doc` (`map`: their ids → the
+/// pasted ids), point the instances among them at mains of `doc`: library copies are shared with
+/// (or brought along as) `doc`'s copies of the same library assets; components `src` publishes as
+/// a library are used from that library (enabled when `src` is saved at `src_path`); other mains
+/// stay behind, so those instances show a missing main (restorable). Links into `src` that can't
+/// be followed never point at an unrelated layer of `doc`.
+pub fn adopt_pasted(doc: &mut Document, src: &Document, src_path: Option<&str>, map: &BTreeMap<NodeId, NodeId>) -> Result<()> {
+    // The mains the pasted instances show and offer as instance swap values (`src`'s ids).
+    let mut mains = BTreeSet::new();
+    for theirs in map.keys() {
+        let Some(NodeKind::Instance { component, props }) = src.node(*theirs).map(|n| &n.kind) else { continue };
+        mains.insert(*component);
+        for k in swap_props(src, *component) {
+            mains.extend(props.get(&k).and_then(id_of));
+        }
+    }
+    let roots: Vec<NodeId> = mains.iter().filter_map(|m| asset_root(src, *m)).collect::<BTreeSet<_>>().into_iter().collect();
+    let mut remote: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+    // Library copies: of this file's own library they are its own layers; of other libraries they
+    // join (or come along as) this file's copies.
+    let own = doc.published.as_ref().map(|p| p.manifest.id.clone());
+    let lib_roots: Vec<NodeId> = roots.iter().copied().filter(|r| src.is_remote(*r)).collect();
+    let mut foreign = BTreeSet::new();
+    for root in closure(src, &lib_roots) {
+        let Some(r) = src.libraries.import_of(root) else { continue };
+        if own.as_deref() == Some(r.library.as_str()) {
+            remote.extend(r.ids.iter().filter(|(lib, _)| doc.contains(**lib)).map(|(lib, theirs)| (*theirs, *lib)));
+        } else {
+            foreign.insert(root);
+            if doc.libraries.link(&r.library).is_none()
+                && let Some(l) = src.libraries.link(&r.library)
+            {
+                doc.libraries_mut().enabled.push(l.clone());
+            }
+        }
+    }
+    if !foreign.is_empty() {
+        remote.extend(merge_components(doc, src, &BTreeMap::new(), Some(&foreign))?);
+    }
+    // Components `src` publishes: from its library.
+    if let Some(lib) = src.published.as_ref().filter(|l| own.as_deref() != Some(l.manifest.id.as_str())) {
+        let keys: Vec<NodeId> =
+            roots.iter().copied().filter(|r| !src.is_remote(*r) && lib.manifest.component(*r).is_some() && lib.doc.contains(*r)).collect();
+        if !keys.is_empty() {
+            remote.extend(import(doc, lib, &keys, false)?);
+            let m = &lib.manifest;
+            if doc.libraries.link(&m.id).is_none()
+                && let Some(path) = src_path
+            {
+                doc.libraries_mut().enabled.push(LibraryLink { id: m.id.clone(), name: m.name.clone(), path: path.to_string(), version: m.version });
+            }
+        }
+    }
+    // Point the pasted layers at those mains; what stays behind gets ids of its own.
+    let mut behind: BTreeMap<NodeId, NodeId> = BTreeMap::new();
+    let mut follow = |doc: &mut Document, id: NodeId| -> NodeId {
+        if let Some(m) = map.get(&id).or_else(|| remote.get(&id)) {
+            return *m;
+        }
+        *behind.entry(id).or_insert_with(|| doc.alloc_id())
+    };
+    for (theirs, mine) in map {
+        let Some(n) = src.node(*theirs) else { continue };
+        let source = n.source.map(|s| follow(doc, s));
+        let kind = match &n.kind {
+            NodeKind::Instance { component, props } => {
+                let swaps = swap_props(src, *component);
+                let mut props = props.clone();
+                for k in swaps {
+                    match props.get(&k).and_then(id_of).and_then(|c| map.get(&c).or_else(|| remote.get(&c)).copied()) {
+                        Some(l) => {
+                            props.insert(k, Value::from(l.0));
+                        }
+                        None => {
+                            props.remove(&k);
+                        }
+                    }
+                }
+                Some(NodeKind::Instance { component: follow(doc, *component), props })
+            }
+            _ => None,
+        };
+        let Ok(m) = doc.get_mut(*mine) else { continue };
+        m.source = source;
+        if let Some(k) = kind {
+            m.kind = k;
+        }
+    }
     Ok(())
 }
 
 /// Refuse edits of library copies, except by library commands (and imports of other files,
 /// which bring their copies along).
 pub fn check_read_only(cmd: &str, before: &Document, after: &Document) -> std::result::Result<(), String> {
-    if cmd.starts_with("library.") || cmd == "file.import" {
+    // Pastes from other files bring the library copies their instances use.
+    if cmd.starts_with("library.") || cmd == "file.import" || cmd.starts_with("edit.paste") {
         return Ok(());
     }
     if !variables_unchanged(before, after) {

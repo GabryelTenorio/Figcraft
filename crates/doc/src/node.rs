@@ -43,8 +43,12 @@ pub enum PropDef {
     Text {
         default: String,
     },
+    /// A nested instance's main; `preferred` components (or sets) are offered first when
+    /// swapping it.
     InstanceSwap {
         default: NodeId,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        preferred: Vec<NodeId>,
     },
     Variant {
         options: Vec<String>,

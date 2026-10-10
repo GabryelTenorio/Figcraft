@@ -258,7 +258,8 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     }
 
     // List markers sit in a gutter and wrapped lines hang at the text start; paragraph indent
-    // applies to plain paragraphs only.
+    // applies to plain paragraphs only. Right-to-left paragraphs mirror both: the gutter and the
+    // indent are on the right, the text ends where they start.
     let marker_width = list_gutter(text.list, &chars, styles.first(), faces.first().cloned().flatten().as_ref());
     let indent = if text.list == ListStyle::None && text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
 
@@ -363,13 +364,24 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let line_indent = marker_width + if para_start_line { indent } else { 0.0 };
         let rtl_line = rtl_para_at(items.get(*s).map(|it| it.char_start).unwrap_or(0));
         let gstart = out.glyphs.len();
-        let mut pen = line_indent;
         // Justify: extra space per gap.
         let gaps = items.get(*s..vis_end).unwrap_or(&[]).iter().filter(|it| it.is_space()).count();
         let justify_extra = match (text.align_h, wrap) {
             (TextAlignH::Justified, Some(maxw)) if !para_end && gaps > 0 => ((maxw - line_indent - width) / gaps as f64).max(0.0),
             _ => 0.0,
         };
+        // Where the visible text ends once justified.
+        let text_end = width + justify_extra * gaps as f64;
+        // A right-to-left line's trailing spaces sit at its visual left (rule L1, below) and hang
+        // outside it, so its visible text spans [0, text_end] with the gutter and indent after it.
+        let trailing: f64 = items
+            .get(vis_end..*e)
+            .unwrap_or(&[])
+            .iter()
+            .filter(|it| it.ch != '\n')
+            .map(|it| it.adv + if it.is_space() { justify_extra } else { 0.0 })
+            .sum();
+        let mut pen = if rtl_line { -trailing } else { line_indent };
         // List marker (before the line's text; zero-length char range so carets skip it).
         if para_start_line && text.list != ListStyle::None {
             let marker = match text.list {
@@ -391,11 +403,17 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             if let (Some(st), Some((face, coords))) = (styles.get(st_idx), marker_face) {
                 let size = sanitize_size(st.font_size);
                 let k = size / face.upem;
-                // Numbers end at the same x; bullets start at the gutter's left edge.
-                let mut mx = if text.list == ListStyle::Numbered {
-                    (marker_width - size * 0.5 - marker_advance(&face, &coords, &marker, size)).max(0.0)
-                } else {
-                    0.0
+                let numbered = text.list == ListStyle::Numbered;
+                // Right to left, the number reads "1." with its full stop on the left (".1").
+                let marker = if rtl_line && numbered { format!(".{}", marker.trim_end_matches('.')) } else { marker };
+                let advance = marker_advance(&face, &coords, &marker, size);
+                // Numbers end (start, right to left) half an em from the text; bullets sit at the
+                // gutter's outer edge.
+                let mut mx = match (rtl_line, numbered) {
+                    (false, true) => (marker_width - size * 0.5 - advance).max(0.0),
+                    (false, false) => 0.0,
+                    (true, true) => text_end + size * 0.5,
+                    (true, false) => text_end + (marker_width - advance).max(0.0),
                 };
                 for c in marker.chars() {
                     let gid = face.glyph_for(c);

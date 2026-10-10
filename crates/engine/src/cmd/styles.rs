@@ -651,11 +651,19 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Write bound variable values into nodes (called during normalisation).
 pub fn apply_bindings(doc: &mut Document) {
+    apply_bindings_to(doc, None);
+}
+
+/// [`apply_bindings`] for the layers `only` (every bound layer when `None`).
+pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTreeSet<NodeId>>) {
     use super::lists::{BoundList, list_binding};
     if doc.variables.variables.is_empty() {
         return;
     }
-    let bound: Vec<NodeId> = doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect();
+    let bound: Vec<NodeId> = match only {
+        Some(ids) => ids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| !n.bound.is_empty())).collect(),
+        None => doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect(),
+    };
     for id in bound {
         let modes = doc.modes_for(id);
         let Some(n) = doc.node(id) else { continue };
@@ -696,7 +704,20 @@ pub fn apply_bindings(doc: &mut Document) {
             sets.insert(field, jv);
         }
         if !sets.is_empty() {
+            // Most bound values are already in place: leave those layers untouched (shared with the
+            // undo snapshots, and not re-synced or re-laid out as edited).
+            let old = doc.node_arc(id).cloned();
+            let was_dirty = doc.dirty().contains(&id);
             let _ = super::props::apply("variables", doc, id, &sets);
+            if let Some(old) = old {
+                // A value a variable gives a layer of an instance is no override.
+                if doc.node(id).is_some_and(|n| n.overrides != old.overrides)
+                    && let Ok(n) = doc.get_mut(id)
+                {
+                    n.overrides = old.overrides.clone();
+                }
+                doc.keep_if_unchanged(old, was_dirty);
+            }
         }
         if !paint_sets.is_empty() {
             apply_paint_bindings(doc, id, &paint_sets);

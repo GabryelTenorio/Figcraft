@@ -437,7 +437,7 @@ fn components_sets_instances_and_properties() {
     let NodeKind::Component { description, props } = &def.kind else { panic!() };
     assert_eq!(description, "Primary button");
     assert_eq!(props.get("Label"), Some(&PropDef::Text { default: "OK".into() }), "{props:?}");
-    assert_eq!(props.get("Icon"), Some(&PropDef::InstanceSwap { default: icon.id }));
+    assert_eq!(props.get("Icon"), Some(&PropDef::InstanceSwap { default: icon.id, preferred: Vec::new() }));
     assert!(!props.contains_key("State"), "variant properties come from the variant names");
     let NodeKind::Component { props: hover_props, .. } = &named(&doc, "State=Hover").kind else { panic!() };
     assert!(hover_props.contains_key("Label"), "variants share the set's definitions");

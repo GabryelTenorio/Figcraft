@@ -90,7 +90,9 @@ the system's accessibility setting turns the interface's animations off.
 
 A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `double`, `hover`,
 `drag` (needs `to: [x, y]`; `steps` intermediate moves, default 8). Position in page coordinates
-(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`.
+(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`. With the Move and Scale
+tools, a press on a frame's or section's name label (as the canvas last drew it, along a rotated
+frame's top edge) selects and drags that frame.
 
 ```json
 {"id":4,"method":"engine.execute","params":{"command":"tool.set","params":{"tool":"ellipse"}}}
@@ -120,8 +122,11 @@ popovers and fields (`ui.pointer` and `ui.key` drive the canvas tools and shortc
 `{up: [x, y], button?}`, `{key, shift?, alt?, cmd?}` (pressed and released; egui key names such as
 `ArrowLeft`, `Escape`, `A`), `{text}` (typed text), `{scroll: [dx, dy], shift?, alt?, cmd?}` (a
 mouse wheel at the pointer: the content moves by that many points, so a negative `dy` scrolls down)
-and `{leave: true}` (the pointer left the window); positions are window points. Events of one call arrive in the same frame, so send a press
-and its release (or a double-click's two clicks) as separate calls. Returns `{queued}`.
+`{leave: true}` (the pointer left the window) and `{hold: {alt?, shift?, cmd?}}` (keep those modifier
+keys down for the frames that follow, e.g. Alt while dragging a component from the Assets panel onto
+an instance to swap it; all false releases them); positions are window points. Events of one call
+arrive in the same frame, so send a press and its release (or a double-click's two clicks) as
+separate calls. Returns `{queued}`.
 
 ```json
 {"id":6,"method":"ui.input","params":{"events":[{"move":[1000,315]}]}}

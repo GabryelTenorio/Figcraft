@@ -197,6 +197,21 @@ impl Document {
         n
     }
 
+    /// Undo a write that changed nothing: when node `old.id` equals `old` by value, `old` goes back
+    /// in its place (shared with the snapshots holding it again) and, unless `was_dirty`, the node
+    /// leaves the dirty set. Returns whether it did.
+    pub fn keep_if_unchanged(&mut self, old: Arc<Node>, was_dirty: bool) -> bool {
+        let id = old.id;
+        let same = self.nodes.get(&id).is_some_and(|n| Arc::ptr_eq(n, &old) || **n == *old);
+        if same {
+            self.nodes.insert(id, old);
+            if !was_dirty {
+                self.dirty.0.remove(&id);
+            }
+        }
+        same
+    }
+
     pub fn get(&self, id: NodeId) -> DocResult<&Node> {
         self.node(id).ok_or(DocError::NoNode(id))
     }
@@ -848,6 +863,8 @@ mod colors_tests;
 mod diff_tests;
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod print_tests;
 #[cfg(test)]
 mod proto_expr_parse_tests;
 #[cfg(test)]

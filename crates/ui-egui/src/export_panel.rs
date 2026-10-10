@@ -1,13 +1,14 @@
 //! Exporting: the Design panel's Export section (a row per export setting with size, suffix and
-//! format, a preview, and "Export N layers"), the page's Export button, and the export actions
-//! the Export dialog shares. Every change runs an `export.*` or `file.export*` command.
+//! format, PDF print settings, a preview, and "Export N layers"), the page's Export button, and the
+//! export actions and print options the Export dialog shares. Every change runs an `export.*` or
+//! `file.export*` command.
 
 use std::collections::BTreeSet;
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::*;
 use figcraft_engine::cmd::file::export_jobs;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
@@ -58,7 +59,8 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
 }
 
-/// One export setting: size (typed or picked), suffix, format and remove.
+/// One export setting: size (typed or picked), suffix, format and remove; a PDF's print settings
+/// under it.
 fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &ExportSetting) {
     row(ui, 32.0, |ui| {
         let (size_w, format_w, gap) = (56.0, 60.0, ui.spacing().item_spacing.x);
@@ -88,6 +90,99 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
             app.run("export.remove", json!({"ids": ids, "index": i}));
         }
     });
+    if e.format == ExportFormat::Pdf {
+        print_row(app, ui, ids, i, &e.print);
+    }
+}
+
+/// A PDF setting's print settings: a summary row that opens them.
+fn print_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &PrintSettings) {
+    let t = Tokens::get(ui.ctx());
+    row(ui, 26.0, |ui| {
+        let open_id = Id::new(("export_print", i));
+        let open = egui::Popup::is_id_open(ui.ctx(), open_id);
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), FIELD_H), Sense::click());
+        if resp.hovered() || open {
+            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        }
+        let label = ui.painter().layout(print_summary(p), regular(11.0), t.text_secondary, r.width() - 32.0);
+        ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - label.size().y / 2.0), label, t.text_secondary);
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(14.0, 14.0)), Icon::Dots, t.icon_secondary);
+        egui::Popup::from_toggle_button_response(&resp.on_hover_text("PDF print settings"))
+            .id(open_id)
+            .width(216.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                if let Some(next) = print_options(ui, Id::new(("export_print_fields", i)), p) {
+                    let mut params = print_params(&next);
+                    params["ids"] = json!(ids);
+                    params["index"] = json!(i);
+                    app.run("export.update", params);
+                }
+            });
+    });
+}
+
+/// "3 mm bleed, crop marks, CMYK" (or "RGB, no bleed").
+fn print_summary(p: &PrintSettings) -> String {
+    let mut parts = Vec::new();
+    if p.bleed() > 0.0 {
+        parts.push(format!("{} bleed", PrintSettings::length_label(p.bleed())));
+    }
+    if p.crop_marks {
+        parts.push("crop marks".to_string());
+    }
+    if p.bleed_marks && p.bleed() > 0.0 {
+        parts.push("bleed marks".to_string());
+    }
+    parts.push(if p.cmyk { "CMYK" } else { "RGB" }.to_string());
+    if p.bleed() <= 0.0 && !p.marks() {
+        parts.push("no bleed".to_string());
+    }
+    let s = parts.join(", ");
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or(s)
+}
+
+/// PDF print options: bleed (typed with a unit: "3 mm", "0.125 in", "9 pt"; anything else keeps
+/// the bleed), crop and bleed marks, CMYK colour. Returns the options when one changed.
+pub(crate) fn print_options(ui: &mut Ui, id: Id, p: &PrintSettings) -> Option<PrintSettings> {
+    let t = Tokens::get(ui.ctx());
+    let mut next = *p;
+    ui.horizontal(|ui| {
+        widgets::label(ui, "Bleed", t.text_secondary);
+        let w = (ui.available_width() - 4.0).max(48.0);
+        if let Some(b) = widgets::text_field(ui, id.with("bleed"), &PrintSettings::length_label(p.bleed()), w, "0 mm")
+            .and_then(|v| PrintSettings::parse_length(&v))
+            .filter(|b| *b <= PrintSettings::MAX_BLEED)
+        {
+            next.bleed = b;
+        }
+    });
+    for (on, label) in [(&mut next.crop_marks, "Crop marks"), (&mut next.bleed_marks, "Bleed marks"), (&mut next.cmyk, "CMYK colour")] {
+        if widgets::checkbox(ui, *on, label) {
+            *on = !*on;
+        }
+    }
+    if p.bleed_marks && p.bleed() <= 0.0 {
+        widgets::label(ui, "Bleed marks need a bleed", t.text_secondary);
+    }
+    (next != *p).then_some(next)
+}
+
+/// Print options as command params (`bleed`, `cropMarks`, `bleedMarks`, `cmyk`).
+fn print_params(p: &PrintSettings) -> Value {
+    json!({"bleed": p.bleed(), "cropMarks": p.crop_marks, "bleedMarks": p.bleed_marks, "cmyk": p.cmyk})
+}
+
+/// `params` with the setting's print options added (PDF exports).
+fn with_print(mut params: Value, setting: &ExportSetting) -> Value {
+    if setting.format == ExportFormat::Pdf
+        && let (Value::Object(m), Value::Object(p)) = (&mut params, print_params(&setting.print))
+    {
+        m.extend(p);
+    }
+    params
 }
 
 /// The rendered preview, cached per layer and document revision.
@@ -196,7 +291,7 @@ pub(crate) fn save_one(app: &mut FigApp, ids: &[NodeId], setting: &ExportSetting
     let ext = setting.format.ext();
     let Some(p) = app.services.pick_save("Export", file, &[ext]) else { return };
     let path = p.to_string_lossy().to_string();
-    if app.run("file.export", json!({"ids": ids, "format": ext, "size": setting.size, "path": path})).is_some() {
+    if app.run("file.export", with_print(json!({"ids": ids, "format": ext, "size": setting.size, "path": path}), setting)).is_some() {
         app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
     }
 }

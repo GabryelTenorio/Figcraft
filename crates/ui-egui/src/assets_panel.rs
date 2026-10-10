@@ -1,8 +1,12 @@
 //! The Assets tab: components as thumbnail tiles (search, click to place, drag onto the canvas to
-//! drop an instance into the frame or auto layout slot under the pointer) and styles (click to
-//! apply to the selection), for this file and for every enabled library, with a "Library updates
-//! available" banner. The libraries view publishes this file as a library and enables library
-//! files.
+//! drop an instance into the frame or auto layout slot under the pointer, or with Alt held onto an
+//! instance to swap it) and styles (click to apply to the selection), for this file and for every
+//! enabled library, with a "Library updates available" banner. The libraries view publishes this
+//! file as a library and enables library files.
+//!
+//! Thousands of assets stay smooth: only the tiles in view are laid out, and thumbnails render
+//! when their tile first shows (a few per frame), are cached, and re-render only when their
+//! component's layers change (compared by the document's shared layer snapshots).
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -19,9 +23,15 @@ use crate::icons::{self, Icon};
 use crate::theme::{COMPONENT, Tokens, regular, semibold};
 
 const TILE_LABEL: f32 = 22.0;
+const TILE_GAP: f32 = 8.0;
 /// Re-check thumbnails at most this often (seconds) while the document changes.
 const THUMB_REFRESH: f64 = 0.4;
-const MAX_THUMBS: usize = 200;
+/// Thumbnails kept (those out of view go first beyond this).
+const MAX_THUMBS: usize = 600;
+/// Thumbnails rendered per frame (the rest follow on the next frames).
+const THUMBS_PER_FRAME: usize = 8;
+/// Layers compared per component when checking whether its thumbnail is stale.
+const MAX_COMPARED: usize = 20_000;
 /// Look for changed library files this often (seconds) while the panel shows.
 const LIBRARY_REFRESH: f64 = 2.0;
 const PAD: f32 = 16.0;
@@ -74,12 +84,13 @@ struct Listing {
     updates: usize,
 }
 
-/// Rendered thumbnails keyed by source and component, with the fingerprint they were made from.
+/// Rendered thumbnails keyed by source and component (None: it renders to nothing), and the
+/// documents they were rendered from (this file's, each library's snapshot).
 #[derive(Clone, Default)]
 struct Thumbs {
-    map: HashMap<(Source, NodeId), (u64, Option<egui::TextureHandle>)>,
+    map: HashMap<(Source, NodeId), Option<egui::TextureHandle>>,
+    docs: HashMap<Source, Arc<Document>>,
     checked_at: f64,
-    key: (u64, u64),
 }
 
 /// A component being dragged out of the panel.
@@ -102,23 +113,25 @@ fn drag_id() -> Id {
     Id::new("asset_drag")
 }
 
-/// Content fingerprint of a layer subtree (re-render its thumbnail when it changes).
-fn fingerprint(doc: &Document, id: NodeId) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+/// Whether component `id` has the same layers in two versions of a document (layers an edit
+/// didn't touch stay shared between the versions, so this compares pointers, not contents).
+fn same_layers(a: &Document, b: &Document, id: NodeId) -> bool {
     let mut stack = vec![id];
-    let mut n = 0;
+    let mut seen = 0;
     while let Some(i) = stack.pop() {
-        n += 1;
-        if n > 5000 {
-            break;
+        seen += 1;
+        if seen > MAX_COMPARED {
+            return false;
         }
-        let Some(node) = doc.node(i) else { continue };
-        if let Ok(bytes) = serde_json::to_vec(node) {
-            bytes.hash(&mut h);
+        match (a.node_arc(i), b.node_arc(i)) {
+            (Some(x), Some(y)) if Arc::ptr_eq(x, y) => {}
+            _ => return false,
         }
-        stack.extend(node.children.iter().copied());
+        if let Some(n) = b.node(i) {
+            stack.extend(n.children.iter().copied());
+        }
     }
-    h.finish()
+    true
 }
 
 pub(crate) fn thumbnail(ctx: &egui::Context, doc: &Document, id: NodeId, px: f32) -> Option<egui::TextureHandle> {
@@ -308,16 +321,25 @@ fn hint(ui: &mut Ui, text: &str) {
     ui.painter().galley(pos2(r.min.x + PAD, r.min.y + 2.0), galley, t.text_secondary);
 }
 
-/// Two-column thumbnail tiles.
-fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, act: &mut Option<Act>) {
+/// Two-column thumbnail tiles; only the rows in view are laid out. The tiles in (and next to) the
+/// view go to `wanted` for their thumbnails.
+fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, wanted: &mut Vec<(Source, NodeId)>, act: &mut Option<Act>) {
     let t = Tokens::get(ui.ctx());
-    let gap = 8.0;
-    let tile = ((w - PAD * 2.0 - gap) / 2.0).max(40.0);
-    for pair in list.chunks(2) {
-        let (row, _) = ui.allocate_exact_size(vec2(w, tile + TILE_LABEL + gap), Sense::hover());
-        for (k, item) in pair.iter().enumerate() {
-            let x = row.min.x + PAD + k as f32 * (tile + gap);
-            let r = Rect::from_min_size(pos2(x, row.min.y), vec2(tile, tile));
+    let tile = ((w - PAD * 2.0 - TILE_GAP) / 2.0).max(40.0);
+    let row_h = tile + TILE_LABEL + TILE_GAP;
+    let rows = list.len().div_ceil(2);
+    let (all, _) = ui.allocate_exact_size(vec2(w, rows as f32 * row_h), Sense::hover());
+    let clip = ui.clip_rect();
+    let first = (((clip.min.y - all.min.y) / row_h).floor().max(0.0) as usize).min(rows);
+    let last = (((clip.max.y - all.min.y) / row_h).ceil().max(0.0) as usize).min(rows);
+    // Thumbnails for one row more on each side, so scrolling finds them ready.
+    let near = first.saturating_sub(1)..(last + 1).min(rows);
+    wanted.extend(list.iter().skip(near.start * 2).take((near.end - near.start) * 2).map(|i| (src.clone(), i.id)));
+    for row in first..last {
+        let y = all.min.y + row as f32 * row_h;
+        for (k, item) in list.iter().skip(row * 2).take(2).enumerate() {
+            let x = all.min.x + PAD + k as f32 * (tile + TILE_GAP);
+            let r = Rect::from_min_size(pos2(x, y), vec2(tile, tile));
             let resp = ui.interact(
                 r.union(Rect::from_min_size(r.left_bottom(), vec2(tile, TILE_LABEL))),
                 Id::new(("asset", src, item.id.0)),
@@ -327,7 +349,7 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, act:
             if resp.hovered() {
                 ui.painter().rect_stroke(r, CornerRadius::same(6), Stroke::new(1.0, COMPONENT), egui::StrokeKind::Inside);
             }
-            match thumbs.map.get(&(src.clone(), item.id)).and_then(|(_, tex)| tex.as_ref()) {
+            match thumbs.map.get(&(src.clone(), item.id)).and_then(Option::as_ref) {
                 Some(tex) => {
                     let size = tex.size_vec2();
                     // Fit the tile, never past 1:1 physical pixels (small components stay crisp).
@@ -345,7 +367,10 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, act:
             }
             let label = Rect::from_min_size(pos2(x, r.max.y + 2.0), vec2(tile, TILE_LABEL - 4.0));
             crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.name, regular(11.0), t.text, tile);
-            let resp = resp.on_hover_text(format!("{}\nDrag onto the canvas, or click to place in the middle of the view", item.name));
+            let resp = resp.on_hover_text(format!(
+                "{}\nDrag onto the canvas, or click to place in the middle of the view.\nHold Alt (Option) while dropping onto an instance to swap it.",
+                item.name
+            ));
             if resp.drag_started() {
                 *act = Some(Act::Drag(AssetDrag { src: src.clone(), component: item.id, set: item.set }));
             }
@@ -386,45 +411,56 @@ fn style_rows(ui: &mut Ui, w: f32, src: &Source, list: &[StyleRow], act: &mut Op
     }
 }
 
-/// Render missing thumbnails now; re-check changed ones (throttled while the document changes).
-fn update_thumbs(ui: &Ui, w: f32, doc: &Document, revision: u64, listing: &Listing, thumbs: &mut Thumbs) {
-    let mut live: Vec<(Source, NodeId, &Document)> = listing.local.iter().map(|t| (Source::Local, t.id, doc)).collect();
-    for sec in &listing.libraries {
-        if let Some(d) = &sec.doc {
-            live.extend(sec.tiles.iter().map(|t| (Source::Library(sec.id.clone()), t.id, d.as_ref())));
-        }
-    }
-    live.truncate(MAX_THUMBS);
+/// Drop the thumbnails whose components changed since they were rendered: this file's are
+/// re-checked at most every [`THUMB_REFRESH`] seconds while it changes, a library's all go when its
+/// file is read again.
+fn invalidate_thumbs(ui: &Ui, thumbs: &mut Thumbs, current: &[(Source, Arc<Document>)]) {
     let now = ui.input(|i| i.time);
-    let key = (revision, listing.key.2);
-    let changed = thumbs.key != key;
-    let due = changed && now - thumbs.checked_at >= THUMB_REFRESH;
-    let missing = live.iter().any(|(s, id, _)| !thumbs.map.contains_key(&(s.clone(), *id)));
-    if !(due || missing) {
-        if changed {
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(THUMB_REFRESH));
-        }
-        return;
-    }
-    let px = ((w - 40.0) / 2.0).max(32.0) * ui.ctx().pixels_per_point();
-    if due {
-        let keep: HashSet<(Source, NodeId)> = live.iter().map(|(s, id, _)| (s.clone(), *id)).collect();
-        thumbs.map.retain(|k, _| keep.contains(k));
-        thumbs.checked_at = now;
-        thumbs.key = key;
-    }
-    for (src, id, d) in live {
-        let k = (src, id);
-        if !due && thumbs.map.contains_key(&k) {
+    for (src, doc) in current {
+        let Some(old) = thumbs.docs.get(src).cloned() else {
+            thumbs.docs.insert(src.clone(), doc.clone());
+            continue;
+        };
+        if Arc::ptr_eq(&old, doc) {
             continue;
         }
-        // Library snapshots only change when the file is read again.
-        let f = match &k.0 {
-            Source::Local => fingerprint(d, id),
-            Source::Library(_) => std::ptr::from_ref(d) as usize as u64,
-        };
-        if thumbs.map.get(&k).is_none_or(|(old, _)| *old != f) {
-            thumbs.map.insert(k, (f, thumbnail(ui.ctx(), d, id, px)));
+        match src {
+            Source::Local if now - thumbs.checked_at < THUMB_REFRESH => {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(THUMB_REFRESH));
+                continue;
+            }
+            Source::Local => {
+                thumbs.checked_at = now;
+                thumbs.map.retain(|(s, id), _| *s != Source::Local || same_layers(&old, doc, *id));
+            }
+            Source::Library(_) => thumbs.map.retain(|(s, _), _| s != src),
+        }
+        thumbs.docs.insert(src.clone(), doc.clone());
+    }
+}
+
+/// Render the missing thumbnails of `wanted` (a few per frame; the rest follow), and keep the
+/// cache bounded, dropping thumbnails out of view first.
+fn render_thumbs(ui: &Ui, w: f32, thumbs: &mut Thumbs, wanted: &[(Source, NodeId)]) {
+    let px = ((w - PAD * 2.0 - TILE_GAP) / 2.0).max(32.0) * ui.ctx().pixels_per_point();
+    let mut rendered = 0;
+    for key in wanted {
+        if thumbs.map.contains_key(key) {
+            continue;
+        }
+        if rendered >= THUMBS_PER_FRAME {
+            ui.ctx().request_repaint();
+            break;
+        }
+        let Some(doc) = thumbs.docs.get(&key.0).cloned() else { continue };
+        thumbs.map.insert(key.clone(), thumbnail(ui.ctx(), &doc, key.1, px));
+        rendered += 1;
+    }
+    if thumbs.map.len() > MAX_THUMBS {
+        let keep: HashSet<&(Source, NodeId)> = wanted.iter().collect();
+        let extra: Vec<(Source, NodeId)> = thumbs.map.keys().filter(|k| !keep.contains(k)).take(thumbs.map.len() - MAX_THUMBS).cloned().collect();
+        for k in extra {
+            thumbs.map.remove(&k);
         }
     }
 }
@@ -454,7 +490,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         updates_banner(app, ui, w, listing.updates);
     }
     let mut thumbs: Thumbs = ui.data(|d| d.get_temp(Id::new("asset_thumbs"))).unwrap_or_default();
-    update_thumbs(ui, w, &doc, revision, &listing, &mut thumbs);
+    let mut sources: Vec<(Source, Arc<Document>)> = vec![(Source::Local, doc.clone())];
+    sources.extend(listing.libraries.iter().filter_map(|l| l.doc.clone().map(|d| (Source::Library(l.id.clone()), d))));
+    invalidate_thumbs(ui, &mut thumbs, &sources);
+    let mut wanted = Vec::new();
     let collapsed_id = Id::new("asset_collapsed_libraries");
     let collapsed: HashSet<String> = ui.data(|d| d.get_temp(collapsed_id)).unwrap_or_default();
     let mut act = None;
@@ -468,7 +507,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 hint(ui, "No matching components");
             }
         }
-        tiles(ui, w, &Source::Local, &listing.local, &thumbs, &mut act);
+        tiles(ui, w, &Source::Local, &listing.local, &thumbs, &mut wanted, &mut act);
         crate::widgets::separator(ui);
         ui.add_space(4.0);
         title(ui, w, "Local styles");
@@ -495,12 +534,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 continue;
             }
             let src = Source::Library(sec.id.clone());
-            tiles(ui, w, &src, &sec.tiles, &thumbs, &mut act);
+            tiles(ui, w, &src, &sec.tiles, &thumbs, &mut wanted, &mut act);
             style_rows(ui, w, &src, &sec.styles, &mut act);
         }
     });
+    render_thumbs(ui, w, &mut thumbs, &wanted);
     let drag = ui.data(|d| d.get_temp::<AssetDrag>(drag_id()));
-    let tex = drag.as_ref().and_then(|d| thumbs.map.get(&(d.src.clone(), d.component)).and_then(|(_, t)| t.clone()));
+    let tex = drag.as_ref().and_then(|d| thumbs.map.get(&(d.src.clone(), d.component)).cloned().flatten());
     ui.data_mut(|d| d.insert_temp(Id::new("asset_thumbs"), thumbs));
     match act {
         Some(Act::Drag(d)) => ui.data_mut(|m| {
@@ -520,7 +560,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         }
         None => {}
     }
-    drag_feedback(app, ui, &doc, tex);
+    let libs: HashMap<String, Arc<Document>> = listing.libraries.iter().filter_map(|l| l.doc.clone().map(|d| (l.id.clone(), d))).collect();
+    drag_feedback(app, ui, &doc, &libs, tex);
 }
 
 /// Place component `id` of `src` centred on page point (`x`, `y`).
@@ -542,18 +583,45 @@ fn apply_style(app: &mut FigApp, src: &Source, style: &str) {
     };
 }
 
+/// Swap the instance at page point (`x`, `y`) to component `id` of `src`.
+fn swap_at(app: &mut FigApp, src: &Source, id: NodeId, x: f64, y: f64) {
+    match src {
+        Source::Local => app.run("instance.swapAt", json!({"component": id, "x": x, "y": y})),
+        Source::Library(lib) => app.run("library.swapAt", json!({"library": lib, "component": id, "x": x, "y": y})),
+    };
+}
+
+/// The component set (by name) a dragged asset belongs to, in the document it comes from: the
+/// instances an Alt-drop prefers to swap. A set's tile is its own family.
+fn drag_family(doc: &Document, libs: &HashMap<String, Arc<Document>>, drag: &AssetDrag) -> Option<String> {
+    let d = match &drag.src {
+        Source::Local => doc,
+        Source::Library(lib) => libs.get(lib)?.as_ref(),
+    };
+    let n = d.node(drag.component)?;
+    if matches!(n.kind, NodeKind::ComponentSet { .. }) {
+        return Some(n.name.clone());
+    }
+    figcraft_engine::drop::swap_family(d, drag.component)
+}
+
 /// While a component is dragged: a ghost at the pointer and, over the canvas, the frame or auto
-/// layout slot it would drop into. Releasing over the canvas places the instance.
-fn drag_feedback(app: &mut FigApp, ui: &mut Ui, doc: &Document, tex: Option<egui::TextureHandle>) {
+/// layout slot it would drop into, or with Alt held the instance it would swap. Releasing over the
+/// canvas places the instance (or swaps that one).
+fn drag_feedback(app: &mut FigApp, ui: &mut Ui, doc: &Document, libs: &HashMap<String, Arc<Document>>, tex: Option<egui::TextureHandle>) {
     let Some(drag) = ui.data(|d| d.get_temp::<AssetDrag>(drag_id())) else { return };
-    let (pointer, released) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.any_released()));
+    let (pointer, released, alt) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.any_released(), i.modifiers.alt));
     let over_canvas = pointer.filter(|p| app.canvas.rect.contains(*p));
     let page = app.session.ds().map(|d| d.page).ok();
-    let slot = over_canvas.zip(page).map(|(p, page)| {
-        let pt = app.to_page(p);
-        (pt, figcraft_engine::drop::slot(doc, page, pt))
+    let at = over_canvas.zip(page).map(|(p, page)| (app.to_page(p), page));
+    // With Alt: the instance under the pointer (never one inside the dragged component itself).
+    let swap = at.filter(|_| alt).and_then(|(pt, page)| {
+        let own = matches!(drag.src, Source::Local).then_some(drag.component);
+        figcraft_engine::drop::swap_target(doc, page, pt, drag_family(doc, libs, &drag).as_deref(), own)
     });
+    let slot = at.filter(|_| swap.is_none()).map(|(pt, page)| (pt, figcraft_engine::drop::slot(doc, page, pt)));
     let ov = &mut app.session.tool.overlay;
+    ov.swap_target = swap;
     ov.drop_target = slot.as_ref().and_then(|(_, s)| (Some(s.parent) != page).then_some(s.parent));
     ov.insert_line = slot.as_ref().and_then(|(_, s)| s.line);
     if let Some(p) = pointer {
@@ -564,8 +632,11 @@ fn drag_feedback(app: &mut FigApp, ui: &mut Ui, doc: &Document, tex: Option<egui
         let ov = &mut app.session.tool.overlay;
         ov.drop_target = None;
         ov.insert_line = None;
-        if let Some((pt, _)) = slot {
-            place(app, &drag.src, drag.component, pt.x, pt.y);
+        ov.swap_target = None;
+        match (swap, at, slot) {
+            (Some(_), Some((pt, _)), _) => swap_at(app, &drag.src, drag.component, pt.x, pt.y),
+            (None, _, Some((pt, _))) => place(app, &drag.src, drag.component, pt.x, pt.y),
+            _ => {}
         }
     }
     ui.ctx().request_repaint();
@@ -773,4 +844,13 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
             app.toast(format!("Added the library \"{}\"", r["name"].as_str().unwrap_or_default()));
         }
     }
+}
+
+/// Tests: the components whose thumbnails are cached (for this file's assets).
+#[cfg(test)]
+pub(crate) fn cached_thumbnails(ctx: &egui::Context) -> Vec<NodeId> {
+    let thumbs: Thumbs = ctx.data(|d| d.get_temp(Id::new("asset_thumbs"))).unwrap_or_default();
+    let mut out: Vec<NodeId> = thumbs.map.keys().filter(|(s, _)| *s == Source::Local).map(|(_, id)| *id).collect();
+    out.sort();
+    out
 }

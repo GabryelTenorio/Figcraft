@@ -13,11 +13,12 @@
 //! mode), background blur and glass from a render of what lies under the layer among the exported
 //! layers, and layers with texture or a progressive layer blur whole.
 //!
-//! Import (via usvg) turns an SVG file into a frame of vector nodes.
+//! Import (via usvg) turns an SVG file into an editable frame: groups, shapes, text, gradients,
+//! masks and effects (see [`import_svg_with_notes`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod import;
-pub use import::{ImportError, import_svg};
+pub use import::{ImportError, Imported, import_svg, import_svg_with_notes, looks_like_svg};
 
 use std::fmt::Write as _;
 
@@ -57,6 +58,8 @@ struct W<'a> {
     body: String,
     next: u32,
     opts: &'a SvgOptions,
+    /// The mask layer being drawn as a mask's content (drawn like any layer, not skipped).
+    mask: Option<NodeId>,
 }
 
 fn num(v: f64) -> String {
@@ -270,7 +273,7 @@ impl W<'_> {
             return;
         }
         let Some(n) = self.doc.node(id) else { return };
-        if !n.visible || n.is_mask {
+        if !n.visible || (n.is_mask && self.mask != Some(id)) {
             return;
         }
         let xf = xf * n.transform;
@@ -342,17 +345,33 @@ impl W<'_> {
             while i < kids.len() {
                 let Some(&c) = kids.get(i) else { break };
                 if self.doc.node(c).is_some_and(|cn| cn.is_mask && cn.visible) {
-                    let mid = self.id("mask");
-                    let saved = std::mem::take(&mut self.body);
-                    if let Some(mn) = self.doc.node(c) {
-                        let mxf = xf * mn.transform;
-                        if let Some((mp, _)) = figcraft_render::node_outline(self.doc, mn) {
-                            let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" fill=\"white\"/>", matrix(mxf), path_d(&mp));
-                        }
+                    let kind = self.doc.node(c).map(|mn| mn.mask_type).unwrap_or_default();
+                    if kind == figcraft_doc::MaskType::Vector {
+                        // A vector mask is a clip path: its outline.
+                        let cid = self.id("clip");
+                        let outline =
+                            self.doc.node(c).and_then(|mn| Some((xf * mn.transform, figcraft_render::subtree_outline(self.doc, mn, depth + 1)?)));
+                        let (shape, cr) = match &outline {
+                            Some((mxf, (mp, rule))) => (
+                                format!(" transform=\"{}\" d=\"{}\"", matrix(*mxf), path_d(mp)),
+                                if *rule == figcraft_render::FillRule::EvenOdd { " clip-rule=\"evenodd\"" } else { "" },
+                            ),
+                            None => (" d=\"\"".to_string(), ""),
+                        };
+                        let _ = write!(self.defs, "<clipPath id=\"{cid}\"><path{shape}{cr}/></clipPath>");
+                        let _ = write!(self.body, "<g clip-path=\"url(#{cid})\">");
+                    } else {
+                        // The layer as drawn: its alpha or luminance masks.
+                        let mid = self.id("mask");
+                        let saved = std::mem::take(&mut self.body);
+                        let outer = self.mask.replace(c);
+                        self.node(c, xf, depth + 1);
+                        self.mask = outer;
+                        let mask_body = std::mem::replace(&mut self.body, saved);
+                        let alpha = if kind == figcraft_doc::MaskType::Alpha { " style=\"mask-type:alpha\"" } else { "" };
+                        let _ = write!(self.defs, "<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\"{alpha}>{mask_body}</mask>");
+                        let _ = write!(self.body, "<g mask=\"url(#{mid})\">");
                     }
-                    let mask_body = std::mem::replace(&mut self.body, saved);
-                    let _ = write!(self.defs, "<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\">{mask_body}</mask>");
-                    let _ = write!(self.body, "<g mask=\"url(#{mid})\">");
                     let mut j = i + 1;
                     while let Some(&k) = kids.get(j) {
                         if self.doc.node(k).is_some_and(|kn| kn.is_mask) {
@@ -619,7 +638,7 @@ fn sniff_mime(b: &[u8]) -> &'static str {
 pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<String> {
     let bounds: Rect = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b))?;
     let origin = Affine::translate((-bounds.x0, -bounds.y0));
-    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts };
+    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts, mask: None };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         w.node(*id, origin * parent_xf, 0);
@@ -639,6 +658,8 @@ pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<S
 
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod mask_export_tests;
 #[cfg(test)]
 mod raster_fx_tests;
 #[cfg(test)]

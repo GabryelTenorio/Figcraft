@@ -17,17 +17,19 @@ pub const USAGE: &str = "figcraft-cli — FigCraft without a window
 USAGE:
   figcraft-cli info <file> [--json]
   figcraft-cli export <file> -o <out> [--format png|jpg|svg|webp|pdf] [--scale N] [--page NAME] [--node ID|NAME]
+                      [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk]
   figcraft-cli convert <in> <out>
   figcraft-cli render <file> -o <out.png> [--scale N] [--page NAME]
   figcraft-cli run <script.json|script.jsonl> [--in <file>] [--out <file>]
   figcraft-cli commands [--json] [--filter TEXT]
   figcraft-cli mcp [--attach PORT]
-  figcraft-cli perf [--layers N[,N...]]
+  figcraft-cli perf [--layers N[,N...]] [--instances N[,N...]]
   figcraft-cli help | --help | --version
 
 Files: .figcraft (native), .json (FigCraft JSON), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image
 layer). `export` writes one file per top-level frame into the <out> directory, or one file when <out>
-has an image extension or --node is given. `run` executes a JSON array (or JSON lines) of
+has an image extension or --node is given; PDFs take print options (a bleed like 3mm or 0.125in,
+crop and bleed marks, CMYK colour). `run` executes a JSON array (or JSON lines) of
 {\"command\": id, \"params\": {...}} in a headless session and prints one JSON result line per step.
 See docs/cli.md and docs/mcp.md.";
 
@@ -79,10 +81,12 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             files::info(&file, a.flag("json"))
         }
         "export" => {
-            let a = Args::parse(rest, &["format", "scale", "page", "node", "o", "out"], &[])?;
+            let a = Args::parse(rest, &["format", "scale", "page", "node", "o", "out", "bleed"], &["crop-marks", "bleed-marks", "cmyk"])?;
             let file = a.one_positional("export <file> -o <out>")?;
             let out = a.value("o").or_else(|| a.value("out")).ok_or_else(|| CliError::Usage("export needs -o <out>".into()))?;
-            files::export(&file, &out, a.value("format").as_deref(), a.scale()?, a.value("page").as_deref(), a.value("node").as_deref())
+            let target =
+                files::Target { format: a.value("format"), scale: a.scale()?, page: a.value("page"), node: a.value("node"), print: a.print()? };
+            files::export(&file, &out, &target)
         }
         "convert" => {
             let a = Args::parse(rest, &[], &[])?;
@@ -118,9 +122,10 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             mcp(a.value("attach").as_deref())
         }
         "perf" => {
-            let a = Args::parse(rest, &["layers"], &[])?;
+            let a = Args::parse(rest, &["layers", "instances"], &[])?;
             let sizes: Vec<usize> = a.usizes("layers", &[1000, 10_000])?.into_iter().map(|n| n.clamp(10, 2_000_000)).collect();
-            perf::run(&sizes)
+            let instances: Vec<usize> = a.usizes("instances", &[2000])?.into_iter().filter(|n| *n > 0).map(|n| n.min(100_000)).collect();
+            perf::run(&sizes, &instances)
         }
         other => Err(CliError::Usage(format!("unknown subcommand `{other}`"))),
     }

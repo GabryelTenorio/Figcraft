@@ -1484,6 +1484,7 @@ dependencies = [
  "figcraft-geom",
  "figcraft-pathops",
  "figcraft-render",
+ "figcraft-text",
  "usvg",
 ]
 

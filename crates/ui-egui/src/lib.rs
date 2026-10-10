@@ -18,6 +18,7 @@ pub mod dev_mode;
 pub mod dialogs;
 pub mod export_panel;
 pub mod font_preview;
+pub mod frame_labels;
 pub mod frame_presets;
 pub mod guides;
 pub mod handles;
@@ -55,6 +56,8 @@ mod a11y_tests;
 mod canvas_drag_tests;
 #[cfg(test)]
 mod comments_tests;
+#[cfg(test)]
+mod frame_label_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
@@ -212,6 +215,8 @@ pub struct UiState {
     pub quit: bool,
     /// The Export dialog is open.
     pub export_preview: bool,
+    /// The Export dialog's PDF print options (bleed, marks, CMYK).
+    pub pdf_print: figcraft_doc::PrintSettings,
     /// The Color profile dialog is open, with this profile chosen.
     pub color_profile: Option<figcraft_color::ColorProfile>,
     /// The open style picker.
@@ -290,6 +295,7 @@ impl Default for UiState {
             render_ms: 0.0,
             quit: false,
             export_preview: false,
+            pdf_print: figcraft_doc::PrintSettings::default(),
             color_profile: None,
             style_picker: None,
             style_grid: false,
