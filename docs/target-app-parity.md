@@ -441,7 +441,14 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    and a client that shows its own edits at once and replays them over others'; derived data
    (auto layout, instances, bindings) is repaired by the author after concurrent edits; binary
    messages (a moved layer is 43 bytes, a cursor 23) with a JSON form; a randomized multi-client
-   test over real commands converges.
+   test over real commands converges. Live sessions run over the network (hosting from the app,
+   invite links, document sync, live cursors, selections, avatars, follow). Undo is per person in
+   a session (`edit.undo` takes back only your own steps, leaving what others changed since;
+   creations and deletions invert; a gesture or command group stays one step); refused edits roll
+   back with a toast; a dropped connection keeps editing and resumes as the same client with what
+   it missed (or a snapshot), then sends what was made offline. Randomized sessions with undo,
+   redo and dropped connections converge, and a checker confirms no undo reverts someone else's
+   change.
    Plugins landed: sandboxed WebAssembly plugins (a metered wasmi
    interpreter with a memory cap and no WASI, also in the browser) whose API is the command
    registry; each run is one undo step and is rolled back when it fails (error, trap, endless loop,
@@ -453,8 +460,7 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    plugins, and `plugin.*` commands for scripts, the CLI and MCP; a Rust SDK and two example
    plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
    plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
-   distribution; for collaboration, the WebSocket transport, hosting and joining from the app,
-   live cursors, per-user undo, reconnect, the browser client and a standalone server. 18–45 h.
+   distribution; for collaboration, the browser client and a standalone server. 18–45 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
