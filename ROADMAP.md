@@ -43,8 +43,17 @@ dimension measured side by side.
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
    merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E), shape builder
-   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept).
-   *Left:* variable width strokes, transform box for several points, point snapping. 10–15 h.
+   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept),
+   variable width strokes (width profile presets with previews in the stroke settings, the Variable
+   width tool ⇧W: drag the path to add a width point, slide points, drag their handles, Delete;
+   smooth interpolation per subpath, dashes, caps and joins, canvas/PNG/SVG/PDF and outline stroke),
+   a transform box around several selected points (corners and edges scale them, Shift keeps
+   proportions, Alt from the centre; just outside a corner rotates, Shift in 15° steps; drag inside
+   to move; the Design panel's X/Y/W/H and flip/rotate act on the points), point snapping while
+   dragging points or handles and with both pens (to the points and segment midpoints of this and
+   other vectors, the usual layer targets and the pixel grid, with guides and a marker on the point
+   landed on; Ctrl/Cmd turns it off). *Left:* arc handles on the canvas, live boolean editing,
+   one-sided widths. 4–8 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -83,8 +92,9 @@ dimension measured side by side.
    the library's name in the Variables editor and the variable pickers; binding, aliasing or setting
    a library collection's mode on a frame copies the variables in as read-only linked copies, so the
    file renders without the library; library components keep their variable bindings and modes;
-   "Library updates available" covers changed variables and bound layers follow).
-   *Left:* a mode picker for explicit modes in the Design panel (engine and MCP only so far). 1–2 h.
+   "Library updates available" covers changed variables and bound layers follow). Explicit variable
+   modes in the Design panel: a frame's mode per collection, Auto (inherited) or its own.
+   *Left:* library collections in the Design panel's mode picker. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -93,8 +103,13 @@ dimension measured side by side.
    (or replace mixed ones); scrolling inside device frames (the frame sized to the device's screen,
    clipped or scrolling by wheel and drag, fixed layers pinned to the screen by their constraints,
    nested "Scroll to", preserve scroll position); a resizable preview pane over the canvas that
-   plays the selected frame and follows edits live. *Left:* device rotation and presentation
-   scaling options, scroll momentum. 1–3 h.
+   plays the selected frame and follows edits live; device rotation (phones and tablets turn to
+   landscape: saved in the file, imported from REST files, drawn turned in the presenter and the
+   pane); presentation options (fit, fit width, fill, 100%, with Z to cycle them and R to
+   restart, the device frame shown or hidden, kept between presentations; what overflows the
+   window pans); scroll momentum (drags fling and slow down the same at any frame rate, the wheel
+   coasts, a drag past the ends stretches and springs back). *Left:* responsive presentation
+   (frames resized to the window), device colours and custom device sizes. 1–2 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -127,13 +142,18 @@ dimension measured side by side.
    ~7.5 ms. The layers panel lays out only the rows in view (every screen expanded at 50k: 39 →
    0.6 ms a frame); text layouts are shared instead of re-formatted per lookup; overflowing text is
    culled by its glyphs. At 10k: full 1440×900 renders 7–15 ms, single-layer edits ~10 µs, hit
-   tests ~26 µs. *Left:* zoomed-out renders at 50k (~40 ms: tiles or levels of detail), save/load
-   at 50k (~0.7 s each), a real-world file corpus, Windows/Linux/browser QA, accessibility. 40–60 h.
+   tests ~26 µs. Zoomed out (50% and below) the canvas draws levels of detail: layers under 2 px
+   land as their averaged colour, text under 4 px is greeked into bars, small rectangles and clip
+   layers skip the path pipeline (exports and closer zooms stay exact): a whole 50k-layer page
+   renders in ~8 ms instead of ~50 ms. `.figcraft` at 50k layers saves in ~0.09 s instead of ~1 s
+   and loads in ~0.16 s instead of ~0.86 s (JSON streamed to and from the document without a
+   value tree, layer fields at their defaults left out: 63 → 22 MB of JSON, old files still
+   open). *Left:* a real-world file corpus, Windows/Linux/browser QA, accessibility. 30–50 h.
 
 ### Where we're going
 
-- **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes (in progress).
+- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); responsive
+  presentation.
 - **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -184,9 +204,9 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 72% | frame guides, 2x pixel preview | 3–5 |
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
 | Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
-| Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
+| Shapes & vector | 8 | 66% | multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 7–11 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
-| Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
+| Strokes | 3 | 76% | stroke styles, arrowhead previews in the menus | 2–3 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |

@@ -27,11 +27,17 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("arrange.forward", "Bring forward", "{ids?}", true, |s, p| zorder(s, p, Z::Forward)),
         spec!("arrange.backward", "Send backward", "{ids?}", true, |s, p| zorder(s, p, Z::Backward)),
         spec!("arrange.back", "Send to back", "{ids?}", true, |s, p| zorder(s, p, Z::Back)),
-        spec!("object.flipH", "Flip horizontal", "{ids?}", true, |s, p| flip(s, p, true)),
-        spec!("object.flipV", "Flip vertical", "{ids?}", true, |s, p| flip(s, p, false)),
-        spec!("object.rotate180", "Rotate 180°", "{ids?}", true, |s, p| rotate_by(s, p, 180.0)),
-        spec!("object.rotateLeft", "Rotate 90° left", "{ids?}", true, |s, p| rotate_by(s, p, 90.0)),
-        spec!("object.rotateRight", "Rotate 90° right", "{ids?}", true, |s, p| rotate_by(s, p, -90.0)),
+        spec!("object.flipH", "Flip horizontal", "{ids?} (in vector edit mode without ids: the selected points)", true, |s, p| flip(s, p, true)),
+        spec!("object.flipV", "Flip vertical", "{ids?} (in vector edit mode without ids: the selected points)", true, |s, p| flip(s, p, false)),
+        spec!("object.rotate180", "Rotate 180°", "{ids?} (in vector edit mode without ids: the selected points)", true, |s, p| rotate_by(
+            s, p, 180.0
+        )),
+        spec!("object.rotateLeft", "Rotate 90° left", "{ids?} (in vector edit mode without ids: the selected points)", true, |s, p| rotate_by(
+            s, p, 90.0
+        )),
+        spec!("object.rotateRight", "Rotate 90° right", "{ids?} (in vector edit mode without ids: the selected points)", true, |s, p| {
+            rotate_by(s, p, -90.0)
+        }),
         spec!("transform.move", "Move", "{ids?, dx, dy}  (page units)", true, |s, p| {
             let (dx, dy) = (num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
             let ids = req_targets("transform.move", s, p)?;
@@ -290,6 +296,13 @@ fn zorder(s: &mut Session, p: &Value, z: Z) -> Result<Value> {
 }
 
 fn flip(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
+    // Editing a vector with points selected: flip them in their box.
+    let points = crate::vectoredit::transform::transform_in_edit_mode(s, p, |b| {
+        if horizontal { b.onto(b.width, 0.0, 0.0, b.height) } else { b.onto(0.0, b.height, b.width, 0.0) }
+    });
+    if let Some(r) = points {
+        return r;
+    }
     let ids = req_targets("flip", s, p)?;
     let doc = s.doc_mut()?;
     let ids = roots(doc, &ids);
@@ -304,6 +317,9 @@ fn flip(s: &mut Session, p: &Value, horizontal: bool) -> Result<Value> {
 }
 
 fn rotate_by(s: &mut Session, p: &Value, deg: f64) -> Result<Value> {
+    if let Some(r) = crate::vectoredit::transform::transform_in_edit_mode(s, p, |b| figcraft_geom::rotate_about(Affine::IDENTITY, b.center(), deg)) {
+        return r;
+    }
     let ids = req_targets("rotate", s, p)?;
     let doc = s.doc_mut()?;
     let ids = roots(doc, &ids);

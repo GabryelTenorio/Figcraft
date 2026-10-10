@@ -781,3 +781,5 @@ mod diff_tests;
 mod proto_expr_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod width_tests;

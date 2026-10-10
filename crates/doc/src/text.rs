@@ -276,16 +276,25 @@ pub struct TextData {
     pub characters: String,
     pub style: TextStyle,
     /// Ranges whose style differs from `style`; full styles (already merged), non-overlapping, sorted.
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub runs: Vec<StyleRun>,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub auto_resize: TextAutoResize,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub align_h: TextAlignH,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub align_v: TextAlignV,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub paragraph_spacing: f64,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub paragraph_indent: f64,
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub list: ListStyle,
     /// Max lines when truncating (0 = as many as fit).
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub max_lines: u32,
     /// OpenType feature toggles (e.g. "liga": false).
+    #[serde(skip_serializing_if = "crate::node::is_default")]
     pub features: std::collections::BTreeMap<String, bool>,
 }
 

@@ -373,6 +373,31 @@ pub fn dropdown(ui: &mut Ui, label: &str, width: f32, lead: Option<Icon>) -> Res
     resp
 }
 
+/// Horizontal space a dropdown takes besides its label (padding and chevron).
+const DROPDOWN_CHROME: f32 = 30.0;
+
+/// A dropdown whose label stays on one line: long names (variable font styles like "SemiBold
+/// SemiCondensed") end with an ellipsis and show in full on hover.
+pub fn elided_dropdown(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
+    let shown = elide(ui, label, width - DROPDOWN_CHROME);
+    let resp = dropdown(ui, &shown, width, None);
+    if shown != label { resp.on_hover_text(label) } else { resp }
+}
+
+/// `s` shortened with an ellipsis to fit `max_w` on one line.
+pub fn elide(ui: &Ui, s: &str, max_w: f32) -> String {
+    let fits = |s: &str| ui.painter().layout_no_wrap(s.to_string(), regular(11.0), Color32::WHITE).size().x <= max_w;
+    if fits(s) {
+        return s.to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    (1..chars.len())
+        .rev()
+        .map(|n| format!("{}…", chars.iter().take(n).collect::<String>().trim_end()))
+        .find(|c| fits(c))
+        .unwrap_or_else(|| "…".into())
+}
+
 /// A row of icon buttons; returns the index clicked.
 pub fn segmented(ui: &mut Ui, items: &[(Icon, &str)], active: Option<usize>, cell: f32) -> Option<usize> {
     let t = Tokens::get(ui.ctx());

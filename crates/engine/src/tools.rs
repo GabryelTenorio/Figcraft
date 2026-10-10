@@ -228,6 +228,8 @@ pub struct Overlay {
     /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the
     /// paint bucket would fill (page-space polygons).
     pub vector_hover: Option<crate::vectoredit::VHit>,
+    /// Vector edit mode, Variable width tool: the width point, handle or path under the pointer.
+    pub width_hover: Option<crate::vectoredit::WHit>,
     pub lasso: Vec<[f64; 2]>,
     /// The eraser brush under the pointer (x, y, radius in page units).
     pub brush: Option<[f64; 3]>,
@@ -336,6 +338,8 @@ pub struct ToolState {
     pub builder_remove: bool,
     /// Show distances from the selection on hover without holding Alt (Dev mode inspection).
     pub redlines: bool,
+    /// Pen snap targets, kept while hovering (see `vectoredit::point_snap`).
+    pub(crate) pen_targets: Option<crate::vectoredit::point_snap::PenTargets>,
 }
 
 impl ToolState {
@@ -346,7 +350,8 @@ impl ToolState {
 
 const HANDLE_PX: f64 = 5.0;
 const ROTATE_PX: f64 = 18.0;
-const SNAP_PX: f64 = 5.0;
+/// Snap distance in screen pixels.
+pub(crate) const SNAP_PX: f64 = 5.0;
 
 /// Corners of the selection's handle box in page coordinates (tl, tr, br, bl).
 pub fn selection_box(doc: &Document, sel: &[NodeId]) -> Option<[Point; 4]> {
@@ -400,9 +405,15 @@ pub fn handle_at(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> Option<
         return None;
     }
     let corners = selection_box(doc, sel)?;
-    let tol = HANDLE_PX / zoom.max(1e-6);
     // Lines (zero height) only get end handles.
     let is_line = sel.len() == 1 && sel.first().and_then(|i| doc.node(*i)).is_some_and(|n| matches!(n.kind, NodeKind::Line));
+    handle_at_corners(&corners, p, zoom, is_line)
+}
+
+/// Which handle of the box with `corners` (tl, tr, br, bl in page coordinates) is under `p`;
+/// `is_line` keeps only the two end handles.
+pub fn handle_at_corners(corners: &[Point; 4], p: Point, zoom: f64, is_line: bool) -> Option<Handle> {
+    let tol = HANDLE_PX / zoom.max(1e-6);
     for (i, c) in corners.iter().enumerate() {
         if is_line && (i == 3 || i == 2) {
             continue;
@@ -436,7 +447,11 @@ pub fn handle_at(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> Option<
 }
 
 fn resize_cursor(doc: &Document, sel: &[NodeId], h: Handle) -> Cursor {
-    let Some(c) = selection_box(doc, sel) else { return Cursor::Default };
+    selection_box(doc, sel).map_or(Cursor::Default, |c| handle_cursor(&c, h))
+}
+
+/// The cursor over handle `h` of the box with corners `c`.
+pub(crate) fn handle_cursor(c: &[Point; 4], h: Handle) -> Cursor {
     let angle = |a: Point, b: Point| (b - a).atan2().to_degrees();
     match h {
         Handle::Corner(i) => {
@@ -451,6 +466,112 @@ fn resize_cursor(doc: &Document, sel: &[NodeId], h: Handle) -> Cursor {
         }
         Handle::Rotate(_) => Cursor::Rotate,
     }
+}
+
+/// The box (x0, y0, x1, y1) a `w0`×`h0` handle box becomes when `handle` is dragged to `q`, all in
+/// the box's own axes: `keep` constrains proportions, `from_center` resizes about the centre.
+/// Edges that cross over come back reversed (x1 < x0 or y1 < y0: a flip).
+pub(crate) fn resized_box(handle: Handle, q: Point, w0: f64, h0: f64, keep: bool, from_center: bool) -> (f64, f64, f64, f64) {
+    let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, w0, h0);
+    match handle {
+        Handle::Corner(0) => {
+            x0 = q.x;
+            y0 = q.y;
+        }
+        Handle::Corner(1) => {
+            x1 = q.x;
+            y0 = q.y;
+        }
+        Handle::Corner(2) => {
+            x1 = q.x;
+            y1 = q.y;
+        }
+        Handle::Corner(_) => {
+            x0 = q.x;
+            y1 = q.y;
+        }
+        Handle::Edge(0) => y0 = q.y,
+        Handle::Edge(1) => x1 = q.x,
+        Handle::Edge(2) => y1 = q.y,
+        Handle::Edge(_) => x0 = q.x,
+        Handle::Rotate(_) => {}
+    }
+    if keep && w0 > 1e-9 && h0 > 1e-9 {
+        let (sx, sy) = ((x1 - x0) / w0, (y1 - y0) / h0);
+        let k = match handle {
+            Handle::Edge(0) | Handle::Edge(2) => sy,
+            Handle::Edge(_) => sx,
+            _ => {
+                if sx.abs() > sy.abs() {
+                    sx
+                } else {
+                    sy
+                }
+            }
+        };
+        let (nw, nh) = (w0 * k, h0 * k);
+        match handle {
+            Handle::Corner(0) => {
+                x0 = w0 - nw;
+                y0 = h0 - nh;
+            }
+            Handle::Corner(1) => {
+                x1 = nw;
+                y0 = h0 - nh;
+            }
+            Handle::Corner(2) => {
+                x1 = nw;
+                y1 = nh;
+            }
+            Handle::Corner(_) => {
+                x0 = w0 - nw;
+                y1 = nh;
+            }
+            Handle::Edge(0) | Handle::Edge(2) => {
+                let c = w0 / 2.0;
+                x0 = c - nw / 2.0;
+                x1 = c + nw / 2.0;
+                if matches!(handle, Handle::Edge(0)) {
+                    y0 = h0 - nh;
+                } else {
+                    y1 = nh;
+                }
+            }
+            Handle::Rotate(_) => {}
+            Handle::Edge(_) => {
+                let c = h0 / 2.0;
+                y0 = c - nh / 2.0;
+                y1 = c + nh / 2.0;
+                if matches!(handle, Handle::Edge(3)) {
+                    x0 = w0 - nw;
+                } else {
+                    x1 = nw;
+                }
+            }
+        }
+    }
+    if from_center {
+        let (cx, cy) = (w0 / 2.0, h0 / 2.0);
+        let hw = ((x1 - x0) / 2.0).abs().max((cx - x0).abs().max((x1 - cx).abs()));
+        let hh = ((y1 - y0) / 2.0).abs().max((cy - y0).abs().max((y1 - cy).abs()));
+        match handle {
+            Handle::Edge(0) | Handle::Edge(2) => {
+                y0 = cy - hh;
+                y1 = cy + hh;
+            }
+            Handle::Edge(_) => {
+                x0 = cx - hw;
+                x1 = cx + hw;
+            }
+            _ => {
+                x0 = cx - hw;
+                x1 = cx + hw;
+                y0 = cy - hh;
+                y1 = cy + hh;
+            }
+        }
+    }
+    (x0, y0, x1, y1)
 }
 
 impl Session {
@@ -556,13 +677,15 @@ impl Session {
             }
         }
         self.tool.overlay.cursor = cursor;
-        self.tool.overlay.guides = guides;
-        if tool == ToolId::Pen
-            && let Some(pen) = &self.tool.pen
-            && let Some((last, _, _)) = pen.points.last()
-        {
-            self.tool.overlay.rubber = Some([last.x, last.y, ev.x, ev.y]);
+        if tool == ToolId::Pen {
+            // Where a click would land (snapped), with its guides.
+            let (to, g) = if ev.shift { (ev.p(), Vec::new()) } else { self.snap_pen_tool(ev)? };
+            guides = g;
+            if let Some((last, _, _)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
+                self.tool.overlay.rubber = Some([last.x, last.y, to.x, to.y]);
+            }
         }
+        self.tool.overlay.guides = guides;
         let ds = self.ds_mut()?;
         if ds.hover != hover {
             ds.hover = hover;
@@ -866,30 +989,6 @@ impl Session {
         // In the handle box's own axes (one layer: its local space).
         let (frame, w0, h0) = r.frame;
         let q = frame.inverse() * p;
-        let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, w0, h0);
-        match r.handle {
-            Handle::Corner(0) => {
-                x0 = q.x;
-                y0 = q.y;
-            }
-            Handle::Corner(1) => {
-                x1 = q.x;
-                y0 = q.y;
-            }
-            Handle::Corner(2) => {
-                x1 = q.x;
-                y1 = q.y;
-            }
-            Handle::Corner(_) => {
-                x0 = q.x;
-                y1 = q.y;
-            }
-            Handle::Edge(0) => y0 = q.y,
-            Handle::Edge(1) => x1 = q.x,
-            Handle::Edge(2) => y1 = q.y,
-            Handle::Edge(_) => x0 = q.x,
-            Handle::Rotate(_) => {}
-        }
         let is_line = r.single && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| matches!(n.kind, NodeKind::Line))).unwrap_or(false);
         if is_line {
             // Line end handles: move the end point freely (length + angle).
@@ -917,82 +1016,7 @@ impl Session {
         let keep = ev.shift
             || r.single && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| n.constrain_proportions)).unwrap_or(false)
             || scale_tool;
-        if keep && w0 > 1e-9 && h0 > 1e-9 {
-            let (sx, sy) = ((x1 - x0) / w0, (y1 - y0) / h0);
-            let k = match r.handle {
-                Handle::Edge(0) | Handle::Edge(2) => sy,
-                Handle::Edge(_) => sx,
-                _ => {
-                    if sx.abs() > sy.abs() {
-                        sx
-                    } else {
-                        sy
-                    }
-                }
-            };
-            let (nw, nh) = (w0 * k, h0 * k);
-            match r.handle {
-                Handle::Corner(0) => {
-                    x0 = w0 - nw;
-                    y0 = h0 - nh;
-                }
-                Handle::Corner(1) => {
-                    x1 = nw;
-                    y0 = h0 - nh;
-                }
-                Handle::Corner(2) => {
-                    x1 = nw;
-                    y1 = nh;
-                }
-                Handle::Corner(_) => {
-                    x0 = w0 - nw;
-                    y1 = nh;
-                }
-                Handle::Edge(0) | Handle::Edge(2) => {
-                    let c = w0 / 2.0;
-                    x0 = c - nw / 2.0;
-                    x1 = c + nw / 2.0;
-                    if matches!(r.handle, Handle::Edge(0)) {
-                        y0 = h0 - nh;
-                    } else {
-                        y1 = nh;
-                    }
-                }
-                Handle::Rotate(_) => {}
-                Handle::Edge(_) => {
-                    let c = h0 / 2.0;
-                    y0 = c - nh / 2.0;
-                    y1 = c + nh / 2.0;
-                    if matches!(r.handle, Handle::Edge(3)) {
-                        x0 = w0 - nw;
-                    } else {
-                        x1 = nw;
-                    }
-                }
-            }
-        }
-        if ev.alt {
-            // Resize from the centre.
-            let (cx, cy) = (w0 / 2.0, h0 / 2.0);
-            let hw = ((x1 - x0) / 2.0).abs().max((cx - x0).abs().max((x1 - cx).abs()));
-            let hh = ((y1 - y0) / 2.0).abs().max((cy - y0).abs().max((y1 - cy).abs()));
-            match r.handle {
-                Handle::Edge(0) | Handle::Edge(2) => {
-                    y0 = cy - hh;
-                    y1 = cy + hh;
-                }
-                Handle::Edge(_) => {
-                    x0 = cx - hw;
-                    x1 = cx + hw;
-                }
-                _ => {
-                    x0 = cx - hw;
-                    x1 = cx + hw;
-                    y0 = cy - hh;
-                    y1 = cy + hh;
-                }
-            }
-        }
+        let (x0, y0, x1, y1) = resized_box(r.handle, q, w0, h0, keep, ev.alt);
         let (flip_x, flip_y) = (x1 < x0, y1 < y0);
         let (nx0, ny0) = (x0.min(x1), y0.min(y1));
         let (nw, nh) = ((x1 - x0).abs(), (y1 - y0).abs());
@@ -1361,8 +1385,20 @@ impl Session {
         Ok(())
     }
 
+    /// The pen tool's snapped position for `ev`: its path's vector (or, before it has one, its first
+    /// point) counts among the targets.
+    fn snap_pen_tool(&mut self, ev: &PointerEvent) -> Result<(Point, Vec<Guide>)> {
+        let (id, extra) = match &self.tool.pen {
+            Some(pen) if pen.id.is_some() => (pen.id, Vec::new()),
+            Some(pen) => (None, pen.points.iter().map(|(p, _, _)| *p).collect()),
+            None => (None, Vec::new()),
+        };
+        self.snap_pen(ev, id, &extra)
+    }
+
     fn pen_down(&mut self, ev: &PointerEvent) -> Result<()> {
-        let p = ev.p();
+        self.tool.overlay.guides.clear();
+        let p = if ev.shift { ev.p() } else { self.snap_pen_tool(ev)?.0 };
         let (doc, page) = {
             let ds = self.ds()?;
             (ds.doc.clone(), ds.page)

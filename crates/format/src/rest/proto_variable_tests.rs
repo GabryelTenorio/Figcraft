@@ -3,7 +3,9 @@
 
 use super::tests::pointers;
 use super::*;
-use figcraft_doc::proto::{Action, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{
+    Action, DeviceRotation, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+};
 use figcraft_doc::{VariableType, VariableValue};
 use serde_json::json;
 
@@ -275,7 +277,7 @@ fn scrolling_flows_and_prototype_device() {
         let (doc, _) = import(&f, &no_images).unwrap();
         let NodeKind::Page { flows, prototype, .. } = &doc.node(doc.pages[0]).unwrap().kind else { panic!() };
         assert_eq!(flows.iter().map(|f| f.start).collect::<Vec<_>>(), [named(&doc, "Details").id]);
-        prototype.device.clone()
+        prototype.clone()
     };
     for (d, want) in [
         (json!({"type": "NONE", "rotation": "NONE"}), "None"),
@@ -286,10 +288,14 @@ fn scrolling_flows_and_prototype_device() {
         (json!({"type": "CUSTOM", "size": {"width": 1920, "height": 1080}, "rotation": "NONE"}), "Desktop"),
         (json!({"type": "CUSTOM", "size": {"width": 375, "height": 667}, "rotation": "NONE"}), "iPhone 16"),
     ] {
-        let got = device(d);
+        let got = device(d).device;
         assert_eq!(got, want);
         assert!(got == "None" || PrototypeSettings::DEVICES.iter().any(|d| d.name == got), "{got}");
     }
+    // A device turned a quarter turn presents in landscape.
+    let turned = device(json!({"type": "PRESET", "presetIdentifier": "APPLE_IPHONE_16", "rotation": "CCW_90"}));
+    assert_eq!((turned.device.as_str(), turned.rotation), ("iPhone 16", DeviceRotation::Landscape));
+    assert_eq!(turned.device().map(|d| (d.width, d.height)), Some((852.0, 393.0)));
 }
 
 // ---- robustness ----

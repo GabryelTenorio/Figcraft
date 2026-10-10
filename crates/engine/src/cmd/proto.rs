@@ -106,20 +106,33 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("proto.settings", "Prototype settings", "{device?, background?}", true, |s, p| {
-            let page = s.page()?;
-            let bg = color(p, "background");
-            let dev = string(p, "device");
-            if let NodeKind::Page { prototype, .. } = &mut s.doc_mut()?.get_mut(page)?.kind {
-                if let Some(c) = bg {
-                    prototype.background = c;
+        spec!(
+            "proto.settings",
+            "Prototype settings",
+            "{device?, background?, rotation? portrait|landscape (or 0|90; phones and tablets turn)}",
+            true,
+            |s, p| {
+                let page = s.page()?;
+                let bg = color(p, "background");
+                let dev = string(p, "device");
+                let rot = match p.get("rotation") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(rotation_of(v).ok_or_else(|| bad("proto.settings", "rotation: portrait|landscape"))?),
+                };
+                if let NodeKind::Page { prototype, .. } = &mut s.doc_mut()?.get_mut(page)?.kind {
+                    if let Some(c) = bg {
+                        prototype.background = c;
+                    }
+                    if let Some(d) = dev {
+                        prototype.device = d;
+                    }
+                    if let Some(r) = rot {
+                        prototype.rotation = r;
+                    }
                 }
-                if let Some(d) = dev {
-                    prototype.device = d;
-                }
+                ok()
             }
-            ok()
-        }),
+        ),
         spec!(
             "proto.present",
             "Present",
@@ -138,7 +151,41 @@ pub fn specs() -> Vec<CommandSpec> {
             s.request_ui("preview.close", json!({}));
             ok()
         }),
+        spec!(
+            "proto.presentOptions",
+            "Presentation options",
+            "{scale? fit|fitWidth|fill|actual, deviceFrame? bool}  how the presenter sizes the prototype (Fit scales down to fit, Fit width fills the width, Fill covers the window, Actual shows it at 100%) and whether it draws the device; kept for later presentations",
+            false,
+            |s, p| {
+                let cmd = "proto.presentOptions";
+                let mut data = serde_json::Map::new();
+                if let Some(v) = p.get("scale").filter(|v| !v.is_null()) {
+                    let scale = v.as_str().filter(|x| PRESENT_SCALES.contains(x)).ok_or_else(|| bad(cmd, "scale: fit|fitWidth|fill|actual"))?;
+                    data.insert("scale".into(), json!(scale));
+                }
+                if let Some(v) = p.get("deviceFrame").filter(|v| !v.is_null()) {
+                    data.insert("deviceFrame".into(), json!(v.as_bool().ok_or_else(|| bad(cmd, "deviceFrame: true|false"))?));
+                }
+                if data.is_empty() {
+                    return Err(bad(cmd, "nothing to set: scale or deviceFrame"));
+                }
+                s.request_ui("present.options", Value::Object(data));
+                ok()
+            }
+        ),
     ]
+}
+
+/// The presenter's scale options (`proto.presentOptions {scale}`).
+pub const PRESENT_SCALES: [&str; 4] = ["fit", "fitWidth", "fill", "actual"];
+
+/// A device rotation from a command value: `portrait` / `landscape`, or 0 / 90 degrees.
+fn rotation_of(v: &Value) -> Option<DeviceRotation> {
+    match v {
+        Value::String(s) => DeviceRotation::parse(s),
+        Value::Number(n) => n.as_f64().and_then(|a| DeviceRotation::parse(&format!("{a}"))),
+        _ => None,
+    }
 }
 
 /// Ask the UI to present (full screen or in the preview pane) from `start`, else the selected

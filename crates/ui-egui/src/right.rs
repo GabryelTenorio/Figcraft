@@ -173,6 +173,11 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
 }
 
 pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
+    menu_item_with(ui, label, shortcut, |_, _, _| {})
+}
+
+/// A menu row with art drawn into it after the label (`art(painter, row rect, text colour)`).
+pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width().max(180.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
@@ -190,7 +195,13 @@ pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
             if resp.hovered() { Color32::WHITE } else { t.text_secondary },
         );
     }
+    art(ui.painter(), r, col);
     resp.clicked()
+}
+
+/// A menu item with a check mark when `on` (the unchecked ones line up with it).
+pub fn menu_check(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
+    menu_item(ui, &format!("{}{label}", if on { "✓ " } else { "    " }), shortcut)
 }
 
 pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
@@ -219,6 +230,9 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     }
     header(app, ui, &doc, &sel);
     widgets::separator(ui);
+    // Editing a vector with points selected, the points' fields stand in for the layer's position
+    // and dimensions.
+    let points_selected = vector_edit.as_ref().is_some_and(|ve| !ve.vertices.is_empty() || !ve.segments.is_empty());
     match vector_edit {
         Some(ve) => crate::vector_panel::points(app, ui, &doc, &ve),
         None => {
@@ -231,10 +245,15 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         }
     }
     widgets::separator(ui);
-    crate::layout_panel::layout_section(app, ui, &doc, &sel);
-    widgets::separator(ui);
+    if !points_selected {
+        crate::layout_panel::layout_section(app, ui, &doc, &sel);
+        widgets::separator(ui);
+    }
     appearance(app, ui, &doc, &sel);
     widgets::separator(ui);
+    if variable_modes(app, ui, &doc, &sel) {
+        widgets::separator(ui);
+    }
     if sel.iter().any(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)))) {
         crate::typography::typography(app, ui, &doc, &sel);
         widgets::separator(ui);
@@ -658,6 +677,62 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     ui.add_space(8.0);
 }
 
+/// The variable modes of the selected frames (sections, components, instances): a row per
+/// collection with more than one mode, Auto (the mode the layer inherits from its parent) or a mode
+/// of its own (`variable.setMode`). Returns whether it showed.
+fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) -> bool {
+    let colls: Vec<&Collection> = doc.variables.collections.iter().filter(|c| c.modes.len() > 1).collect();
+    if colls.is_empty() || !sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())) {
+        return false;
+    }
+    let t = Tokens::get(ui.ctx());
+    widgets::section_header(ui, "Variable modes", &[], false);
+    // The collection's name, then a wider mode picker ("Auto (Light)") across both field columns.
+    let col = widgets::col_width(ui.available_width());
+    let (name_w, pick_w) = ((col * 0.7).round(), (col * 1.3).round());
+    // Auto resolves from the parent of the first selected layer.
+    let parent_modes = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).map(|p| doc.modes_for(p)).unwrap_or_default();
+    for c in colls {
+        let name_of = |m: &str| c.modes.iter().find(|x| x.id == m).map_or("", |x| x.name.as_str());
+        // Each layer's own mode (None: Auto); None overall when they differ.
+        let own = common(doc, sel, |n| n.var_modes.get(&c.id).cloned());
+        let inherited = parent_modes.get(&c.id).or(c.default_mode()).map_or("", |m| name_of(m));
+        let auto = format!("Auto ({inherited})");
+        let label = match &own {
+            Some(Some(m)) => name_of(m).to_string(),
+            Some(None) => auto.clone(),
+            None => "Mixed".into(),
+        };
+        row(ui, 32.0, |ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(name_w, FIELD_H), Sense::hover());
+            let name = widgets::elide(ui, &c.name, name_w);
+            ui.painter().text(pos2(r.min.x, r.center().y), Align2::LEFT_CENTER, &name, regular(11.0), t.text);
+            if name != c.name {
+                ui.interact(r, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&c.name);
+            }
+            let resp = widgets::elided_dropdown(ui, &label, pick_w);
+            egui::Popup::menu(&resp).width(180.0).show(|ui| {
+                let mut pick = None;
+                if menu_check(ui, own == Some(None), &auto, "") {
+                    pick = Some(Value::Null);
+                }
+                ui.separator();
+                for m in &c.modes {
+                    if menu_check(ui, own.as_ref().is_some_and(|o| o.as_ref() == Some(&m.id)), &m.name, "") {
+                        pick = Some(json!(m.id));
+                    }
+                }
+                if let Some(mode) = pick {
+                    app.run("variable.setMode", json!({"ids": sel, "collection": c.id, "mode": mode}));
+                    ui.close();
+                }
+            });
+        });
+    }
+    ui.add_space(8.0);
+    true
+}
+
 /// While a range of text is selected, the Fill section edits that range's colour.
 fn range_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, start: usize, end: usize) {
     let t = Tokens::get(ui.ctx());
@@ -819,7 +894,78 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     }
 }
 
-/// Advanced stroke settings: dash pattern, join and the end points of open paths.
+/// A width profile drawn as a filled band across `rect` (thickest point = full height); `None`
+/// draws a uniform stroke.
+pub(crate) fn profile_art(painter: &egui::Painter, rect: Rect, profile: Option<&WidthProfile>, col: Color32) {
+    const STEPS: u32 = 40;
+    let max = profile.map_or(1.0, WidthProfile::max_scale).max(1e-6);
+    let (cy, half) = (rect.center().y, rect.height() / 2.0);
+    let mut mesh = egui::Mesh::default();
+    let (mut top, mut bottom) = (Vec::new(), Vec::new());
+    for i in 0..=STEPS {
+        let t = f64::from(i) / f64::from(STEPS);
+        let s = profile.map_or(0.5, |p| p.scale_at(t) / max) as f32;
+        let x = rect.min.x + rect.width() * t as f32;
+        let h = (s * half).max(0.5);
+        top.push(pos2(x, cy - h));
+        bottom.push(pos2(x, cy + h));
+        mesh.colored_vertex(pos2(x, cy - h), col);
+        mesh.colored_vertex(pos2(x, cy + h), col);
+    }
+    for i in 0..STEPS {
+        let k = 2 * i;
+        mesh.add_triangle(k, k + 1, k + 2);
+        mesh.add_triangle(k + 1, k + 3, k + 2);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    // The mesh isn't anti-aliased: smooth its edges with hairlines.
+    for edge in [top, bottom] {
+        painter.add(egui::Shape::line(edge, Stroke::new(0.75, col)));
+    }
+}
+
+/// Stroke settings ▸ Width profile: the presets (each with its shape) and a flip.
+fn width_profile_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], profile: Option<Option<WidthProfile>>, half: f32) {
+    let t = Tokens::get(ui.ctx());
+    widgets::sublabels(ui, "Width profile", None);
+    row(ui, 32.0, |ui| {
+        let label = match &profile {
+            None => "Mixed",
+            Some(None) => WidthPreset::Uniform.label(),
+            Some(Some(p)) => p.preset().map_or("Custom", WidthPreset::label),
+        };
+        let resp = widgets::dropdown(ui, label, half * 2.0 + 8.0 - 32.0, None);
+        if let Some(p) = &profile {
+            let r = resp.rect;
+            let art = Rect::from_min_max(pos2(r.max.x - 22.0 - 56.0, r.center().y - 5.0), pos2(r.max.x - 22.0, r.center().y + 5.0));
+            profile_art(ui.painter(), art, p.as_ref(), t.icon_secondary);
+        }
+        egui::Popup::menu(&resp).show(|ui| {
+            for preset in WidthPreset::ALL {
+                let prof = preset.profile();
+                let art = |pt: &egui::Painter, r: Rect, col: Color32| {
+                    let a = Rect::from_min_max(pos2(r.max.x - 8.0 - 64.0, r.center().y - 5.0), pos2(r.max.x - 8.0, r.center().y + 5.0));
+                    profile_art(pt, a, prof.as_ref(), col);
+                };
+                if menu_item_with(ui, preset.label(), "", art) {
+                    app.run("stroke.widthProfile", json!({"ids": ids, "preset": preset.id()}));
+                    ui.close();
+                }
+            }
+        });
+        // Flip: the profile runs from the other end of the path.
+        let custom = profile.clone().flatten();
+        let flip = icons::button(ui, Icon::FlipH, 24.0, false, "Flip width profile");
+        if flip.clicked()
+            && let Some(p) = custom
+        {
+            let pts: Vec<[f64; 2]> = p.points.iter().rev().map(|q| [1.0 - q.t, q.scale]).collect();
+            app.run("stroke.widthProfile", json!({"ids": ids, "points": pts}));
+        }
+    });
+}
+
+/// Advanced stroke settings: dash pattern, width profile, join and the end points of open paths.
 fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
@@ -851,6 +997,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
             app.field(&ids, "dashes", e, |v| json!([dash, v.max(0.0)]));
         });
     }
+    width_profile_row(app, ui, &ids, st.as_ref().map(|s| s.profile().cloned()), half);
     let join = st.as_ref().map(|s| s.join);
     widgets::sublabels(ui, "Join", (join == Some(StrokeJoin::Miter)).then_some("Miter angle"));
     row(ui, 32.0, |ui| {

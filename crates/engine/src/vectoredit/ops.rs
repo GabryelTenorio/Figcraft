@@ -4,7 +4,7 @@
 
 use figcraft_doc::*;
 use figcraft_geom::kurbo::{CubicBez, ParamCurve};
-use figcraft_geom::{Point, Vec2};
+use figcraft_geom::{Affine, Point, Vec2};
 
 fn tvec(t: (f64, f64)) -> Vec2 {
     Vec2::new(t.0, t.1)
@@ -26,6 +26,43 @@ pub fn move_vertices(net: &mut VectorNetwork, idx: &[usize], d: Vec2) {
         {
             v.x += d.x;
             v.y += d.y;
+        }
+    }
+}
+
+/// Map vertices `idx` through `m` (scale, rotate, flip…); the handles at them follow its linear
+/// part. Nothing changes when any result wouldn't be finite.
+pub fn transform_vertices(net: &mut VectorNetwork, idx: &[usize], m: Affine) {
+    let set: std::collections::BTreeSet<usize> = idx.iter().copied().filter(|i| *i < net.vertices.len()).collect();
+    let [a, b, c, d, _, _] = m.as_coeffs();
+    let map_t = |t: (f64, f64)| (a * t.0 + c * t.1, b * t.0 + d * t.1);
+    let points: Vec<(usize, Point)> = set.iter().filter_map(|i| Some((*i, m * net.vertices.get(*i)?.point()))).collect();
+    // (segment, at its start, the mapped handle).
+    let handles: Vec<(usize, bool, (f64, f64))> = net
+        .segments
+        .iter()
+        .enumerate()
+        .flat_map(|(si, s)| [(si, true, s.a, s.ta), (si, false, s.b, s.tb)])
+        .filter(|(_, _, v, _)| set.contains(v))
+        .map(|(si, start, _, t)| (si, start, map_t(t)))
+        .collect();
+    let ok = |x: f64, y: f64| x.is_finite() && y.is_finite();
+    if !points.iter().all(|(_, p)| ok(p.x, p.y)) || !handles.iter().all(|(_, _, t)| ok(t.0, t.1)) {
+        return;
+    }
+    for (i, p) in points {
+        if let Some(v) = net.vertices.get_mut(i) {
+            v.x = p.x;
+            v.y = p.y;
+        }
+    }
+    for (si, start, t) in handles {
+        if let Some(s) = net.segments.get_mut(si) {
+            if start {
+                s.ta = t;
+            } else {
+                s.tb = t;
+            }
         }
     }
 }

@@ -9,6 +9,11 @@
 //! into a texture. Smart animate interpolates a temporary document between the outgoing and
 //! incoming states ([`smart_interpolate`]) and renders it each animation frame; the other
 //! transitions move or fade the two cached textures ([`transition_frames`]).
+//!
+//! The full-window presenter sizes the prototype by its [`PresentView`] (fit, fit width, fill or
+//! actual size; Z cycles them); a prototype bigger than the window pans. Scrolling keeps its
+//! momentum after a drag or the wheel lets go ([`fling_axis`]), and a drag past the end of a
+//! scroll range stretches ([`rubber_band`]) and springs back on release.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -65,6 +70,113 @@ struct Anim {
     start: f64,
     dur: f64,
     easing: Easing,
+}
+
+/// What a wheel or drag scrolls: a frame with overflow (offsets in page units), or the whole view
+/// when the prototype is bigger than the window (offsets in screen points).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scroller {
+    Frame(NodeId),
+    View,
+}
+
+/// Scrolling that keeps going after the wheel or the pointer let go, slowing down; past the end of
+/// the range (only after a drag, `bounce`) it springs back.
+#[derive(Clone, Copy, Debug)]
+struct Fling {
+    target: Scroller,
+    /// Units per second.
+    vel: (f64, f64),
+    /// How quickly it slows down (1/s).
+    decay: f64,
+    bounce: bool,
+    /// When it last moved (UI clock, seconds).
+    at: f64,
+}
+
+/// How quickly a fling slows down after a drag (1/s; it travels its speed / decay).
+const DECAY_DRAG: f64 = 2.5;
+/// How quickly the wheel's coast slows down (1/s).
+const DECAY_WHEEL: f64 = 8.0;
+/// Stiffness of the spring that pulls an overscroll back (1/s, critically damped).
+const SPRING: f64 = 16.0;
+/// A fling inside its range stops below this speed (units/s).
+const FLING_STOP: f64 = 6.0;
+/// The wheel coasts on when it was faster than this as it stopped (screen points/s).
+const COAST_MIN: f64 = 40.0;
+/// How far a drag past the end can stretch the content at most (screen points).
+const RUBBER_PTS: f64 = 240.0;
+
+/// How the full-window presenter sizes the prototype.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PresentScale {
+    /// Scaled down to fit the window (never above 100%).
+    #[default]
+    Fit,
+    /// Scaled to the window's width; what's taller pans.
+    FitWidth,
+    /// Scaled to cover the whole window; what overflows pans.
+    Fill,
+    /// At 100%.
+    Actual,
+}
+
+impl PresentScale {
+    const ALL: [PresentScale; 4] = [PresentScale::Fit, PresentScale::FitWidth, PresentScale::Fill, PresentScale::Actual];
+
+    /// Its id in commands (`proto.presentOptions {scale}`).
+    pub fn id(self) -> &'static str {
+        match self {
+            PresentScale::Fit => "fit",
+            PresentScale::FitWidth => "fitWidth",
+            PresentScale::Fill => "fill",
+            PresentScale::Actual => "actual",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|x| x.id() == s)
+    }
+
+    /// The options the presenter offers, in the order Z cycles them: on a device there's no Fit
+    /// width (the device fits, fills the window or shows at 100%).
+    pub fn options(device: bool) -> &'static [PresentScale] {
+        if device { &[PresentScale::Fit, PresentScale::Fill, PresentScale::Actual] } else { &Self::ALL }
+    }
+
+    pub fn label(self, device: bool) -> &'static str {
+        match (self, device) {
+            (PresentScale::Fit, false) => "Fit to window",
+            (PresentScale::FitWidth, _) => "Fit width",
+            (PresentScale::Fill, false) => "Fill window",
+            (PresentScale::Actual, false) => "Actual size (100%)",
+            (PresentScale::Fit, true) => "Fit device to window",
+            (PresentScale::Fill, true) => "Zoom device to fill window",
+            (PresentScale::Actual, true) => "Device at 100%",
+        }
+    }
+
+    /// The option after this one (Z), wrapping round.
+    pub fn next(self, device: bool) -> Self {
+        let opts = Self::options(device);
+        let i = opts.iter().position(|x| *x == self);
+        opts.get(i.map_or(0, |i| (i + 1) % opts.len())).copied().unwrap_or_default()
+    }
+}
+
+/// The full-window presenter's options (kept for later presentations; the preview pane always
+/// fits, with the device drawn).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PresentView {
+    pub scale: PresentScale,
+    /// Draw the device's body around its screen.
+    pub device_frame: bool,
+}
+
+impl Default for PresentView {
+    fn default() -> Self {
+        Self { scale: PresentScale::Fit, device_frame: true }
+    }
 }
 
 /// A frame scrolling from one offset to another.
@@ -126,8 +238,20 @@ pub struct Presenter {
     urls: Vec<String>,
     /// The editor's document as last copied (the player copies it again when it changes).
     source: Option<Arc<Document>>,
-    /// Scrolling by dragging: the frame and its offset when the drag began.
-    drag_scroll: Option<(NodeId, (f64, f64))>,
+    /// Scrolling by dragging: what it scrolls and its offset when the drag began.
+    drag_scroll: Option<(Scroller, (f64, f64))>,
+    /// How the full-window presenter sizes the prototype.
+    pub view: PresentView,
+    /// How far the view is panned when the prototype is bigger than the window (points; None:
+    /// centred across, at the top).
+    pan: Option<(f64, f64)>,
+    /// How far the view can pan, and the zoom it shows at (from the last layout).
+    pan_range: (f64, f64),
+    zoom: f64,
+    /// Scrolling that carries on after the input let go.
+    fling: Option<Fling>,
+    /// The wheel's last target and its speed (units/s), while it turns.
+    wheel: Option<(Scroller, (f64, f64))>,
 }
 
 impl Presenter {
@@ -170,7 +294,77 @@ impl Presenter {
             urls: Vec::new(),
             source: None,
             drag_scroll: None,
+            view: PresentView::default(),
+            pan: None,
+            pan_range: (0.0, 0.0),
+            zoom: 1.0,
+            fling: None,
+            wheel: None,
         }
+    }
+
+    /// Stop scrolling motion (a fling, the wheel's coast, a drag).
+    fn stop_scrolling(&mut self) {
+        self.fling = None;
+        self.wheel = None;
+        self.drag_scroll = None;
+    }
+
+    /// Size the prototype another way; the view starts over at its top.
+    pub fn set_scale(&mut self, scale: PresentScale) {
+        self.view.scale = scale;
+        self.pan = None;
+        self.stop_scrolling();
+    }
+
+    /// The current offset of `t` (a frame's scroll, else the view's pan).
+    fn offset(&self, t: Scroller) -> (f64, f64) {
+        match t {
+            Scroller::Frame(f) => self.scroll.get(&f).copied().unwrap_or((0.0, 0.0)),
+            Scroller::View => self.pan.unwrap_or((self.pan_range.0 / 2.0, 0.0)),
+        }
+    }
+
+    /// How far `t` scrolls (`base`: the player's document without scroll offsets).
+    fn limits(&self, base: &Document, t: Scroller) -> (f64, f64) {
+        match t {
+            Scroller::Frame(f) => self.range(base, f),
+            Scroller::View => self.pan_range,
+        }
+    }
+
+    fn set_offset(&mut self, t: Scroller, v: (f64, f64)) {
+        if !v.0.is_finite() || !v.1.is_finite() {
+            return;
+        }
+        match t {
+            Scroller::Frame(f) => {
+                if self.scroll.get(&f) != Some(&v) {
+                    self.scroll.insert(f, v);
+                    self.rev += 1;
+                }
+            }
+            Scroller::View => self.pan = Some(v),
+        }
+    }
+
+    /// Move a fling on to `now`; true while it is still moving.
+    fn step_fling(&mut self, now: f64) -> bool {
+        let Some(mut f) = self.fling.take() else { return false };
+        let Some(base) = self.doc.as_ref() else { return false };
+        let r = self.limits(base, f.target);
+        let x = self.offset(f.target);
+        let dt = (now - f.at).clamp(0.0, 0.25);
+        f.at = now;
+        let (nx, vx, done_x) = fling_axis(x.0, f.vel.0, r.0, dt, f.decay, f.bounce);
+        let (ny, vy, done_y) = fling_axis(x.1, f.vel.1, r.1, dt, f.decay, f.bounce);
+        self.set_offset(f.target, (nx, ny));
+        f.vel = (vx, vy);
+        if done_x && done_y {
+            return false;
+        }
+        self.fling = Some(f);
+        true
     }
 
     /// Follow the editor's document: copy it the first time and whenever it changed, keeping the
@@ -202,7 +396,7 @@ impl Presenter {
         self.temp = None;
         self.anim = None;
         self.scroll_anim = None;
-        self.drag_scroll = None;
+        self.stop_scrolling();
         self.scroll.retain(|f, _| doc.contains(*f));
         let clamped: Vec<(NodeId, (f64, f64))> = self.scroll.iter().map(|(f, s)| (*f, clamp_scroll(*s, self.range(doc, *f)))).collect();
         self.scroll.extend(clamped);
@@ -264,12 +458,14 @@ impl Presenter {
         let to = clamp_scroll((x, y), self.range(doc, self.current));
         self.scroll.insert(self.current, to);
         self.scroll_anim = None;
+        self.stop_scrolling();
         self.rev += 1;
     }
 
     /// The player's state for `ui.inspect`.
     pub fn inspect(&self) -> Value {
         let doc = self.doc.as_ref();
+        let pan = self.offset(Scroller::View);
         json!({
             "current": self.current,
             "name": doc.and_then(|d| d.node(self.current)).map(|n| n.name.as_str()),
@@ -279,7 +475,14 @@ impl Presenter {
             "scroll": self.scroll.get(&self.current).map_or([0.0, 0.0], |s| [s.0, s.1]),
             "scrollRange": doc.map(|d| { let r = self.range(d, self.current); [r.0, r.1] }),
             "device": doc.and_then(|d| page_settings(d, self.current).device()).map(|d| d.name),
+            "landscape": doc.is_some_and(|d| page_settings(d, self.current).landscape()),
             "viewport": doc.and_then(|d| viewport(d, self.current)).map(|v| [v.0, v.1]),
+            "scale": self.view.scale.id(),
+            "deviceFrame": self.view.device_frame,
+            "pan": [pan.0, pan.1],
+            "panRange": [self.pan_range.0, self.pan_range.1],
+            "zoom": self.zoom,
+            "flinging": self.fling.is_some(),
         })
     }
 
@@ -322,7 +525,8 @@ impl Presenter {
         self.overlays.clear();
         self.scroll.clear();
         self.scroll_anim = None;
-        self.drag_scroll = None;
+        self.stop_scrolling();
+        self.pan = None;
         self.temp = None;
         self.current = frame;
         if let Some(s) = kept
@@ -342,7 +546,8 @@ impl Presenter {
         self.overlays.clear();
         self.scroll.clear();
         self.scroll_anim = None;
-        self.drag_scroll = None;
+        self.stop_scrolling();
+        self.pan = None;
         self.anim = None;
         self.temp = None;
         self.doc = self.original.clone();
@@ -357,7 +562,7 @@ impl Presenter {
         self.overlays = t.snap.overlays;
         self.history = t.snap.history;
         self.scroll = t.snap.scroll;
-        self.drag_scroll = None;
+        self.stop_scrolling();
         self.hovered.clear();
         self.rev += 1;
     }
@@ -531,13 +736,26 @@ impl Presenter {
             return Some(t.clone());
         }
         let bounds = figcraft_render::export_bounds(doc, id)?;
-        let pix = figcraft_render::render_node(doc, id, px_scale)?;
+        let pix = figcraft_render::render_node(doc, id, texture_scale(ctx, bounds, px_scale))?;
         let img = crate::render_worker::screen_image(&pix, doc.color_profile);
         let tex = ctx.load_texture(format!("present-{}", id.0), img, egui::TextureOptions::LINEAR);
         let ft = FrameTex { key, tex, bounds };
         self.textures.insert(id, ft.clone());
         Some(ft)
     }
+}
+
+/// The most pixels a presented frame's texture holds (bigger prototypes, at 100% or filling the
+/// window, are drawn from a smaller texture scaled up).
+const MAX_TEXTURE_PIXELS: f64 = 16_777_216.0;
+
+/// The pixel scale, at most `px`, at which `bounds` makes a texture the GPU takes (no side past
+/// its limit) of at most [`MAX_TEXTURE_PIXELS`].
+fn texture_scale(ctx: &egui::Context, bounds: figcraft_geom::Rect, px: f64) -> f64 {
+    let side = ctx.input(|i| i.max_texture_side) as f64 - 2.0;
+    let (w, h) = (bounds.width().max(1.0), bounds.height().max(1.0));
+    let s = px.min(side / w.max(h)).min((MAX_TEXTURE_PIXELS / (w * h)).sqrt());
+    if s.is_finite() && s > 0.0 { s } else { 1e-3 }
 }
 
 /// Page → screen mapping for one presented frame.
@@ -788,6 +1006,66 @@ fn clamp_scroll((x, y): (f64, f64), (rx, ry): (f64, f64)) -> (f64, f64) {
     (c(x, rx), c(y, ry))
 }
 
+/// One axis of a fling after `dt` seconds: from offset `x` moving at `v` (units/s) in a range
+/// `0..=r`. Inside the range it slows down exponentially (`decay`, 1/s: it travels `v / decay`);
+/// past an end it either stops there or, with `bounce`, a critically damped spring pulls it back.
+/// Both are solved exactly over short sub-steps, so the motion doesn't depend on the frame rate.
+/// Returns the new offset and speed, and whether it has come to rest.
+pub fn fling_axis(x: f64, v: f64, r: f64, dt: f64, decay: f64, bounce: bool) -> (f64, f64, bool) {
+    if !(x.is_finite() && v.is_finite() && r.is_finite() && dt.is_finite() && decay > 0.0) || r <= 0.0 {
+        return (if r.is_finite() && x.is_finite() { x.clamp(0.0, r.max(0.0)) } else { 0.0 }, 0.0, true);
+    }
+    // A frame is never longer than a second, nor a fling faster than a million units a second.
+    let dt = dt.clamp(0.0, 1.0);
+    let steps = (dt * 240.0).ceil().clamp(1.0, 64.0);
+    let h = dt / steps;
+    let (mut x, mut v) = (x, v.clamp(-1e6, 1e6));
+    for _ in 0..steps as usize {
+        if (0.0..=r).contains(&x) {
+            let e = (-decay * h).exp();
+            x += v * (1.0 - e) / decay;
+            v *= e;
+            if !bounce && !(0.0..=r).contains(&x) {
+                x = x.clamp(0.0, r);
+                v = 0.0;
+            }
+        } else {
+            let end = x.clamp(0.0, r);
+            let (d, e) = (x - end, (-SPRING * h).exp());
+            let c = v + SPRING * d;
+            x = end + (d + c * h) * e;
+            v = (v - SPRING * c * h) * e;
+        }
+    }
+    if !x.is_finite() || !v.is_finite() {
+        return (0.0, 0.0, true);
+    }
+    let end = x.clamp(0.0, r);
+    if x == end && v.abs() < FLING_STOP {
+        return (x, 0.0, true);
+    }
+    if x != end && (x - end).abs() < 0.5 && v.abs() < FLING_STOP * 4.0 {
+        return (end, 0.0, true);
+    }
+    (x, v, false)
+}
+
+/// Where a drag to offset `x` shows in a range `0..=r`: past an end it stretches less the further
+/// it goes, never more than `limit` past.
+pub fn rubber_band(x: f64, r: f64, limit: f64) -> f64 {
+    if !x.is_finite() || !r.is_finite() || r <= 0.0 || !limit.is_finite() || limit <= 0.0 {
+        return if x.is_finite() && r.is_finite() { x.clamp(0.0, r.max(0.0)) } else { 0.0 };
+    }
+    let band = |over: f64| limit * (1.0 - 1.0 / (over * 0.55 / limit + 1.0));
+    if x < 0.0 {
+        -band(-x)
+    } else if x > r {
+        r + band(x - r)
+    } else {
+        x
+    }
+}
+
 /// The prototype settings of the page holding `id` (defaults when there's none).
 pub fn page_settings(doc: &Document, id: NodeId) -> PrototypeSettings {
     doc.page_of(id)
@@ -988,12 +1266,21 @@ struct Layout {
     /// and overflowing content show around a frame presented without a device).
     clip: Rect,
     device: Option<Device>,
+    /// The device is turned to landscape.
+    landscape: bool,
+    /// The device's body is drawn around its screen.
+    body: bool,
     overlays: Vec<(NodeId, Place, Rect)>,
     /// Overlays animating out (same order as `Presenter::closing`).
     closing: Vec<(NodeId, Place, Rect)>,
 }
 
-/// Bezel width around a device's screen of width `w`, and the screen's corner radius.
+/// The width of a device's screen of `size` held upright (its short side when turned).
+fn upright_w(size: Vec2, landscape: bool) -> f32 {
+    if landscape { size.y } else { size.x }
+}
+
+/// Bezel width around a device's screen of upright width `w`, and the screen's corner radius.
 fn bezel(device: &str, w: f32) -> (f32, f32) {
     match device {
         "MacBook Air" => ((w * 0.025).max(6.0), 0.0),
@@ -1003,38 +1290,71 @@ fn bezel(device: &str, w: f32) -> (f32, f32) {
     }
 }
 
-/// How far a device's body reaches past its screen of width `w`: (each side, top, bottom).
-fn body_outset(device: &str, w: f32) -> (f32, f32, f32) {
+/// How far a device's body reaches past its screen of `size`: (each side, top, bottom). A phone
+/// turned to landscape has its side buttons above and below.
+fn body_outset(device: &str, size: Vec2, landscape: bool) -> (f32, f32, f32) {
+    let w = upright_w(size, landscape);
     let (b, _) = bezel(device, w);
     match device {
         "MacBook Air" => (b + w * 0.08, b, b + (w * 0.022).max(6.0)),
         "Desktop" => (b, b, b + w * 0.08 + 6.0),
+        _ if landscape => (b, b + 3.0, b + 3.0),
         _ => (b + 3.0, b, b),
     }
 }
 
-/// Place the presented frame in `area` (kept `pad` from its edges): on its device's screen, with
-/// the whole device fitting, else the frame itself scaled to fit. Never above 100%.
-fn layout(p: &mut Presenter, area: Rect, pad: f32) -> Option<Layout> {
+/// Place the presented frame in `area`: on its device's screen (the whole device sized by the
+/// view's scale option), else the frame itself. Fit and 100% keep the chrome's padding from the
+/// edges; Fit never goes above 100%. What doesn't fit the window pans (`Presenter::pan`). The
+/// preview pane always fits.
+fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
     let disp = p.display()?;
     let fb = disp.world_bounds(p.current)?;
-    let device = page_settings(&disp, p.current).device();
+    let settings = page_settings(&disp, p.current);
+    let (device, landscape) = (settings.device(), settings.landscape());
+    let view = if chrome.pane { PresentView::default() } else { p.view };
+    let body = device.filter(|_| view.device_frame);
+    let pad = if matches!(view.scale, PresentScale::Fit | PresentScale::Actual) { chrome.pad } else { 0.0 };
     let avail = area.shrink(pad);
     let (sw, sh) = device.map_or((fb.width(), fb.height()), |d| (d.width, d.height));
-    let mut scale = (f64::from(avail.width()) / sw.max(1.0)).min(f64::from(avail.height()) / sh.max(1.0));
-    if let Some(d) = device {
-        let (ws, hs) = ((sw * scale) as f32, (sh * scale) as f32);
-        let (x, top, bottom) = body_outset(d.name, ws);
-        scale *= f64::from((avail.width() / (ws + 2.0 * x)).min(avail.height() / (hs + top + bottom)));
+    // The screen at `scale`, the body's outsets around it and the whole size.
+    let outer = |scale: f64| {
+        let size = vec2((sw * scale) as f32, (sh * scale) as f32);
+        let (x, top, bottom) = body.map_or((0.0, 0.0, 0.0), |d| body_outset(d.name, size, landscape));
+        (size, x, top, vec2(size.x + 2.0 * x, size.y + top + bottom))
+    };
+    // The factor that makes something of size `o` fit, fill… the available space.
+    let factor = |o: Vec2| {
+        let (kx, ky) = (avail.width() / o.x.max(1.0), avail.height() / o.y.max(1.0));
+        f64::from(match view.scale {
+            PresentScale::Fit => kx.min(ky),
+            PresentScale::FitWidth => kx,
+            PresentScale::Fill => kx.max(ky),
+            PresentScale::Actual => 1.0,
+        })
+    };
+    let mut scale = factor(vec2(sw as f32, sh as f32));
+    // The body doesn't scale exactly with the screen (its edges have a minimum): size it once more.
+    if body.is_some() {
+        scale *= factor(outer(scale).3);
     }
-    let scale = if scale.is_finite() { scale.clamp(0.01, 1.0) } else { 0.01 };
-    let size = vec2((sw * scale) as f32, (sh * scale) as f32);
-    // Centre the whole device: a laptop's base hangs below its screen.
-    let shift = device.map_or(0.0, |d| {
-        let (_, top, bottom) = body_outset(d.name, size.x);
-        (top - bottom) / 2.0
-    });
-    let screen = Rect::from_center_size(area.center() + vec2(0.0, shift), size);
+    let max = if view.scale == PresentScale::Fit { 1.0 } else { 16.0 };
+    let scale = if scale.is_finite() { scale.clamp(0.01, max) } else { 0.01 };
+    let (size, x, top, whole) = outer(scale);
+    p.zoom = scale;
+    // What's bigger than the window pans: starting centred across and at the top.
+    let over = |d: f32| if d > 0.5 { d } else { 0.0 };
+    let excess = vec2(over(whole.x - avail.width()), over(whole.y - avail.height()));
+    p.pan_range = (f64::from(excess.x), f64::from(excess.y));
+    // While a drag or fling moves the view it may stretch past the ends; otherwise it stays in range.
+    let live = matches!(p.drag_scroll, Some((Scroller::View, _))) || p.fling.is_some_and(|f| f.target == Scroller::View);
+    if !live {
+        p.pan = p.pan.map(|v| clamp_scroll(v, p.pan_range));
+    }
+    let pan = p.offset(Scroller::View);
+    let along = |excess: f32, min: f32, centre: f32, len: f32, pan: f64| if excess > 0.0 { min - pan as f32 } else { centre - len / 2.0 };
+    let min = pos2(along(excess.x, avail.min.x, area.center().x, whole.x, pan.0), along(excess.y, avail.min.y, area.center().y, whole.y, pan.1));
+    let screen = Rect::from_min_size(min + vec2(x, top), size);
     let place = Place::centered(fb, screen.center(), scale);
     let place_overlay = |o: &OverlayState| {
         let ob = disp.world_bounds(o.id)?;
@@ -1045,7 +1365,7 @@ fn layout(p: &mut Presenter, area: Rect, pad: f32) -> Option<Layout> {
     let overlays = p.overlays.iter().filter_map(place_overlay).collect();
     let closing = p.closing.iter().filter_map(|(_, o)| place_overlay(o)).collect();
     let clip = if device.is_some() { screen } else { area };
-    Some(Layout { disp, scale, place, screen, clip, device, overlays, closing })
+    Some(Layout { disp, scale, place, screen, clip, device, landscape, body: body.is_some(), overlays, closing })
 }
 
 /// The keys that present the current frame full-window.
@@ -1074,6 +1394,8 @@ enum BarAction {
     Restart,
     /// Present full-window (from the pane).
     Present,
+    /// The full-window presenter's options menu (handled in the bar).
+    Options,
 }
 
 /// The full-window presenter (while `app.ui.present` is set). Escape or Close ends it.
@@ -1091,6 +1413,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     for u in pres.urls.drain(..) {
         app.services.open_url(&u);
     }
+    // The options carry over to the next presentation.
+    app.ui.present_view = pres.view;
     if action == Some(BarAction::Close) || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         return;
     }
@@ -1176,11 +1500,12 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
-/// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs).
-fn device_body(p: &egui::Painter, device: &str, s: Rect) {
+/// Body of the presentation device behind the screen `s` (drawn in code: rounded slabs). Turned
+/// to landscape (a quarter turn counter-clockwise), a phone's left side is at the bottom.
+fn device_body(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
     let body = Color32::from_rgb(0x1C, 0x1C, 0x1E);
     let edge = Color32::from_rgb(0x5A, 0x5A, 0x5E);
-    let w = s.width();
+    let w = upright_w(s.size(), landscape);
     let (b, screen_r) = bezel(device, w);
     match device {
         "MacBook Air" => {
@@ -1208,8 +1533,15 @@ fn device_body(p: &egui::Painter, device: &str, s: Rect) {
             let slab = s.expand(b);
             let r = CornerRadius::same((screen_r + b).min(255.0) as u8);
             if !device.starts_with("iPad") {
-                for (x, y0, h) in [(slab.min.x - 2.0, 0.18, 0.06), (slab.min.x - 2.0, 0.27, 0.1), (slab.max.x, 0.24, 0.13)] {
-                    let btn = Rect::from_min_size(pos2(x, slab.min.y + slab.height() * y0), vec2(2.5, slab.height() * h));
+                // (on the left side, from the top, length) as fractions of the upright side.
+                for (left, f0, h) in [(true, 0.18, 0.06), (true, 0.27, 0.1), (false, 0.24, 0.13)] {
+                    let btn = if landscape {
+                        let y = if left { slab.max.y - 0.5 } else { slab.min.y - 2.5 };
+                        Rect::from_min_size(pos2(slab.min.x + slab.width() * f0, y), vec2(slab.width() * h, 2.5))
+                    } else {
+                        let x = if left { slab.min.x - 2.0 } else { slab.max.x };
+                        Rect::from_min_size(pos2(x, slab.min.y + slab.height() * f0), vec2(2.5, slab.height() * h))
+                    };
                     p.rect_filled(btn, CornerRadius::same(1), edge);
                 }
             }
@@ -1220,9 +1552,9 @@ fn device_body(p: &egui::Painter, device: &str, s: Rect) {
 }
 
 /// What sits on top of the screen: rounded screen corners (the body colour masks the frame's
-/// square corners) and a phone's camera pill.
-fn device_glass(p: &egui::Painter, device: &str, s: Rect) {
-    let w = s.width();
+/// square corners) and a phone's camera pill (at the left when turned to landscape).
+fn device_glass(p: &egui::Painter, device: &str, s: Rect, landscape: bool) {
+    let w = upright_w(s.size(), landscape);
     let (b, screen_r) = bezel(device, w);
     if screen_r <= 0.0 {
         return;
@@ -1231,7 +1563,11 @@ fn device_glass(p: &egui::Painter, device: &str, s: Rect) {
     let cover = (screen_r * 0.45 + 1.0).min(b);
     p.rect_stroke(s, CornerRadius::same(screen_r.min(255.0) as u8), Stroke::new(cover, Color32::from_rgb(0x1C, 0x1C, 0x1E)), StrokeKind::Outside);
     if device.starts_with("iPhone") {
-        let pill = Rect::from_center_size(pos2(s.center().x, s.min.y + w * 0.045), vec2(w * 0.3, w * 0.085));
+        let pill = if landscape {
+            Rect::from_center_size(pos2(s.min.x + w * 0.045, s.center().y), vec2(w * 0.085, w * 0.3))
+        } else {
+            Rect::from_center_size(pos2(s.center().x, s.min.y + w * 0.045), vec2(w * 0.3, w * 0.085))
+        };
         p.rect_filled(pill, CornerRadius::same((w * 0.0425).min(255.0) as u8), Color32::BLACK);
     }
 }
@@ -1269,21 +1605,27 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         }
         ctx.request_repaint();
     }
+    // Scrolling that carries on after the input let go (repaints only while it moves).
+    if p.step_fling(now) {
+        ctx.request_repaint();
+    }
     let resp = ui.interact(area, ui.id().with("present_area"), Sense::click_and_drag());
     let over = resp.contains_pointer();
-    if let Some(l) = layout(p, area, chrome.pad) {
+    if let Some(l) = layout(p, area, chrome) {
         // The pane only takes the keyboard while the pointer is over it.
-        input(p, &ctx, &l, over, chrome.keys && (!chrome.pane || over), now);
+        input(p, &ctx, &l, over, chrome.keys && (!chrome.pane || over), chrome.pane, now);
     }
-    let Some(l) = layout(p, area, chrome.pad) else { return action };
+    let Some(l) = layout(p, area, chrome) else { return action };
     let painter = ui.painter_at(area);
-    if let Some(d) = l.device {
-        device_body(&painter, d.name, l.screen);
+    if l.device.is_some() {
+        if let Some(d) = l.device.filter(|_| l.body) {
+            device_body(&painter, d.name, l.screen, l.landscape);
+        }
         painter.rect_filled(l.screen, CornerRadius::ZERO, bg);
     }
     draw(p, &painter, &ctx, &l, now);
-    if let Some(d) = l.device {
-        device_glass(&painter, d.name, l.screen);
+    if let Some(d) = l.device.filter(|_| l.body) {
+        device_glass(&painter, d.name, l.screen, l.landscape);
     }
     // Timers: wake up for the soonest pending "after delay".
     let mut next: Option<f64> = None;
@@ -1324,12 +1666,13 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         Some(NodeKind::Page { flows, .. }) => flows.clone(),
         _ => vec![],
     };
+    let device = page_settings(doc, p.current).device().is_some();
     let mut action = None;
     // Right: the buttons, right to left.
     let buttons: &[(BarAction, &str, Icon)] = if chrome.pane {
         &[(BarAction::Close, "Close preview", Icon::Close), (BarAction::Present, "Present", Icon::Play), (BarAction::Restart, "Restart", Icon::Reset)]
     } else {
-        &[(BarAction::Close, "Close", Icon::Close), (BarAction::Restart, "Restart", Icon::Reset)]
+        &[(BarAction::Close, "Close", Icon::Close), (BarAction::Restart, "Restart", Icon::Reset), (BarAction::Options, "Options", Icon::Dots)]
     };
     let mut x = bar.max.x - if chrome.pane { 6.0 } else { 8.0 };
     for (act, label, icon) in buttons {
@@ -1348,7 +1691,9 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         } else {
             ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
         }
-        if resp.clicked() {
+        if *act == BarAction::Options {
+            egui::Popup::menu(&resp).width(220.0).show(|ui| options_menu(p, ui, device, now));
+        } else if resp.clicked() {
             action = Some(*act);
         }
     }
@@ -1381,6 +1726,31 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     action
 }
 
+/// The full-window presenter's options menu: how the prototype is sized (Z cycles them), the
+/// device's body, restart (R).
+fn options_menu(p: &mut Presenter, ui: &mut Ui, device: bool, now: f64) {
+    use crate::right::menu_check;
+    for s in PresentScale::options(device) {
+        if menu_check(ui, p.view.scale == *s, s.label(device), "") {
+            p.set_scale(*s);
+            ui.close();
+        }
+    }
+    if menu_check(ui, false, "Next size option", "Z") {
+        p.set_scale(p.view.scale.next(device));
+        ui.close();
+    }
+    ui.separator();
+    if device && menu_check(ui, p.view.device_frame, "Show device frame", "") {
+        p.view.device_frame = !p.view.device_frame;
+        ui.close();
+    }
+    if menu_check(ui, false, "Restart", "R") {
+        p.restart(p.start, now);
+        ui.close();
+    }
+}
+
 /// Scrolling frames under the screen point `q`, innermost first: those of `root` (in the display
 /// document `disp`) that can scroll (`base` is the player's document without scroll offsets).
 fn scrollers_at(p: &Presenter, base: &Document, disp: &Document, root: NodeId, place: &Place, q: Pos2) -> Vec<NodeId> {
@@ -1400,15 +1770,24 @@ fn consume_key(ctx: &egui::Context, key: egui::Key) {
     ctx.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: k, .. } if *k == key)));
 }
 
+/// Screen points → `t`'s units (page units for frames, points for the view).
+fn units_per_point(t: Scroller, scale: f64) -> f64 {
+    match t {
+        Scroller::Frame(_) => 1.0 / scale.max(1e-6),
+        Scroller::View => 1.0,
+    }
+}
+
 /// Pointer, wheel, keys and timers. `over_area`: the pointer is over the player; `keys_on`: the
-/// player takes the keyboard.
-fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, keys_on: bool, now: f64) {
-    let (pos, pressed, released, down, wheel, keys) = ctx.input(|i| {
-        let keys: Vec<egui::Key> = i
+/// player takes the keyboard; `pane`: it plays in the preview pane (which always fits).
+#[allow(clippy::too_many_arguments)]
+fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, keys_on: bool, pane: bool, now: f64) {
+    let (pos, pressed, released, down, wheel, velocity, dt, keys) = ctx.input(|i| {
+        let keys: Vec<(egui::Key, egui::Modifiers)> = i
             .events
             .iter()
             .filter_map(|e| match e {
-                egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(*key),
+                egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => Some((*key, *modifiers)),
                 _ => None,
             })
             .collect();
@@ -1418,13 +1797,20 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             i.pointer.button_released(egui::PointerButton::Primary),
             i.pointer.primary_down(),
             i.smooth_scroll_delta,
+            i.pointer.velocity(),
+            f64::from(i.unstable_dt).clamp(1.0 / 500.0, 0.1),
             keys,
         )
     });
     let keys = if keys_on { keys } else { Vec::new() };
     let pos = pos.filter(|_| over_area || p.press.is_some());
-    if !down {
-        p.drag_scroll = None;
+    // A drag that scrolled lets go: it carries on at the pointer's speed (and springs back from
+    // past the ends).
+    if !down && let Some((t, _)) = p.drag_scroll.take() {
+        let u = units_per_point(t, l.scale);
+        let r = p.doc.as_ref().map_or((0.0, 0.0), |b| p.limits(b, t));
+        let along = |v: f32, r: f64| if r > 0.0 { -f64::from(v) * u } else { 0.0 };
+        p.fling = Some(Fling { target: t, vel: (along(velocity.x, r.0), along(velocity.y, r.1)), decay: DECAY_DRAG, bounce: true, at: now });
     }
     // The active layer: the top overlay, else the frame.
     let (root, place, clip) = match l.overlays.last() {
@@ -1441,21 +1827,40 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             return;
         }
     }
-    // The wheel scrolls the innermost frame under the pointer that can still move that way.
+    // The wheel scrolls the innermost frame under the pointer that can still move that way, else
+    // pans a view bigger than the window. When it stops it coasts on, slowing down.
     if wheel != Vec2::ZERO
         && let Some(q) = pos
         && let Some(base) = p.doc.clone()
     {
-        for f in scrollers_at(p, &base, doc, root, &place, q) {
-            let cur = p.scroll.get(&f).copied().unwrap_or((0.0, 0.0));
-            let next = clamp_scroll((cur.0 - f64::from(wheel.x) / l.scale, cur.1 - f64::from(wheel.y) / l.scale), p.range(&base, f));
+        let mut targets: Vec<Scroller> = scrollers_at(p, &base, doc, root, &place, q).into_iter().map(Scroller::Frame).collect();
+        if p.pan_range != (0.0, 0.0) {
+            targets.push(Scroller::View);
+        }
+        let mut moved = None;
+        for t in targets {
+            let u = units_per_point(t, l.scale);
+            let cur = p.offset(t);
+            let next = clamp_scroll((cur.0 - f64::from(wheel.x) * u, cur.1 - f64::from(wheel.y) * u), p.limits(&base, t));
             if (next.0 - cur.0).abs() > 1e-6 || (next.1 - cur.1).abs() > 1e-6 {
-                p.scroll.insert(f, next);
+                p.set_offset(t, next);
                 p.scroll_anim = None;
-                p.rev += 1;
+                p.fling = None;
+                moved = Some((t, ((next.0 - cur.0) / dt, (next.1 - cur.1) / dt)));
                 break;
             }
         }
+        // The wheel's speed, smoothed over ~50 ms whatever the frame rate.
+        p.wheel = moved.map(|(t, inst)| {
+            let prev = p.wheel.filter(|w| w.0 == t).map_or(inst, |w| w.1);
+            let a = 1.0 - (-dt / 0.05).exp();
+            (t, (lerp(prev.0, inst.0, a), lerp(prev.1, inst.1, a)))
+        });
+    } else if wheel == Vec2::ZERO
+        && let Some((t, v)) = p.wheel.take()
+        && v.0.hypot(v.1) > COAST_MIN * units_per_point(t, l.scale)
+    {
+        p.fling = Some(Fling { target: t, vel: v, decay: DECAY_WHEEL, bounce: false, at: now });
     }
     let hits: Vec<(NodeId, Rect)> = hot.iter().rev().filter(|(_, r)| pos.is_some_and(|q| r.contains(q))).copied().collect();
     if !hits.is_empty() {
@@ -1496,6 +1901,10 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     if pressed && pos.is_some() && over_area {
         p.press = pos;
         p.dragged = false;
+        // Pressing catches a fling (one springing back from past an end carries on).
+        let overscrolled = |f: &Fling| p.doc.as_ref().is_some_and(|b| clamp_scroll(p.offset(f.target), p.limits(b, f.target)) != p.offset(f.target));
+        p.fling = p.fling.filter(overscrolled);
+        p.wheel = None;
         if let (Some((_, _, orect)), Some(o), Some(q)) = (l.overlays.last(), p.overlays.last(), pos)
             && !orect.contains(q)
         {
@@ -1530,24 +1939,31 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             p.press = None;
             return;
         }
-        // Otherwise the drag scrolls the innermost frame under it that scrolls.
-        if let Some(base) = p.doc.clone()
-            && let Some(f) = scrollers_at(p, &base, doc, root, &place, start).first().copied()
-        {
-            p.drag_scroll = Some((f, p.scroll.get(&f).copied().unwrap_or((0.0, 0.0))));
+        // Otherwise the drag scrolls the innermost frame under it that scrolls, else pans a view
+        // bigger than the window.
+        if let Some(base) = p.doc.clone() {
+            let target = scrollers_at(p, &base, doc, root, &place, start)
+                .first()
+                .copied()
+                .map(Scroller::Frame)
+                .or((p.pan_range != (0.0, 0.0)).then_some(Scroller::View));
+            if let Some(t) = target {
+                p.fling = None;
+                p.drag_scroll = Some((t, clamp_scroll(p.offset(t), p.limits(&base, t))));
+            }
         }
     }
+    // Dragging scrolls with the pointer; past the ends it stretches.
     if down
-        && let (Some((f, from)), Some(start), Some(q)) = (p.drag_scroll, p.press, pos)
+        && let (Some((t, from)), Some(start), Some(q)) = (p.drag_scroll, p.press, pos)
         && let Some(base) = p.doc.as_ref()
     {
-        let d = q - start;
-        let to = clamp_scroll((from.0 - f64::from(d.x) / l.scale, from.1 - f64::from(d.y) / l.scale), p.range(base, f));
-        if p.scroll.get(&f).copied().unwrap_or((0.0, 0.0)) != to {
-            p.scroll.insert(f, to);
-            p.scroll_anim = None;
-            p.rev += 1;
-        }
+        let (d, u) = (q - start, units_per_point(t, l.scale));
+        let r = p.limits(base, t);
+        let limit = RUBBER_PTS * u;
+        let to = (rubber_band(from.0 - f64::from(d.x) * u, r.0, limit), rubber_band(from.1 - f64::from(d.y) * u, r.1, limit));
+        p.set_offset(t, to);
+        p.scroll_anim = None;
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
     }
     if released && p.press.is_some() {
@@ -1571,7 +1987,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         }
     }
     // Keys.
-    for key in &keys {
+    for (key, mods) in &keys {
         let name = key.name();
         let found = doc.subtree(root).into_iter().find_map(|id| {
             find_trigger(doc, id, |t| matches!(t, Trigger::KeyPress { key } if key.eq_ignore_ascii_case(name) || key_alias(key) == Some(name)))
@@ -1583,6 +1999,23 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
                 return;
             }
             continue;
+        }
+        // The player's own keys, when the prototype doesn't use them: R restarts, Z cycles the
+        // full-window presenter's size options.
+        if mods.is_none() {
+            match key {
+                egui::Key::R => {
+                    p.restart(p.start, now);
+                    consume_key(ctx, *key);
+                    return;
+                }
+                egui::Key::Z if !pane => {
+                    p.set_scale(p.view.scale.next(l.device.is_some()));
+                    consume_key(ctx, *key);
+                    return;
+                }
+                _ => {}
+            }
         }
         // Arrow keys step through top-level frames when nothing else uses them.
         if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
@@ -1662,7 +2095,9 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
                 let t0 = std::time::Instant::now();
                 let tmp = smart_interpolate(&a.from_doc, a.from_frame, &l.disp, p.current, e);
                 let bounds = figcraft_render::export_bounds(&tmp, p.current);
-                if let (Some(b), Some(pix)) = (bounds, figcraft_render::render_node(&tmp, p.current, px)) {
+                if let Some(b) = bounds
+                    && let Some(pix) = figcraft_render::render_node(&tmp, p.current, texture_scale(ctx, b, px))
+                {
                     let img = crate::render_worker::screen_image(&pix, tmp.color_profile);
                     let tex = match &mut p.anim_tex {
                         Some(t) => {

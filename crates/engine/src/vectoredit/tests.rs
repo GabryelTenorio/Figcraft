@@ -6,24 +6,24 @@ use super::*;
 use crate::EngineError;
 use crate::tools::{PointerEvent, PointerKind};
 
-fn ex(s: &mut Session, c: &str, p: Value) -> Value {
+pub(super) fn ex(s: &mut Session, c: &str, p: Value) -> Value {
     s.execute(c, &p).unwrap_or_else(|e| panic!("{c}: {e}"))
 }
 
-fn net(s: &Session, id: NodeId) -> VectorNetwork {
+pub(super) fn net(s: &Session, id: NodeId) -> VectorNetwork {
     network(s.doc().unwrap(), id).unwrap().clone()
 }
 
-fn ev(kind: PointerKind, x: f64, y: f64) -> PointerEvent {
+pub(super) fn ev(kind: PointerKind, x: f64, y: f64) -> PointerEvent {
     PointerEvent::at(kind, x, y, 1.0)
 }
 
-fn click(s: &mut Session, x: f64, y: f64) {
+pub(super) fn click(s: &mut Session, x: f64, y: f64) {
     s.pointer(&ev(PointerKind::Down, x, y)).unwrap();
     s.pointer(&ev(PointerKind::Up, x, y)).unwrap();
 }
 
-fn drag(s: &mut Session, from: (f64, f64), to: (f64, f64)) {
+pub(super) fn drag(s: &mut Session, from: (f64, f64), to: (f64, f64)) {
     s.pointer(&ev(PointerKind::Down, from.0, from.1)).unwrap();
     s.pointer(&ev(PointerKind::Move, (from.0 + to.0) / 2.0, (from.1 + to.1) / 2.0)).unwrap();
     s.pointer(&ev(PointerKind::Move, to.0, to.1)).unwrap();
@@ -31,22 +31,22 @@ fn drag(s: &mut Session, from: (f64, f64), to: (f64, f64)) {
 }
 
 /// A 100×100 rectangle at the origin, in edit mode.
-fn rect(s: &mut Session) -> NodeId {
+pub(super) fn rect(s: &mut Session) -> NodeId {
     let r = ex(s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 100, "height": 100}));
     let id = crate::params::id_of(&r["id"]).unwrap();
     ex(s, "vector.edit.begin", json!({"id": id}));
     id
 }
 
-fn ve(s: &Session) -> VectorEdit {
+pub(super) fn ve(s: &Session) -> VectorEdit {
     s.ds().unwrap().vector_edit.clone().unwrap()
 }
 
-fn vertex_at(n: &VectorNetwork, x: f64, y: f64) -> usize {
+pub(super) fn vertex_at(n: &VectorNetwork, x: f64, y: f64) -> usize {
     n.vertices.iter().position(|v| (v.x - x).abs() < 1e-6 && (v.y - y).abs() < 1e-6).unwrap()
 }
 
-fn pt(x: f64, y: f64) -> Point {
+pub(super) fn pt(x: f64, y: f64) -> Point {
     Point::new(x, y)
 }
 
