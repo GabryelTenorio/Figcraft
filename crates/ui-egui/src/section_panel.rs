@@ -86,12 +86,21 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         row(ui, 32.0, |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let id = egui::Id::new(("dev_reason", ids.first().copied()));
-            let committed = widgets::text_field(ui, id, "", col * 2.0 - 64.0, "Why it changed");
+            let draft_id = id.with("draft");
+            // The typed reason stays a draft until Enter or Resolve: clicking away keeps it.
+            let mut draft: String = ui.data(|d| d.get_temp(draft_id)).unwrap_or_default();
+            let committed = widgets::text_field(ui, id, &draft, col * 2.0 - 64.0, "Why it changed");
+            let enter = committed.is_some() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if let Some(text) = committed {
+                draft = text;
+                ui.data_mut(|d| d.insert_temp(draft_id, draft.clone()));
+            }
             let button = widgets::button(ui, "Resolve", true, true).on_hover_text("Back to Ready for dev");
-            if let Some(reason) = committed.filter(|r| !r.trim().is_empty()) {
-                app.run("dev.resolveChange", json!({"ids": ids, "reason": reason}));
-            } else if button.clicked() {
-                app.run("dev.resolveChange", json!({"ids": ids}));
+            if enter || button.clicked() {
+                let reason = draft.trim();
+                let params = if reason.is_empty() { json!({"ids": ids}) } else { json!({"ids": ids, "reason": reason}) };
+                app.run("dev.resolveChange", params);
+                ui.data_mut(|d| d.remove::<String>(draft_id));
             }
         });
     } else if let Some(note) = common(doc, sel, |n| n.dev_note.clone()).filter(|n| !n.is_empty()) {
