@@ -93,12 +93,40 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"instances": out}))
             }
         ),
+        spec!(
+            "component.makeSlot",
+            "Make slot",
+            "{id? (a frame inside a main component), name? (the slot property's name; the frame's by default), preferred? [component or set ids]}  (its instances take any content there)",
+            true,
+            make_slot
+        ),
+        spec!(
+            "component.removeSlot",
+            "Remove slot",
+            "{id? (a slot frame of a main component)}  (instances lose their own content in it)",
+            true,
+            remove_slot
+        ),
+        spec!(
+            "instance.slotInsert",
+            "Insert into slot",
+            "{id? (a slot inside an instance, or the instance with `slot`), slot? (slot property name), component, index? (child index; on top when omitted), replace? (clear the slot first)}",
+            true,
+            slot_insert
+        ),
+        spec!(
+            "instance.resetSlot",
+            "Reset slot",
+            "{id? (a slot inside an instance, or the instance with `slot`), slot?}  (back to the main's default content)",
+            true,
+            reset_slot
+        ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
         spec!("component.resetInstance", "Reset all changes", "{ids?}", true, reset_instance),
         spec!(
             "component.resetOverride",
             "Reset override",
-            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|size|position|component|props; all when omitted)}",
+            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|size|position|component|props|slot; all when omitted)}",
             true,
             reset_override
         ),
@@ -143,14 +171,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.addProperty",
             "Add component property",
-            "{id? (component, set, or a layer inside a component: it gets bound), name, type: boolean|text|instanceSwap|variant, default?, layer? (node bound to it)}",
+            "{id? (component, set, or a layer inside a component: it gets bound), name, type: boolean|text|instanceSwap|variant|slot, default?, layer? (node bound to it; a frame for slots), preferred? (slots: component ids)}",
             true,
             add_prop
         ),
         spec!(
             "component.editProperty",
             "Edit component property",
-            "{id? (component or set), name, newName?, default?, value? + newValue? (rename a variant value)}",
+            "{id? (component or set), name, newName?, default?, value? + newValue? (rename a variant value), preferred? (slots: component ids)}",
             true,
             edit_prop
         ),
@@ -158,7 +186,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.bindProperty",
             "Bind layer to property",
-            "{layer?, property (null/\"\" unbinds), field?: visible|characters|mainComponent}",
+            "{layer?, property (null/\"\" unbinds), field?: visible|characters|mainComponent|slot}",
             true,
             bind_prop
         ),
@@ -397,30 +425,15 @@ fn detach(s: &mut Session, p: &Value) -> Result<Value> {
         if inside_instance(doc, i) {
             return Err(EngineError::Disabled(cmd.into(), "a nested instance can't be detached on its own: detach the outer instance first".into()));
         }
-        // Own layers lose their link; nested instances stay instances of their own mains.
-        let mut nested = Vec::new();
-        for d in doc.subtree(i).into_iter().filter(|d| *d != i) {
-            let parent_inst = doc.node(d).and_then(|n| n.parent).and_then(|p| owning_instance(doc, p));
-            if parent_inst != Some(i) {
-                continue;
-            }
-            if matches!(doc.node(d).map(|n| &n.kind), Some(NodeKind::Instance { .. })) {
-                nested.push(d);
-            } else if let Some(n) = doc.node_mut(d) {
-                n.source = None;
-                n.overrides.clear();
-                n.prop_refs.clear();
-            }
-        }
+        // Own layers lose their link (slot content stays as it is); nested instances stay
+        // instances of their own mains.
+        let nested = unlink_layers(doc, i, Some(i));
         let n = doc.get_mut(i)?;
         n.kind = NodeKind::Frame;
         n.source = None;
         n.overrides.clear();
         n.prop_refs.remove("mainComponent");
         for nn in nested {
-            if let Some(m) = doc.node_mut(nn) {
-                m.prop_refs.clear();
-            }
             rebase_instance(doc, nn);
         }
         out.push(i);
@@ -501,6 +514,108 @@ fn reset_override(s: &mut Session, p: &Value) -> Result<Value> {
         changed = true;
     }
     Ok(json!({"changed": changed}))
+}
+
+/// A property name for `owner` based on `base` (a layer name): valid and not taken yet.
+fn fresh_prop_name(doc: &Document, owner: &Owner, base: &str) -> String {
+    let base: String = base.chars().filter(|c| !matches!(c, ',' | '=')).take(100).collect::<String>().trim().to_string();
+    let base = if base.is_empty() { "Slot".to_string() } else { base };
+    let taken = |n: &str| {
+        owner.components(doc).iter().any(|c| prop_defs(doc, *c).contains_key(n))
+            || matches!(owner, Owner::Set(s) if variant_options(doc, *s).iter().any(|(k, _)| k == n))
+    };
+    (1..10_000).map(|k| if k == 1 { base.clone() } else { format!("{base} {k}") }).find(|n| !taken(n)).unwrap_or(base)
+}
+
+/// The `preferred` components of a slot property: component or component set ids.
+fn preferred_arg(cmd: &str, doc: &Document, p: &Value) -> Result<Vec<NodeId>> {
+    let Some(v) = get(p, "preferred").filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let list = v.as_array().ok_or_else(|| bad(cmd, "`preferred`: an array of component ids"))?;
+    let mut out = Vec::new();
+    for x in list.iter().take(500) {
+        let c = id_of(x)
+            .filter(|c| doc.node(*c).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. })))
+            .ok_or_else(|| bad(cmd, format!("`preferred`: {x} is not a component or component set")))?;
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn make_slot(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "component.makeSlot";
+    let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a frame inside a main component"))?;
+    let doc = s.doc()?;
+    let n = doc.get(id)?;
+    let inside_main = owning_component(doc, id).is_some_and(|c| c != id) && owning_instance(doc, id).is_none();
+    if !matches!(n.kind, NodeKind::Frame) || !inside_main {
+        return Err(bad(cmd, "only a frame inside a main component (not inside an instance) can become a slot"));
+    }
+    if is_slot(doc, id) {
+        return Err(EngineError::Disabled(cmd.into(), format!("\"{}\" is already a slot", n.name)));
+    }
+    let owner = Owner::resolve(doc, id).ok_or_else(|| bad(cmd, "the frame isn't inside a component"))?;
+    let name = string(p, "name").unwrap_or_else(|| fresh_prop_name(doc, &owner, &n.name));
+    let preferred = get(p, "preferred").cloned().unwrap_or(Value::Null);
+    add_prop(s, &json!({"id": id, "layer": id, "name": name, "type": "slot", "preferred": preferred}))
+}
+
+fn remove_slot(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "component.removeSlot";
+    let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a slot frame of a main component"))?;
+    let doc = s.doc()?;
+    if owning_instance(doc, id).is_some() {
+        return Err(EngineError::Disabled(cmd.into(), "slots are removed on the main component".into()));
+    }
+    let name = slot_name(doc, id).ok_or_else(|| bad(cmd, "not a slot frame of a main component"))?;
+    delete_prop(s, &json!({"id": id, "name": name}))?;
+    Ok(json!({"id": id, "name": name}))
+}
+
+/// The slot inside an instance a command acts on: `id` itself, or instance `id`'s slot `name`.
+fn instance_slot(cmd: &str, doc: &Document, id: NodeId, name: Option<&str>) -> Result<NodeId> {
+    let slot = match name {
+        Some(nm) => slots_of(doc, id).into_iter().find(|(_, n)| n == nm).map(|(l, _)| l).ok_or_else(|| bad(cmd, format!("no slot named `{nm}`")))?,
+        None => id,
+    };
+    if !is_slot(doc, slot) || owning_instance(doc, slot).is_none() {
+        return Err(bad(cmd, "not a slot of an instance (a main component's slot takes layers like any frame)"));
+    }
+    Ok(slot)
+}
+
+fn slot_insert(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "instance.slotInsert";
+    let c = req_id(cmd, p, "component")?;
+    let target = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a slot inside an instance"))?;
+    let index = match get(p, "index").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(v.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(cmd, "`index`: a child index (0 = bottom)"))?),
+    };
+    let doc = s.doc_mut()?;
+    let slot = instance_slot(cmd, doc, target, string(p, "slot").as_deref())?;
+    let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
+    if boolean(p, "replace").unwrap_or(false) {
+        for k in doc.get(slot)?.children.clone() {
+            doc.remove(k)?;
+        }
+    }
+    let i = create_instance_at(doc, c, slot, 0.0, 0.0, index)?;
+    s.set_selection(vec![i]);
+    Ok(json!({"id": i, "slot": slot}))
+}
+
+fn reset_slot(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "instance.resetSlot";
+    let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a slot inside an instance"))?;
+    let doc = s.doc_mut()?;
+    let slot = instance_slot(cmd, doc, id, string(p, "slot").as_deref())?;
+    let changed = slot_edited(doc, slot);
+    if changed {
+        doc.get_mut(slot)?.overrides.remove(SLOT);
+    }
+    Ok(json!({"id": slot, "changed": changed}))
 }
 
 fn push_changes(s: &mut Session, p: &Value) -> Result<Value> {
@@ -703,6 +818,7 @@ fn coerce(cmd: &str, doc: &Document, name: &str, def: &PropDef, v: &Value) -> Re
             let t = v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
             if options.is_empty() || options.contains(&t) { Ok(json!(t)) } else { Err(bad(cmd, format!("`{name}` must be one of {options:?}"))) }
         }
+        PropDef::Slot { .. } => Err(bad(cmd, format!("`{name}` is a slot: fill it with instance.slotInsert or by adding layers to it"))),
     }
 }
 
@@ -754,7 +870,7 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
             for (k, v) in values {
                 ip.insert(k, v);
             }
-            for (k, d) in &defs {
+            for (k, d) in defs.iter().filter(|(_, d)| takes_value(d)) {
                 ip.entry(k.clone()).or_insert_with(|| prop_default_value(d));
             }
         }
@@ -877,13 +993,22 @@ fn add_prop(s: &mut Session, p: &Value) -> Result<Value> {
             s.set_selection(vec![set]);
             return Ok(json!({"id": set}));
         }
-        _ => return Err(bad(cmd, "type: boolean|text|instanceSwap|variant")),
+        "slot" => {
+            if !layer_node.as_ref().is_some_and(|n| matches!(n.kind, NodeKind::Frame)) {
+                return Err(bad(cmd, "a slot is a frame inside the component: select one (or pass `layer`)"));
+            }
+            PropDef::Slot { preferred: preferred_arg(cmd, doc, p)? }
+        }
+        _ => return Err(bad(cmd, "type: boolean|text|instanceSwap|variant|slot")),
     };
     for c in &comps {
         set_prop_defs(doc, *c, |m| {
             m.insert(name.clone(), def.clone());
         })?;
         // Existing instances get the default.
+        if !takes_value(&def) {
+            continue;
+        }
         for inst in instances_of(doc, *c) {
             if let NodeKind::Instance { props, .. } = &mut doc.get_mut(inst)?.kind {
                 props.entry(name.clone()).or_insert_with(|| prop_default_value(&def));
@@ -920,6 +1045,7 @@ fn bind(cmd: &str, doc: &mut Document, layer: NodeId, property: Option<&str>, fi
         PropDef::Text { .. } => "characters",
         PropDef::InstanceSwap { .. } => "mainComponent",
         PropDef::Variant { .. } => return Err(bad(cmd, "variant properties pick a variant; they can't be bound to a layer")),
+        PropDef::Slot { .. } => SLOT,
     };
     let field = field.unwrap_or(expected);
     if field != expected {
@@ -929,6 +1055,14 @@ fn bind(cmd: &str, doc: &mut Document, layer: NodeId, property: Option<&str>, fi
         "characters" if n.kind.text().is_none() => return Err(bad(cmd, "text properties bind to text layers")),
         "mainComponent" if !matches!(n.kind, NodeKind::Instance { .. }) => return Err(bad(cmd, "instance swap properties bind to instances")),
         "visible" if layer == comp => return Err(bad(cmd, "the component itself can't be hidden by its own property")),
+        SLOT if !matches!(n.kind, NodeKind::Frame) => return Err(bad(cmd, "slot properties bind to frames inside the component")),
+        SLOT if doc
+            .subtree(comp)
+            .into_iter()
+            .any(|d| d != layer && doc.node(d).is_some_and(|x| x.prop_refs.get(SLOT).map(String::as_str) == Some(property))) =>
+        {
+            return Err(bad(cmd, format!("another frame of the component is already the slot `{property}`")));
+        }
         _ => {}
     }
     doc.get_mut(layer)?.prop_refs.insert(field.to_string(), property.to_string());
@@ -941,9 +1075,9 @@ fn bind_prop(s: &mut Session, p: &Value) -> Result<Value> {
     let property = string(p, "property");
     let field = string(p, "field");
     if let Some(f) = &field
-        && !matches!(f.as_str(), "visible" | "characters" | "mainComponent")
+        && !matches!(f.as_str(), "visible" | "characters" | "mainComponent" | SLOT)
     {
-        return Err(bad(cmd, "field: visible|characters|mainComponent"));
+        return Err(bad(cmd, "field: visible|characters|mainComponent|slot"));
     }
     let doc = s.doc_mut()?;
     bind(cmd, doc, layer, property.as_deref(), field.as_deref())?;
@@ -1034,16 +1168,20 @@ fn edit_prop(s: &mut Session, p: &Value) -> Result<Value> {
         return ok();
     }
     let def = comps.iter().find_map(|c| prop_defs(doc, *c).get(&name).cloned()).ok_or_else(|| bad(cmd, format!("no property named `{name}`")))?;
-    let new_def = match get(p, "default") {
-        Some(v) => match coerce(cmd, doc, &name, &def, v)? {
-            Value::Bool(b) => PropDef::Boolean { default: b },
-            Value::String(t) if matches!(def, PropDef::Text { .. }) => PropDef::Text { default: t },
-            other => match (&def, id_of(&other)) {
-                (PropDef::InstanceSwap { .. }, Some(c)) => PropDef::InstanceSwap { default: c },
-                _ => def.clone(),
+    let new_def = match (&def, get(p, "preferred")) {
+        (PropDef::Slot { .. }, Some(_)) => PropDef::Slot { preferred: preferred_arg(cmd, doc, p)? },
+        (_, Some(_)) => return Err(bad(cmd, "`preferred` is for slot properties")),
+        (_, None) => match get(p, "default") {
+            Some(v) => match coerce(cmd, doc, &name, &def, v)? {
+                Value::Bool(b) => PropDef::Boolean { default: b },
+                Value::String(t) if matches!(def, PropDef::Text { .. }) => PropDef::Text { default: t },
+                other => match (&def, id_of(&other)) {
+                    (PropDef::InstanceSwap { .. }, Some(c)) => PropDef::InstanceSwap { default: c },
+                    _ => def.clone(),
+                },
             },
+            None => def.clone(),
         },
-        None => def.clone(),
     };
     for c in &comps {
         let had = prop_defs(doc, *c).contains_key(&name);
@@ -1105,6 +1243,7 @@ fn def_json(name: &str, d: &PropDef) -> Value {
         PropDef::Text { default } => json!({"name": name, "type": "text", "default": default}),
         PropDef::InstanceSwap { default } => json!({"name": name, "type": "instanceSwap", "default": default}),
         PropDef::Variant { options, default } => json!({"name": name, "type": "variant", "default": default, "options": options}),
+        PropDef::Slot { preferred } => json!({"name": name, "type": "slot", "preferred": preferred}),
     }
 }
 
@@ -1127,9 +1266,21 @@ fn describe_props(doc: &Document, id: NodeId) -> Value {
             list.push(v);
         }
     }
+    // Slots: the frames (on a main) or this instance's copy, with whether it holds its own content.
+    let slots = slots_of(doc, if values.is_some() { id } else { variant_set(doc, comp).unwrap_or(comp) });
     for (k, d) in prop_defs(doc, comp) {
         let mut v = def_json(&k, &d);
-        if let Some(vals) = &values {
+        if !takes_value(&d) {
+            let layers: Vec<NodeId> = slots.iter().filter(|(_, n)| *n == k).map(|(l, _)| *l).collect();
+            if values.is_some() {
+                v["value"] = layers.first().map_or(Value::Null, |l| {
+                    let count = doc.node(*l).map_or(0, |n| n.children.len());
+                    json!({"layer": l, "edited": slot_edited(doc, *l), "layers": count})
+                });
+            } else {
+                v["layers"] = json!(layers);
+            }
+        } else if let Some(vals) = &values {
             v["value"] = vals.get(&k).cloned().unwrap_or_else(|| prop_default_value(&d));
         }
         list.push(v);

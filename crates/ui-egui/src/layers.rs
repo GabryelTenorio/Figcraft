@@ -17,6 +17,7 @@ pub fn node_icon(doc: &Document, id: NodeId) -> Icon {
     let Some(n) = doc.node(id) else { return Icon::Rectangle };
     match &n.kind {
         NodeKind::Page { .. } => Icon::Page,
+        NodeKind::Frame if figcraft_engine::components::is_slot(doc, id) => Icon::Slot,
         NodeKind::Frame => {
             if let Some(l) = &n.layout {
                 match l.mode {
@@ -531,14 +532,15 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     }
                 }
             }
-            let icon_col = if is_comp {
+            let icon = node_icon(&doc, row.id);
+            let icon_col = if is_comp || icon == Icon::Slot {
                 COMPONENT
             } else if n.visible {
                 t.icon
             } else {
                 t.text_tertiary
             };
-            icons::paint(ui.painter(), Rect::from_center_size(pos2(x0 + 22.0, r.center().y), vec2(14.0, 14.0)), node_icon(&doc, row.id), icon_col);
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(x0 + 22.0, r.center().y), vec2(14.0, 14.0)), icon, icon_col);
             let name_x = x0 + 36.0;
             let editing = app.ui.rename.as_ref().is_some_and(|(i, _)| *i == row.id);
             if editing {

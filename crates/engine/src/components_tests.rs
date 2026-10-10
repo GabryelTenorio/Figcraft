@@ -4,47 +4,47 @@ use super::*;
 use crate::{EngineError, Session, params::id_of};
 use serde_json::{Value, json};
 
-fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
+pub(crate) fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
     match s.execute(cmd, &p) {
         Ok(v) => v,
         Err(e) => panic!("{cmd} {p}: {e}"),
     }
 }
 
-fn idv(v: &Value) -> NodeId {
+pub(crate) fn idv(v: &Value) -> NodeId {
     id_of(&v["id"]).unwrap()
 }
 
-fn node(s: &Session, id: NodeId) -> Node {
+pub(crate) fn node(s: &Session, id: NodeId) -> Node {
     s.doc().unwrap().node(id).unwrap().clone()
 }
 
-fn kids(s: &Session, id: NodeId) -> Vec<NodeId> {
+pub(crate) fn kids(s: &Session, id: NodeId) -> Vec<NodeId> {
     node(s, id).children
 }
 
-fn fill(s: &Session, id: NodeId) -> String {
+pub(crate) fn fill(s: &Session, id: NodeId) -> String {
     node(s, id).fills.first().and_then(|p| p.solid_color()).map(|c| c.to_hex()).unwrap_or_default()
 }
 
-fn chars(s: &Session, id: NodeId) -> String {
+pub(crate) fn chars(s: &Session, id: NodeId) -> String {
     node(s, id).kind.text().map(|t| t.characters.clone()).unwrap_or_default()
 }
 
-fn healthy(s: &Session) {
+pub(crate) fn healthy(s: &Session) {
     let doc = s.doc().unwrap();
     assert!(doc.validate().is_empty(), "{:?}", doc.validate());
     assert!(mirror_issues(doc).is_empty(), "{:?}", mirror_issues(doc));
 }
 
 /// The instance layer mirroring main layer `src`.
-fn copy_of(s: &Session, inst: NodeId, src: NodeId) -> NodeId {
+pub(crate) fn copy_of(s: &Session, inst: NodeId, src: NodeId) -> NodeId {
     let doc = s.doc().unwrap();
     doc.subtree(inst).into_iter().find(|i| doc.node(*i).and_then(|n| n.source) == Some(src)).unwrap()
 }
 
 /// Card: 200×100 component with "Bg" rectangle, "Title" text and "Dot" ellipse.
-fn card(s: &mut Session) -> (NodeId, NodeId, NodeId, NodeId) {
+pub(crate) fn card(s: &mut Session) -> (NodeId, NodeId, NodeId, NodeId) {
     let f = idv(&ex(s, "frame.create", json!({"x": 0, "y": 0, "width": 200, "height": 100, "name": "Card"})));
     let bg =
         idv(&ex(s, "shape.rectangle", json!({"x": 0, "y": 0, "width": 200, "height": 100, "parent": f, "props": {"name": "Bg", "fill": "#eeeeee"}})));
@@ -164,7 +164,7 @@ fn instances_refuse_structure_edits() {
 }
 
 /// Icon component (one "Shape" rectangle) and a Button component holding an Icon instance.
-fn button(s: &mut Session) -> (NodeId, NodeId, NodeId, NodeId) {
+pub(crate) fn button(s: &mut Session) -> (NodeId, NodeId, NodeId, NodeId) {
     let f = idv(&ex(s, "frame.create", json!({"x": 0, "y": 300, "width": 24, "height": 24, "name": "Icon"})));
     let shape = idv(&ex(
         s,

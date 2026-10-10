@@ -125,8 +125,10 @@ pub fn grid_cell_at(doc: &Document, parent: NodeId, p: Point) -> Option<(u32, u3
 /// being dragged) and their descendants. Inside auto layout the deepest auto layout frame under the
 /// pointer wins: plain frames there are items of the flow, not destinations (dropping onto a card
 /// in a list inserts next to it). Elsewhere the deepest frame or section under the pointer wins.
+/// Inside an instance only its slots (and what's in them) take drops; a slot always does.
 pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -> Option<NodeId> {
-    fn rec(doc: &Document, id: NodeId, p: Point, exclude: &[NodeId], in_al: bool, depth: usize) -> Option<NodeId> {
+    /// `locked`: inside an instance, outside its slots.
+    fn rec(doc: &Document, id: NodeId, p: Point, exclude: &[NodeId], in_al: bool, locked: bool, depth: usize) -> Option<NodeId> {
         if depth > 128 || exclude.contains(&id) {
             return None;
         }
@@ -135,19 +137,20 @@ pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -
             return None;
         }
         let container = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
+        let kids_locked = crate::components::locks_children(doc, id, locked);
         if !container {
             // Groups: frames inside them can still take the drop.
-            return n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al, depth + 1));
+            return n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al, kids_locked, depth + 1));
         }
         let inside = doc.world_bounds(id).is_some_and(|b| b.contains(p)) && n.local_rect().contains(doc.world_transform(id).inverse() * p);
-        if !inside || matches!(n.kind, NodeKind::Instance { .. }) {
+        if !inside {
             return None;
         }
         let auto_layout = n.layout.is_some();
-        let deeper = n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al || auto_layout, depth + 1));
-        deeper.or((auto_layout || !in_al).then_some(id))
+        let deeper = n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al || auto_layout, kids_locked, depth + 1));
+        deeper.or((!kids_locked && (auto_layout || !in_al || crate::components::is_slot(doc, id))).then_some(id))
     }
-    doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, 0))
+    doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, false, 0))
 }
 
 /// Margin (page units) around the auto layout frame a dragged layer comes from that still keeps it.

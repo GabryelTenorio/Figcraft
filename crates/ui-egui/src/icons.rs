@@ -129,6 +129,8 @@ pub enum Icon {
     Logo,
     /// Ignore auto layout: a layer pinned at an offset inside its frame.
     AbsolutePosition,
+    /// A component slot: a dashed frame with a plus, a place that takes any content.
+    Slot,
 }
 
 struct P<'a> {
@@ -715,6 +717,16 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.fill_rect(7.0, 6.0, 10.5, 9.5, 0.5);
             p.line(10.5, 7.75, 13.5, 7.75);
             p.line(8.75, 2.5, 8.75, 6.0);
+        }
+        Slot => {
+            for (a, b) in [(2.5, 5.0), (6.75, 9.25), (11.0, 13.5)] {
+                p.line(a, 2.5, b, 2.5);
+                p.line(a, 13.5, b, 13.5);
+                p.line(2.5, a, 2.5, b);
+                p.line(13.5, a, 13.5, b);
+            }
+            p.line(8.0, 5.5, 8.0, 10.5);
+            p.line(5.5, 8.0, 10.5, 8.0);
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

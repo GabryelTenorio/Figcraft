@@ -55,7 +55,7 @@ absoluteBounds, visible, locked, opacity, blend, fills, strokes, strokeWeight, e
 layout (including grid `columnTracks` / `rowTracks`), sizing, `minWidth` / `maxWidth` /
 `minHeight` / `maxHeight`, `absolute`, constraints (children of plain frames and absolute
 children), `gridCell` (a grid auto layout child's column, row and spans), clip, text properties,
-component/instance links, overrides, boundVariables, interactions, exports. The auto layout props
+component/instance links, overrides, `slot` (a slot layer's property name), boundVariables, interactions, exports. The auto layout props
 that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-know).
 
 ### `ui.inspect {}`

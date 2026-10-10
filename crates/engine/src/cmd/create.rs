@@ -101,7 +101,8 @@ pub fn specs() -> Vec<CommandSpec> {
 /// The top-most frame-like (or section) node on the page containing page point `pt`,
 /// excluding `exclude` and their descendants.
 pub fn frame_at(doc: &Document, page: NodeId, pt: Point, exclude: &[NodeId]) -> Option<NodeId> {
-    fn rec(doc: &Document, id: NodeId, pt: Point, exclude: &[NodeId], depth: usize) -> Option<NodeId> {
+    /// `locked`: inside an instance, where only slots (and what's in them) take layers.
+    fn rec(doc: &Document, id: NodeId, pt: Point, exclude: &[NodeId], depth: usize, locked: bool) -> Option<NodeId> {
         if depth > 128 || exclude.contains(&id) {
             return None;
         }
@@ -117,17 +118,16 @@ pub fn frame_at(doc: &Document, page: NodeId, pt: Point, exclude: &[NodeId]) -> 
         if is_container && !inside {
             return None;
         }
-        if !matches!(n.kind, NodeKind::Instance { .. }) {
-            for c in n.children.iter().rev() {
-                if let Some(f) = rec(doc, *c, pt, exclude, depth + 1) {
-                    return Some(f);
-                }
+        let locked = crate::components::locks_children(doc, id, locked);
+        for c in n.children.iter().rev() {
+            if let Some(f) = rec(doc, *c, pt, exclude, depth + 1, locked) {
+                return Some(f);
             }
         }
-        (is_container && inside && !matches!(n.kind, NodeKind::Instance { .. })).then_some(id)
+        (is_container && inside && !locked).then_some(id)
     }
     let p = doc.node(page)?;
-    p.children.iter().rev().find_map(|c| rec(doc, *c, pt, exclude, 0))
+    p.children.iter().rev().find_map(|c| rec(doc, *c, pt, exclude, 0, false))
 }
 
 pub fn kind_for(t: &str) -> Option<(NodeKind, &'static str)> {

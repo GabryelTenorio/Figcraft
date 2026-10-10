@@ -4,11 +4,16 @@
 //!   the selected layer's overrides, and Reset / Detach / Go to main / Push changes.
 //! - A component or component set: its properties (add, rename, default, delete) and, for a set,
 //!   the variant property matrix.
-//! - A layer inside a component: bind its visibility / text / instance to a property.
+//! - A layer inside a component: bind its visibility / text / instance to a property, or make a
+//!   frame a slot.
+//! - A slot inside an instance (and an instance's slot properties): fill it with components
+//!   (preferred ones first), select it, reset it to the main's default content.
 
 use egui::{Id, Sense, Ui, vec2};
 use figcraft_doc::*;
-use figcraft_engine::components::{inside_instance, owning_component, owning_instance, variant_options, variant_props, variant_set};
+use figcraft_engine::components::{
+    inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
+};
 use serde_json::{Value, json};
 
 use crate::FigApp;
@@ -32,6 +37,11 @@ pub fn instance_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
             description_ui(app, ui, n.id, description);
         }
         _ => {}
+    }
+    if owning_instance(doc, n.id).is_some()
+        && let Some((name, preferred)) = slot_def(doc, n.id)
+    {
+        slot_section(app, ui, doc, n.id, name, preferred);
     }
     if !matches!(n.kind, NodeKind::Instance { .. }) && n.source.is_some() && owning_instance(doc, n.id).is_some() {
         overrides_ui(app, ui, n);
@@ -129,7 +139,69 @@ fn type_icon(d: &PropDef) -> Icon {
         PropDef::Text { .. } => Icon::Text,
         PropDef::InstanceSwap { .. } => Icon::Instance,
         PropDef::Variant { .. } => Icon::ComponentSet,
+        PropDef::Slot { .. } => Icon::Slot,
     }
+}
+
+/// A selected slot inside an instance: its fill menu.
+fn slot_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, name: &str, preferred: &[NodeId]) {
+    let t = Tokens::get(ui.ctx());
+    let comps = local_components(doc);
+    widgets::separator(ui);
+    row(ui, 36.0, |ui| {
+        ui.label(egui::RichText::new("Slot").font(semibold(11.0)).color(t.text));
+    });
+    row(ui, 32.0, |ui| {
+        prop_label(ui, name, Icon::Slot);
+        let w = ui.available_width().max(60.0);
+        slot_fill(app, ui, doc, slot, preferred, &comps, w);
+    });
+}
+
+/// The fill menu of slot `slot` inside an instance: its preferred components first, then every
+/// local component; select the slot; reset it to the main's default content.
+fn slot_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, preferred: &[NodeId], comps: &[(NodeId, String)], w: f32) {
+    let t = Tokens::get(ui.ctx());
+    let edited = slot_edited(doc, slot);
+    let label = match (edited, doc.node(slot).map_or(0, |n| n.children.len())) {
+        (false, 0) => "Empty".to_string(),
+        (false, _) => "Default content".to_string(),
+        (true, 1) => "1 layer".to_string(),
+        (true, k) => format!("{k} layers"),
+    };
+    let resp = widgets::dropdown(ui, &label, w, Some(Icon::Slot)).on_hover_text("Add content to this slot");
+    egui::Popup::menu(&resp).width(w.max(200.0)).show(|ui| {
+        let insert = |app: &mut FigApp, c: NodeId| app.run("instance.slotInsert", json!({"id": slot, "component": c.0}));
+        let heading = |ui: &mut Ui, text: &str| ui.label(egui::RichText::new(text).font(semibold(11.0)).color(t.text_secondary));
+        if !preferred.is_empty() {
+            heading(ui, "Preferred");
+            for c in preferred.iter().filter(|c| doc.contains(**c)) {
+                let name = doc.node(*c).map(|n| n.name.clone()).unwrap_or_default();
+                if menu_item(ui, &name, "") {
+                    insert(app, *c);
+                    ui.close();
+                }
+            }
+        }
+        heading(ui, "All components");
+        egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+            // Never a component the slot is part of.
+            for (c, name) in comps.iter().filter(|(c, _)| !doc.is_ancestor(*c, slot)) {
+                if menu_item(ui, name, "") {
+                    insert(app, *c);
+                    ui.close();
+                }
+            }
+        });
+        if menu_item(ui, "Select slot", "") {
+            app.run("select.set", json!({"ids": [slot.0]}));
+            ui.close();
+        }
+        if edited && menu_item(ui, "Reset slot", "") {
+            app.run("instance.resetSlot", json!({"id": slot.0}));
+            ui.close();
+        }
+    });
 }
 
 fn prop_defs(doc: &Document, c: NodeId) -> std::collections::BTreeMap<String, PropDef> {
@@ -256,7 +328,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                         }
                     });
                 }
-                PropDef::Variant { .. } => {}
+                PropDef::Variant { .. } | PropDef::Slot { .. } => {}
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if icons::button(ui, Icon::Minus, 22.0, false, "Delete property").clicked() {
@@ -264,6 +336,30 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 }
             });
         });
+        // A slot's preferred components, on a row of their own.
+        if let PropDef::Slot { preferred } = d {
+            row(ui, 30.0, |ui| {
+                ui.add_space(22.0);
+                let label = match preferred.len() {
+                    0 => "No preferred components".to_string(),
+                    1 => "1 preferred component".to_string(),
+                    k => format!("{k} preferred components"),
+                };
+                let w = (ui.available_width() - 8.0).max(60.0);
+                let resp = widgets::dropdown(ui, &label, w, None).on_hover_text("Offered first when filling the slot (any content is allowed)");
+                egui::Popup::menu(&resp).width(w.max(200.0)).show(|ui| {
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for (c, name) in comps.iter().filter(|(c, _)| *c != owner && first != Some(*c)) {
+                            let on = preferred.contains(c);
+                            if menu_item(ui, &format!("{}{name}", if on { "✓ " } else { "" }), "") {
+                                let next: Vec<u64> = preferred.iter().filter(|p| *p != c).map(|p| p.0).chain((!on).then_some(c.0)).collect();
+                                app.run("component.editProperty", json!({"id": owner, "name": k, "preferred": next}));
+                            }
+                        }
+                    });
+                });
+            });
+        }
     }
     if is_set {
         row(ui, 32.0, |ui| {
@@ -286,6 +382,9 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     if matches!(n.kind, NodeKind::Instance { .. }) {
         fields.push(("mainComponent", "Instance", "instanceSwap"));
     }
+    if matches!(n.kind, NodeKind::Frame) {
+        fields.push(("slot", "Slot", "slot"));
+    }
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
         ui.label(egui::RichText::new("Component property").font(semibold(11.0)).color(t.text));
@@ -296,7 +395,10 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             .filter(|(_, d)| {
                 matches!(
                     (ty, d),
-                    ("boolean", PropDef::Boolean { .. }) | ("text", PropDef::Text { .. }) | ("instanceSwap", PropDef::InstanceSwap { .. })
+                    ("boolean", PropDef::Boolean { .. })
+                        | ("text", PropDef::Text { .. })
+                        | ("instanceSwap", PropDef::InstanceSwap { .. })
+                        | ("slot", PropDef::Slot { .. })
                 )
             })
             .map(|(k, _)| k)
@@ -307,6 +409,7 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             let icon = match field {
                 "visible" => Icon::Eye,
                 "characters" => Icon::Text,
+                "slot" => Icon::Slot,
                 _ => Icon::Instance,
             };
             icons::paint(ui.painter(), ir, icon, if bound.is_some() { COMPONENT } else { t.icon_secondary });
@@ -320,7 +423,13 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                         ui.close();
                     }
                 }
-                if menu_item(ui, "Create property…", "") {
+                if ty == "slot" {
+                    if bound.is_none() && menu_item(ui, "Make slot", "") {
+                        // Named after the frame.
+                        app.run("component.makeSlot", json!({"id": n.id}));
+                        ui.close();
+                    }
+                } else if menu_item(ui, "Create property…", "") {
                     let existing: Vec<String> = defs.keys().cloned().collect();
                     let name = (1..)
                         .map(|k| if k == 1 { label.to_string() } else { format!("{label} {k}") })
@@ -329,7 +438,12 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                     app.run("component.addProperty", json!({"id": n.id, "name": name, "type": ty}));
                     ui.close();
                 }
-                if bound.is_some() && menu_item(ui, "Detach property", "") {
+                if ty == "slot" {
+                    if bound.is_some() && menu_item(ui, "Remove slot", "") {
+                        app.run("component.removeSlot", json!({"id": n.id}));
+                        ui.close();
+                    }
+                } else if bound.is_some() && menu_item(ui, "Detach property", "") {
                     app.run("component.bindProperty", json!({"layer": n.id, "property": null, "field": field}));
                     ui.close();
                 }
@@ -381,6 +495,7 @@ fn group_label(g: &str) -> String {
         "position" => "Position",
         "component" => "Swapped instance",
         "props" => "Instance properties",
+        "slot" => "Slot content",
         other => other,
     }
     .to_string()
@@ -510,6 +625,7 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
     let NodeKind::Instance { component, props } = &n.kind else { return };
     let id = n.id;
     let set = variant_set(doc, *component);
+    let slots = slots_of(doc, id);
     // Variant properties.
     if let Some(set) = set {
         let current = doc.node(*component).map(|c| variant_props(&c.name)).unwrap_or_default();
@@ -567,6 +683,11 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                     });
                 }
                 PropDef::Variant { .. } => {}
+                PropDef::Slot { preferred } => {
+                    if let Some((slot, _)) = slots.iter().find(|(_, name)| *name == k) {
+                        slot_fill(app, ui, doc, *slot, &preferred, comps, w);
+                    }
+                }
             }
         });
     }

@@ -70,8 +70,15 @@ dimension measured side by side.
    show on the main's instances); component descriptions (edited on the main, shown on
    instances); local libraries (publish a file's components, sets and styles with per-asset
    versions, enable library files, place library components and apply library styles as
-   read-only linked copies, "Library updates available" with overrides kept on update).
-   *Left:* nested override edge cases, slots, library variables. 7–11 h.
+   read-only linked copies, "Library updates available" with overrides kept on update); slots
+   (a frame of a main made a slot property with preferred components; instances fill it with any
+   content of their own, kept across main updates, variant switches, copy/paste and detach, with
+   the main's default content until edited; reset slot; slot badges in the layers panel and on the
+   canvas; fill menu in the properties panel; drops from the Assets panel and the canvas land in
+   slots); nested overrides kept when the main moves or swaps a nested instance, and on nested
+   instances copied out of an instance (re-linked to their own main); canvas drags can no longer
+   pull layers out of an instance.
+   *Left:* library variables. 2–4 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -113,8 +120,8 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes; component slots and nested override edge cases
-  (in progress); paint colour profiles and style picker polish (in progress).
+  a real-file corpus); variable width strokes; library variables; paint colour profiles and style
+  picker polish (in progress).
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -141,7 +148,7 @@ dimension measured side by side.
   eyedropper), text editing (caret, selection, words, lines), auto layout reorder by dragging,
   drop into frames, align/distribute/tidy, z-order, flip/rotate, scale tool, booleans, flatten,
   outline stroke, components (create, instances, sync with overrides, reset, detach, push changes,
-  variants, properties), styles and variables, prototype commands, find/replace, batch rename,
+  variants, properties, slots), styles and variables, prototype commands, find/replace, batch rename,
   copy/paste (internal + SVG/text), file new/open/save/import/export (native `.figcraft`, SVG
   in/out, PNG/JPG/WebP), version snapshots.
 - **UI (egui, swappable):** the incumbent's 2026 layout: tab strip, icon rail, file header, pages and
@@ -170,7 +177,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
-| Components & variants | 9 | 65% | slots, nested override edge cases, library variables | 7–11 |
+| Components & variants | 9 | 71% | library variables | 2–4 |
 | Styles & variables | 5 | 75% | binding effects, line height and letter spacing | 2–4 |
 | Prototyping | 6 | 76% | device rotation, presentation scaling options, scroll momentum | 1–3 |
 | Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |

@@ -100,7 +100,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `inspect.code` (CSS, HTML + CSS for a whole frame, SwiftUI or Jetpack Compose for a layer), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, SwiftUI or Jetpack Compose for a layer), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`), text…); returns the updated layers. |
@@ -172,6 +172,30 @@ read library files return an error).
   file and publish.
 - **Update**: `library.updates` lists the components and styles with a newer published version;
   `library.acceptUpdates {ids? (library ids)}` pulls them in, keeping instance overrides.
+
+### Slots
+
+A slot is a frame inside a main component whose instances take any content of their own (add,
+remove and reorder layers there, unlike the rest of an instance). It is a component property of type
+`slot` (`component.properties` lists it: on a main with its `layers`, on an instance with
+`value: {layer, edited, layers}`).
+
+- **Define** (on the main): `component.makeSlot {id (a frame inside a main component), name?,
+  preferred? [component or set ids]}` (the property is named after the frame by default);
+  `component.editProperty {name, preferred}`; `component.removeSlot {id}` (instances lose their own
+  content in it). `component.addProperty {type: "slot", layer}` and `component.bindProperty {field:
+  "slot"}` work too (one frame per component for a slot).
+- **Fill** (on an instance): `instance.slotInsert {id (the slot layer, or the instance with `slot`
+  (property name)), component, index?, replace?}` places an instance of a component in it; any
+  structure command (`shape.*`, `node.reparent`, `edit.paste` with the slot selected, `edit.delete`,
+  `node.reorder`, `instance.place` or a drag onto it) works inside it. The main's default content
+  shows (and follows the main) until the slot is first edited; then the slot's layers are the
+  instance's own (override group `slot`): kept across main updates, variant switches, copy/paste and
+  detach, and instances placed there stand alone (their own overrides, properties and detach).
+- **Reset**: `instance.resetSlot {id}` (or `component.resetOverride {id, group: "slot"}`, or
+  `component.resetInstance`) brings back the main's default content.
+
+`get_node` shows `"slot": "<property>"` on slot layers.
 
 ### Shape builder
 

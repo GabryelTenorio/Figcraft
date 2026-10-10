@@ -720,8 +720,10 @@ impl Session {
                     }
                     let p = ev.p();
                     let home = moving.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent);
-                    // Absolute children of an auto layout frame stay in it; the rest may change parent.
-                    let flow = moving.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute));
+                    // Absolute children of an auto layout frame stay in it, and so do the layers of
+                    // an instance (outside its slots: they only move); the rest may change parent.
+                    let flow = moving.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute))
+                        && !home.is_some_and(|h| crate::components::structure_locked(doc, h));
                     let target = if flow { crate::drop::drag_parent(doc, page, p, &moving) } else { home.unwrap_or(page) };
                     let mode = doc.node(target).and_then(|n| n.layout.as_ref()).map(|l| l.mode);
                     if let (true, Some(mode)) = (flow, mode) {
@@ -1173,12 +1175,26 @@ impl Session {
                         let before = ds.doc.clone();
                         let d = ds.doc_mut();
                         for m in &moving {
+                            // Instance layers stay put (outside slots): they only move.
+                            let from = d.node(*m).and_then(|n| n.parent);
+                            if from.is_some_and(|f| crate::components::structure_locked(d, f)) || crate::components::structure_locked(d, target) {
+                                continue;
+                            }
                             // A layer can't go into itself; it stays where it is.
                             let _ = d.reparent(*m, target, None);
                         }
                         crate::normalize(ds.doc_mut(), &before);
                     }
-                    self.commit_interaction()?;
+                    // Reordering or dragging layers out of an instance (outside its slots) is a
+                    // structure edit only its main can make: the gesture is undone.
+                    let ds = self.ds()?;
+                    let allowed =
+                        ds.interaction.as_ref().is_none_or(|it| moving.iter().all(|m| crate::components::move_allowed(&it.doc, &ds.doc, *m)));
+                    if allowed {
+                        self.commit_interaction()?;
+                    } else {
+                        self.cancel_interaction()?;
+                    }
                 } else {
                     self.cancel_interaction()?;
                     // Plain click on an already-selected layer among several: select just it.

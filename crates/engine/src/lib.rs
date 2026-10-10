@@ -887,6 +887,8 @@ mod import_export_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
+mod nested_override_tests;
+#[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
 mod rotated_select_tests;
@@ -894,6 +896,8 @@ mod rotated_select_tests;
 mod section_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
+#[cfg(test)]
+mod slot_tests;
 #[cfg(test)]
 mod style_tests;
 #[cfg(test)]

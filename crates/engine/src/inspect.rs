@@ -126,6 +126,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if !n.overrides.is_empty() {
             o.insert("overrides".into(), json!(n.overrides));
         }
+        if let Some(slot) = crate::components::slot_name(doc, n.id) {
+            o.insert("slot".into(), json!(slot));
+        }
     }
     match &n.kind {
         NodeKind::Text(t) => {

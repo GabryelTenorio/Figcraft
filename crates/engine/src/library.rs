@@ -64,10 +64,15 @@ fn used_components(doc: &Document, root: NodeId) -> BTreeSet<NodeId> {
                 }
             }
             NodeKind::Component { props, .. } => {
-                out.extend(props.values().filter_map(|d| match d {
-                    PropDef::InstanceSwap { default } => Some(*default),
-                    _ => None,
-                }));
+                for d in props.values() {
+                    match d {
+                        PropDef::InstanceSwap { default } => {
+                            out.insert(*default);
+                        }
+                        PropDef::Slot { preferred } => out.extend(preferred.iter().copied()),
+                        _ => {}
+                    }
+                }
             }
             _ => {}
         }
@@ -452,10 +457,14 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
         NodeKind::Component { props, .. } => {
             props.retain(|_, d| !matches!(d, PropDef::InstanceSwap { default } if !map.contains_key(default)));
             for d in props.values_mut() {
-                if let PropDef::InstanceSwap { default } = d
-                    && let Some(l) = map.get(default)
-                {
-                    *default = *l;
+                match d {
+                    PropDef::InstanceSwap { default } => {
+                        if let Some(l) = map.get(default) {
+                            *default = *l;
+                        }
+                    }
+                    PropDef::Slot { preferred } => *preferred = preferred.iter().filter_map(|c| map.get(c).copied()).collect(),
+                    _ => {}
                 }
             }
         }

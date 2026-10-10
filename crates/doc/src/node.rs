@@ -37,10 +37,25 @@ impl BoolOp {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PropDef {
-    Boolean { default: bool },
-    Text { default: String },
-    InstanceSwap { default: NodeId },
-    Variant { options: Vec<String>, default: String },
+    Boolean {
+        default: bool,
+    },
+    Text {
+        default: String,
+    },
+    InstanceSwap {
+        default: NodeId,
+    },
+    Variant {
+        options: Vec<String>,
+        default: String,
+    },
+    /// A frame (bound through `prop_refs["slot"]`) whose instances take any content of their own;
+    /// `preferred` components are offered first when filling it.
+    Slot {
+        #[serde(default)]
+        preferred: Vec<NodeId>,
+    },
 }
 
 /// What a node is, with per-type data.
@@ -380,11 +395,13 @@ pub struct Node {
     /// Handoff status of a frame or section (shown as a badge next to its name).
     #[serde(default, skip_serializing_if = "DevStatus::is_none")]
     pub dev_status: DevStatus,
-    /// Inside an instance: property groups overridden locally ("fills", "characters", …).
+    /// Inside an instance: property groups overridden locally ("fills", "characters", …; "slot":
+    /// this slot holds the instance's own content).
     #[serde(default)]
     pub overrides: BTreeSet<String>,
     /// Component property references: which property controls this node's
-    /// "visible" (boolean), "characters" (text) or "mainComponent" (instance swap).
+    /// "visible" (boolean), "characters" (text) or "mainComponent" (instance swap), or which slot
+    /// property this frame is ("slot").
     #[serde(default)]
     pub prop_refs: BTreeMap<String, String>,
     /// Free-form plugin / agent data.
