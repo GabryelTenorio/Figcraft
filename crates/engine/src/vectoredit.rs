@@ -333,8 +333,8 @@ pub fn begin(s: &mut Session, id: NodeId) -> Result<()> {
     }
     let ds = s.ds_mut()?;
     if !std::sync::Arc::ptr_eq(&before, &ds.doc) {
-        ds.history.undo.push(crate::HistoryEntry { label: "Edit vector".into(), doc: before, selection: ds.selection.clone(), page: ds.page });
-        ds.history.redo.clear();
+        let (selection, page) = (ds.selection.clone(), ds.page);
+        ds.record(Some("Edit vector"), before, selection, page);
     }
     ds.vector_edit = Some(VectorEdit::new(id));
     ds.selection = vec![id];

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use figcraft_doc::{Document, Node, NodeId, NodeKind};
 
-use crate::change::{Change, Json, Prop};
+use crate::change::{Change, Json, Prop, Target};
 use crate::frac::{self, FIRST_KEY};
 use crate::{Error, docprops};
 
@@ -116,6 +116,23 @@ impl Replica {
     /// Node `id`'s position key ("" when it has none, which sorts first).
     pub fn key(&self, id: NodeId) -> &str {
         self.positions.get(&id).map_or("", String::as_str)
+    }
+
+    /// The current value of `target` (`None`: its node or entry doesn't exist).
+    pub fn value(&self, target: &Target) -> Result<Option<Json>, Error> {
+        match target {
+            Target::Node(id, prop) => {
+                let Some(n) = self.doc.node(*id) else { return Ok(None) };
+                match prop {
+                    Prop::Parent => Json::of(&n.parent),
+                    Prop::Position => Json::of(self.key(*id)),
+                    p => p.get(n),
+                }
+                .map(Some)
+            }
+            Target::Doc(prop) => docprops::get(&self.doc, *prop).map(Some),
+            Target::Entry(entry) => docprops::entry_value(&self.doc, entry),
+        }
     }
 
     pub(crate) fn from_parts(doc: Document, positions: Positions) -> Replica {

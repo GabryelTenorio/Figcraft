@@ -263,7 +263,7 @@ pub fn document(s: &Session, depth: usize, all_pages: bool) -> Value {
         "images": doc.images.len(),
         "colorProfile": doc.color_profile.id(),
         "textEdit": ds.text_edit,
-        "history": {"undo": ds.history.undo.iter().rev().take(20).map(|h| h.label.clone()).collect::<Vec<_>>(), "redo": ds.history.redo.len()},
+        "history": {"undo": ds.undo_labels(20), "redo": ds.history_len().1},
     })
 }
 

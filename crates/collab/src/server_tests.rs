@@ -144,7 +144,7 @@ fn invalid_batches_are_rejected_whole() {
     rejected(&mut s, a.id(), vec![create(77, frame)]);
     // A valid change with an invalid one: neither applies.
     let (reason, _) = rejected(&mut s, a.id(), vec![set(frame, Prop::Name, "ok".into()), set(NodeId(4242), Prop::Name, "x".into())]);
-    assert!(reason.contains("4242"), "{reason}");
+    assert!(reason.contains("deleted by someone else"), "{reason}");
     // A cycle through a new frame.
     rejected(&mut s, a.id(), vec![create((me << 32) | 1, frame), set(frame, Prop::Parent, serde_json::json!((me << 32) | 1))]);
     // Too many changes; based on the future.
@@ -166,12 +166,12 @@ fn deleted_nodes_can_come_back_but_ids_are_never_handed_out_twice() {
     let snap = crate::replica::create_change(gone.document().node(frame).unwrap(), gone.key(frame)).unwrap();
     // b deletes the frame (an old id); a brings it back, as undo would.
     let out = s.receive(b.id(), ClientMsg::Changes { base_seq: 0, batch_id: 1, changes: vec![Change::Delete { id: frame }] });
-    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes { .. })]));
+    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes(..))]));
     for m in for_client(&out, a.id()) {
         a.receive(m, &NoRecompute).unwrap();
     }
     let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 1, batch_id: 1, changes: vec![snap.clone()] });
-    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes { .. })]), "{out:?}");
+    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes(..))]), "{out:?}");
     assert_eq!(s.document(), gone.document());
 }
 
@@ -194,7 +194,7 @@ fn fixes_roll_a_rejected_client_back_to_the_server_state() {
     // A client without a confirmed copy can roll back with the fixes: they delete what the server
     // doesn't have (b's delete arrives first on a's connection).
     let mut rolled = optimistic.clone();
-    let ServerMsg::Changes { changes, .. } = &for_client(&out_b, a.id())[0] else { panic!() };
+    let ServerMsg::Changes(crate::Accepted { changes, .. }) = &for_client(&out_b, a.id())[0] else { panic!() };
     rolled.apply(changes, Mode::Lenient).unwrap();
     rolled.apply(fixes, Mode::Lenient).unwrap();
     assert_eq!(rolled.document(), s.document());
@@ -237,7 +237,7 @@ fn remote_batches_apply_under_pending_ones() {
     assert_eq!(a.view(), s.replica());
     assert_eq!(b.view(), s.replica());
     // Messages out of order are protocol errors.
-    let stale = ServerMsg::Changes { seq: 1, author: b.id(), batch_id: 1, changes: vec![] };
+    let stale = ServerMsg::Changes(crate::Accepted { seq: 1, author: b.id(), batch_id: 1, changes: vec![] });
     assert!(a.receive(stale, &NoRecompute).is_err());
     assert!(a.receive(ServerMsg::Reject { batch_id: 9, reason: String::new(), fixes: vec![] }, &NoRecompute).is_err());
     assert!(Client::join(ServerMsg::Pong).is_err());

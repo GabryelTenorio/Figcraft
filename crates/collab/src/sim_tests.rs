@@ -10,7 +10,7 @@ use crate::sim::{Rng, Sim};
 use crate::{NoRecompute, Recompute};
 
 /// A toy derived value: a frame's width is ten times its number of children.
-struct Width;
+pub(crate) struct Width;
 
 impl Recompute for Width {
     fn recompute(&self, doc: &mut Document, _: &Document, touched: &BTreeSet<NodeId>) {
@@ -26,7 +26,7 @@ impl Recompute for Width {
     }
 }
 
-fn base() -> Document {
+pub(crate) fn base() -> Document {
     let mut d = Document::new("Shared");
     let page = d.first_page().unwrap();
     for i in 0..3 {
@@ -41,7 +41,7 @@ fn base() -> Document {
 }
 
 /// One random edit of `doc`, the way a command would make it (derived data recomputed after).
-fn random_edit(doc: &mut Document, rng: &mut Rng, derive: &dyn Recompute) {
+pub(crate) fn random_edit(doc: &mut Document, rng: &mut Rng, derive: &dyn Recompute) {
     let before = doc.clone();
     doc.take_dirty();
     let ids: Vec<NodeId> = doc.ids().collect();

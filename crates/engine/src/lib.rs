@@ -255,6 +255,8 @@ pub struct DocState {
     checkpoint: Arc<Document>,
     /// Dev Mode focus view: the frame or section shown alone on the canvas (see [`Self::focused`]).
     pub focus: Option<NodeId>,
+    /// The live session this document is in (edits sync; undo is per user): see [`collab`].
+    pub collab: Option<collab::LiveDoc>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -306,6 +308,7 @@ impl DocState {
             preview: None,
             text_preview: None,
             focus: None,
+            collab: None,
         };
         st.zoom_to_fit();
         st
@@ -669,12 +672,8 @@ impl Session {
         let changed = !Arc::ptr_eq(&ds.doc, &bdoc);
         if changed {
             normalize(ds.doc_mut(), &bdoc);
-            if spec.history && ds.interaction.is_none() {
-                ds.history.undo.push(HistoryEntry { label: spec.label.to_string(), doc: bdoc, selection: bsel, page: bpage });
-                if ds.history.undo.len() > ds.history.limit.max(1) {
-                    ds.history.undo.remove(0);
-                }
-                ds.history.redo.clear();
+            if ds.interaction.is_none() {
+                ds.record(spec.history.then_some(spec.label), bdoc, bsel, bpage);
             }
         }
         ds.clean_selection();
@@ -721,8 +720,8 @@ impl Session {
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.take() else { return Ok(()) };
         if !Arc::ptr_eq(&it.doc, &ds.doc) && *it.doc != *ds.doc {
-            ds.history.undo.push(HistoryEntry { label: it.label, doc: it.doc, selection: it.selection, page: ds.page });
-            ds.history.redo.clear();
+            let page = ds.page;
+            ds.record(Some(&it.label), it.doc, it.selection, page);
         } else {
             ds.doc = it.doc;
         }
@@ -747,8 +746,14 @@ impl Session {
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.undo".into(), PREVIEW_READ_ONLY.into()));
         }
-        ds.interaction = None;
+        if let Some(it) = ds.interaction.take().filter(|_| ds.collab.is_some()) {
+            // The gesture in progress is dropped (it was never synced).
+            ds.doc = it.doc;
+        }
         ds.text_edit = None;
+        if let Some(did) = ds.live_travel(true) {
+            return Ok(did);
+        }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
         let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
         ds.history.redo.push(redo);
@@ -768,8 +773,13 @@ impl Session {
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.redo".into(), PREVIEW_READ_ONLY.into()));
         }
-        ds.interaction = None;
+        if let Some(it) = ds.interaction.take().filter(|_| ds.collab.is_some()) {
+            ds.doc = it.doc;
+        }
         ds.text_edit = None;
+        if let Some(did) = ds.live_travel(false) {
+            return Ok(did);
+        }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
         let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
         ds.history.undo.push(undo);
@@ -800,20 +810,18 @@ impl Session {
         let (before, sel, page, saved_len, uid) = (ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.uid);
         // The steps inside are dropped again below, so they mustn't push the oldest ones out.
         let limit = std::mem::replace(&mut ds.history.limit, usize::MAX);
+        ds.hold_sync(true);
         let result = f(self);
         let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) else { return result };
         ds.history.limit = limit;
         ds.history.undo.truncate(saved_len);
+        ds.hold_sync(false);
         if result.is_err() {
             ds.doc = before;
             ds.selection = sel;
             ds.page = page;
         } else if !Arc::ptr_eq(&before, &ds.doc) {
-            ds.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection: sel, page });
-            if ds.history.undo.len() > limit.max(1) {
-                ds.history.undo.remove(0);
-            }
-            ds.history.redo.clear();
+            ds.record(Some(label), before, sel, page);
         }
         result
     }
@@ -829,8 +837,8 @@ impl Session {
                 "selection": ds.selection,
                 "tool": self.tool.tool.id(),
                 "zoom": ds.view.zoom,
-                "undo": ds.history.undo.len(),
-                "redo": ds.history.redo.len(),
+                "undo": ds.history_len().0,
+                "redo": ds.history_len().1,
                 "documents": self.docs.len(),
             }),
             Err(_) => json!({"documents": 0}),
@@ -1067,7 +1075,11 @@ mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod collab_live_tests;
+#[cfg(test)]
 mod collab_tests;
+#[cfg(test)]
+mod collab_undo_tests;
 #[cfg(test)]
 mod comments_polish_tests;
 #[cfg(test)]

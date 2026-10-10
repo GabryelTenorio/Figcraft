@@ -2,8 +2,10 @@
 
 Status: milestone M9. **Step 1 (the core, no networking) is implemented** in `crates/collab`:
 identifiers, the object/property model, change sets, ordering and validation, client
-reconciliation, derived data and the message encoding. The rest is the plan the next
-implementation PRs follow and update; sections say what is built.
+reconciliation, derived data and the message encoding. **Step 3's transport-independent parts are
+implemented** on top: per-user undo and redo, rejection handling and offline queueing with
+reconnect (`crates/collab`, and documents in a live session in the engine). The rest is the plan
+the next implementation PRs follow and update; sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -51,7 +53,9 @@ fit FigCraft's architecture:
 
 - **Client id**: a 32-bit id the server assigns to each connection on join. The server starts
   above every client id space already used by node ids in the file, so ids from earlier sessions
-  are never handed out again (a persistent server will also store its counter with the file).
+  are never handed out again. The counter is part of the session state a server saves
+  (`Server::state` / `Server::restore`), so a restarted server doesn't hand ids out twice either;
+  a client that reconnects keeps its id.
 - **Node ids** are unique across clients without coordination: with a client id set
   (`Document::set_client_id`), `Document::alloc_id` returns `client_id << 32 | counter`,
   continuing after the highest id of that space already in the document. Ids in existing files
@@ -62,7 +66,8 @@ fit FigCraft's architecture:
   created again whole (what undo does): the server accepts creating an id that doesn't exist only
   if it was deleted before or lies in the sender's own id space.
 - Styles, variables, collections and comments keep their existing string or numeric ids (made
-  unique by the engine); a client-scoped scheme for them comes with per-user undo.
+  unique by the engine); a client-scoped scheme for them is still to come (until then two people
+  creating one at the same moment can get the same id, and the later write wins).
 
 ## The document as objects and properties
 
@@ -137,9 +142,9 @@ Client → server:
 
 | Message | Meaning |
 |---|---|
-| `Hello {protocol, file, token, name, color, client_version}` | Join a file's session. |
+| `Hello {protocol, file, token, name, color, client_version, resume?}` | Join a file's session; `resume {session, client_id, seq}` when coming back after a dropped connection. |
 | `Changes {base_seq, batch_id, changes: [Change]}` | One user action's changes (one undo step). |
-| `Presence {cursor?, selection?, viewport?, editing_text?}` | Ephemeral; throttled to ~30 Hz, latest wins. |
+| `Presence {cursor?, selection?, viewport?, editing_text? {node, caret, selection?}}` | Ephemeral; throttled to ~30 Hz, latest wins. |
 | `Ack {seq}` | Highest sequence applied (lets the server trim per-client buffers). |
 | `Ping` | Keep-alive. |
 
@@ -147,7 +152,7 @@ Server → client:
 
 | Message | Meaning |
 |---|---|
-| `Welcome {client_id, seq, snapshot or delta, peers}` | Join accepted: the full document (or changes since a cached `seq`). |
+| `Welcome {session, client_id, seq, catch_up: Snapshot or Delta, processed, peers}` | Join accepted: the full document, or for a reconnecting client the batches it missed; what the server did with that client's batches (`processed {last_batch, refused}`). |
 | `Changes {seq, author, batch_id, changes}` | Accepted changes, in order, to everyone (the author gets its own back as confirmation). |
 | `Reject {batch_id, reason, fixes: [Change]}` | A batch (or part of it) was invalid: the current values to roll back to. |
 | `Presence {client_id, …}` / `PeerJoined` / `PeerLeft` | Other people's cursors, selections and arrivals. |
@@ -157,8 +162,8 @@ Server → client:
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
 and `Remove` (see above). A snapshot is the list of changes that builds the document from nothing;
-`Welcome` carries one (deltas since a cached `seq` come with reconnect, step 3). A whole batch is
-accepted or rejected.
+`Welcome` carries one, or the missed batches when a client reconnects (see Offline and
+reconnect). A whole batch is accepted or rejected.
 
 ## Ordering, optimism and convergence
 
@@ -187,7 +192,19 @@ or the JSON encoding. Tests drive it with synthetic edits and, in the engine, wi
 commands (creating, moving and reparenting layers including cycle attempts, deleting, grouping,
 auto layout, components and instances, styles, variables, text, pages, comments): after quiescence
 every client's state equals the server's, for every seed (more seeds run as an ignored test).
-Undo is not part of these runs (step 3).
+The same runs with undo, redo and dropped connections are described below.
+
+### Rejections
+
+*Built.* When the server refuses a batch (a layer it changes was deleted by someone else, a move
+would make a cycle, a value is out of range…), the `Reject` carries a short reason (a deleted
+layer reads "a layer it changes was deleted by someone else") and the current values of what the
+batch touched. The client drops the batch, applies the fixes to its confirmed copy (a no-op there:
+every batch ordered before the rejection arrived first; they matter to clients that keep no
+confirmed copy), rebuilds its view from the confirmed state and its remaining batches, and takes
+the batch's step out of the undo history, together with any undo or redo of it still waiting to be
+sent. It then queues a notice (`Client::take_notices`, `Notice::message`); the engine shows it as
+the UI's toast (`Session::message`).
 
 ### Derived data
 
@@ -212,19 +229,59 @@ Undo is not part of these runs (step 3).
 
 ## Undo and redo
 
-*Step 3.* Until then the engine's snapshot undo must not be used in a live session: it restores a
-whole earlier document and would revert other people's changes made in between. The server already
-accepts re-creating deleted nodes with their ids, which undoing a delete needs.
+*Built* (`Client::{undo, redo}`; in the engine, `edit.undo` / `edit.redo` and the UI's undo route
+there while the document is in a live session). Outside a live session the engine's snapshot undo
+works exactly as before; a document entering or leaving a session starts with an empty history.
 
 Undo stays per user and undoes only **your own** actions: an undo turns your last batch into a new
 batch that writes back the values your batch replaced, for the properties nobody has changed since
 (a property someone else changed afterwards is left alone). Redo is the inverse. Remote changes
 never enter your undo history.
 
+Decisions, as built:
+
+- **A step per batch.** Every undoable batch of the user (one command, one gesture, one
+  `command.batch` / `Session::grouped` group) becomes a step: per target (a node property, a
+  document-level property or entry) the value before and after, plus the nodes it created and
+  deleted, each as the change that creates it as it was. Batches that aren't commands' edits
+  (derived-data follow-ups) never become steps.
+- **"Nobody has changed it since"** is decided by server order: a batch from someone else that the
+  server ordered after the step's last confirmed batch takes the targets it writes away from the
+  step for good (a write to a list as a whole takes every entry of that list; creating a node again
+  takes all its properties; a taken parent takes the position too). Batches ordered before it are
+  what the step replaced: the step learns their values when its batch is confirmed or replayed, so
+  an undo restores the value that was there in server order, not the one the user happened to see.
+- **Creates become deletes, deletes create the subtree again** with the same ids, positions and
+  values (the server accepts re-creating deleted ids). A created layer someone else has since put
+  layers into is not deleted (and if nothing else of the step is left, the step is skipped); a
+  layer whose parent is gone is not brought back. Changes are checked in order against the current
+  state, so an undo is never refused for what the client can see.
+- **An undo or redo waits for what came before it.** It shows at once, but goes out only when
+  every earlier batch of the client is confirmed or refused, and is then made again from the
+  confirmed state. So it never rests on an edit the server refused (the step and its undo are
+  dropped with the edit) or on values the client hadn't seen yet. Undoing right after an edit
+  costs one round trip before it reaches the others; edits made meanwhile queue behind it.
+- **Derived data** that the restored values imply (auto layout, groups…) is recomputed with the
+  recompute hook and sent as a follow-up batch, like the repairs after concurrent edits.
+- **A step that no longer changes anything is skipped** (the next undo goes one step further).
+- Concurrent edits the undoing client couldn't have seen (made while its undo was on the way, or
+  while it was offline) are ordered last-writer-wins like any other edits.
+
+Tests: the in-memory simulation checks every undo and redo the server accepts against the log of
+accepted batches: a value it changes was last written by its author (or after the client's last
+seen sequence number), and every layer it deletes was created by its author or moved into the
+deleted layer after that. Random sessions of synthetic edits and of real engine commands, with
+undo, redo and dropped connections, converge with no violation (thousands of seeds were run while
+building it; an ignored test runs more). The engine's tests also cover a gesture staying one step
+while others' edits arrive mid-gesture, a group of commands syncing as one step, an undo right
+after an edit waiting for it, and a refused edit's toast.
+
 ## Presence
 
 - Cursor position in page coordinates plus the page id; selection ids; viewport rectangle; whether
-  the user is typing in a text layer (to show their caret and selection inside it).
+  the user is typing in a text layer, with their caret and selection inside it
+  (`editing_text {node, caret, selection}`, in characters; the message carries it, step 2's UI
+  shows it).
 - Shown as named, coloured cursors on the canvas, selection outlines in the user's colour, avatars
   in the title bar; click an avatar to **follow** that user's viewport (Escape or any pan stops).
 - Never stored; dropped when a client disconnects; the server rate-limits and coalesces.
@@ -245,9 +302,42 @@ never enter your undo history.
 
 ## Offline and reconnect
 
-On a dropped connection the client keeps editing locally, queues batches, and on reconnect sends
-`Hello` with its last confirmed `seq`; the server replies with the missed changes, then the queued
-batches are sent (they may be partly rejected if their objects were deleted meanwhile).
+*Built* (`Client::{disconnect, reconnect}`, the server's log; in the engine,
+`Session::{collab_disconnected, collab_reconnect}`). On a dropped connection the client keeps
+editing locally, queues batches, and on reconnect sends `Hello` with its last confirmed `seq`; the
+server replies with the missed changes, then the queued batches are sent (they may be partly
+rejected if their objects were deleted meanwhile).
+
+Decisions, as built:
+
+- **Same identity.** `Hello.resume` carries the session id (random per server, kept in its saved
+  state), the client id and the last sequence number applied. A client this session gave its id to
+  keeps it (a stale connection with that id is taken over); anyone else joins as new. A client
+  welcomed as new after all (the server restarted without its state) starts over from the
+  snapshot and is told how many unsent changes couldn't be kept.
+- **Catch-up.** The server keeps a log of accepted batches (`Limits::max_log_batches`, default
+  10 000, and `max_log_changes`, default 1 000 000). If every batch after the client's sequence
+  number is still in it, the welcome carries them (`CatchUp::Delta`); otherwise the whole document
+  (`CatchUp::Snapshot`).
+- **What happened to the batches in flight.** The server remembers per client the last batch id it
+  processed and the latest refused ids (at most 1 024). Batches up to that id that the catch-up
+  doesn't confirm were refused (the user is told); the others are sent again, in order, keeping
+  the sequence number they were made on. Batches the server confirmed but whose echo was lost are
+  confirmed by the catch-up and never sent twice.
+- **Undo across a gap.** With a delta, the missed batches mark the steps they conflict with exactly
+  as they would have live. With a snapshot, which batches came from others isn't known: a step
+  keeps a value only if it is still the one the step wrote (someone else setting exactly the same
+  value can't be told apart). An undo or redo lost in flight is made again from the caught-up
+  state, treating what others wrote meanwhile as later than the step.
+- **Session state.** `Server::state` returns what a server needs to carry on after a restart
+  (`SessionState`: snapshot, sequence number, session id, client-id counter, the clients that can
+  reconnect and what was done with their batches, deleted ids, the log), as one serde value; the
+  standalone server will store it.
+
+Tests: random sessions where clients drop and come back mid-session converge, with the default log
+and with logs short enough that long absences fall back to snapshots; targeted tests cover a lost
+echo, a batch refused while offline, a long absence, an unknown client and a restart from the
+saved state.
 
 ## Agents, MCP and the CLI
 
@@ -273,6 +363,8 @@ chooses to share on the network; the default is the invite link with a random to
 2. **Transport + embedded host:** WebSocket server/client (native), the binary encoding, the
    `collab.*` commands, Share / Join UI, live cursors, selections, avatars and follow.
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
-   editing.
+   editing. **Done** for everything that doesn't need the transport (the client, the server and
+   the engine's live documents, exercised through the in-memory simulation); the transport wires
+   the engine calls up with step 2.
 4. **Browser client** (WebSocket through `web-sys`).
 5. **Standalone `figcraft-server`** with persistence, compaction and accounts.

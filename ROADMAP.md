@@ -241,7 +241,15 @@ dimension measured side by side.
    and a client that shows its own edits at once and replays them over others'; derived data
    (auto layout, instances, bindings) is repaired by the author after concurrent edits; binary
    messages (a moved layer is 43 bytes, a cursor 23) with a JSON form; a randomized multi-client
-   test over real commands converges.
+   test over real commands converges. On top of it, without the transport yet: per-user undo and
+   redo in a live session (`edit.undo` and the UI's undo take back only your own steps, leaving
+   what others changed since; creations and deletions invert; a gesture or command group stays one
+   step; an undo waits for its edit's confirmation and is made again from the server's state);
+   refused edits roll back and leave the history with a toast; offline editing with a queue, and
+   reconnect with the missed batches (or a snapshot once the server's log no longer has them), the
+   client keeping its id; the server's session state (client-id counter, log) can be saved and
+   restored. Randomized sessions with undo, redo and dropped connections converge, and a checker
+   confirms no undo reverts someone else's change.
    Plugins landed: sandboxed WebAssembly plugins (a metered wasmi
    interpreter with a memory cap and no WASI, also in the browser) whose API is the command
    registry; each run is one undo step and is rolled back when it fails (error, trap, endless loop,
@@ -254,7 +262,7 @@ dimension measured side by side.
    plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
    plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
    distribution; for collaboration, the WebSocket transport, hosting and joining from the app,
-   live cursors, per-user undo, reconnect, the browser client and a standalone server. 18–45 h.
+   live cursors, the browser client and a standalone server. 18–45 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -408,4 +416,4 @@ Weighted feature depth ≈ **79%** (self-graded, from the table).
 | M5 Prototype & present | ~82% |
 | M6 Interop & dev mode | ~62% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |
-| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | core done (ids, change sets, server ordering, convergence); networking next |
+| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | core done (ids, change sets, server ordering, convergence); per-user undo, rejections, offline queue and reconnect done (no transport yet); networking next |

@@ -482,7 +482,9 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
 `collab.diff {against? (undo: the last undoable action, the default | saved: since the last
 save)}` returns `{changes, count, bytes}`: the change batch a live session would send for that edit
 (per-property `create` / `set` / `delete` and document-level changes, see
-`docs/collab-protocol.md`) and its binary size. It changes nothing.
+`docs/collab-protocol.md`) and its binary size. It changes nothing. In a live session, where undo
+is per user (`edit.undo` / `edit.redo` take back only your own steps, see
+`docs/collab-protocol.md`), only `saved` applies.
 
 ### Plugins
 
