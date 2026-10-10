@@ -272,6 +272,18 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 };
                 player.ok_or("nothing is presented")?.scroll_to(at(0), at(1));
             }
+            // The style picker: a slot (fill, stroke, effect, grid) opens it for the selection, null
+            // closes it; `stylePickerEdit` (a style id or name) opens its editor; `stylePickerView`
+            // is `list` or `grid`.
+            if let Some(v) = p.get("stylePicker") {
+                match v.as_str().and_then(crate::style_picker::StyleSlot::parse) {
+                    Some(slot) => crate::style_picker::open_for_selection(app, slot, p.get("stylePickerEdit").and_then(Value::as_str)),
+                    None => app.ui.style_picker = None,
+                }
+            }
+            if let Some(v) = p.get("stylePickerView").and_then(Value::as_str) {
+                app.ui.style_grid = v == "grid";
+            }
             // The Color profile dialog: a profile id opens it with that profile chosen, null closes it.
             if let Some(v) = p.get("colorProfileDialog") {
                 app.ui.color_profile = v.as_str().and_then(figcraft_color::ColorProfile::parse);

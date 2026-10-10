@@ -34,6 +34,19 @@ pub enum PickerTarget {
         id: String,
         mode: String,
     },
+    /// One paint of a colour style (edited from the style picker).
+    Style {
+        id: String,
+        index: usize,
+    },
+}
+
+/// The paints of colour style `id`.
+fn style_paints(doc: &figcraft_doc::Document, id: &str) -> Option<Vec<Paint>> {
+    match &doc.style(id)?.kind {
+        figcraft_doc::StyleKind::Paint { paints } => Some(paints.clone()),
+        _ => None,
+    }
 }
 
 /// The fills a text range paints with (its own, else the layer's).
@@ -68,6 +81,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             }
             _ => None,
         },
+        PickerTarget::Style { id, index } => style_paints(doc, id)?.get(*index).cloned(),
     }
 }
 
@@ -99,6 +113,13 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         PickerTarget::Variable { id, mode } => {
             let c = paint.solid_color().unwrap_or(Color::BLACK);
             app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.with_alpha(c.a * paint.opacity).to_css_hex()}))
+        }
+        PickerTarget::Style { id, index } => {
+            let Some(mut paints) = app.session.doc().ok().and_then(|d| style_paints(d, id)) else { return };
+            if let Some(slot) = paints.get_mut(*index) {
+                *slot = paint.clone();
+            }
+            app.session.execute("style.update", &json!({"style": id, "value": paints}))
         }
     };
     if let Err(e) = r {
