@@ -62,8 +62,19 @@ fn ci() -> bool {
 }
 
 fn wasm() -> bool {
-    run(cargo().args(["check", "--target", "wasm32-unknown-unknown", "-p", "figcraft-collab", "-p", "figcraft-engine", "-p", "figcraft-ui-egui", "-p", "figcraft-web"]))
-        && plugins()
+    run(cargo().args([
+        "check",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        "figcraft-collab",
+        "-p",
+        "figcraft-engine",
+        "-p",
+        "figcraft-ui-egui",
+        "-p",
+        "figcraft-web",
+    ])) && plugins()
 }
 
 /// The example plugins in `plugins/examples` (each folder's name is its package; its module is
