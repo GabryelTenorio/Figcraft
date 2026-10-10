@@ -142,8 +142,17 @@ dimension measured side by side.
    screen with width and height fields, imported from REST files); flow descriptions in the
    presenter's flow picker and under each flow; conditional actions (if / else if / else over
    variable expressions) and set-variable-mode actions run in the presenter (from REST files or
-   commands). *Left:* building conditionals in the interaction editor, hotspot hints on click,
-   comments and inspect in the presenter. 3–6 h.
+   commands). Conditionals are built in the interaction editor: an interaction's actions are a list
+   (add, reorder, remove, open one to edit it), "Add action ▸ Conditional" adds an if whose
+   condition comes from a builder (a variable from the variable picker, an operator, a value or
+   another variable) or is typed as an expression (`count >= 3 and not done`, checked when entered,
+   what's wrong shown under the field), each block with its own actions (the same editors,
+   nested), plus "Else if" and "Else"; set variable values can be expressions (`count + 1`,
+   `"Hi " + name`); every edit is an undo step (`proto.action.*`, `proto.conditional.*`). Hotspot
+   hints: a click where nothing reacts flashes the screen's hotspots (an Options menu toggle, on by
+   default); the presenter's Inspect panel shows the hovered layer's properties. *Left:* dragging
+   actions to reorder them (a menu moves them now), QA against larger prototypes with
+   conditionals. 2–4 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -271,7 +280,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
-| Prototyping | 6 | 86% | building conditionals in the interaction editor, hotspot hints, inspect in the presenter | 3–5 |
+| Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |

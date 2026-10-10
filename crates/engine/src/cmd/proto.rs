@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.add",
             "Add interaction",
-            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate {preserveScroll?}|back|scrollTo|openOverlay {position?, close_on_outside?, background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
+            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key}}, action {type: navigate {preserveScroll?}|back|scrollTo|openOverlay {position?, close_on_outside?, background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
             true,
             add
         ),
@@ -134,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.presentOptions",
             "Presentation options",
-            "{scale? fit|fitWidth|fill|actual, deviceFrame? bool}  how the presenter sizes the prototype (Fit scales down to fit, Fit width fills the width, Fill covers the window, Actual shows it at 100%) and whether it draws the device; kept for later presentations",
+            "{scale? fit|fitWidth|fill|actual, deviceFrame? bool, hotspotHints? bool, inspect? bool}  how the presenter sizes the prototype (Fit scales down to fit, Fit width fills the width, Fill covers the window, Actual shows it at 100%), whether it draws the device, whether a click where nothing reacts flashes the hotspots (on by default) and whether the Inspect panel shows the properties of the layer under the pointer; kept for later presentations",
             false,
             |s, p| {
                 let cmd = "proto.presentOptions";
@@ -143,11 +143,13 @@ pub fn specs() -> Vec<CommandSpec> {
                     let scale = v.as_str().filter(|x| PRESENT_SCALES.contains(x)).ok_or_else(|| bad(cmd, "scale: fit|fitWidth|fill|actual"))?;
                     data.insert("scale".into(), json!(scale));
                 }
-                if let Some(v) = p.get("deviceFrame").filter(|v| !v.is_null()) {
-                    data.insert("deviceFrame".into(), json!(v.as_bool().ok_or_else(|| bad(cmd, "deviceFrame: true|false"))?));
+                for key in ["deviceFrame", "hotspotHints", "inspect"] {
+                    if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+                        data.insert(key.into(), json!(v.as_bool().ok_or_else(|| bad(cmd, format!("{key}: true|false")))?));
+                    }
                 }
                 if data.is_empty() {
-                    return Err(bad(cmd, "nothing to set: scale or deviceFrame"));
+                    return Err(bad(cmd, "nothing to set: scale, deviceFrame, hotspotHints or inspect"));
                 }
                 s.request_ui("present.options", Value::Object(data));
                 ok()
@@ -277,8 +279,12 @@ fn open_player(s: &mut Session, p: &Value, cmd: &str, ui: &str) -> Result<Value>
 
 /// Every node an action points at must exist.
 fn check_dests(cmd: &str, s: &Session, it: &Interaction) -> Result<()> {
-    let doc = s.doc()?;
-    for a in figcraft_doc::proto::walk(&it.actions) {
+    check_action_dests(cmd, s.doc()?, &it.actions)
+}
+
+/// Every node `actions` (and what they nest) point at must exist in `doc`.
+pub(crate) fn check_action_dests(cmd: &str, doc: &Document, actions: &[Action]) -> Result<()> {
+    for a in figcraft_doc::proto::walk(actions) {
         if let Some(d) = a.dest()
             && !doc.contains(d)
         {
@@ -290,11 +296,19 @@ fn check_dests(cmd: &str, s: &Session, it: &Interaction) -> Result<()> {
 
 /// Variables, collections and modes that actions name by name, stored by id.
 fn canonical_ids(doc: &Document, it: &mut Interaction) {
-    let vars = &doc.variables;
-    walk_mut(&mut it.actions, &mut |a| match a {
-        Action::SetVariable { variable, .. } => {
+    canonical_actions(&doc.variables, &mut it.actions);
+}
+
+/// Variables (also those expressions read), collections and modes that `actions` name by name,
+/// stored by id.
+pub(crate) fn canonical_actions(vars: &Variables, actions: &mut [Action]) {
+    walk_mut(actions, &mut |a| match a {
+        Action::SetVariable { variable, expr, .. } => {
             if let Some(v) = vars.get(variable) {
                 *variable = v.id.clone();
+            }
+            if let Some(e) = expr {
+                canonical_expr(vars, e, 0);
             }
         }
         Action::SetVariableMode { collection, mode } => {
@@ -305,8 +319,26 @@ fn canonical_ids(doc: &Document, it: &mut Interaction) {
                 *collection = c.id.clone();
             }
         }
+        Action::Conditional { blocks } => {
+            for e in blocks.iter_mut().filter_map(|b| b.condition.as_mut()) {
+                canonical_expr(vars, e, 0);
+            }
+        }
         _ => {}
     });
+}
+
+/// Variables an expression reads by name, stored by id.
+pub(crate) fn canonical_expr(vars: &Variables, e: &mut Expr, depth: usize) {
+    match e {
+        Expr::Value(VariableValue::Alias(name)) => {
+            if let Some(v) = vars.get(name) {
+                *name = v.id.clone();
+            }
+        }
+        Expr::Op { args, .. } if depth < MAX_EXPR_DEPTH => args.iter_mut().for_each(|a| canonical_expr(vars, a, depth + 1)),
+        _ => {}
+    }
 }
 
 fn duration(p: &Value) -> Option<u32> {
@@ -315,6 +347,7 @@ fn duration(p: &Value) -> Option<u32> {
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.interaction.add";
+    let p = &super::proto_actions::with_expressions(cmd, &s.doc()?.variables, p)?;
     let it = if let Some(d) = id(p, "dest")
         && get(p, "action").is_none()
     {
@@ -349,6 +382,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.interaction.set";
+    let p = &super::proto_actions::with_expressions(cmd, &s.doc()?.variables, p)?;
     let k = req_num(cmd, p, "index")?;
     if k < 0.0 {
         return Err(bad(cmd, "`index` must be ≥ 0"));

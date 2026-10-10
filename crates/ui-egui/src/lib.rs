@@ -29,6 +29,7 @@ pub mod measure_overlay;
 pub mod menus;
 pub mod present;
 pub mod proto_canvas;
+pub mod proto_editor;
 pub mod proto_panel;
 pub mod render_worker;
 pub mod right;
@@ -62,6 +63,8 @@ mod popup_width_tests;
 mod present_tests;
 #[cfg(test)]
 mod present_view_tests;
+#[cfg(test)]
+mod proto_editor_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
@@ -411,8 +414,16 @@ impl FigApp {
                     if let Some(f) = r.data.get("deviceFrame").and_then(|f| f.as_bool()) {
                         v.device_frame = f;
                     }
+                    if let Some(h) = r.data.get("hotspotHints").and_then(|h| h.as_bool()) {
+                        v.hotspot_hints = h;
+                    }
+                    if let Some(i) = r.data.get("inspect").and_then(|i| i.as_bool()) {
+                        v.inspect = i;
+                    }
                     if let Some(p) = self.ui.present.as_mut() {
                         p.view.device_frame = v.device_frame;
+                        p.view.hotspot_hints = v.hotspot_hints;
+                        p.view.inspect = v.inspect;
                         p.set_scale(v.scale);
                     }
                 }
@@ -535,6 +546,9 @@ impl FigApp {
             return;
         }
         let t = theme::Tokens::get(&ctx);
+        // A field that had the keyboard when the frame began keeps its keys from the shortcuts
+        // even if it lets go during the frame (Enter commits it).
+        let typing = ctx.memory(|m| m.focused().is_some());
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
@@ -594,7 +608,7 @@ impl FigApp {
         // the arrows step through comment threads with the Comment tool.
         present::show_pane(self, &ctx);
         comments::keys(self, &ctx);
-        shortcuts::handle(self, &ctx);
+        shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);
@@ -642,7 +656,7 @@ impl FigApp {
             "dark": self.ui.dark,
             "presenting": self.ui.present.is_some(),
             "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
-            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame, "comments": self.ui.present_view.comments},
+            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame, "comments": self.ui.present_view.comments, "hotspotHints": self.ui.present_view.hotspot_hints, "inspect": self.ui.present_view.inspect},
             "preview": self.ui.preview.as_ref().map(|p| p.player.inspect()),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
