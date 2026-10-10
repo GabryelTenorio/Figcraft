@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage checked against the alpha gate: stays alpha; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the mainstream practitioner number; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -17,7 +17,8 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 |---|---|---|
 | Menu/command breadth | **97.5%** (197 / 202 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, re-checked from source on 2026-10-10) |
 | Feature breadth (does each Figma Design feature exist, weighted) | **~76%** (core editor areas 1–16: ~90%) | estimated from the area table below |
-| Ready for real work | **~46%** | estimated (dimension table below) |
+| Ready for real work | **~46%** | estimated (dimension table below: written weights × written per-dimension scores) |
+| Mainstream practitioner | **~43%** | estimated ([below](#mainstream-practitioner): weekly areas 66.5% × discounts 0.9 × 0.9 × 0.8) |
 | Remaining to beta | **~210–380 h** one Opus 5.5 agent (~45–85 h wall-clock with 5 parallel agents) | estimated |
 | Remaining to full parity | **~420–790 h** one agent (~100–180 h wall-clock with 5 parallel agents) | estimated |
 | Stage | **alpha**: the alpha gate passes ([roadmap](roadmap.md#alpha-gate)); `.fig` import and multiplayer are beta gaps (see [ROADMAP](../ROADMAP.md#stage)) | |
@@ -117,6 +118,44 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 Dimension hours add up to the full-parity total without double counting: the feature-area rows
 for import/export (14), multiplayer and team libraries (17, 19), plugins (18) and AI (21) are
 counted under their dimensions.
+
+## Mainstream practitioner
+
+The same question for the typical professional Figma Design user: a product designer who designs
+screens, maintains or uses a design system, prototypes and hands off to developers every week.
+Computed per craftrules `standards/progress-docs.md`.
+
+**1. Areas used weekly, with weights.** Feature areas 1–16 of the table above, with their weights
+(sum 100). Left out as the standard says: plugins and widgets (18), AI (21), team and organization
+libraries (19, cloud/team admin), Figma Draw extras (20, not weekly for a product designer),
+localization beyond English, specialist hardware. Real-time multiplayer (17) is cloud collaboration
+and is left out as an area, but its effect on working with Figma users is counted in discount 3.
+
+**2. Average depth** ("Ready" column, weighted): **66.5%**.
+
+**3. Discounts for what still stops real work:**
+
+| Discount | Factor | Evidence |
+|---|---|---|
+| Interaction fidelity | ×0.90 | UI3 look compared side by side (~65% by the builders); no tool-by-tool comparison of cursors, modifier keys while dragging, snapping thresholds or popovers yet; Ctrl to suspend snapping on macOS missing ([ui-parity](ui-parity.md)) |
+| Stability on real machines | ×0.90 | Never-crash lints, command guard with rollback, recovery copies and 963 tests, but no field record at all: the repository is private, v0.2.0 has had no outside users or issue reports, CI tests run on Linux only and hands-on QA is on macOS. Harsher than VectorCraft's ×0.92 because there is no outside evidence either way |
+| File exchange with Figma users | ×0.80 | A Figma designer's work lives in shared Figma files. FigCraft can't open `.fig` or write anything Figma opens as a document; incoming work can come through the REST API JSON (one way, needs an access token), outgoing only as SVG, PDF, PNG or code. Teammates, reviewers and developers would all need FigCraft ([file-format-parity](file-format-parity.md), [collaboration-parity](collaboration-parity.md)) |
+
+66.5% × 0.90 × 0.90 × 0.80 = **~43%** (estimated).
+
+**4. User evidence (2026-10-10):** 0 issues, 0 praise or "switched from Figma" reports, 0 comments
+from anyone but the maintainers (`gh issue list`, `gh api .../issues/comments`; the repository is
+private, 1 star, PRs only from maintainers). No outside evidence either way; nothing raises the
+number.
+
+**Why it is lower than ready for real work (~46%), unusually.** The full number averages
+dimensions additively, so the missing `.fig` exchange costs only the file-format dimension's 12%
+weight, and FigCraft earns points the mainstream number doesn't count (platforms 75%: Linux,
+FreeBSD and the web, where Figma has no desktop app). The mainstream number applies file exchange
+as a multiplier on everything, because a Figma practitioner's whole working week is shared through
+Figma files. Both are computed from written weights; neither was moved to match the other. The
+mainstream number rises fastest with `.fig` import (the ×0.80 toward ×0.95: ~51%) and the
+interaction pass.
 
 ## How the hours are calibrated
 
@@ -451,5 +490,6 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Added the mainstream practitioner number (~43%: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange) and user-evidence count (none). Checked that ready for real work (~46%) is built from the written dimension weights and scores; unchanged |
 | 2026-10-10 | minor | Stage checked against the alpha gate: stays alpha |
 | 2026-10-10 | major | Created from the ROADMAP's parity rubric, honest assessment and area narrative. Full re-measure against Figma desktop 126.10.7: added multiplayer, plugins, team libraries, Figma Draw extras and AI as weighted areas; split breadth from ready-for-real-work; core depth re-graded ~79% → ~67%; hours calibrated from git history; full parity 115–195 h → 420–790 h |
