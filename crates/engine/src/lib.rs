@@ -974,6 +974,8 @@ mod measure_tests;
 #[cfg(test)]
 mod nested_override_tests;
 #[cfg(test)]
+mod paint_reorder_tests;
+#[cfg(test)]
 mod paint_tests;
 #[cfg(test)]
 mod pixel_preview_tests;

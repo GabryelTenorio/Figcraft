@@ -213,42 +213,29 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
     if let Some(t) = n.kind.text() {
         out.push(typography(doc, n, t));
     }
-    let paint_rows = |paints: &[figcraft_color::Paint]| -> Vec<Prop> {
-        paints
+    // Each paint's row names the variable bound to its colour; a style names the first row.
+    let paint_rows = |fills: bool, style: Option<&StyleId>| -> Vec<Prop> {
+        let paints = if fills { &n.fills } else { &n.strokes };
+        let rows: Vec<Prop> = paints
             .iter()
-            .filter(|p| p.visible)
-            .map(|p| match &p.kind {
-                PaintKind::Solid { color } => {
-                    let c = color.with_alpha(color.a * p.opacity);
-                    prop("Solid", color_text(c)).color(c)
-                }
-                PaintKind::Gradient(g) => {
-                    let kind = match g.kind {
-                        GradientKind::Linear => "Linear",
-                        GradientKind::Radial => "Radial",
-                        GradientKind::Angular => "Angular",
-                        GradientKind::Diamond => "Diamond",
-                    };
-                    let stops: Vec<String> = g.stops.iter().map(|s| format!("#{} {}%", s.color.to_hex(), (s.position * 100.0).round())).collect();
-                    let r = prop(kind, stops.join(", "));
-                    match g.stops.first() {
-                        Some(s) => r.color(s.color),
-                        None => r,
-                    }
-                }
-                PaintKind::Image(_) => prop("Image", format!("{}%", (p.opacity * 100.0).round())),
+            .enumerate()
+            .filter(|(_, p)| p.visible)
+            .map(|(i, p)| {
+                let token = crate::cmd::lists::paint_binding_key(n, fills, i).and_then(|k| variable(doc, n, k));
+                paint_row(p).token(token)
             })
-            .collect()
+            .collect();
+        match style_name(doc, style) {
+            Some(name) => tag_first(rows, Some(name)),
+            None => rows,
+        }
     };
-    let fills = paint_rows(&n.fills);
+    let fills = paint_rows(true, n.styles.fill.as_ref());
     if !fills.is_empty() {
-        let token = style_name(doc, n.styles.fill.as_ref()).or_else(|| variable(doc, n, "fill"));
-        out.push(Section { title: "Fills", rows: tag_first(fills, token) });
+        out.push(Section { title: "Fills", rows: fills });
     }
-    let mut strokes = paint_rows(&n.strokes);
+    let mut strokes = paint_rows(false, n.styles.stroke.as_ref());
     if !strokes.is_empty() {
-        let token = style_name(doc, n.styles.stroke.as_ref()).or_else(|| variable(doc, n, "stroke"));
-        strokes = tag_first(strokes, token);
         let align = match n.stroke.align {
             StrokeAlign::Inside => "inside",
             StrokeAlign::Center => "center",
@@ -306,6 +293,31 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
 }
 
 /// A style or variable applies to the whole list: show it on the first row.
+/// One paint's row: its kind and colour (or stops, or opacity for images).
+fn paint_row(p: &figcraft_color::Paint) -> Prop {
+    match &p.kind {
+        PaintKind::Solid { color } => {
+            let c = color.with_alpha(color.a * p.opacity);
+            prop("Solid", color_text(c)).color(c)
+        }
+        PaintKind::Gradient(g) => {
+            let kind = match g.kind {
+                GradientKind::Linear => "Linear",
+                GradientKind::Radial => "Radial",
+                GradientKind::Angular => "Angular",
+                GradientKind::Diamond => "Diamond",
+            };
+            let stops: Vec<String> = g.stops.iter().map(|s| format!("#{} {}%", s.color.to_hex(), (s.position * 100.0).round())).collect();
+            let r = prop(kind, stops.join(", "));
+            match g.stops.first() {
+                Some(s) => r.color(s.color),
+                None => r,
+            }
+        }
+        PaintKind::Image(_) => prop("Image", format!("{}%", (p.opacity * 100.0).round())),
+    }
+}
+
 fn tag_first(mut rows: Vec<Prop>, token: Option<String>) -> Vec<Prop> {
     if let Some(first) = rows.first_mut() {
         first.token = token;

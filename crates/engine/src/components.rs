@@ -344,6 +344,7 @@ fn carry_overrides(from: &Node, to: &mut Node, what: Carry) {
                 if let (NodeKind::Instance { props: a, .. }, NodeKind::Instance { props: b, .. }) = (&from.kind, &mut to.kind) {
                     *b = a.clone();
                 }
+                carry_prop_bindings(from, to);
             }
             _ => {}
         }
@@ -380,6 +381,18 @@ fn path_map(doc: &Document, root: NodeId, src_names: bool) -> BTreeMap<NodeId, S
         }
     }
     out
+}
+
+/// The binding key prefix of an instance's component property value
+/// (`componentProperties/<name>`): a boolean property takes a boolean variable, a text property a
+/// string variable.
+pub const PROP_BINDING: &str = "componentProperties/";
+
+/// Give `to` the component property bindings of instance `from` (they go with its property
+/// values, which an instance keeps across rebuilds).
+fn carry_prop_bindings(from: &Node, to: &mut Node) {
+    to.bound.retain(|k, _| !k.starts_with(PROP_BINDING));
+    to.bound.extend(from.bound.iter().filter(|(k, _)| k.starts_with(PROP_BINDING)).map(|(k, v)| (k.clone(), v.clone())));
 }
 
 /// The override group a property-bound field belongs to.
@@ -619,6 +632,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     fresh.children = order;
     fresh.transform = root.transform;
     fresh.kind = root.kind.clone();
+    carry_prop_bindings(&root, &mut fresh);
     // A nested instance keeps mirroring its layer of the outer main.
     fresh.source = if inside_instance(doc, inst) { root.source } else { Some(component) };
     fresh.constraints = root.constraints;
