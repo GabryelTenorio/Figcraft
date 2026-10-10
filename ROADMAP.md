@@ -213,7 +213,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 73% | frame guides | 2–4 |
+| Canvas & navigation | 6 | 75% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
 | Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |

@@ -88,6 +88,23 @@ impl Targets {
                 }
             }
         }
+        // The guides of the frames the moving layers are in, across each frame.
+        let mut f = parent;
+        for _ in 0..128 {
+            let Some(n) = doc.node(f).filter(|_| f != page) else { break };
+            if let Some(b) = doc.world_bounds(f).filter(|_| !n.guides.is_empty()) {
+                let xf = doc.world_transform(f);
+                for g in &n.guides {
+                    if g.vertical {
+                        t.xs.push(((xf * Point::new(g.offset, 0.0)).x, b.y0, b.y1));
+                    } else {
+                        t.ys.push(((xf * Point::new(0.0, g.offset)).y, b.x0, b.x1));
+                    }
+                }
+            }
+            let Some(up) = n.parent else { break };
+            f = up;
+        }
         t
     }
 
