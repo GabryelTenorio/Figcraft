@@ -175,6 +175,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         painter.image(tex.id(), Rect::from_min_size(tl, vec2(w, h)), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
     overlays(app, &painter, &t);
+    crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
     crate::comments::draw(app, &painter);
     crate::comments::popovers(app, &ctx);

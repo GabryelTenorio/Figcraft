@@ -13,6 +13,7 @@ pub mod comments;
 pub mod component_panel;
 pub mod control;
 pub mod credits;
+pub mod dev_mode;
 pub mod dialogs;
 pub mod export_panel;
 pub mod font_preview;
@@ -200,6 +201,8 @@ pub struct UiState {
     pub left_collapsed: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
+    /// Dev Mode: annotations on the canvas and the ready-for-dev list.
+    pub dev: dev_mode::DevUi,
 
     /// What FigCraft last put on the system clipboard: when the clipboard still holds it, a paste
     /// uses our copied layers; anything else there (an image, SVG, text) came from another app.
@@ -263,6 +266,7 @@ impl Default for UiState {
             left_collapsed: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
+            dev: dev_mode::DevUi::default(),
 
             last_copy: None,
             next_autosave: 0.0,

@@ -126,7 +126,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, SwiftUI or Jetpack Compose for a layer), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`), text…); returns the updated layers. |
@@ -341,6 +341,42 @@ closing or saving a version ends the preview first, and `version.list` marks the
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
+
+### Dev Mode
+
+- **Component code:** `inspect.code {id, language: react|swiftui|compose}` on a component, a
+  component set or a variant writes the component as a reusable unit: React (TSX) with a props
+  interface, SwiftUI with a `View` struct, Compose with a `@Composable` function. Its component
+  properties are the parameters, with their defaults: variant properties become string unions
+  (React) or enums, booleans become flags around the layers they show, text properties strings,
+  instance swaps views (`React.ReactNode`, `AnyView`, a composable lambda) and slots optional
+  content. Every variant of a set shares one definition; in React the other variants' differences
+  become CSS rules on `data-*` attributes. On an instance (or a layer tree containing instances)
+  each instance is a call passing only the values it changes, e.g. `<Button state="Hover"
+  label="Buy" />`, `Button(state: .hover, label: "Buy")`, `Button(state = ButtonState.Hover, label =
+  "Buy")`. Names are escaped and unique (keywords get a suffix, `default` → `defaultValue`; names
+  that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
+  {id?, language?}` returns the parts: `{component, name, set, properties: [{name, param, type,
+  default, value? (instances)}], definition, usage? (instances)}`.
+- **Annotations:** notes for developers on any layer, each with optional pinned properties that
+  Dev Mode shows with their current values (and the style or variable behind them).
+  `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,
+  index}`), `annotation.edit {id?, index, label?, properties?}` (`properties` replaces the list),
+  `annotation.remove {id?, index?}` (no index: all of the layer's), all undoable, and
+  `annotation.list {ids? | id? | page? ("all")}` → `{annotations: [{id, name, index, label,
+  properties: [{property, label, value, token?, color?}]}]}` (`value` is null when the layer doesn't
+  have that property). Pinnable ids: `width`, `height`, `top`, `left`, `rotation`, `opacity`,
+  `cornerRadius`, `direction`, `gap`, `padding`, `alignment`, `fontFamily`, `fontStyle`,
+  `fontSize`, `lineHeight`, `letterSpacing`, `textAlign`, `fill`, `stroke`, `strokeWeight`,
+  `effects`. A layer holds at most 64 annotations; notes are capped at 5,000 characters. They are
+  saved with the file (`get_node` lists them as `annotations`); instances don't inherit their
+  main's annotations and keep their own across main edits. In the app the Inspect tab draws them
+  as callouts beside their layers and edits them in its Annotations section.
+- **Ready for dev:** frames at the top of a page or section, and sections, carry a handoff status
+  (`node.set {devStatus: none|readyForDev|completed}`). `inspect.readyForDev {status?:
+  readyForDev|completed|any, page?}` lists them across pages (or on one page) in page and layer
+  order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
+  frames and, with nothing selected, lists them with a status filter (click one to go to it).
 
 ### Ruler guides
 

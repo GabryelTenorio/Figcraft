@@ -22,17 +22,37 @@ const SECTION_COLORS: [(&str, &str); 8] = [
     ("Violet", "#EBE3FF"),
 ];
 
-pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let is_section = |i: &NodeId| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }));
-    let top_frame = |i: &NodeId| {
-        doc.node(*i).is_some_and(|n| {
+fn is_section(doc: &Document, id: NodeId) -> bool {
+    doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }))
+}
+
+/// Whether `id` can carry a handoff status: a section, or a frame at the top of a page or section.
+pub fn has_status(doc: &Document, id: NodeId) -> bool {
+    is_section(doc, id)
+        || doc.node(id).is_some_and(|n| {
             n.kind.is_frame_like()
                 && !matches!(n.kind, NodeKind::Instance { .. })
                 && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
         })
-    };
-    let sections = !sel.is_empty() && sel.iter().all(is_section);
-    if sel.is_empty() || !sel.iter().all(|i| is_section(i) || top_frame(i)) {
+}
+
+/// The handoff status of `ids` as a dropdown `width` wide ("Mixed" when they differ).
+pub fn status_dropdown(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], width: f32) {
+    let st = common(doc, ids, |n| n.dev_status);
+    let resp = widgets::dropdown(ui, st.map(DevStatus::label).unwrap_or("Mixed"), width, Some(Icon::Code));
+    egui::Popup::menu(&resp).show(|ui| {
+        for d in DevStatus::ALL {
+            if menu_item(ui, d.label(), "") {
+                app.set_props(ids, json!({"devStatus": d.id()}));
+                ui.close();
+            }
+        }
+    });
+}
+
+pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
+    let sections = !sel.is_empty() && sel.iter().all(|i| is_section(doc, *i));
+    if sel.is_empty() || !sel.iter().all(|i| has_status(doc, *i)) {
         return;
     }
     let t = crate::theme::Tokens::get(ui.ctx());
@@ -57,18 +77,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         });
     }
     widgets::sublabels(ui, "Status", None);
-    row(ui, 32.0, |ui| {
-        let st = common(doc, sel, |n| n.dev_status);
-        let resp = widgets::dropdown(ui, st.map(DevStatus::label).unwrap_or("Mixed"), col * 2.0 + 8.0, Some(Icon::Code));
-        egui::Popup::menu(&resp).show(|ui| {
-            for d in DevStatus::ALL {
-                if menu_item(ui, d.label(), "") {
-                    app.set_props(&ids, json!({"devStatus": d.id()}));
-                    ui.close();
-                }
-            }
-        });
-    });
+    row(ui, 32.0, |ui| status_dropdown(app, ui, doc, &ids, col * 2.0 + 8.0));
     row(ui, 32.0, |ui| {
         let fit = ui.add_sized(vec2(col * 2.0 + 8.0, widgets::FIELD_H), egui::Button::new("Resize to fit")).on_hover_text("Fit to contents  ⌥⇧⌘R");
         if fit.clicked() {

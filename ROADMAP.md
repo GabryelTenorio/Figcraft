@@ -210,7 +210,9 @@ dimension measured side by side.
   bar (frameless on Windows/Linux with drawn window buttons, drag, double-click maximise and edge
   resizing; macOS window buttons inset into it), icon rail, file header, pages and
   layers tree (rename, visibility/lock, drag to reorder/reparent), Assets panel, floating bottom
-  toolbar with flyouts and mode switcher, Design / Prototype / Inspect (CSS) panels, colour picker
+  toolbar with flyouts and mode switcher, Design / Prototype / Inspect panels (Dev Mode: properties with their styles and variables, annotations
+  with pinned properties drawn as callouts on the canvas, a ready-for-dev list, CSS/HTML/React/SwiftUI/Compose
+  code where components take their properties as parameters and instances are calls), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
   context menu, Actions palette (⌘K), keyboard shortcuts from the catalog, presentation player with
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
@@ -238,7 +240,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
 | Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
-| Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |
+| Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 
 Weighted feature depth ≈ **73%** (self-graded, from the table).

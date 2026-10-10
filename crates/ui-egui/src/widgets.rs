@@ -302,6 +302,40 @@ pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &st
     text_field_in(ui, id, value, rect, placeholder)
 }
 
+/// A multi-line text field across the panel (descriptions, notes) that commits when it loses
+/// focus: returns the new text then, when it changed. The draft lives only while it has focus.
+pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
+    let te = id.with("te");
+    let focused = ui.memory(|m| m.has_focus(te));
+    let mut text: String = if focused { ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
+    let mut done = false;
+    ui.horizontal(|ui| {
+        ui.add_space(PAD);
+        let w = ui.available_width() - PAD;
+        let r = egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .id(te)
+                    .frame(egui::Frame::NONE)
+                    .font(regular(11.0))
+                    .hint_text(hint)
+                    .desired_rows(rows)
+                    .desired_width(w - 12.0),
+            )
+        });
+        done = r.inner.lost_focus();
+    });
+    if done {
+        ui.data_mut(|d| d.remove::<String>(id));
+        return (text != value).then_some(text);
+    }
+    if ui.memory(|m| m.has_focus(te)) {
+        ui.data_mut(|d| d.insert_temp(id, text));
+    }
+    None
+}
+
 /// An editable field with a menu of `options` behind the chevron at its right (export sizes…).
 /// Returns the typed text (on Enter / focus loss) or the option picked.
 pub fn combo_field(ui: &mut Ui, id: Id, value: &str, width: f32, options: &[String]) -> Option<String> {

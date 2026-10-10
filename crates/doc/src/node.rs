@@ -193,6 +193,18 @@ impl DevStatus {
     }
 }
 
+/// A note for developers on a layer (a Dev Mode annotation): its text and the properties it pins,
+/// which Dev Mode shows with their current values.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Annotation {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// Pinned property ids ("width", "fill", "fontSize"…; `figcraft_engine::annotations` lists
+    /// them). Unknown ids are kept and ignored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<String>,
+}
+
 /// A ruler guide on a page or frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
@@ -410,6 +422,9 @@ pub struct Node {
     /// Free-form plugin / agent data.
     #[serde(default, skip_serializing_if = "is_default")]
     pub plugin_data: BTreeMap<String, String>,
+    /// Dev Mode annotations, in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<Annotation>,
 }
 
 fn yes() -> bool {
@@ -514,6 +529,7 @@ impl Node {
             overrides: BTreeSet::new(),
             prop_refs: BTreeMap::new(),
             plugin_data: BTreeMap::new(),
+            annotations: Vec::new(),
         }
     }
 

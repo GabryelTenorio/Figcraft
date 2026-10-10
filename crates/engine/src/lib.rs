@@ -7,9 +7,11 @@
 //! edits and are journaled the same way.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod annotations;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
+pub mod component_codegen;
 pub mod components;
 pub mod devinspect;
 pub mod drop;
@@ -902,9 +904,13 @@ mod al_drag_tests;
 #[cfg(test)]
 mod al_nesting_tests;
 #[cfg(test)]
+mod annotations_tests;
+#[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
+#[cfg(test)]
+mod component_codegen_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
