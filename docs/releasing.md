@@ -59,6 +59,7 @@ refuses them (0 steps) and no release is created. The `version` input is applied
 | macOS 11+ (universal) | `figcraft-<v>-macos-universal.dmg`, `figcraft-cli-<v>-macos-universal.zip` | `macos-15-xlarge` |
 | Windows 10+ x64 / x86 / arm64 | `figcraft-<v>-windows-<arch>.msi`, `figcraft-<v>-windows-<arch>-portable.zip` | `windows-latest` (arm64 cross-compiled) |
 | Linux x86_64 / aarch64 | `figcraft-<v>-linux-<arch>.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}` | `ubuntu-22.04` / `ubuntu-22.04-arm` (Flatpak: 24.04) |
+| Linux riscv64 | `figcraft-<v>-linux-riscv64.tar.gz` (CLI smoke-tested under QEMU; needs glibc ≥ 2.39) | cross-compiled on `ubuntu-24.04` against ports.ubuntu.com riscv64 libraries |
 | FreeBSD 14 x86_64 | `figcraft-<v>-freebsd-x86_64.tar.gz` | FreeBSD 14.3 VM on `ubuntu-latest` |
 | Web | `figcraft-web-<v>.zip` (static site; [`packaging/web/README.md`](../packaging/web/README.md)) | `ubuntu-latest` |
 
@@ -128,6 +129,8 @@ libraries as dependencies); and an `.AppImage` with update information and a `.z
 is the from-source manifest for a Flathub submission (not built in CI; vendor crates with
 `flatpak-cargo-generator.py` first). Both manifests keep the same runtime and `finish-args`
 (packaging-lint checks). Binaries are built on Ubuntu 22.04 and need glibc ≥ 2.35.
+The `linux-riscv64` job cross-compiles with `CROSS_ARCH`/`CROSS_TARGET`/`CROSS_COMPILE` and
+`EMULATOR=qemu-riscv64` and packages only the tarball (`--formats tar`).
 
 ### FreeBSD
 
