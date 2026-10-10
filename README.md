@@ -138,6 +138,7 @@ The desktop app also offers a loopback-only control channel (`figcraft --control
 - **Its own renderer:** tiny-skia on every core for the canvas and exports, with layer blending, effects and masks; booleans from linesweeper, geometry from kurbo, text from skrifa and HarfRust.
 - **Runs in the browser:** the whole engine and UI compile to WebAssembly.
 - **Accessible:** screen readers get names, roles, values and states for the tools, layer rows, fields, dropdowns, tabs and menus (AccessKit on desktop), F6 moves the keyboard between the toolbar, layers, canvas and properties (Tab within them, Escape back to the canvas), the system's reduce-motion setting is honoured, and panel text meets WCAG AA contrast in both themes.
+- **Plugins:** sandboxed WebAssembly plugins (a metered, pure-Rust interpreter with a memory cap and no file or network access, in the browser too) that act through the same commands, each run one undo step, within the permissions their manifest asks for. A Rust SDK and two example plugins are in [`plugins/`](plugins); see [`docs/plugins.md`](docs/plugins.md).
 - **Never crashes:** no `unwrap`, `expect` or `panic` in shipped code, enforced by clippy; commands run behind a guard so a bug fails one action, not your session.
 - **Clean-room:** implemented from public documentation and observed behaviour only. No proprietary code, file formats, icons or images.
 
@@ -164,7 +165,7 @@ New contributors and AI agents: start with [`AGENTS.md`](AGENTS.md), then [`docs
 Installers for macOS (universal, signed and notarized), Windows (x64, x86 and arm64), Linux (AppImage, `.deb`, `.rpm`, Flatpak and tarball), FreeBSD and the web are attached to each [GitHub release](https://github.com/storytold/figcraft/releases). Maintainers: [`docs/releasing.md`](docs/releasing.md) explains how releases are built, signed and published.
 
 > [!IMPORTANT]
-> **Status:** FigCraft is in **alpha**: about 46% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft can't open `.fig` files yet, has no multiplayer or plugins, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
+> **Status:** FigCraft is in **alpha**: about 47% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft can't open `.fig` files yet, has no multiplayer yet (its core is in, networking is next), runs its own WebAssembly plugins rather than Figma's, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
 
 ## The Crafting Apps
 

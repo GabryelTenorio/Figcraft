@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (marked beta blockers after the alpha gate) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged #101–#103: plugins and the multiplayer core) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -15,11 +15,11 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | # | Gap | Kind | Hours | Doc |
 |---|---|---|---|---|
 | 1 | `.fig` files can't be opened (**beta blocker**) | File format | 30–60 | [file-format-parity](file-format-parity.md) |
-| 2 | No real-time multiplayer or sharing (**beta blocker**) | Feature | 60–110 | [collaboration-parity](collaboration-parity.md) |
+| 2 | No real-time multiplayer or sharing (**beta blocker**) | Feature | 45–90 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
 | 5 | No localization layer; English only | Localization | 60–100 | [localization-parity](localization-parity.md) |
-| 6 | No plugins or widgets | Ecosystem | 40–80 | [target-app-parity](target-app-parity.md) |
+| 6 | Plugins: no run-time UI, distribution or widgets; Figma's plugins don't run | Ecosystem | 25–55 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
 | 9 | Figma Draw: brushes, pressure, text on a path, pattern fills | Feature | 10–18 | [target-app-parity](target-app-parity.md) |
@@ -34,7 +34,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 18 | Display P3 on screen; one window only | Hardware | 6–12 | [hardware-parity](hardware-parity.md) |
 | 19 | AI features | AI | 30–60 | [target-app-parity](target-app-parity.md) |
 | 20 | Mobile apps (view, mirror, comment) | Platforms | 20–40 | [hardware-parity](hardware-parity.md) |
-| 21 | Five menu items without a command | Feature | 2–4 | [parity-checklist](parity-checklist.md) |
+| 21 | Three menu items without a command | Feature | 2–4 | [parity-checklist](parity-checklist.md) |
 | 22 | Screen readers never run; browser has no accessibility tree | UI/UX | 4–8 | [ui-parity](ui-parity.md) |
 | 23 | CMYK output intent for print PDFs | File format | 2–4 | [file-format-parity](file-format-parity.md) |
 
@@ -57,11 +57,13 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 ### 2. No real-time multiplayer or sharing
 - **Missing:** co-editing, live cursors and selections, observation mode, cursor chat, spotlight,
   audio, share links and permissions. Comments and versions are local to the file.
-- **Evidence:** `docs/collab-protocol.md` is a design ("Nothing here is implemented yet").
+- **Evidence:** the core landed in #103 (`crates/collab`: client-scoped ids, change sets, server
+  ordering and validation, client reconciliation, binary messages, randomized convergence tests over
+  real commands), but there is no networking yet, so nobody can co-edit (`docs/collab-protocol.md`).
 - **Impact:** Figma's defining feature; most teams use it every day. Solo designers can work
   without it.
-- **Estimate:** 60–110 h: session server hosted from the app (per the protocol), property-level
-  sync with server ordering, presence, then sharing and permissions; the browser build needs the
+- **Estimate:** 45–90 h: WebSocket transport and a session server hosted from the app (per the
+  protocol), presence, then sharing and permissions; the browser build needs the
   same client.
 
 ### 3. Nothing checked against real Figma files
@@ -94,16 +96,19 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Estimate:** 15–25 h for the layer and string extraction, then 3–5 h per language plus native
   review; 60–100 h for the 11 key languages. Detail in [`localization-parity.md`](localization-parity.md).
 
-### 6. No plugins or widgets
-- **Missing:** a plugin API, sandbox and manager; widgets; Community files. Two menu items
-  (`plugins.runLast`, `plugins.manage`) have no command.
-- **Evidence:** [`parity-checklist.md`](parity-checklist.md); `plugin_data` on nodes is the only
-  hook.
-- **Impact:** many teams depend on a handful of plugins (icons, content, accessibility checks).
-  FigCraft's CLI, control channel and MCP server cover agent automation better than Figma does.
-- **Estimate:** 40–80 h. Figma plugins are JavaScript, so compatibility needs a JS engine in the
-  app (a pure-Rust one or an isolated FFI crate under the never-crash rules) or a WASM-only API
-  that runs none of the existing plugins. **Owner decision needed** before starting.
+### 6. Plugins: no run-time UI, distribution or widgets; Figma's plugins don't run
+- **Landed (#101):** sandboxed WebAssembly plugins (wasmi, metered, memory cap, no WASI, also in
+  the browser) acting through the command registry, one undo step per run, manifest permissions,
+  Plugins menu, Run last plugin, Manage plugins, `plugin.*` commands, a Rust SDK and two examples
+  ([`plugins.md`](plugins.md)).
+- **Missing:** plugin-defined UI at run time (forms or panels a plugin returns), settings storage,
+  distribution (a plugin directory), widgets, Community files. Figma's own plugins are JavaScript
+  against Figma's plugin API and don't run.
+- **Impact:** teams that depend on specific Figma plugins (icons, content, accessibility checks)
+  can't bring them. FigCraft's CLI, control channel and MCP server cover agent automation better
+  than Figma does.
+- **Estimate:** 25–55 h for the missing pieces of FigCraft's own API. Running Figma's plugins
+  needs a JS engine and an API shim: **owner decision needed**.
 
 ### 7. CPU canvas where Figma uses the GPU
 - **Missing:** GPU rendering of the canvas. FigCraft renders with tiny-skia on the CPU (banded,
@@ -190,9 +195,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   FigCraft's web build runs in mobile browsers but is not designed for touch.
 - **Estimate:** 20–40 h for a touch-first viewer and mirror.
 
-### 21. Five menu items without a command (measured)
-- `file.openRecent`, `view.outlinesSelection`, `view.maskOutlines`, `plugins.runLast`,
-  `plugins.manage` ([`parity-checklist.md`](parity-checklist.md)). The plugin pair waits for gap 6.
+### 21. Three menu items without a command (measured)
+- `file.openRecent`, `view.outlinesSelection`, `view.maskOutlines`
+  ([`parity-checklist.md`](parity-checklist.md)); the plugin pair landed in #101.
 - **Estimate:** 2–4 h for the first three.
 
 ### 22. Screen readers never run; browser has no accessibility tree
@@ -209,5 +214,6 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | minor | Marked beta blockers; no alpha blockers (the alpha gate passes) |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure against Figma desktop 126.10.7 (replaces the gap list that lived in ROADMAP.md) |

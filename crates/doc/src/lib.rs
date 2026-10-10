@@ -85,6 +85,52 @@ impl PartialEq for Dirty {
     }
 }
 
+/// Hands out node ids. A single-user document counts up through the whole id range; in a live
+/// collaboration session each participant allocates in its own space, `client << 32 | counter`, so
+/// ids made at the same time on different machines never collide. Saved as the file's `next_id`;
+/// the client id is never saved. Never part of equality: two documents with the same content are
+/// equal however far their counters went.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+struct IdAlloc {
+    /// The next id to hand out.
+    next: u64,
+    /// The client whose space ids come from (0: the whole range, as in a single-user file).
+    #[serde(skip)]
+    client: u32,
+}
+
+impl PartialEq for IdAlloc {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl IdAlloc {
+    /// Whether `id` lies in the space this allocator hands out (any id without a client).
+    fn owns(&self, id: NodeId) -> bool {
+        self.client == 0 || id.0 >> 32 == u64::from(self.client)
+    }
+
+    /// Never hand out `id` (or anything below it in this space) again.
+    fn reserve(&mut self, id: NodeId) {
+        if self.owns(id) && id.0 >= self.next {
+            self.next = id.0.saturating_add(1);
+        }
+    }
+
+    fn alloc(&mut self) -> NodeId {
+        let id = NodeId(self.next);
+        let next = self.next.saturating_add(1);
+        // A client space holds 2^32 ids; a full one keeps returning its last id (an insert then
+        // fails as a duplicate) rather than spilling into another client's space.
+        if self.owns(NodeId(next)) {
+            self.next = next;
+        }
+        id
+    }
+}
+
 /// Raw image bytes (encoded PNG/JPEG/…) kept by content hash.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageData {
@@ -103,7 +149,7 @@ pub struct Document {
     /// Nodes touched since the last [`take_dirty`](Self::take_dirty) (edited, added or removed).
     #[serde(skip)]
     dirty: Dirty,
-    next_id: u64,
+    next_id: IdAlloc,
     #[serde(default)]
     pub styles: Vec<Style>,
     #[serde(default)]
@@ -150,12 +196,21 @@ impl Default for Document {
 impl Document {
     /// A new file with one empty page ("Page 1").
     pub fn new(name: impl Into<String>) -> Self {
-        let mut doc = Self {
+        let mut doc = Self::without_pages(name);
+        let p = doc.add_page("Page 1");
+        doc.current_page = Some(p);
+        doc
+    }
+
+    /// A document with no pages at all: not a valid file on its own (see [`repair`](Self::repair)),
+    /// only a base to build one onto, e.g. by applying a collaboration snapshot.
+    pub fn without_pages(name: impl Into<String>) -> Self {
+        Self {
             name: name.into(),
             pages: Vec::new(),
             nodes: imbl::OrdMap::new(),
             dirty: Dirty::default(),
-            next_id: 1,
+            next_id: IdAlloc { next: 1, client: 0 },
             styles: Vec::new(),
             variables: Variables::default(),
             images: BTreeMap::new(),
@@ -168,10 +223,7 @@ impl Document {
             image_presets: Vec::new(),
             annotation_categories: None,
             dev_snapshots: BTreeMap::new(),
-        };
-        let p = doc.add_page("Page 1");
-        doc.current_page = Some(p);
-        doc
+        }
     }
 
     /// Node ids touched since the last call (edited, added or removed), clearing the record.
@@ -179,16 +231,46 @@ impl Document {
         std::mem::take(&mut self.dirty.0)
     }
 
+    /// Record `ids` as touched, for passes that follow the dirty set (e.g. after changes made
+    /// elsewhere were applied).
+    pub fn mark_dirty(&mut self, ids: impl IntoIterator<Item = NodeId>) {
+        self.dirty.0.extend(ids);
+    }
+
     /// Node ids touched so far (without clearing).
     pub fn dirty(&self) -> &std::collections::BTreeSet<NodeId> {
         &self.dirty.0
     }
 
-    /// A fresh unused id.
+    /// A fresh unused id (in this document's client space during a collaboration session; see
+    /// [`set_client_id`](Self::set_client_id)).
     pub fn alloc_id(&mut self) -> NodeId {
-        let id = NodeId(self.next_id);
-        self.next_id = self.next_id.saturating_add(1);
-        id
+        self.next_id.alloc()
+    }
+
+    /// The id [`alloc_id`](Self::alloc_id) returns next.
+    pub fn next_id(&self) -> NodeId {
+        NodeId(self.next_id.next)
+    }
+
+    /// The collaboration client ids are allocated for (0: none, a single-user document).
+    pub fn client_id(&self) -> u32 {
+        self.next_id.client
+    }
+
+    /// Allocate new ids as `client << 32 | counter`, continuing after the highest id of that space
+    /// already in the document, so participants of a live session never make the same id. 0 goes
+    /// back to single-user allocation (after the highest id of any space).
+    pub fn set_client_id(&mut self, client: u32) {
+        let (lo, hi) = if client == 0 { (0, u64::MAX) } else { (u64::from(client) << 32, (u64::from(client) << 32) | u64::from(u32::MAX)) };
+        let highest = self.nodes.range(NodeId(lo)..=NodeId(hi)).next_back().map(|(k, _)| *k);
+        // Re-setting the same client keeps its counter (ids handed out stay handed out).
+        let keep = if self.next_id.client == client { self.next_id.next } else { 0 };
+        let start = if client == 0 { keep.max(1) } else { keep.max(lo | 1) };
+        self.next_id = IdAlloc { next: start, client };
+        if let Some(h) = highest {
+            self.next_id.reserve(h);
+        }
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -309,9 +391,7 @@ impl Document {
         if self.nodes.contains_key(&id) {
             return Err(DocError::Invalid(format!("node {id} already exists")));
         }
-        if id.0 >= self.next_id {
-            self.next_id = id.0.saturating_add(1);
-        }
+        self.reserve_ids(id);
         node.parent = Some(parent);
         self.nodes.insert(id, Arc::new(node));
         self.dirty.0.insert(id);
@@ -442,6 +522,48 @@ impl Document {
         let n = self.get_mut(id)?;
         n.parent = Some(new_parent);
         n.transform = parent_world.inverse() * world;
+        Ok(())
+    }
+
+    /// Add page node `node` (its id unused; no parent, no children) at the end of the page list.
+    pub fn insert_page(&mut self, mut node: Node) -> DocResult<NodeId> {
+        let id = node.id;
+        if !node.is_page() {
+            return Err(DocError::Invalid(format!("{id} is not a page")));
+        }
+        if self.nodes.contains_key(&id) {
+            return Err(DocError::Invalid(format!("node {id} already exists")));
+        }
+        self.reserve_ids(id);
+        node.parent = None;
+        node.children.clear();
+        self.nodes.insert(id, Arc::new(node));
+        self.dirty.0.insert(id);
+        self.pages.push(id);
+        Ok(id)
+    }
+
+    /// Move `id` under `parent` at `index` (clamped) keeping its local transform, unlike
+    /// [`reparent`](Self::reparent), which keeps its place on the page.
+    pub fn place(&mut self, id: NodeId, parent: NodeId, index: usize) -> DocResult<()> {
+        if self.get(id)?.is_page() {
+            return Err(DocError::Invalid("pages can't be moved into nodes".into()));
+        }
+        if !self.get(parent)?.kind.is_container() {
+            return Err(DocError::NotContainer(parent));
+        }
+        if self.is_ancestor(id, parent) {
+            return Err(DocError::Cycle(id, parent));
+        }
+        if let Some(old) = self.get(id)?.parent
+            && let Some(p) = self.node_mut(old)
+        {
+            p.children.retain(|c| *c != id);
+        }
+        let p = self.get_mut(parent)?;
+        let at = index.min(p.children.len());
+        p.children.insert(at, id);
+        self.get_mut(id)?.parent = Some(parent);
         Ok(())
     }
 
@@ -607,9 +729,7 @@ impl Document {
             {
                 *component = *m;
             }
-            if new_id.0 >= self.next_id {
-                self.next_id = new_id.0.saturating_add(1);
-            }
+            self.reserve_ids(*new_id);
             self.nodes.insert(*new_id, Arc::new(c));
             self.dirty.0.insert(*new_id);
         }
@@ -807,11 +927,8 @@ impl Document {
             let p = self.add_page("Page 1");
             self.current_page = Some(p);
         }
-        if let Some(max) = self.nodes.keys().max()
-            && self.next_id <= max.0
-        {
-            self.next_id = max.0.saturating_add(1);
-        }
+        let client = self.client_id();
+        self.set_client_id(client);
         if self.current_page.is_none_or(|p| !self.pages.contains(&p)) {
             self.current_page = self.pages.first().copied();
         }
@@ -874,6 +991,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 
 #[cfg(test)]
 mod blur_tests;
+#[cfg(test)]
+mod client_id_tests;
 #[cfg(test)]
 mod colors_tests;
 #[cfg(test)]

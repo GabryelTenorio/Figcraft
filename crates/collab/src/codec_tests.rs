@@ -1,0 +1,160 @@
+//! Message encodings: round trips, hostile input, and the sizes of typical messages.
+
+use figcraft_doc::{Document, NodeId, NodeKind};
+
+use crate::change::{Change, Json, Prop};
+use crate::message::{ClientMsg, Hello, PROTOCOL, Peer, Presence, ServerMsg, WIRE_VERSION, decode, decode_json, encode, encode_json};
+use crate::sim::Rng;
+use crate::{Error, Replica, diff};
+
+/// A typical edit: one layer dragged (its transform).
+fn moved_layer() -> ClientMsg {
+    let mut doc = Document::new("f");
+    let page = doc.first_page().unwrap();
+    doc.set_client_id(3);
+    let r = doc.create(page, NodeKind::Rectangle, "Rectangle 1", 120.0, 80.0, 100.0, 60.0).unwrap();
+    let a = Replica::new(doc);
+    let mut b = a.document().clone();
+    b.get_mut(r).unwrap().transform = figcraft_geom::Affine::translate((164.5, 92.25));
+    ClientMsg::Changes { base_seq: 1234, batch_id: 56, changes: diff(&a, &b).unwrap().changes }
+}
+
+fn cursor() -> ClientMsg {
+    ClientMsg::Presence(Presence { cursor: Some((NodeId(1), 512.5, 384.25)), ..Default::default() })
+}
+
+fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
+    let peer = Peer { client_id: 4, name: "Ada".into(), color: "#FF8800".into() };
+    let set = Change::Set { id: NodeId((4 << 32) | 9), prop: Prop::Name, value: Json::of("Café ☕").unwrap() };
+    let client = vec![
+        ClientMsg::Hello(Hello {
+            protocol: PROTOCOL,
+            file: "f".into(),
+            token: "t".into(),
+            name: "Ada".into(),
+            color: "#FF8800".into(),
+            client_version: "0.2.0".into(),
+        }),
+        moved_layer(),
+        cursor(),
+        ClientMsg::Presence(Presence {
+            cursor: None,
+            selection: Some(vec![NodeId(2), NodeId(3)]),
+            viewport: Some((NodeId(1), 0.0, 0.0, 1200.0, 800.0)),
+            editing_text: Some(NodeId(7)),
+        }),
+        ClientMsg::Ack { seq: 9 },
+        ClientMsg::Ping,
+    ];
+    let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
+    let server = vec![
+        ServerMsg::Welcome { client_id: 4, seq: 10, snapshot, peers: vec![peer.clone()] },
+        ServerMsg::Changes { seq: 11, author: 4, batch_id: 2, changes: vec![set.clone(), Change::Delete { id: NodeId(5) }] },
+        ServerMsg::Reject { batch_id: 3, reason: "no".into(), fixes: vec![set] },
+        ServerMsg::Presence { client_id: 4, presence: Presence::default() },
+        ServerMsg::PeerJoined(peer),
+        ServerMsg::PeerLeft { client_id: 4 },
+        ServerMsg::Refused { reason: "full".into() },
+        ServerMsg::Pong,
+    ];
+    (client, server)
+}
+
+#[test]
+fn every_message_round_trips_in_both_forms() {
+    let (client, server) = samples();
+    for m in &client {
+        assert_eq!(&decode::<ClientMsg>(&encode(m).unwrap(), usize::MAX).unwrap(), m);
+        assert_eq!(&decode_json::<ClientMsg>(&encode_json(m).unwrap(), usize::MAX).unwrap(), m);
+    }
+    for m in &server {
+        assert_eq!(&decode::<ServerMsg>(&encode(m).unwrap(), usize::MAX).unwrap(), m);
+        assert_eq!(&decode_json::<ServerMsg>(&encode_json(m).unwrap(), usize::MAX).unwrap(), m);
+    }
+    // The JSON form is readable: the type, then its fields; values as JSON.
+    let json = encode_json(&moved_layer()).unwrap();
+    assert!(json.starts_with(r#"{"changes":{"base_seq":1234,"batch_id":56,"changes":[{"set":"#), "{json}");
+    assert!(json.contains(r#""prop":"transform","value":[1.0,0.0,0.0,1.0,164.5,92.25]"#), "{json}");
+    // The binary form starts with the wire version and carries values as JSON text.
+    let bin = encode(&moved_layer()).unwrap();
+    assert_eq!(bin[0], WIRE_VERSION);
+    assert!(bin.windows(5).any(|w| w == b"164.5"));
+}
+
+#[test]
+fn hostile_bytes_are_refused_without_panicking() {
+    assert!(matches!(decode::<ClientMsg>(&[], 100), Err(Error::Decode(_))));
+    assert!(matches!(decode::<ClientMsg>(&[WIRE_VERSION + 1, 4], 100), Err(Error::Decode(_))));
+    let ping = encode(&ClientMsg::Ping).unwrap();
+    let mut trailing = ping.clone();
+    trailing.push(0);
+    assert!(decode::<ClientMsg>(&trailing, 100).is_err(), "trailing bytes");
+    assert!(decode::<ClientMsg>(&ping, 1).is_err(), "over the size limit");
+    assert!(decode_json::<ClientMsg>("{\"ping\":null}", 3).is_err(), "over the size limit");
+    // A huge length prefix doesn't allocate it.
+    let mut huge = vec![WIRE_VERSION, 1];
+    huge.extend([0xFF, 0xFF, 0xFF, 0xFF, 0x0F]);
+    assert!(decode::<ClientMsg>(&huge, 1 << 20).is_err());
+    // Deeply nested JSON inside a value is refused by the JSON parser's depth limit.
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+    let evil = format!(r#"{{"changes":{{"base_seq":0,"batch_id":0,"changes":[{{"set":{{"id":1,"prop":"name","value":{deep}}}}}]}}}}"#);
+    assert!(decode_json::<ClientMsg>(&evil, usize::MAX).is_err());
+    // The same value in a binary message (JSON text inside).
+    let mut bin = encode(&ClientMsg::Changes {
+        base_seq: 0,
+        batch_id: 0,
+        changes: vec![Change::Set { id: NodeId(1), prop: Prop::Name, value: Json::of("x").unwrap() }],
+    })
+    .unwrap();
+    let at = bin.windows(3).position(|w| w == b"\"x\"").unwrap();
+    bin.truncate(at - 1);
+    let mut len = deep.len();
+    while len >= 0x80 {
+        bin.push((len as u8 & 0x7F) | 0x80);
+        len >>= 7;
+    }
+    bin.push(len as u8);
+    bin.extend(deep.as_bytes());
+    assert!(matches!(decode::<ClientMsg>(&bin, usize::MAX), Err(Error::Decode(_))));
+}
+
+#[test]
+fn fuzzed_messages_never_panic() {
+    let (client, server) = samples();
+    let valid: Vec<Vec<u8>> = client.iter().map(|m| encode(m).unwrap()).chain(server.iter().map(|m| encode(m).unwrap())).collect();
+    let mut rng = Rng::new(42);
+    for round in 0..20_000 {
+        let mut bytes =
+            if round % 4 == 0 { (0..rng.below(64)).map(|_| rng.next_u64() as u8).collect() } else { rng.pick(&valid).cloned().unwrap_or_default() };
+        // Flip, insert or cut a few bytes.
+        for _ in 0..1 + rng.below(4) {
+            if bytes.is_empty() {
+                break;
+            }
+            let i = rng.below(bytes.len());
+            match rng.below(3) {
+                0 => bytes[i] = rng.next_u64() as u8,
+                1 => bytes.insert(i, rng.next_u64() as u8),
+                _ => bytes.truncate(i.max(1)),
+            }
+        }
+        let _ = decode::<ClientMsg>(&bytes, 1 << 20);
+        let _ = decode::<ServerMsg>(&bytes, 1 << 20);
+        if let Ok(text) = std::str::from_utf8(&bytes) {
+            let _ = decode_json::<ClientMsg>(text, 1 << 20);
+        }
+    }
+}
+
+#[test]
+fn message_sizes() {
+    // Recorded in docs/collab-protocol.md (Encoding). Binary stays well under JSON.
+    let edit = moved_layer();
+    let (eb, ej) = (encode(&edit).unwrap().len(), encode_json(&edit).unwrap().len());
+    let cur = cursor();
+    let (cb, cj) = (encode(&cur).unwrap().len(), encode_json(&cur).unwrap().len());
+    println!("typical edit (move a layer): binary {eb} B, JSON {ej} B; cursor update: binary {cb} B, JSON {cj} B");
+    assert!(eb < ej && cb < cj);
+    assert!(cb <= 32, "a cursor update is tiny: {cb}");
+    assert!(eb <= 96, "a move is small: {eb}");
+}

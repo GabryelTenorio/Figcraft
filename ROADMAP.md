@@ -1,8 +1,8 @@
 # FigCraft Roadmap
 
-**Stage: alpha** · next: beta, ~29 points and ~210–380 h away (one Opus 5.5 agent; ~45–85 h wall-clock with 5 agents)
+**Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness by audience with hours to ~95%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged #101–#103: plugins and the multiplayer core; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -13,19 +13,19 @@ start with [`docs/gaps.md`](docs/gaps.md).
 
 | | Value | Kind |
 |---|---|---|
-| Menu/command breadth | **97.5%** (197 / 202) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
-| Feature breadth | **~76%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
-| Ready for real work | **~46%** | estimated, same doc (written dimension weights and scores) |
+| Menu/command breadth | **98.5%** (200 / 203) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
+| Feature breadth | **~78%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
+| Ready for real work | **~47%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~43%** | estimated: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
-| Remaining to beta | **~210–380 h** one agent | estimated |
-| Remaining to full parity | **~420–790 h** one agent (~100–180 h wall-clock with 5 agents) | estimated |
+| Remaining to beta | **~200–365 h** one agent | estimated |
+| Remaining to full parity | **~390–745 h** one agent (~95–170 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~46% | ~400–750 h | multiplayer (60–110), localization (60–100), plugins (40–80), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Full target (ready for real work) | ~47% | ~375–705 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
 | Mainstream practitioner | ~43% | ~180–330 h | core editor depth incl. `.fig` import (98–188), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -46,26 +46,26 @@ lines, a typical feature PR 1–2.5 h). Details and what needs a human:
 **Alpha.** Core workflows exist end to end (frames, shapes, vectors, text, auto layout, components
 with variants and overrides, styles, variables, prototyping, Dev Mode, SVG/PNG/JPG/PDF), but
 FigCraft can't open Figma's own `.fig` files, has no multiplayer, and nothing has been checked
-against real Figma documents. Ready-for-real-work is ~46%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is missing, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
+against real Figma documents. Ready-for-real-work is ~47%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is missing, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
 ~75% **and** reliable `.fig` import: the `.fig` reader (30–60 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
-basic multiplayer (40–70 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
+basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
 the localization layer with Figma's own languages (20–35 h).
 
 ## By dimension
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 56% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
-| Collaboration | 8% | 70–130 | [collaboration-parity](docs/collaboration-parity.md) |
+| Collaboration | 12% (core in, no networking) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 50% | 15–30 | [hardware-parity](docs/hardware-parity.md) |
 | Localization | 10% (English only) | 60–100 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
-| Ecosystem / plugins | 5% | 40–80 | [gaps](docs/gaps.md) |
+| Ecosystem / plugins | 20% (own WASM plugins) | 25–55 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
 
 ## Features
@@ -88,8 +88,8 @@ the localization layer with Figma's own languages (20–35 h).
 | Import/export | 65% | 35% | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Dev Mode / inspect | 80% | 62% | 4–8 | [dev-mode-parity](docs/dev-mode-parity.md) |
 | Comments, versions, misc | 80% | 58% | 4–8 | [collaboration-parity](docs/collaboration-parity.md) |
-| Multiplayer & sharing | 5% | 0% | 60–110 | [collaboration-parity](docs/collaboration-parity.md) |
-| Plugins & widgets | 0% | 0% | 40–80 | [gaps](docs/gaps.md) |
+| Multiplayer & sharing | 15% | 5% | 45–90 | [collaboration-parity](docs/collaboration-parity.md) |
+| Plugins & widgets | 35% | 20% | 25–55 | [plugins](docs/plugins.md) |
 | Team libraries | 40% | 25% | 10–20 | [components-parity](docs/components-parity.md) |
 | Figma Draw extras | 45% | 30% | 10–18 | [gaps](docs/gaps.md) |
 | AI features | 0% | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -123,10 +123,14 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Localization layer, then ja, ko, es, pt-BR, fr, de: 35–55 h.
-5. Multiplayer (M9): 60–110 h.
+5. Multiplayer networking on the landed core (M9): 45–90 h.
 
 ## Progress log
 
+- **2026-10-10** · WASM plugins (#101: sandboxed wasmi runtime, manifest permissions, Plugins menu,
+  Run last, Manage, Rust SDK and two examples), docs refresh (#102), the multiplayer core without
+  networking (#103: client-scoped ids, change sets, server ordering and validation, client
+  reconciliation, convergence tests). Menu breadth 200/203; ready for real work ~47%.
 - **2026-10-10** · Full re-measure against Figma desktop 126.10.7 under the craftrules progress-docs
   standard: ready for real work ~46%, feature breadth ~76%, stage alpha; progress docs split out
   (`docs/target-app-parity.md`, `gaps.md`, `roadmap.md`, `architecture.md`, the per-area parity
@@ -148,6 +152,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | minor | Readiness by audience with hours to ~95% (full ~400–750, mainstream ~180–330, essentials ~85–160) |
 | 2026-10-10 | minor | Added essentials user (~53%) and mainstream practitioner (~43%); ready for real work unchanged at ~46% |
 | 2026-10-10 | minor | Alpha gate (core workflows) checked under the revised stage rules: passes, stays alpha |

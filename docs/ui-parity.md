@@ -19,7 +19,7 @@ interaction feel not yet compared.
 | Light and dark themes | done | colours from `theme::Tokens` |
 | Minimize UI (Cmd+\\) | done | |
 | Resizable panels | partial | check widths and snap points against Figma |
-| Actions palette (Cmd+K, Cmd+/) | done | commands; no plugins or assets search parity |
+| Actions palette (Cmd+K, Cmd+/) | done | commands; no assets search parity |
 | Context menus | done | canvas and layers; keyboard access to the layers context menu missing |
 | Main menu from the logo | done | generated from `catalog.rs`; popups sized to content |
 | Keyboard shortcuts panel | done | docked, tabbed by group, searchable, per-platform keycaps |
