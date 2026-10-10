@@ -1,5 +1,6 @@
-//! Canvas rendering off the UI thread (desktop) or inline (web). The latest request wins; the UI
-//! keeps showing the previous image, re-projected to the current view, until the new one arrives.
+//! Canvas rendering off the UI thread (desktop) or inline (web). The latest request wins (queued
+//! older ones are skipped); the UI shows each finished image, re-projected to the current view,
+//! until the next one arrives.
 //! The renderer keeps its last image ([`figcraft_render::Retained`]): a pan renders only the
 //! uncovered strips and an edit only the areas of the layers that changed.
 
@@ -16,7 +17,6 @@ pub struct Job {
     pub view: View,
     pub outline: bool,
     pub skip: Vec<NodeId>,
-    pub generation: u64,
 }
 
 pub struct Done {
@@ -24,7 +24,6 @@ pub struct Done {
     pub image: egui::ColorImage,
     /// The view the image shows (the requested one snapped outwards to whole device pixels).
     pub view: View,
-    pub generation: u64,
     pub ms: f64,
     pub work: Work,
 }
@@ -51,7 +50,7 @@ fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     #[cfg(target_arch = "wasm32")]
     let ms = 0.0;
-    Some(Done { image, view, generation: job.generation, ms, work })
+    Some(Done { image, view, ms, work })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
