@@ -166,14 +166,17 @@ accounts, nothing on the network; the browser build has no file system, so there
 read library files return an error).
 
 - **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
-  the file's components, component sets and styles as a new version (by default everything except
-  names starting with `.` or `_`, or what the last publish offered; `include`/`exclude` take
-  component ids and style ids or names). Components and styles they use come along, unoffered. Each
-  asset keeps the version it last changed in; publishing with no changes is refused. Save the file
-  (`file.save`) so other files see the new version.
+  the file's components, component sets, styles and variable collections as a new version (by
+  default everything except names starting with `.` or `_`, or what the last publish offered;
+  `include`/`exclude` take component ids and style or collection ids or names). A collection comes
+  with its variables (values per mode, aliases, scopes), except those hidden from publishing
+  (`variable.update {variable, hiddenFromPublishing: true}`). Components, styles and variables that
+  published assets use (a component's bound variables, a variable's alias targets) come along,
+  unoffered. Each asset keeps the version it last changed in; publishing with no changes is refused.
+  Save the file (`file.save`) so other files see the new version.
 - **Enable**: `library.add {path}` / `library.remove {id}` (id, name or path) / `library.list
-  {assets?}` (versions, pending updates, errors; with `assets: true` each library's components and
-  styles, and what this file can publish). Libraries are read read-only with size limits, and read
+  {assets?}` (versions, pending updates, errors; with `assets: true` each library's components,
+  styles, variable collections (with their modes) and variables, and what this file can publish). Libraries are read read-only with size limits, and read
   again when the file changes.
 - **Use**: `library.place {library, component, x?, y?}` (a component, set or variant by id or name;
   page point, default the view's centre) copies the component, with the components and styles it
@@ -181,10 +184,19 @@ read library files return an error).
   {library, component}` only copies it (then `instance.create`, `instance.swap`…).
   `library.applyStyle {library, style, ids?, target?}` copies a style in (linked, read-only) and
   applies it. Instances of library components behave like any instance: overrides, properties,
-  variants, swap, reset, detach. Editing the copies (or library styles) is refused; edit the library
-  file and publish.
-- **Update**: `library.updates` lists the components and styles with a newer published version;
-  `library.acceptUpdates {ids? (library ids)}` pulls them in, keeping instance overrides.
+  variants, swap, reset, detach. Library components keep their variable bindings and explicit modes
+  (bound to copies of the library's variables).
+- **Library variables**: `library.bindVariable {library, variable, field, ids?}` copies a published
+  variable in (linked, read-only, with the variables it aliases and its collection) and binds it
+  like `variable.bind`; `library.aliasVariable {library, alias, variable, mode?}` makes a local
+  variable's value an alias of a library variable; `library.setVariableMode {library, collection,
+  mode, ids?}` sets a library collection's mode on frames (the page when no ids are given);
+  `library.importVariable {library, variable}` only copies it (then `variable.bind`, `variable.set
+  {value: {alias}}`). The copies render without the library file. Editing the copies (library
+  components, styles, variables or collections) is refused; edit the library file and publish.
+- **Update**: `library.updates` lists the components, styles, variable collections and variables
+  with a newer published version; `library.acceptUpdates {ids? (library ids)}` pulls them in,
+  keeping instance overrides; bound layers, aliases and explicit modes follow the updated values.
 
 ### Slots
 

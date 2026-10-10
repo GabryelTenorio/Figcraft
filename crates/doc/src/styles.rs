@@ -133,6 +133,10 @@ pub struct Variable {
     /// supported property, empty = none (hidden from pickers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scopes: Option<Vec<String>>,
+    /// Left out when the file is published as a library (unless a published variable or component
+    /// uses it).
+    #[serde(default, rename = "hiddenFromPublishing", skip_serializing_if = "std::ops::Not::not")]
+    pub hidden_from_publishing: bool,
 }
 
 impl Variable {

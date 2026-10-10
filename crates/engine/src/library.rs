@@ -1,13 +1,15 @@
 //! Local libraries (the data model is in [`figcraft_doc::library`]).
 //!
-//! - **Publish** ([`publish`]): the chosen components, component sets and styles, and every asset
-//!   and style they use, are copied into a snapshot. Each asset keeps the library version it last
-//!   changed in, so files using the library update only what changed.
+//! - **Publish** ([`publish`]): the chosen components, component sets, styles and variable
+//!   collections, and every asset, style and variable they use, are copied into a snapshot. Each
+//!   asset keeps the library version it last changed in, so files using the library update only
+//!   what changed. Variables hidden from publishing stay out unless something published uses them.
 //! - **Read** ([`Cache`]): library files are read read-only (only their library entries, with size
 //!   limits) and again whenever they change on disk. The browser has no file system: there every
 //!   read is a clear error.
-//! - **Use** ([`import`], [`import_styles`]): assets are copied into the document's library store
-//!   as read-only main components and styles; [`check_read_only`] refuses other edits of them.
+//! - **Use** ([`import`], [`import_styles`], [`import_variables`]): assets are copied into the
+//!   document's library store as read-only main components, and into its styles and variables as
+//!   read-only linked copies; [`check_read_only`] refuses other edits of them.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -27,7 +29,7 @@ const MAX_CACHED: usize = 64;
 /// Most assets one import or publish walks (with what they use).
 const MAX_ASSETS: usize = 100_000;
 /// Why library edits are refused.
-pub const READ_ONLY: &str = "library components and styles can't be edited in this file: edit them in their library file and publish it";
+pub const READ_ONLY: &str = "library components, styles and variables can't be edited in this file: edit them in their library file and publish it";
 #[cfg(target_arch = "wasm32")]
 const NO_FILES: &str = "libraries need the desktop app: the browser has no file system";
 
@@ -135,32 +137,104 @@ pub fn local_styles(doc: &Document) -> impl Iterator<Item = &Style> {
     doc.styles.iter().filter(|s| !is_remote_style(doc, &s.id))
 }
 
-/// What a file can publish: its top-level local components and sets, and its local styles.
-pub fn publishable(doc: &Document) -> (Vec<NodeId>, Vec<String>) {
-    let comps = local_components(doc).into_iter().filter(|c| asset_root(doc, *c) == Some(*c)).collect();
-    (comps, local_styles(doc).map(|s| s.id.clone()).collect())
+/// Whether variable `id` was copied from a library.
+pub fn is_remote_variable(doc: &Document, id: &str) -> bool {
+    doc.libraries.variable_import(id).is_some()
+}
+
+/// Whether variable collection `id` was copied from a library.
+pub fn is_remote_collection(doc: &Document, id: &str) -> bool {
+    doc.libraries.collection_import(id).is_some()
+}
+
+/// Local variable collections (not library copies).
+pub fn local_collections(doc: &Document) -> impl Iterator<Item = &Collection> {
+    doc.variables.collections.iter().filter(|c| !is_remote_collection(doc, &c.id))
+}
+
+/// What a publish offers: asset roots, style ids and variable collection ids.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Selection {
+    pub components: Vec<NodeId>,
+    pub styles: Vec<String>,
+    pub collections: Vec<CollectionId>,
+}
+
+impl Selection {
+    pub fn is_empty(&self) -> bool {
+        self.components.is_empty() && self.styles.is_empty() && self.collections.is_empty()
+    }
+}
+
+/// What a file can publish: its top-level local components and sets, its local styles and its
+/// local variable collections.
+pub fn publishable(doc: &Document) -> Selection {
+    Selection {
+        components: local_components(doc).into_iter().filter(|c| asset_root(doc, *c) == Some(*c)).collect(),
+        styles: local_styles(doc).map(|s| s.id.clone()).collect(),
+        collections: local_collections(doc).map(|c| c.id.clone()).collect(),
+    }
 }
 
 /// What a publish offers when nothing is chosen: the assets offered last time plus new ones, never
 /// assets named with a leading `.` or `_`.
-pub fn default_selection(doc: &Document) -> (Vec<NodeId>, Vec<String>) {
-    let (comps, styles) = publishable(doc);
+pub fn default_selection(doc: &Document) -> Selection {
+    let all = publishable(doc);
     let prev = doc.published.as_ref().map(|p| &p.manifest);
-    let comps = comps
-        .into_iter()
-        .filter(|c| {
-            let offered = prev.and_then(|m| m.component(*c)).map(|a| a.published);
-            offered.unwrap_or_else(|| doc.node(*c).is_some_and(|n| !hidden_name(&n.name)))
-        })
-        .collect();
-    let styles = styles
-        .into_iter()
-        .filter(|s| {
-            let offered = prev.and_then(|m| m.style(s)).map(|x| x.published);
-            offered.unwrap_or_else(|| doc.style(s).is_some_and(|x| !hidden_name(&x.name)))
-        })
-        .collect();
-    (comps, styles)
+    let pick = |offered: Option<bool>, name: Option<&str>| offered.unwrap_or_else(|| name.is_some_and(|n| !hidden_name(n)));
+    Selection {
+        components: all
+            .components
+            .into_iter()
+            .filter(|c| pick(prev.and_then(|m| m.component(*c)).map(|a| a.published), doc.node(*c).map(|n| n.name.as_str())))
+            .collect(),
+        styles: all
+            .styles
+            .into_iter()
+            .filter(|s| pick(prev.and_then(|m| m.style(s)).map(|x| x.published), doc.style(s).map(|x| x.name.as_str())))
+            .collect(),
+        collections: all
+            .collections
+            .into_iter()
+            .filter(|c| pick(prev.and_then(|m| m.collection(c)).map(|x| x.published), doc.variables.collection(c).map(|x| x.name.as_str())))
+            .collect(),
+    }
+}
+
+/// `seeds` (variable ids) and every variable they alias, transitively, by id.
+fn alias_closure(vars: &Variables, seeds: impl IntoIterator<Item = VariableId>) -> BTreeSet<VariableId> {
+    let mut out = BTreeSet::new();
+    let mut stack: Vec<VariableId> = seeds.into_iter().collect();
+    while let Some(cur) = stack.pop() {
+        let Some(v) = vars.get(&cur) else { continue };
+        if out.len() >= MAX_ASSETS || !out.insert(v.id.clone()) {
+            continue;
+        }
+        for val in v.values.values() {
+            if let VariableValue::Alias(a) = val {
+                stack.push(a.clone());
+            }
+        }
+    }
+    out
+}
+
+/// The variables a layer's prototype actions set.
+fn set_variables(n: &Node) -> impl Iterator<Item = &VariableId> {
+    n.interactions.iter().flat_map(|it| &it.actions).filter_map(|a| match a {
+        Action::SetVariable { variable, .. } => Some(variable),
+        _ => None,
+    })
+}
+
+/// Variables the layers under `roots` bind, and the collections they choose modes of.
+fn used_variables(doc: &Document, roots: &[NodeId]) -> (BTreeSet<VariableId>, BTreeSet<CollectionId>) {
+    let (mut vars, mut colls) = (BTreeSet::new(), BTreeSet::new());
+    for n in roots.iter().flat_map(|r| doc.subtree(*r)).filter_map(|i| doc.node(i)) {
+        vars.extend(n.bound.values().cloned());
+        colls.extend(n.var_modes.keys().cloned());
+    }
+    (vars, colls)
 }
 
 /// Whether asset `root` is the same in two snapshots (its position on the page aside).
@@ -181,13 +255,15 @@ fn new_library_id(doc: &Document, seed: u64) -> String {
     h.get(..16).map(str::to_string).unwrap_or(h)
 }
 
-/// Publish `components` (asset roots) and `styles` of `doc` as a new library version. `seed` keeps
-/// a first publish's new id unique. Refused when there is nothing to publish or nothing changed.
-pub fn publish(doc: &Document, components: &[NodeId], styles: &[String], description: Option<String>, seed: u64) -> Result<PublishedLibrary> {
+/// Publish `sel` (asset roots, styles and variable collections) of `doc` as a new library version.
+/// `seed` keeps a first publish's new id unique. Refused when there is nothing to publish or
+/// nothing changed.
+pub fn publish(doc: &Document, sel: &Selection, description: Option<String>, seed: u64) -> Result<PublishedLibrary> {
     let cmd = "library.publish";
-    if components.is_empty() && styles.is_empty() {
-        return Err(disabled(cmd, "nothing to publish: the file has no components or styles to offer"));
+    if sel.is_empty() {
+        return Err(disabled(cmd, "nothing to publish: the file has no components, styles or variables to offer"));
     }
+    let (components, styles) = (&sel.components, &sel.styles);
     let units = closure(doc, components);
     // The snapshot keeps the file's ids, on a page whose id none of them uses.
     let mut snap = Document::new(doc.name.clone());
@@ -213,6 +289,28 @@ pub fn publish(doc: &Document, components: &[NodeId], styles: &[String], descrip
     let mut keep: BTreeSet<String> = linked_styles(doc, &units);
     keep.extend(styles.iter().cloned());
     snap.styles = doc.styles.iter().filter(|s| keep.contains(&s.id)).cloned().collect();
+    // Variables: the published collections' (but those hidden from publishing), those the assets
+    // bind, and what all of them alias.
+    let offered_colls: BTreeSet<&str> = sel.collections.iter().map(String::as_str).collect();
+    let offered_vars: BTreeSet<&str> = doc
+        .variables
+        .variables
+        .iter()
+        .filter(|v| offered_colls.contains(v.collection.as_str()) && !v.hidden_from_publishing)
+        .map(|v| v.id.as_str())
+        .collect();
+    let (bound, mode_colls) = used_variables(doc, &units);
+    let var_ids = alias_closure(&doc.variables, offered_vars.iter().map(|v| v.to_string()).chain(bound));
+    snap.variables.variables = doc.variables.variables.iter().filter(|v| var_ids.contains(&v.id)).cloned().collect();
+    let coll_ids: BTreeSet<&str> = snap
+        .variables
+        .variables
+        .iter()
+        .map(|v| v.collection.as_str())
+        .chain(offered_colls.iter().copied())
+        .chain(mode_colls.iter().map(String::as_str))
+        .collect();
+    snap.variables.collections = doc.variables.collections.iter().filter(|c| coll_ids.contains(c.id.as_str())).cloned().collect();
     for h in used_images(&snap) {
         if let Some(img) = doc.images.get(&h) {
             snap.images.insert(h, img.clone());
@@ -251,6 +349,39 @@ pub fn publish(doc: &Document, components: &[NodeId], styles: &[String], descrip
             }
         })
         .collect();
+    let old_colls: HashMap<&str, &Collection> =
+        prev.map(|p| p.doc.variables.collections.iter().map(|c| (c.id.as_str(), c)).collect()).unwrap_or_default();
+    let collections = snap
+        .variables
+        .collections
+        .iter()
+        .map(|c| {
+            let kept = prev.and_then(|p| p.manifest.collection(&c.id)).filter(|_| old_colls.get(c.id.as_str()) == Some(&c)).map(|x| x.version);
+            LibraryCollection {
+                id: c.id.clone(),
+                name: c.name.clone(),
+                version: kept.unwrap_or(version),
+                published: offered_colls.contains(c.id.as_str()),
+            }
+        })
+        .collect();
+    let old_vars: HashMap<&str, &Variable> = prev.map(|p| p.doc.variables.variables.iter().map(|v| (v.id.as_str(), v)).collect()).unwrap_or_default();
+    let variables = snap
+        .variables
+        .variables
+        .iter()
+        .map(|v| {
+            let kept = prev.and_then(|p| p.manifest.variable(&v.id)).filter(|_| old_vars.get(v.id.as_str()) == Some(&v)).map(|x| x.version);
+            LibraryVariable {
+                id: v.id.clone(),
+                name: v.name.clone(),
+                collection: v.collection.clone(),
+                kind: v.kind.id().into(),
+                version: kept.unwrap_or(version),
+                published: offered_vars.contains(v.id.as_str()),
+            }
+        })
+        .collect();
     let manifest = LibraryManifest {
         id: prev.map(|p| p.manifest.id.clone()).unwrap_or_else(|| new_library_id(doc, seed)),
         name: doc.name.clone(),
@@ -259,6 +390,8 @@ pub fn publish(doc: &Document, components: &[NodeId], styles: &[String], descrip
         time: crate::cmd::comment::now_secs(),
         components,
         styles,
+        collections,
+        variables,
     };
     if let Some(p) = prev
         && (LibraryManifest { version: p.manifest.version, time: p.manifest.time, ..manifest.clone() }) == p.manifest
@@ -379,6 +512,25 @@ fn copy_images(doc: &mut Document, src: &Document, hashes: &BTreeSet<String>) {
     }
 }
 
+/// The record of library `lid`'s `key` among `records` whose copy `exists`.
+fn record_of(records: &[ImportedRecord], lid: &str, key: &str, exists: impl Fn(&str) -> bool) -> Option<ImportedRecord> {
+    records.iter().find(|r| r.library == lid && r.key == key && exists(&r.local)).cloned()
+}
+
+/// Add or replace the record of `rec`'s library asset.
+fn set_record(records: &mut Vec<ImportedRecord>, rec: ImportedRecord) {
+    match records.iter_mut().find(|r| r.library == rec.library && r.key == rec.key) {
+        Some(r) => *r = rec,
+        None => records.push(rec),
+    }
+}
+
+/// A local id for a copy of library `lid`'s `key`: `lid:key`, numbered when `taken`.
+fn local_key(lid: &str, key: &str, taken: impl Fn(&str) -> bool) -> String {
+    let base = format!("{lid}:{key}");
+    (1..10_000).map(|k| if k == 1 { base.clone() } else { format!("{base}#{k}") }).find(|l| !taken(l)).unwrap_or(base)
+}
+
 /// Copy library styles `keys` into `doc` as linked remote styles (with `update`, copies older than
 /// the library's are refreshed). Returns library style id → local id.
 pub fn import_styles(doc: &mut Document, lib: &PublishedLibrary, keys: &BTreeSet<String>, update: bool) -> BTreeMap<String, String> {
@@ -388,32 +540,21 @@ pub fn import_styles(doc: &mut Document, lib: &PublishedLibrary, keys: &BTreeSet
     for key in keys {
         let Some(style) = lib.doc.styles.iter().find(|s| s.id == *key) else { continue };
         let version = lib.manifest.style(key).map_or(lib.manifest.version, |s| s.version);
-        let record = doc.libraries.styles.iter().find(|r| r.library == lid && r.key == *key && doc.styles.iter().any(|s| s.id == r.local)).cloned();
-        let local = match record {
+        let local = match record_of(&doc.libraries.styles, &lid, key, |l| doc.styles.iter().any(|s| s.id == l)) {
             Some(r) => {
                 if update
                     && version > r.version
                     && let Some(slot) = doc.styles.iter_mut().find(|s| s.id == r.local)
                 {
                     *slot = Style { id: r.local.clone(), ..style.clone() };
-                    if let Some(rec) = doc.libraries_mut().styles.iter_mut().find(|x| x.local == r.local) {
-                        rec.version = version;
-                    }
+                    set_record(&mut doc.libraries_mut().styles, ImportedStyle { version, ..r.clone() });
                 }
                 r.local
             }
             None => {
-                let base = format!("{lid}:{key}");
-                let mut local = base.clone();
-                let mut k = 1;
-                while doc.styles.iter().any(|s| s.id == local) && k < 10_000 {
-                    k += 1;
-                    local = format!("{base}#{k}");
-                }
+                let local = local_key(&lid, key, |l| doc.styles.iter().any(|s| s.id == l));
                 doc.styles.push(Style { id: local.clone(), ..style.clone() });
-                let libs = doc.libraries_mut();
-                libs.styles.retain(|r| !(r.library == lid && r.key == *key));
-                libs.styles.push(ImportedStyle { library: lid.clone(), key: key.clone(), local: local.clone(), version });
+                set_record(&mut doc.libraries_mut().styles, ImportedStyle { library: lid.clone(), key: key.clone(), local: local.clone(), version });
                 local
             }
         };
@@ -426,11 +567,105 @@ pub fn import_styles(doc: &mut Document, lib: &PublishedLibrary, keys: &BTreeSet
     out
 }
 
+/// Library variable and collection ids → the ids of their local copies.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VariableMap {
+    pub variables: BTreeMap<VariableId, VariableId>,
+    pub collections: BTreeMap<CollectionId, CollectionId>,
+}
+
+/// Copy library variables `keys` (with every variable they alias) and collections `collections`
+/// (with those of the variables) into `doc` as linked, read-only copies. Copies the document
+/// already has are kept, or with `update` refreshed in place (same ids, so bindings, aliases and
+/// explicit modes follow) when the library has a newer version.
+pub fn import_variables(
+    doc: &mut Document,
+    lib: &PublishedLibrary,
+    keys: &BTreeSet<VariableId>,
+    collections: &BTreeSet<CollectionId>,
+    update: bool,
+) -> VariableMap {
+    let (lid, m, src) = (lib.manifest.id.as_str(), &lib.manifest, &lib.doc.variables);
+    let vars = alias_closure(src, keys.iter().cloned());
+    let colls: BTreeSet<&CollectionId> = collections.iter().chain(vars.iter().filter_map(|v| src.get(v)).map(|v| &v.collection)).collect();
+    let mut out = VariableMap::default();
+    // Collections first: the variables name theirs.
+    for key in colls {
+        let Some(c) = src.collections.iter().find(|c| c.id == *key) else { continue };
+        let version = m.collection(key).map_or(m.version, |x| x.version);
+        let exists = |d: &Document, l: &str| d.variables.collections.iter().any(|x| x.id == l);
+        let local = match record_of(&doc.libraries.collections, lid, key, |l| exists(doc, l)) {
+            Some(r) => {
+                if update
+                    && version > r.version
+                    && let Some(slot) = doc.variables.collections.iter_mut().find(|x| x.id == r.local)
+                {
+                    *slot = Collection { id: r.local.clone(), ..c.clone() };
+                    set_record(&mut doc.libraries_mut().collections, ImportedRecord { version, ..r.clone() });
+                }
+                r.local
+            }
+            None => {
+                let local = local_key(lid, key, |l| exists(doc, l));
+                doc.variables.collections.push(Collection { id: local.clone(), ..c.clone() });
+                let rec = ImportedRecord { library: lid.to_string(), key: key.clone(), local: local.clone(), version };
+                set_record(&mut doc.libraries_mut().collections, rec);
+                local
+            }
+        };
+        out.collections.insert(key.clone(), local);
+    }
+    // Local ids first (the copies alias each other), then the values.
+    let mut write: Vec<(&Variable, VariableId, u64, bool)> = Vec::new();
+    for key in &vars {
+        let Some(v) = src.variables.iter().find(|x| x.id == *key).filter(|v| out.collections.contains_key(&v.collection)) else { continue };
+        let version = m.variable(key).map_or(m.version, |x| x.version);
+        let local = match record_of(&doc.libraries.variables, lid, key, |l| doc.variables.variables.iter().any(|x| x.id == l)) {
+            Some(r) => {
+                if update && version > r.version {
+                    write.push((v, r.local.clone(), version, false));
+                }
+                r.local
+            }
+            None => {
+                let taken = |l: &str| doc.variables.variables.iter().any(|x| x.id == l) || out.variables.values().any(|x| x == l);
+                let local = local_key(lid, key, taken);
+                write.push((v, local.clone(), version, true));
+                local
+            }
+        };
+        out.variables.insert(key.clone(), local);
+    }
+    for (v, local, version, new) in write {
+        let Some(collection) = out.collections.get(&v.collection).cloned() else { continue };
+        let mut values = BTreeMap::new();
+        for (mode, val) in &v.values {
+            let val = match val {
+                // An alias to a variable the library doesn't have resolves to nothing: dropped
+                // (never pointed at a variable of this file).
+                VariableValue::Alias(a) => match src.get(a).and_then(|t| out.variables.get(&t.id)) {
+                    Some(l) => VariableValue::Alias(l.clone()),
+                    None => continue,
+                },
+                other => other.clone(),
+            };
+            values.insert(mode.clone(), val);
+        }
+        let copy = Variable { id: local.clone(), collection, values, ..v.clone() };
+        match doc.variables.variables.iter_mut().find(|x| x.id == local).filter(|_| !new) {
+            Some(slot) => *slot = copy,
+            None => doc.variables.variables.push(copy),
+        }
+        set_record(&mut doc.libraries_mut().variables, ImportedRecord { library: lid.to_string(), key: v.id.clone(), local, version });
+    }
+    out
+}
+
 /// Point a layer copied from `src` at its new ids. [`Document::paste_nodes`] maps ids, children,
 /// parents, instance mains and prototype destinations; this maps the rest: mirrored layers,
-/// instance swap properties and (with `styles`) style links. Variable bindings (not imported) are
-/// dropped with their values kept; references `map` doesn't know are dropped.
-fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles: Option<&BTreeMap<String, String>>) {
+/// instance swap properties and (with `styles` and `vars`) style links, variable bindings and
+/// explicit modes; references the maps don't know are dropped (bindings with their values kept).
+fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles: Option<&BTreeMap<String, String>>, vars: Option<&VariableMap>) {
     n.source = n.source.and_then(|s| map.get(&s).copied());
     let swaps = match &n.kind {
         NodeKind::Instance { component, .. } if !map.contains_key(component) => {
@@ -475,8 +710,10 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
             *r = r.take().and_then(|s| styles.get(&s).cloned());
         }
     }
-    n.bound.clear();
-    n.var_modes.clear();
+    if let Some(vars) = vars {
+        n.bound = std::mem::take(&mut n.bound).into_iter().filter_map(|(f, v)| vars.variables.get(&v).map(|l| (f, l.clone()))).collect();
+        n.var_modes = std::mem::take(&mut n.var_modes).into_iter().filter_map(|(c, m)| vars.collections.get(&c).map(|l| (l.clone(), m))).collect();
+    }
     n.plugin_data.remove("figcraft.thumbnail");
     for it in &mut n.interactions {
         it.actions.retain(|a| !matches!(a, Action::SetVariable { .. }) && a.dest().is_none_or(|d| map.contains_key(&d)));
@@ -524,6 +761,8 @@ pub fn import(doc: &mut Document, lib: &PublishedLibrary, keys: &[NodeId], updat
     }
     let roots_written: Vec<NodeId> = write.iter().map(|(u, _)| *u).collect();
     let styles = import_styles(doc, lib, &linked_styles(src, &roots_written), update);
+    let (bound, mode_colls) = used_variables(src, &roots_written);
+    let vars = import_variables(doc, lib, &bound, &mode_colls, update);
     for (u, _) in &write {
         if let Some(r) = records.get(u)
             && doc.contains(r.root)
@@ -536,7 +775,7 @@ pub fn import(doc: &mut Document, lib: &PublishedLibrary, keys: &[NodeId], updat
         let mut nodes = Vec::with_capacity(sub.len());
         for id in sub {
             let Some(mut n) = src.node(*id).cloned() else { continue };
-            localize(&mut n, src, &map, Some(&styles));
+            localize(&mut n, src, &map, Some(&styles), Some(&vars));
             node_images(&n, &mut hashes);
             nodes.push(n);
         }
@@ -556,36 +795,61 @@ pub fn import(doc: &mut Document, lib: &PublishedLibrary, keys: &[NodeId], updat
     Ok(map)
 }
 
-/// Pending updates of `doc`'s copies of library `lib`: (component records, style records).
-pub fn pending(doc: &Document, lib: &PublishedLibrary) -> (Vec<ImportedComponent>, Vec<ImportedStyle>) {
-    let m = &lib.manifest;
-    let comps = doc
-        .libraries
-        .components
-        .iter()
-        .filter(|r| r.library == m.id && doc.contains(r.root) && m.component(r.key).is_some_and(|a| a.version > r.version))
-        .cloned()
-        .collect();
-    let styles = doc
-        .libraries
-        .styles
-        .iter()
-        .filter(|r| r.library == m.id && doc.style(&r.local).is_some() && m.style(&r.key).is_some_and(|s| s.version > r.version))
-        .cloned()
-        .collect();
-    (comps, styles)
+/// A document's copies of one library's assets (the records), e.g. those with pending updates.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pending {
+    pub components: Vec<ImportedComponent>,
+    pub styles: Vec<ImportedRecord>,
+    pub collections: Vec<ImportedRecord>,
+    pub variables: Vec<ImportedRecord>,
 }
 
-/// Pull library `lib`'s updates of the copies `doc` has (instances keep their overrides).
-/// Returns how many components and styles changed.
-pub fn accept_updates(doc: &mut Document, lib: &PublishedLibrary) -> Result<(usize, usize)> {
-    let (comps, styles) = pending(doc, lib);
-    if !comps.is_empty() {
-        let keys: Vec<NodeId> = comps.iter().map(|r| r.key).collect();
+impl Pending {
+    pub fn count(&self) -> usize {
+        self.components.len() + self.styles.len() + self.collections.len() + self.variables.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count() == 0
+    }
+}
+
+/// The records of library `lid` among `records` whose copy `exists` and whose library `version` is
+/// newer.
+fn stale(records: &[ImportedRecord], lid: &str, exists: impl Fn(&str) -> bool, version: impl Fn(&str) -> Option<u64>) -> Vec<ImportedRecord> {
+    records.iter().filter(|r| r.library == lid && exists(&r.local) && version(&r.key).is_some_and(|v| v > r.version)).cloned().collect()
+}
+
+/// Pending updates of `doc`'s copies of library `lib`.
+pub fn pending(doc: &Document, lib: &PublishedLibrary) -> Pending {
+    let (m, libs, vars) = (&lib.manifest, &doc.libraries, &doc.variables);
+    Pending {
+        components: libs
+            .components
+            .iter()
+            .filter(|r| r.library == m.id && doc.contains(r.root) && m.component(r.key).is_some_and(|a| a.version > r.version))
+            .cloned()
+            .collect(),
+        styles: stale(&libs.styles, &m.id, |l| doc.styles.iter().any(|s| s.id == l), |k| m.style(k).map(|x| x.version)),
+        collections: stale(&libs.collections, &m.id, |l| vars.collections.iter().any(|c| c.id == l), |k| m.collection(k).map(|x| x.version)),
+        variables: stale(&libs.variables, &m.id, |l| vars.variables.iter().any(|v| v.id == l), |k| m.variable(k).map(|x| x.version)),
+    }
+}
+
+/// Pull library `lib`'s updates of the copies `doc` has (instances keep their overrides, bound
+/// layers re-resolve). Returns what was updated.
+pub fn accept_updates(doc: &mut Document, lib: &PublishedLibrary) -> Result<Pending> {
+    let p = pending(doc, lib);
+    if !p.components.is_empty() {
+        let keys: Vec<NodeId> = p.components.iter().map(|r| r.key).collect();
         import(doc, lib, &keys, true)?;
     }
-    if !styles.is_empty() {
-        import_styles(doc, lib, &styles.iter().map(|r| r.key.clone()).collect(), true);
+    if !p.styles.is_empty() {
+        import_styles(doc, lib, &p.styles.iter().map(|r| r.key.clone()).collect(), true);
+    }
+    if !p.variables.is_empty() || !p.collections.is_empty() {
+        let keys = |list: &[ImportedRecord]| list.iter().map(|r| r.key.clone()).collect::<BTreeSet<_>>();
+        import_variables(doc, lib, &keys(&p.variables), &keys(&p.collections), true);
     }
     let m = &lib.manifest;
     if let Some(l) = doc.libraries_mut().enabled.iter_mut().find(|l| l.id == m.id)
@@ -595,10 +859,11 @@ pub fn accept_updates(doc: &mut Document, lib: &PublishedLibrary) -> Result<(usi
         l.name = m.name.clone();
     }
     prune(doc, &m.id)?;
-    Ok((comps.len(), styles.len()))
+    Ok(p)
 }
 
-/// Drop copies of `library`'s components and styles that nothing in the document uses any more.
+/// Drop copies of `library`'s components, styles, variables and collections that nothing in the
+/// document uses any more.
 pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
     for _ in 0..MAX_ASSETS {
         // Which copies instances outside them use.
@@ -630,16 +895,68 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
         doc.styles.retain(|s| !unused.contains(&s.id));
         doc.libraries_mut().styles.retain(|r| !unused.contains(&r.local));
     }
+    // Variables layers bind or set, and local variables alias (with what those alias).
+    let seeds = doc
+        .nodes()
+        .flat_map(|n| n.bound.values().chain(set_variables(n)))
+        .cloned()
+        .chain(doc.variables.variables.iter().filter(|v| !is_remote_variable(doc, &v.id)).flat_map(|v| v.values.values()).filter_map(|x| match x {
+            VariableValue::Alias(a) => Some(a.clone()),
+            _ => None,
+        }))
+        .collect::<Vec<_>>();
+    let used = alias_closure(&doc.variables, seeds);
+    let unused: BTreeSet<String> =
+        doc.libraries.variables.iter().filter(|r| r.library == library && !used.contains(&r.local)).map(|r| r.local.clone()).collect();
+    if !unused.is_empty() {
+        doc.variables.variables.retain(|v| !unused.contains(&v.id));
+        doc.libraries_mut().variables.retain(|r| !unused.contains(&r.local));
+    }
+    // Collections the remaining variables are in, or layers choose a mode of.
+    let used: BTreeSet<String> =
+        doc.variables.variables.iter().map(|v| v.collection.clone()).chain(doc.nodes().flat_map(|n| n.var_modes.keys()).cloned()).collect();
+    let unused: BTreeSet<String> =
+        doc.libraries.collections.iter().filter(|r| r.library == library && !used.contains(&r.local)).map(|r| r.local.clone()).collect();
+    if !unused.is_empty() {
+        doc.variables.collections.retain(|c| !unused.contains(&c.id));
+        doc.libraries_mut().collections.retain(|r| !unused.contains(&r.local));
+    }
     Ok(())
+}
+
+/// `theirs` records of copies `exists` in this document that `mine` doesn't list yet.
+fn new_records(mine: &[ImportedRecord], theirs: &[ImportedRecord], exists: impl Fn(&str) -> bool) -> Vec<ImportedRecord> {
+    theirs.iter().filter(|s| exists(&s.local) && !mine.iter().any(|x| x.library == s.library && x.key == s.key)).cloned().collect()
 }
 
 /// When pages of `other` are appended to `doc` (`map`: their ids → the pasted ids): the library
 /// copies they use come along (shared with the copies `doc` has of the same assets), with their
-/// records and library links, and the pasted layers point at them.
+/// records and library links, and the pasted layers point at them. Styles and variables are
+/// appended by id beforehand: this records the copies among them.
 pub fn merge_store(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, NodeId>) -> Result<()> {
-    if other.library_store().is_none() {
+    if other.libraries.is_empty() {
         return Ok(());
     }
+    if other.library_store().is_some() {
+        merge_components(doc, other, map)?;
+    }
+    let styles = new_records(&doc.libraries.styles, &other.libraries.styles, |l| doc.styles.iter().any(|s| s.id == l));
+    let colls = new_records(&doc.libraries.collections, &other.libraries.collections, |l| doc.variables.collections.iter().any(|c| c.id == l));
+    let vars = new_records(&doc.libraries.variables, &other.libraries.variables, |l| doc.variables.variables.iter().any(|v| v.id == l));
+    let libs = doc.libraries_mut();
+    libs.styles.extend(styles);
+    libs.collections.extend(colls);
+    libs.variables.extend(vars);
+    for l in &other.libraries.enabled {
+        if libs.link(&l.id).is_none() {
+            libs.enabled.push(l.clone());
+        }
+    }
+    Ok(())
+}
+
+/// The component copies of [`merge_store`].
+fn merge_components(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, NodeId>) -> Result<()> {
     let mut remote: BTreeMap<NodeId, NodeId> = BTreeMap::new();
     let mut fresh = Vec::new();
     for r in other.libraries.components.iter().filter(|r| other.contains(r.root)) {
@@ -658,7 +975,7 @@ pub fn merge_store(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, 
         for r in &fresh {
             let mut nodes: Vec<Node> = other.subtree(r.root).into_iter().filter_map(|i| other.node(i).cloned()).collect();
             for n in &mut nodes {
-                localize(n, other, &remote, None);
+                localize(n, other, &remote, None, None);
             }
             let Some(root) = remote.get(&r.root).copied() else { continue };
             doc.paste_nodes(&nodes, &remote, r.root, store, None)?;
@@ -685,17 +1002,6 @@ pub fn merge_store(doc: &mut Document, other: &Document, map: &BTreeMap<NodeId, 
             n.source = source;
         }
     }
-    let libs = doc.libraries_mut();
-    for s in &other.libraries.styles {
-        if !libs.styles.iter().any(|x| x.library == s.library && x.key == s.key) {
-            libs.styles.push(s.clone());
-        }
-    }
-    for l in &other.libraries.enabled {
-        if libs.link(&l.id).is_none() {
-            libs.enabled.push(l.clone());
-        }
-    }
     Ok(())
 }
 
@@ -705,12 +1011,34 @@ pub fn check_read_only(cmd: &str, before: &Document, after: &Document) -> std::r
     if cmd.starts_with("library.") || cmd == "file.import" {
         return Ok(());
     }
+    if !variables_unchanged(before, after) {
+        return Err(READ_ONLY.into());
+    }
     let Some(store) = after.library_store().or_else(|| before.library_store()) else { return Ok(()) };
     let touched = |d: &Document, id: NodeId| d.contains(id) && d.page_of(id) == Some(store);
     if after.dirty().iter().any(|id| touched(before, *id) || touched(after, *id)) {
         return Err(READ_ONLY.into());
     }
     Ok(())
+}
+
+/// Whether the library variables and collections copied into `before` are the same in `after`,
+/// and no other variable joined one of those collections. A document whose library data was
+/// replaced (undo, redo, a restored version) brings its own copies.
+fn variables_unchanged(before: &Document, after: &Document) -> bool {
+    let libs = &before.libraries;
+    if (libs.variables.is_empty() && libs.collections.is_empty()) || !Arc::ptr_eq(libs, &after.libraries) || before.variables == after.variables {
+        return true;
+    }
+    let (b, a) = (&before.variables, &after.variables);
+    fn by_id<T>(list: &[T], id: impl Fn(&T) -> &str) -> HashMap<&str, &T> {
+        list.iter().map(|x| (id(x), x)).collect()
+    }
+    let (bv, av) = (by_id(&b.variables, |x| &x.id), by_id(&a.variables, |x| &x.id));
+    let (bc, ac) = (by_id(&b.collections, |x| &x.id), by_id(&a.collections, |x| &x.id));
+    libs.variables.iter().all(|r| bv.get(r.local.as_str()) == av.get(r.local.as_str()))
+        && libs.collections.iter().all(|r| bc.get(r.local.as_str()) == ac.get(r.local.as_str()))
+        && a.variables.iter().all(|v| libs.collection_import(&v.collection).is_none() || after.libraries.variable_import(&v.id).is_some())
 }
 
 /// The library a remote layer was copied from (its id), if any.
@@ -725,6 +1053,26 @@ pub fn library_of(doc: &Document, id: NodeId) -> Option<&str> {
 /// The display name of library `id` in `doc` (its link's name, else the id).
 pub fn library_name<'a>(doc: &'a Document, id: &'a str) -> &'a str {
     doc.libraries.link(id).map_or(id, |l| l.name.as_str())
+}
+
+/// The enabled libraries of `doc` that `cache` has read (and that still hold the linked library).
+pub fn read_libraries<'a>(cache: &'a Cache, doc: &'a Document) -> impl Iterator<Item = (&'a LibraryLink, &'a Arc<PublishedLibrary>)> {
+    doc.libraries.enabled.iter().filter_map(|l| match cache.cached(&l.path) {
+        Some(Ok(lib)) if lib.manifest.id == l.id => Some((l, lib)),
+        _ => None,
+    })
+}
+
+/// The variable collections library `lib` offers.
+pub fn published_collections(lib: &PublishedLibrary) -> impl Iterator<Item = &Collection> {
+    let m = &lib.manifest;
+    lib.doc.variables.collections.iter().filter(|c| m.collection(&c.id).is_some_and(|x| x.published))
+}
+
+/// The variables library `lib` offers (not those hidden from publishing).
+pub fn published_variables(lib: &PublishedLibrary) -> impl Iterator<Item = &Variable> {
+    let offered: BTreeSet<&str> = lib.manifest.variables.iter().filter(|v| v.published).map(|v| v.id.as_str()).collect();
+    lib.doc.variables.variables.iter().filter(move |v| offered.contains(v.id.as_str()))
 }
 
 #[cfg(test)]
