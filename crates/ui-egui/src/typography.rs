@@ -200,14 +200,16 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     row(ui, 32.0, |ui| {
         let lh = uniform(&styles, |s| s.line_height);
         let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
-        if let Some(v) = lead_field(ui, Id::new("ty_lh"), LeadGlyph::LineHeight, &lh_label, half, "Line height")
+        let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: "Line height" };
+        if let Some(v) = spacing_field(app, ui, &ids, &field, &lh_label, half, editing)
             && let Some(v) = parse_line_height(&v, lh)
         {
             apply_style(app, "lineHeight", v);
         }
         let ls = uniform(&styles, |s| s.letter_spacing);
         let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
-        if let Some(v) = lead_field(ui, Id::new("ty_ls"), LeadGlyph::LetterSpacing, &ls_label, half, "Letter spacing")
+        let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: "Letter spacing" };
+        if let Some(v) = spacing_field(app, ui, &ids, &field, &ls_label, half, editing)
             && let Some(v) = parse_letter_spacing(&v, ls)
         {
             apply_style(app, "letterSpacing", v);
@@ -624,6 +626,30 @@ fn paint_lead(p: &egui::Painter, r: Rect, g: LeadGlyph, col: Color32) {
 }
 
 /// A text field with a leading glyph (line height, letter spacing…). Returns the committed text.
+/// Line height or letter spacing: which property, its field id, glyph and tooltip.
+struct SpacingField {
+    field: &'static str,
+    id: Id,
+    glyph: LeadGlyph,
+    tip: &'static str,
+}
+
+/// A spacing field that whole layers can bind to a number variable (in pixels): the variable's
+/// chip when bound, else the editable field with a variable button on hover. While a text range is
+/// selected it only takes values. Returns the typed text.
+fn spacing_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], f: &SpacingField, value: &str, width: f32, range: bool) -> Option<String> {
+    let rect = Rect::from_min_size(ui.cursor().min, vec2(width, FIELD_H));
+    if !range && crate::variable_ui::bound_chip(app, ui, ids, f.field, VariableType::Number, rect) {
+        ui.allocate_rect(rect, Sense::hover());
+        return None;
+    }
+    let out = lead_field(ui, f.id, f.glyph, value, width, f.tip);
+    if !range && ui.data(|d| d.get_temp::<String>(f.id.with("editing")).is_none()) {
+        crate::variable_ui::bind_button(ui, rect, ids, f.field, VariableType::Number);
+    }
+    out
+}
+
 fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, tip: &str) -> Option<String> {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());

@@ -66,3 +66,19 @@ fn opacity_padding_text_and_visibility_follow_their_variables() {
     assert_eq!(doc.node(f).unwrap().opacity, 1.0);
     assert!(doc.node(t).unwrap().visible);
 }
+
+#[test]
+fn line_height_and_letter_spacing_follow_number_variables_in_pixels() {
+    let mut s = Session::new();
+    let t = id_of(&s.execute("text.create", &json!({"text": "Hello", "x": 0, "y": 0})).unwrap()["id"]).unwrap();
+    s.execute("variable.createCollection", &json!({"name": "Type"})).unwrap();
+    s.execute("variable.create", &json!({"collection": "Type", "name": "leading", "type": "number", "value": 24})).unwrap();
+    s.execute("variable.create", &json!({"collection": "Type", "name": "tracking", "type": "number", "value": 2})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [t], "field": "lineHeight", "variable": "leading"})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [t], "field": "letterSpacing", "variable": "tracking"})).unwrap();
+    let style = |s: &Session| s.doc().unwrap().node(t).unwrap().kind.text().unwrap().style.clone();
+    assert_eq!(style(&s).line_height, figcraft_doc::LineHeight::Pixels(24.0));
+    assert_eq!(style(&s).letter_spacing, figcraft_doc::LetterSpacing::Pixels(2.0));
+    s.execute("variable.set", &json!({"variable": "leading", "value": 30})).unwrap();
+    assert_eq!(style(&s).line_height, figcraft_doc::LineHeight::Pixels(30.0));
+}
