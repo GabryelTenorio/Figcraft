@@ -140,7 +140,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         && done.generation == app.canvas.generation
     {
         // A pixel preview render is magnified with hard pixel edges.
-        let filter = if done.view.scale == 1.0 && app.session.ds().is_ok_and(pixel_preview) {
+        let filter = if app.session.ds().ok().and_then(pixel_preview) == Some(done.view.scale) {
             egui::TextureOptions::NEAREST
         } else {
             egui::TextureOptions::LINEAR
@@ -211,21 +211,22 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
 }
 
-/// Pixel preview is on and zoomed in past one screen pixel per page pixel.
-fn pixel_preview(ds: &figcraft_engine::DocState) -> bool {
-    ds.view.pixel_preview && ds.view.zoom > 1.0
+/// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past it.
+fn pixel_preview(ds: &figcraft_engine::DocState) -> Option<f64> {
+    let k = f64::from(ds.view.pixel_scale.clamp(1, 2));
+    (ds.view.pixel_preview && ds.view.zoom > k).then_some(k)
 }
 
 fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
     let (mut ox, mut oy) = ds.view.origin();
-    let (scale, w, h) = if pixel_preview(ds) {
-        // Pixel preview: render one pixel per page unit from a whole-pixel origin, shown magnified
+    let (scale, w, h) = if let Some(k) = pixel_preview(ds) {
+        // Pixel preview: render `k` pixels per page unit from a whole-pixel origin, shown magnified
         // without smoothing.
-        (ox, oy) = (ox.floor(), oy.floor());
-        let z = ds.view.zoom.max(1e-9);
-        (1.0, (f64::from(rect.width()) / z).ceil() as u32 + 2, (f64::from(rect.height()) / z).ceil() as u32 + 2)
+        (ox, oy) = ((ox * k).floor() / k, (oy * k).floor() / k);
+        let z = ds.view.zoom.max(1e-9) / k;
+        (k, (f64::from(rect.width()) / z).ceil() as u32 + 2, (f64::from(rect.height()) / z).ceil() as u32 + 2)
     } else {
         (ds.view.zoom * f64::from(ppp), (rect.width() * ppp).ceil().max(1.0) as u32, (rect.height() * ppp).ceil().max(1.0) as u32)
     };

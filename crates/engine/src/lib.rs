@@ -104,6 +104,8 @@ pub struct ViewState {
     pub rulers: bool,
     pub outlines: bool,
     pub pixel_preview: bool,
+    /// Pixel preview resolution: rendered pixels per page pixel (1 or 2).
+    pub pixel_scale: u8,
     pub show_slices: bool,
     pub comments: bool,
     pub frame_outlines: bool,
@@ -126,6 +128,7 @@ impl Default for ViewState {
             rulers: false,
             outlines: false,
             pixel_preview: false,
+            pixel_scale: 1,
             show_slices: false,
             comments: true,
             frame_outlines: false,
@@ -893,6 +896,8 @@ mod mask_tests;
 mod nested_override_tests;
 #[cfg(test)]
 mod paint_tests;
+#[cfg(test)]
+mod pixel_preview_tests;
 #[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]

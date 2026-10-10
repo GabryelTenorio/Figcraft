@@ -19,6 +19,23 @@ fn flag(s: &mut Session, p: &Value, f: fn(&mut ViewState) -> &mut bool) -> Resul
     Ok(json!({"on": *slot}))
 }
 
+/// Pixel preview: toggles, or turns on at a resolution of 1x or 2x.
+fn pixel_preview(s: &mut Session, p: &Value) -> Result<Value> {
+    let scale = match p.get("scale") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_u64() {
+            Some(k @ (1 | 2)) => Some(k as u8),
+            _ => return Err(bad("view.pixelPreview", "`scale` must be 1 or 2")),
+        },
+    };
+    let v = view(s)?;
+    if let Some(k) = scale {
+        v.pixel_scale = k;
+    }
+    v.pixel_preview = boolean(p, "on").unwrap_or(scale.is_some() || !v.pixel_preview);
+    Ok(json!({"on": v.pixel_preview, "scale": v.pixel_scale}))
+}
+
 fn zoom_to(s: &mut Session, z: f64) -> Result<Value> {
     let v = view(s)?;
     let c = (v.cx, v.cy);
@@ -140,7 +157,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.slices", "Slices", "{on?}", false, |s, p| flag(s, p, |v| &mut v.show_slices)),
         spec!("view.comments", "Comments", "{on?}", false, |s, p| flag(s, p, |v| &mut v.comments)),
         spec!("view.outlines", "Outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.outlines)),
-        spec!("view.pixelPreview", "Pixel preview", "{on?}", false, |s, p| flag(s, p, |v| &mut v.pixel_preview)),
+        spec!("view.pixelPreview", "Pixel preview", "{on?, scale? (1|2: rendered pixels per page pixel; turns it on)}", false, pixel_preview),
         spec!("view.frameOutlines", "Frame outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.frame_outlines)),
         spec!("view.snapGeometry", "Snap to geometry", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_geometry)),
         spec!("view.snapObjects", "Snap to objects", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_objects)),
