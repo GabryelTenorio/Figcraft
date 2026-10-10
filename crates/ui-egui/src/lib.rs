@@ -13,6 +13,7 @@ pub mod comments;
 pub mod component_panel;
 pub mod control;
 pub mod credits;
+pub mod dev_compare;
 pub mod dev_mode;
 pub mod dialogs;
 pub mod export_panel;
@@ -52,6 +53,8 @@ pub mod widgets;
 mod canvas_drag_tests;
 #[cfg(test)]
 mod comments_tests;
+#[cfg(test)]
+mod dev_mode_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
@@ -420,6 +423,9 @@ impl FigApp {
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
                 "panel.versionHistory" => versions::open(self),
+                "view.devCompare" => {
+                    self.ui.dev.compare = r.data.get("id").and_then(figcraft_engine::params::id_of).map(dev_compare::CompareView::new);
+                }
                 "panel.libraries" => {
                     self.ui.left_tab = LeftTab::Assets;
                     self.ui.left_collapsed = false;
@@ -643,6 +649,7 @@ impl FigApp {
         // the arrows step through comment threads with the Comment tool.
         present::show_pane(self, &ctx);
         comments::keys(self, &ctx);
+        dev_compare::keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
@@ -703,6 +710,9 @@ impl FigApp {
             "palette": self.ui.palette.is_some(),
             "variables": self.ui.variables.is_some(),
             "versionHistory": self.ui.versions.open,
+            "devCompare": self.ui.dev.compare.as_ref().map(|c| json!({"id": c.id, "mode": if c.mode == dev_compare::Mode::Overlay { "overlay" } else { "sideBySide" }, "split": c.split})),
+            "devFocus": self.session.ds().ok().and_then(figcraft_engine::DocState::focused),
+            "annotationFilter": self.ui.dev.categories.id(),
             "colorProfileDialog": self.ui.color_profile.map(|p| p.id()),
             "stylePicker": self.ui.style_picker.as_ref().map(|p| p.slot().key()),
             "stylePickerView": if self.ui.style_grid { "grid" } else { "list" },

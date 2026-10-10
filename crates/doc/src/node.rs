@@ -207,6 +207,48 @@ pub struct Annotation {
     /// them). Unknown ids are kept and ignored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<String>,
+    /// The id of its category ([`AnnotationCategory`]; `None`: uncategorised). An id the file
+    /// doesn't define reads as uncategorised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+}
+
+/// A kind of annotation (Development, Accessibility…): its stable id, name and the colour its
+/// callouts are drawn in.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AnnotationCategory {
+    pub id: String,
+    pub name: String,
+    pub color: Color,
+}
+
+impl AnnotationCategory {
+    /// The colours offered for categories (the defaults take the first four).
+    pub const COLORS: [Color; 8] = [
+        Color::from_rgb8_const(0x2F, 0x6F, 0xEB),
+        Color::from_rgb8_const(0x8A, 0x4F, 0xE0),
+        Color::from_rgb8_const(0x1E, 0x9E, 0x6A),
+        Color::from_rgb8_const(0xD9, 0x7A, 0x06),
+        Color::from_rgb8_const(0xD6, 0x3A, 0x3A),
+        Color::from_rgb8_const(0xD1, 0x3F, 0x9B),
+        Color::from_rgb8_const(0x11, 0x92, 0xA8),
+        Color::from_rgb8_const(0x6B, 0x72, 0x80),
+    ];
+
+    pub fn new(id: &str, name: &str, color: Color) -> Self {
+        Self { id: id.to_string(), name: name.to_string(), color }
+    }
+
+    /// The categories a file starts with.
+    pub fn defaults() -> Vec<AnnotationCategory> {
+        let [dev, interaction, a11y, content, ..] = Self::COLORS;
+        vec![
+            Self::new("development", "Development", dev),
+            Self::new("interaction", "Interaction", interaction),
+            Self::new("accessibility", "Accessibility", a11y),
+            Self::new("content", "Content", content),
+        ]
+    }
 }
 
 /// A ruler guide on a page or frame.

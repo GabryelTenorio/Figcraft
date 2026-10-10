@@ -494,11 +494,44 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
   saved with the file (`get_node` lists them as `annotations`); instances don't inherit their
   main's annotations and keep their own across main edits. In the app the Inspect tab draws them
   as callouts beside their layers and edits them in its Annotations section.
+- **Annotation categories:** every annotation can have a category, drawn as the colour of its
+  callout: the defaults are Development, Interaction, Accessibility and Content, and a file can add
+  its own. `annotation.add` / `annotation.edit` take `category` (an id or name; `null` clears it)
+  and `annotation.list` returns `category: {id, name, color}` and filters with `{category: id |
+  name | "none"}`. `annotation.categories {}` → `{categories: [{id, name, color, count}]}`;
+  undoable `annotation.addCategory {name, color?}` → `{id}` (a new one takes the first unused
+  colour), `annotation.editCategory {id, name?, color?}` (rename, recolour; ids stay) and
+  `annotation.removeCategory {id}` (its annotations stay, uncategorised). Names are unique (ignoring
+  case), up to 64 characters; at most 64 categories. Files keep the list only once it differs from
+  the defaults (old files open with the defaults). In the app, with nothing selected, the Inspect
+  tab filters the callouts by category and edits the categories (colour, name, delete, add); each
+  note has a category menu.
 - **Ready for dev:** frames at the top of a page or section, and sections, carry a handoff status
   (`node.set {devStatus: none|readyForDev|completed}`). `inspect.readyForDev {status?:
   readyForDev|completed|any, page?}` lists them across pages (or on one page) in page and layer
   order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
-  frames and, with nothing selected, lists them with a status filter (click one to go to it).
+  frames and, with nothing selected, lists them with a status filter (click one to go to it, or its
+  focus button to open it in the focus view).
+- **Compare changes:** when a layer marked Ready for dev first changes (it turns "Changed"), the
+  file keeps a copy of it and everything in it as it was just before that edit (saved in the
+  `.figcraft` file only while there is a change; resolving the change, marking it again, another
+  status or deleting it drops the copy, so the next change compares with that state).
+  `dev.compare {id?, show?}` → `{id, name, changed, snapshot, added, removed, modified, truncated,
+  changes: [{id, name, type, change: added|removed|changed, depth, layers, properties?: [{section,
+  property, before, after, text}]}]}`: layers matched by id, added and removed ones listed as a
+  whole (`layers` counts what's inside), changed ones with their properties formatted like Inspect
+  (`width 120 → 136`, `fill #FF0000 → #E03030`, `text “Welcome” → “Hello”`, `parent Badge → Screen`,
+  `order 3 → 1`, `component Card → Card 2`, auto layout, typography, strokes, effects, corner radius,
+  opacity, visibility, name), nested layers and instance contents included. `snapshot: false` means
+  the frame changed before copies were kept (an older file). `show: true` opens the compare view in
+  the app: before and now side by side (or overlaid with a slider), changed layers outlined (added
+  green, changed orange, removed red), the list of changes and Resolve change.
+- **Focus view:** `dev.focus {id? | direction: next|previous}` → `{id, name, page, index, count}`
+  shows one top-level frame or section alone on the canvas (fitted, selected, other layers neither
+  drawn nor hit), switching page when needed; `direction` steps through the ready-for-dev frames
+  across pages, wrapping around. `dev.unfocus {}` ends it, as do Escape (once the frame or nothing
+  is selected), leaving the page or deleting the frame. The app shows a bar with the frame's name
+  and status, Compare changes, previous / next and exit; `inspect_ui` reports `devFocus`.
 
 ### Effects
 

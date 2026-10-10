@@ -53,6 +53,8 @@ pub struct Options {
     pub outline_mode: bool,
     /// Nodes to leave out (an editor drawing them itself).
     pub skip: Vec<NodeId>,
+    /// Draw only this layer of the page, where it is (Dev Mode's focus view).
+    pub solo: Option<NodeId>,
     /// A preview (the canvas): when zoomed out, approximate what's too small on screen to see in
     /// detail, see [`lod`]. Off for everything that must be exact (exports, thumbnails); no
     /// effect in outline mode.
@@ -151,8 +153,13 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
     let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip, lod, under: None };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
-    for c in &p.children {
-        draw::draw_node(&ctx, &mut pix, *c, xf, 0);
+    match opts.solo.filter(|id| *id != page && doc.page_of(*id) == Some(page)) {
+        Some(id) => draw::draw_node(&ctx, &mut pix, id, xf * parent_transform(doc, id), 0),
+        None => {
+            for c in &p.children {
+                draw::draw_node(&ctx, &mut pix, *c, xf, 0);
+            }
+        }
     }
     Some(pix)
 }
@@ -161,9 +168,13 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap) {
     let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[], lod: false, under: None };
     for id in ids {
-        let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
-        draw::draw_node(&ctx, pix, *id, view.transform() * parent_xf, 0);
+        draw::draw_node(&ctx, pix, *id, view.transform() * parent_transform(doc, *id), 0);
     }
+}
+
+/// The page transform of layer `id`'s parent.
+fn parent_transform(doc: &Document, id: NodeId) -> Affine {
+    doc.node(id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY)
 }
 
 /// How an export draws a node by itself (see [`render_alone`]).
@@ -376,6 +387,8 @@ mod progressive_tests;
 mod retained_edit_tests;
 #[cfg(test)]
 mod retained_tests;
+#[cfg(test)]
+mod solo_tests;
 #[cfg(test)]
 mod spread_tests;
 #[cfg(test)]

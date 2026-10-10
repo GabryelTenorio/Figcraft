@@ -189,7 +189,7 @@ const MENU_PAD: f32 = 8.0;
 const MENU_GAP: f32 = 24.0;
 
 /// The style of popup menus: egui's, with text kept on one line (a menu grows to its widest item).
-fn menu_style(s: &mut egui::Style) {
+pub(crate) fn menu_style(s: &mut egui::Style) {
     egui::containers::menu::menu_style(s);
     s.wrap_mode = Some(egui::TextWrapMode::Extend);
 }
@@ -1848,6 +1848,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
         widgets::note(ui, "Select a layer to see its properties and code", t.text_secondary);
         widgets::note(ui, "Hover other layers to measure the distance", t.text_secondary);
         crate::dev_mode::ready_list(app, ui);
+        crate::dev_mode::categories_section(app, ui);
         return;
     };
     let name = doc.node(first).map(|n| n.name.clone()).unwrap_or_default();

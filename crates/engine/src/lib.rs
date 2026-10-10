@@ -15,6 +15,7 @@ pub mod cmd;
 pub mod codegen;
 pub mod component_codegen;
 pub mod components;
+pub mod devcompare;
 pub mod devinspect;
 pub mod distance;
 pub mod drop;
@@ -249,6 +250,8 @@ pub struct DocState {
     pub text_preview: Option<Arc<Document>>,
     /// The document as of the last version saved (or as opened): autosaves only follow changes.
     checkpoint: Arc<Document>,
+    /// Dev Mode focus view: the frame or section shown alone on the canvas (see [`Self::focused`]).
+    pub focus: Option<NodeId>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -299,6 +302,7 @@ impl DocState {
             versions_changed: false,
             preview: None,
             text_preview: None,
+            focus: None,
         };
         st.zoom_to_fit();
         st
@@ -386,6 +390,11 @@ impl DocState {
                 self.view.cy = self.view.vh / 2.0 - 100.0;
             }
         }
+    }
+
+    /// The layer the focus view shows, while it exists on the current page.
+    pub fn focused(&self) -> Option<NodeId> {
+        self.focus.filter(|f| self.doc.page_of(*f) == Some(self.page))
     }
 
     /// Drop selected ids that no longer exist or aren't on the current page.
@@ -1003,10 +1012,22 @@ fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<No
         }
     }
     for m in changed {
-        if let Some(n) = doc.node_mut(m)
-            && !n.dev_changed
-        {
-            n.dev_changed = true;
+        if doc.node(m).is_some_and(|n| !n.dev_changed) {
+            // Its first change since it was marked: keep what it looked like (for Compare changes).
+            if let Some(snap) = before.snapshot_subtree(m) {
+                doc.dev_snapshots.insert(m, Arc::new(snap));
+            }
+            if let Some(n) = doc.node_mut(m) {
+                n.dev_changed = true;
+            }
+        }
+    }
+    // Snapshots last until the change is resolved, the layer is marked again or it's deleted.
+    if !doc.dev_snapshots.is_empty() {
+        let keep = |d: &Document, id: NodeId| d.node(id).is_some_and(|n| n.dev_status == figcraft_doc::DevStatus::ReadyForDev && n.dev_changed);
+        let stale: Vec<NodeId> = doc.dev_snapshots.keys().copied().filter(|id| !keep(doc, *id)).collect();
+        for id in stale {
+            doc.dev_snapshots.remove(&id);
         }
     }
 }
@@ -1017,6 +1038,8 @@ mod al_drag_tests;
 mod al_keys_tests;
 #[cfg(test)]
 mod al_nesting_tests;
+#[cfg(test)]
+mod annotation_categories_tests;
 #[cfg(test)]
 mod annotations_tests;
 #[cfg(test)]
@@ -1031,6 +1054,10 @@ mod comments_polish_tests;
 mod component_codegen_tests;
 #[cfg(test)]
 mod components_scale_tests;
+#[cfg(test)]
+mod devcompare_tests;
+#[cfg(test)]
+mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]

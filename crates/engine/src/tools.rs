@@ -778,7 +778,7 @@ impl Session {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
-                hover = doc.hit_test(page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd));
+                hover = self.hit(&doc, page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd));
                 if ev.alt || self.tool.redlines {
                     use crate::distance::{Hover, guide_at, hover_lines, padding_frame, parent_of};
                     // Shift+Alt over an auto layout frame: its padding and gaps. Otherwise from the
@@ -861,7 +861,7 @@ impl Session {
             };
             return Ok(());
         }
-        let leaf = doc.hit_test(page, ev.p(), ev.tol() * 2.0);
+        let leaf = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
         match leaf {
             Some(leaf) => {
                 let target = select_target(&doc, leaf, &sel, ev.cmd);
@@ -896,6 +896,8 @@ impl Session {
                 // Marquee; starting inside a top-level frame selects its children.
                 let within = frame_at(&doc, page, ev.p(), &[]).filter(|f| doc.node(*f).is_some_and(|n| n.parent == Some(page)));
                 let within = within.filter(|f| doc.world_bounds(*f).is_some_and(|b| b.contains(ev.p())));
+                // The focus view selects only inside its frame.
+                let within = self.ds()?.focused().or(within);
                 if !ev.shift {
                     self.set_selection(vec![]);
                 }
@@ -920,6 +922,9 @@ impl Session {
                 } else {
                     figcraft_doc::geometry::marquee_select(&doc, page, r, *within)
                 };
+                if let Some(f) = self.ds()?.focused() {
+                    hits.retain(|h| *h != f && doc.is_ancestor(f, *h));
+                }
                 // A marquee over a frame from outside selects the frame only when it covers it fully.
                 if within.is_none() && !ev.cmd {
                     hits.retain(|h| {
@@ -1455,7 +1460,7 @@ impl Session {
         if self.tool.tool == ToolId::Pen {
             return self.pen_finish();
         }
-        let Some(leaf) = doc.hit_test(page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
+        let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
         let target = select_target(&doc, leaf, &sel, true);
         // Text: edit at the click.
         if doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
@@ -1505,7 +1510,7 @@ impl Session {
             textedit::end(self)?;
         }
         // Clicking existing text edits it.
-        if let Some(leaf) = doc.hit_test(page, ev.p(), ev.tol() * 2.0)
+        if let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
             && doc.node(leaf).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
         {
             let idx = self.text_index_at(leaf, ev.p())?;
@@ -1731,7 +1736,17 @@ impl Session {
         crate::shapebuilder::key(self, name)
     }
 
-    /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect.
+    /// The layer under `p` for a click: the topmost on `page`, or in the focus view the focused
+    /// frame's.
+    pub fn hit(&self, doc: &Document, page: NodeId, p: Point, tol: f64) -> Option<NodeId> {
+        match self.ds().ok().and_then(crate::DocState::focused) {
+            Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol),
+            None => doc.hit_test(page, p, tol),
+        }
+    }
+
+    /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect (in the
+    /// focus view, once the focused frame or nothing is selected, it ends the focus view).
     pub fn escape(&mut self) -> Result<()> {
         if self.tool.pen.is_some() {
             return self.pen_finish();
@@ -1751,9 +1766,15 @@ impl Session {
             self.set_tool(ToolId::Move);
             return Ok(());
         }
-        // Escape selects the parent (like Figma), then nothing.
-        let doc = self.doc()?;
         let sel = self.selection();
+        if let Some(f) = self.ds()?.focused()
+            && (sel.is_empty() || sel == [f])
+        {
+            self.ds_mut()?.focus = None;
+            return Ok(());
+        }
+        // Escape selects the parent, then nothing.
+        let doc = self.doc()?;
         let parents: Vec<NodeId> =
             sel.iter().filter_map(|i| doc.node(*i).and_then(|n| n.parent)).filter(|p| !doc.node(*p).is_some_and(Node::is_page)).collect();
         if !parents.is_empty() {

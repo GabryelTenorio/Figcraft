@@ -75,6 +75,17 @@ pub struct DevItem {
 /// Most items listed.
 const MAX_DEV_ITEMS: usize = 500;
 
+/// Whether `id` can carry a handoff status: a section, or a frame at the top of a page or section.
+pub fn has_status(doc: &Document, id: NodeId) -> bool {
+    let section = |n: &Node| matches!(n.kind, NodeKind::Section { .. });
+    doc.node(id).is_some_and(|n| {
+        section(n)
+            || (n.kind.is_frame_like()
+                && !matches!(n.kind, NodeKind::Instance { .. })
+                && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || section(p)))
+    })
+}
+
 /// The layers with handoff status `status` (`None`: any status) on `page` (`None`: every page),
 /// in page and layer order (bounded).
 pub fn dev_items(doc: &Document, status: Option<DevStatus>, page: Option<NodeId>) -> Vec<DevItem> {

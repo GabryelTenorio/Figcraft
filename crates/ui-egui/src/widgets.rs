@@ -419,8 +419,21 @@ fn keep_focus(r: &Response, started: bool) {
     }
 }
 
+/// What a dropdown shows before its label.
+#[derive(Clone, Copy)]
+pub enum DropLead {
+    Icon(Icon),
+    /// A colour dot (a category's colour).
+    Dot(Color32),
+}
+
 /// A dropdown-looking button showing `label`; returns the response (open a menu on click).
 pub fn dropdown(ui: &mut Ui, label: &str, width: f32, lead: Option<Icon>) -> Response {
+    dropdown_lead(ui, label, width, lead.map(DropLead::Icon))
+}
+
+/// [`dropdown`] with an icon or a colour dot before the label.
+pub fn dropdown_lead(ui: &mut Ui, label: &str, width: f32, lead: Option<DropLead>) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::click());
     let bg = t.field;
@@ -429,9 +442,16 @@ pub fn dropdown(ui: &mut Ui, label: &str, width: f32, lead: Option<Icon>) -> Res
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
     let mut x = rect.min.x + 8.0;
-    if let Some(i) = lead {
-        icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(14.0, 14.0)), i, t.icon_secondary);
-        x += 18.0;
+    match lead {
+        Some(DropLead::Icon(i)) => {
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(x + 6.0, rect.center().y), vec2(14.0, 14.0)), i, t.icon_secondary);
+            x += 18.0;
+        }
+        Some(DropLead::Dot(c)) => {
+            ui.painter().circle_filled(pos2(x + 5.0, rect.center().y), 4.5, c);
+            x += 16.0;
+        }
+        None => {}
     }
     let galley = ui.painter().layout(label.to_string(), regular(11.0), t.text, rect.width() - (x - rect.min.x) - 20.0);
     ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, t.text);
@@ -521,6 +541,51 @@ pub fn section_header(ui: &mut Ui, title: &str, buttons: &[(Icon, &str)], dim: b
         x -= 24.0;
     }
     out
+}
+
+/// An icon button at `rect` (hover highlight, tooltip); true when clicked.
+pub fn icon_button_at(ui: &mut Ui, id: Id, rect: Rect, icon: Icon, tip: &str) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let resp = ui.interact(rect, id, Sense::click()).on_hover_text(tip);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(ui.painter(), rect.shrink(5.0), icon, t.icon);
+    resp.clicked()
+}
+
+/// A 24×24 icon button laid out in place; true when clicked.
+pub fn icon_button(ui: &mut Ui, icon: Icon, tip: &str) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+    let id = ui.id().with(("icon_button", tip));
+    icon_button_at(ui, id, rect, icon, tip)
+}
+
+/// A bar floating at the top centre of the `canvas` area (a version preview, the focus view):
+/// `add` lays out its contents in a row.
+pub fn canvas_banner<R>(ctx: &egui::Context, id: Id, canvas: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let t = Tokens::get(ctx);
+    egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(pos2(canvas.center().x, canvas.min.y + 12.0))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(t.panel)
+                .stroke(Stroke::new(1.0, t.border))
+                .corner_radius(CornerRadius::same(8))
+                .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 12, spread: 0, color: t.shadow })
+                .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        add(ui)
+                    })
+                    .inner
+                })
+                .inner
+        })
+        .inner
 }
 
 /// Where a dragged row will land: an accent line across `x0..x1` at `y`.
