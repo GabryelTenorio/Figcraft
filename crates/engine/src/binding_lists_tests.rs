@@ -28,7 +28,7 @@ fn setup() -> (Session, NodeId) {
 
 fn blur(s: &Session, r: NodeId, i: usize) -> f64 {
     match s.doc().unwrap().node(r).unwrap().effects.get(i).map(|e| &e.kind) {
-        Some(EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius }) => *radius,
+        Some(EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b)) => b.radius,
         k => panic!("{k:?}"),
     }
 }

@@ -70,12 +70,15 @@ fn transpose(src: &[u8], dst: &mut [u8], w: usize, h: usize) {
     }
 }
 
+/// The largest blur standard deviation drawn (pixels): wider blurs look the same.
+pub const MAX_SIGMA: f64 = 500.0;
+
 /// Gaussian-like blur of the whole pixmap with standard deviation `sigma` (pixels).
 pub fn blur(p: &mut Pixmap, sigma: f64) {
     if !(sigma.is_finite() && sigma > 0.3) {
         return;
     }
-    let sigma = sigma.min(500.0);
+    let sigma = sigma.min(MAX_SIGMA);
     let (w, h) = (p.width() as usize, p.height() as usize);
     let radii = box_sizes(sigma);
     let mut a = p.data().to_vec();

@@ -378,7 +378,7 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
                     sh.spread *= k;
                     sh.offset = (sh.offset.0 * k, sh.offset.1 * k);
                 }
-                EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => *radius *= k,
+                EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => *b = b.scaled(k),
                 EffectKind::Noise(nz) => {
                     nz.size *= k;
                     nz.size_y = nz.size_y.map(|v| v * k);

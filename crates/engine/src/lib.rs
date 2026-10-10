@@ -980,6 +980,8 @@ mod paint_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
+mod progressive_blur_tests;
+#[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
 mod proto_present_tests;

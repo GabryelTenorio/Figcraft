@@ -1,17 +1,18 @@
 //! On-canvas editing handles that sit above the pointer tools: gradient handles (while a
 //! gradient fill is open in the colour picker), image crop handles (while a Crop-mode image
-//! fill is open) and auto layout padding/gap handles (item gaps, wrapped row gaps, grid column
+//! fill is open), progressive blur handles (while a progressive blur's settings are open) and
+//! auto layout padding/gap handles (item gaps, wrapped row gaps, grid column
 //! and row gaps, with the grid's tracks outlined).
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
 use figcraft_color::{ImagePaint, ImageScaleMode, Paint, PaintKind};
-use figcraft_doc::{LayoutMode, NodeId};
+use figcraft_doc::{Blur, Effect, LayoutMode, NodeId};
 use figcraft_geom::Point;
 use serde_json::json;
 
-use crate::FigApp;
 use crate::colorpicker::PickerTarget;
 use crate::theme::{ACCENT, semibold};
+use crate::{FigApp, RightTab};
 
 const PINK: Color32 = Color32::from_rgb(0xF2, 0x48, 0x8C);
 
@@ -23,6 +24,8 @@ enum Drag {
     Padding { id: NodeId, side: usize, start: Pos2, value: f64 },
     /// A gap band: `key` is the prop it edits (`gap` or `crossGap`), `vertical` the drag axis.
     Gap { id: NodeId, start: Pos2, value: f64, vertical: bool, key: &'static str },
+    /// Progressive blur of effect `index`: 0 = start point, 1 = end point.
+    Blur { id: NodeId, index: usize, which: usize },
     /// Image crop: corner 0..4 (tl, tr, br, bl) scales about the opposite corner, 4 moves.
     Crop { id: NodeId, fills: bool, index: usize, which: usize, start: (f64, f64), rect: (f64, f64, f64, f64) },
 }
@@ -74,6 +77,26 @@ fn gradient_target(app: &FigApp) -> Option<(NodeId, bool, usize, figcraft_color:
         PaintKind::Gradient(g) => Some((id, *fills, *index, g.clone())),
         _ => None,
     }
+}
+
+/// The progressive blur being edited: a single selected layer's first visible progressive blur
+/// whose settings are open in the Design panel (layer index, effect).
+fn blur_target(app: &FigApp, ctx: &egui::Context) -> Option<(NodeId, usize, Effect)> {
+    if app.ui.right_tab != RightTab::Design {
+        return None;
+    }
+    let sel = app.session.selection();
+    let [id] = sel.as_slice() else { return None };
+    let n = app.session.doc().ok()?.node(*id)?;
+    let (i, e) =
+        n.effects.iter().enumerate().find(|(i, e)| e.visible && e.blur().is_some_and(Blur::is_progressive) && crate::right::effect_open(ctx, *i))?;
+    Some((*id, i, e.clone()))
+}
+
+/// A progressive blur's start and end points on screen.
+fn blur_points(app: &FigApp, id: NodeId, e: &Effect) -> Option<[Pos2; 2]> {
+    let b = e.blur()?.sanitized();
+    Some([unit_to_screen(app, id, b.start)?, unit_to_screen(app, id, b.end)?])
 }
 
 /// Where `p` projects onto segment a→b: (t in 0..1, distance in points).
@@ -264,6 +287,17 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
         }
         return;
     }
+    if let Some((id, _, e)) = blur_target(app, painter.ctx()) {
+        let Some([a, b]) = blur_points(app, id, &e) else { return };
+        painter.line_segment([a, b], Stroke::new(2.0, Color32::WHITE));
+        painter.line_segment([a, b], Stroke::new(1.0, Color32::from_black_alpha(120)));
+        // The start is hollow (least blur), the end filled (most blur by default).
+        painter.circle_filled(a, 5.0, Color32::WHITE);
+        painter.circle_stroke(a, 5.0, Stroke::new(1.5, ACCENT));
+        painter.circle_filled(b, 5.0, ACCENT);
+        painter.circle_stroke(b, 5.0, Stroke::new(1.5, Color32::WHITE));
+        return;
+    }
     if let Some((id, _, _, _, r)) = crop_target(app) {
         let Some(c) = crop_corners(app, id, r) else { return };
         let outline = vec![c[0], c[1], c[2], c[3], c[0]];
@@ -389,6 +423,17 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
         }
         return true;
     }
+    if let Some((id, index, e)) = blur_target(app, ctx) {
+        let hit = blur_points(app, id, &e).and_then(|pts| pts.iter().position(|p| (*p - pos).length() <= 8.0));
+        if let Some(which) = hit {
+            ctx.set_cursor_icon(egui::CursorIcon::Grab);
+            if pressed {
+                let _ = app.session.begin_interaction("Edit progressive blur");
+                ctx.data_mut(|d| d.insert_temp(drag_id(), Drag::Blur { id, index, which }));
+            }
+            return true;
+        }
+    }
     if let Some((id, fills, index, _, rect)) = crop_target(app) {
         let Some(c) = crop_corners(app, id, rect) else { return false };
         let start = screen_to_unit(app, id, pos).unwrap_or((0.0, 0.0));
@@ -465,6 +510,18 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
             let cmd = if *fills { "fill.set" } else { "stroke.set" };
             let _ = app.session.execute(cmd, &json!({"ids": [id], "index": index, "paint": paint}));
             let _: Option<Paint> = None;
+        }
+        Drag::Blur { id, index, which } => {
+            let Some(u) = screen_to_unit(app, *id, pos) else { return };
+            let Some(mut e) = app.session.doc().ok().and_then(|d| d.node(*id)).and_then(|n| n.effects.get(*index)).cloned() else { return };
+            if let Some(b) = e.blur_mut() {
+                if *which == 0 {
+                    b.start = u;
+                } else {
+                    b.end = u;
+                }
+            }
+            let _ = app.session.execute("effect.set", &json!({"ids": [id], "index": index, "effect": e}));
         }
         Drag::Padding { id, side, start, value } => {
             let d = f64::from(match side {

@@ -6,7 +6,12 @@
 //! alignment survives exactly, text is outlined, images are embedded as data URIs, and shadows
 //! and blurs become SVG filters. Shadow spread offsets the outline like the renderer (the shape
 //! stroked twice the spread wide with mitred joins, cut away with a mask to shrink); inner shadows
-//! are masked, blurred rectangles clipped to the shape.
+//! are masked, blurred rectangles clipped to the shape, over the fills and under the strokes.
+//!
+//! What SVG filters can't match is drawn by the renderer and embedded as PNG images, so it looks
+//! like the canvas: noise grains over the vector layer (crisp, blended with the noise's blend
+//! mode), background blur and glass from a render of what lies under the layer among the exported
+//! layers, and layers with texture or a progressive layer blur whole.
 //!
 //! Import (via usvg) turns an SVG file into a frame of vector nodes.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -21,6 +26,12 @@ use figcraft_color::{Color, GradientKind, Paint, PaintKind};
 use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind, SPREAD_MITER_LIMIT, Shadow};
 use figcraft_geom::{Affine, BezPath, Rect};
 use figcraft_render::shadow::Outline;
+use figcraft_render::{Alone, Pixmap, View, backdrop};
+
+/// Device pixels per page unit of embedded renders (blurs, glass, texture).
+const RASTER_SCALE: f64 = 2.0;
+/// Largest side of an embedded render, in pixels.
+const MAX_RASTER_SIDE: f64 = 4096.0;
 
 #[derive(Clone, Debug)]
 pub struct SvgOptions {
@@ -38,6 +49,10 @@ impl Default for SvgOptions {
 
 struct W<'a> {
     doc: &'a Document,
+    /// The exported layers, in z-order (what backdrops see).
+    roots: &'a [NodeId],
+    /// Page coordinates → SVG coordinates.
+    page: Affine,
     defs: String,
     body: String,
     next: u32,
@@ -81,6 +96,27 @@ fn matrix(a: Affine) -> String {
     format!("matrix({} {} {} {} {} {})", num(c[0]), num(c[1]), num(c[2]), num(c[3]), num(c[4]), num(c[5]))
 }
 
+/// A view of page area `b` at `k` device pixels per unit (fewer when that makes it larger than
+/// [`MAX_RASTER_SIDE`] a side).
+fn raster_view(b: Rect, k: f64) -> Option<View> {
+    if !(b.width() > 0.0 && b.height() > 0.0 && [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) && k.is_finite() && k > 0.0) {
+        return None;
+    }
+    let side = b.width().max(b.height()) * k;
+    let k = if side > MAX_RASTER_SIDE { k * MAX_RASTER_SIDE / side } else { k };
+    let (w, h) = ((b.width() * k).ceil().max(1.0), (b.height() * k).ceil().max(1.0));
+    Some(View { origin: (b.x0, b.y0), scale: k, width: w as u32, height: h as u32 })
+}
+
+/// ` style="mix-blend-mode:…"` for a blend mode other than normal (else nothing).
+fn blend_style(b: figcraft_color::BlendMode) -> String {
+    if matches!(b, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
+        String::new()
+    } else {
+        format!(" style=\"mix-blend-mode:{}\"", b.css())
+    }
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -100,11 +136,7 @@ impl W<'_> {
         if !p.visible || p.opacity <= 0.0 {
             return None;
         }
-        let blend = if matches!(p.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
-            String::new()
-        } else {
-            format!(" style=\"mix-blend-mode:{}\"", p.blend.css())
-        };
+        let blend = blend_style(p.blend);
         match &p.kind {
             PaintKind::Solid { color } => {
                 let a = color.a * p.opacity;
@@ -217,8 +249,8 @@ impl W<'_> {
                     );
                     merge.push(format!("s{i}"));
                 }
-                EffectKind::LayerBlur { radius } => {
-                    let _ = write!(f, "<feGaussianBlur in=\"SourceGraphic\" stdDeviation=\"{}\" result=\"blur\"/>", num(radius / 2.0));
+                EffectKind::LayerBlur(b) => {
+                    let _ = write!(f, "<feGaussianBlur in=\"SourceGraphic\" stdDeviation=\"{}\" result=\"blur\"/>", num(b.sanitized().radius / 2.0));
                 }
                 _ => {}
             }
@@ -242,15 +274,21 @@ impl W<'_> {
             return;
         }
         let xf = xf * n.transform;
-        let mut attrs = String::new();
-        if self.opts.include_ids {
-            let _ = write!(attrs, " id=\"{}\"", esc(&n.name.replace(' ', "_")));
+        let id_attr = if self.opts.include_ids { format!(" id=\"{}\"", esc(&n.name.replace(' ', "_"))) } else { String::new() };
+        if self.raster_whole(id, n, &id_attr) {
+            return;
         }
+        let mut attrs = id_attr;
         if n.opacity < 0.999 {
             let _ = write!(attrs, " opacity=\"{}\"", num(f64::from(n.opacity)));
         }
-        if !matches!(n.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
-            let _ = write!(attrs, " style=\"mix-blend-mode:{}\"", n.blend.css());
+        let grains = self.grain_images(id, n);
+        let blend = blend_style(n.blend);
+        if !blend.is_empty() {
+            attrs.push_str(&blend);
+        } else if !grains.is_empty() {
+            // Grains blend with the layer only, like the canvas's isolated layer.
+            attrs.push_str(" style=\"isolation:isolate\"");
         }
         let spreads = n.effects.iter().any(|e| e.visible && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0));
         let sil = if spreads { figcraft_render::shadow::silhouette(self.doc, n) } else { None };
@@ -261,6 +299,11 @@ impl W<'_> {
             let _ = write!(attrs, " filter=\"url(#{fid})\"");
         }
         let _ = write!(self.body, "<g{attrs}>");
+        if backdrop::has_effects(n)
+            && let Some(img) = self.backdrop_image(id, None)
+        {
+            self.body.push_str(&img);
+        }
         let (w, h) = (n.width, n.height);
         let outline = match &n.kind {
             NodeKind::Group | NodeKind::Page { .. } => None,
@@ -274,6 +317,14 @@ impl W<'_> {
             for p in &n.fills {
                 if let Some(a) = self.paint_attr(p, w, h) {
                     let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" {a}{fr}/>", matrix(xf), path_d(path));
+                }
+            }
+        }
+        // Inner shadows paint over the fills, under the children and strokes.
+        if let Some(o) = &outline {
+            for e in n.effects.iter().filter(|e| e.visible) {
+                if let EffectKind::InnerShadow(s) = &e.kind {
+                    self.inner_shadow(o, s, xf);
                 }
             }
         }
@@ -337,14 +388,92 @@ impl W<'_> {
                 }
             }
         }
-        if let Some(o) = &outline {
-            for e in n.effects.iter().filter(|e| e.visible) {
-                if let EffectKind::InnerShadow(s) = &e.kind {
-                    self.inner_shadow(o, s, xf);
-                }
+        self.body.push_str(&grains);
+        self.body.push_str("</g>");
+    }
+
+    /// `<image>` markup of `pix`, a render of `view`'s page area, with `attrs`; `None` when it is
+    /// empty.
+    fn image(&self, pix: &Pixmap, view: &View, attrs: &str) -> Option<String> {
+        if pix.data().iter().skip(3).step_by(4).all(|a| *a == 0) {
+            return None;
+        }
+        let png = figcraft_render::encode_png(pix).ok()?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let t = self.page * Affine::translate(view.origin) * Affine::scale(1.0 / view.scale.max(1e-9));
+        Some(format!(
+            "<image transform=\"{}\" width=\"{}\" height=\"{}\"{attrs} href=\"data:image/png;base64,{b64}\"/>",
+            matrix(t),
+            pix.width(),
+            pix.height()
+        ))
+    }
+
+    /// Node `id`'s background blurs and glass as an image over its shape, drawn by the renderer
+    /// from what lies under it among the exported layers (`opacity`: the layer's, when the image
+    /// isn't inside its group).
+    fn backdrop_image(&self, id: NodeId, opacity: Option<f32>) -> Option<String> {
+        let view = raster_view(backdrop::shape_bounds(self.doc, id)?, RASTER_SCALE)?;
+        let pix = backdrop::effects_beneath(self.doc, self.roots, id, &view, None)?;
+        let op = opacity.filter(|o| *o < 0.999).map(|o| format!(" opacity=\"{}\"", num(f64::from(o)))).unwrap_or_default();
+        self.image(&pix, &view, &op)
+    }
+
+    /// Layers whose look SVG can't build (texture scatters their pixels, a progressive blur varies
+    /// across them, noise over a blur depends on their order) are drawn by the renderer and
+    /// embedded whole, over their backdrop effects. False when the layer isn't one of them (or
+    /// can't be rendered): it is written as vectors.
+    fn raster_whole(&mut self, id: NodeId, n: &Node, id_attr: &str) -> bool {
+        let has = |f: &dyn Fn(&EffectKind) -> bool| n.effects.iter().any(|e| e.visible && f(&e.kind));
+        let whole = has(&|k| matches!(k, EffectKind::Texture(_)))
+            || has(&|k| matches!(k, EffectKind::LayerBlur(b) if b.is_progressive()))
+            || (has(&|k| matches!(k, EffectKind::Noise(_))) && has(&|k| matches!(k, EffectKind::LayerBlur(_))));
+        if !whole {
+            return false;
+        }
+        let Some(view) = figcraft_render::raster_bounds(self.doc, id).and_then(|b| raster_view(b, RASTER_SCALE)) else { return false };
+        // The renderer applies the layer's opacity; its blend mode applies to the SVG beneath.
+        let Some(img) = figcraft_render::render_alone(self.doc, id, &view, Alone::WithEffects).and_then(|p| self.image(&p, &view, "")) else {
+            return false;
+        };
+        let back = if backdrop::has_effects(n) { self.backdrop_image(id, Some(n.opacity.clamp(0.0, 1.0))) } else { None };
+        let _ = write!(self.body, "<g{id_attr}{}>{}{img}</g>", blend_style(n.blend), back.unwrap_or_default());
+        true
+    }
+
+    /// Node `id`'s noise grains as images over the layer (crisp pixels, the noise's blend mode),
+    /// drawn by the renderer from the layer's content (empty without noise).
+    fn grain_images(&self, id: NodeId, n: &Node) -> String {
+        let noises: Vec<&figcraft_doc::Noise> = n
+            .effects
+            .iter()
+            .filter(|e| e.visible)
+            .filter_map(|e| match &e.kind {
+                EffectKind::Noise(nz) => Some(nz),
+                _ => None,
+            })
+            .collect();
+        if noises.is_empty() {
+            return String::new();
+        }
+        // At least two pixels a grain (grains are twice the noise size across), up to 4 per unit.
+        let world = self.doc.world_transform(id);
+        let sc = world.determinant().abs().sqrt();
+        let cell = noises.iter().map(|nz| nz.grain().0.min(nz.grain().1) * 2.0).fold(f64::INFINITY, f64::min) * sc;
+        let k = if cell.is_finite() && cell > 0.0 { (2.0 / cell).clamp(RASTER_SCALE, 4.0) } else { RASTER_SCALE };
+        let Some(view) = self.doc.world_render_bounds(id).and_then(|b| raster_view(b, k)) else { return String::new() };
+        let Some(layer) = figcraft_render::render_alone(self.doc, id, &view, Alone::Plain) else { return String::new() };
+        let xf = view.transform() * world;
+        let mut out = String::new();
+        for nz in noises {
+            let blend = blend_style(nz.blend);
+            let blend = blend.strip_prefix(" style=\"").and_then(|b| b.strip_suffix('"')).map(|b| format!(";{b}")).unwrap_or_default();
+            let attrs = format!(" style=\"image-rendering:pixelated{blend}\"");
+            if let Some(img) = figcraft_render::grain::grains(&layer, nz, xf, id.0 as u32).and_then(|g| self.image(&g, &view, &attrs)) {
+                out.push_str(&img);
             }
         }
-        self.body.push_str("</g>");
+        out
     }
 
     /// Markup painting `outlines` (local, through `xf`) grown (`spread > 0`) or shrunk by `spread`
@@ -489,8 +618,8 @@ fn sniff_mime(b: &[u8]) -> &'static str {
 /// Export `ids` (in z-order) as one SVG document covering their export bounds.
 pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<String> {
     let bounds: Rect = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b))?;
-    let mut w = W { doc, defs: String::new(), body: String::new(), next: 0, opts };
     let origin = Affine::translate((-bounds.x0, -bounds.y0));
+    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         w.node(*id, origin * parent_xf, 0);
@@ -510,5 +639,7 @@ pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<S
 
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod raster_fx_tests;
 #[cfg(test)]
 mod tests;

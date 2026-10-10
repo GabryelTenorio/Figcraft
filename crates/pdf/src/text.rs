@@ -17,6 +17,7 @@ use krilla::text::{Font, GlyphId, KrillaGlyph};
 use figcraft_color::{GradientKind, Paint, PaintKind};
 
 use crate::draw::{Exporter, above, affine_ok, blend, to_xf, vector_paint};
+use crate::raster::Raster;
 
 /// Glyphs of one face and size on one line, written as one text run.
 struct Run {
@@ -33,7 +34,7 @@ struct Run {
 }
 
 /// Draw a text node; `xf` maps its local space to the page.
-pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine) {
+pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine, inner: &[Raster]) {
     let NodeKind::Text(t) = &n.kind else { return };
     let Some((layout, dy)) = figcraft_text::layout_node(n) else { return };
     let gxf = xf * Affine::translate((0.0, dy));
@@ -46,6 +47,8 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
     let (w, h) = (n.width, n.height);
     let chars: Vec<char> = t.characters.chars().collect();
     let styles: BTreeSet<usize> = layout.glyphs.iter().map(|g| g.style).chain(layout.decorations.iter().map(|d| d.style)).collect();
+    // Every run's fills, then the inner shadows over them, then the strokes on top.
+    let mut stroked = Vec::new();
     for k in styles {
         let fills = layout.styles.get(k).and_then(|st| st.fills.as_ref()).unwrap_or(&n.fills);
         let mut decorations = BezPath::new();
@@ -75,11 +78,15 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
             }
         }
         if n.has_visible_stroke() {
-            let props = StrokeProps { align: StrokeAlign::Center, ..n.stroke.clone() };
-            let area = figcraft_pathops::stroke_center(&outlines, props.weight, &props);
-            for p in &n.strokes {
-                ex.fill(s, &area, FillRule::NonZero, p, w, h, gxf);
-            }
+            stroked.push(outlines);
+        }
+    }
+    ex.place_inner(s, inner);
+    let props = StrokeProps { align: StrokeAlign::Center, ..n.stroke.clone() };
+    for outlines in &stroked {
+        let area = figcraft_pathops::stroke_center(outlines, props.weight, &props);
+        for p in &n.strokes {
+            ex.fill(s, &area, FillRule::NonZero, p, w, h, gxf);
         }
     }
 }
