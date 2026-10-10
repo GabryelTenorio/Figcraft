@@ -50,17 +50,22 @@ fn find(doc: &Document, root: NodeId, k: usize, pred: impl Fn(&figcraft_doc::Nod
     doc.subtree(root).into_iter().filter(|i| doc.node(*i).is_some_and(&pred)).nth(k)
 }
 
-fn render(doc: &Document, page: NodeId, v: &ViewState) -> bool {
-    let (ox, oy) = v.origin();
-    let view = figcraft_render::View { origin: (ox, oy), scale: v.zoom, width: VIEW_W, height: VIEW_H };
-    figcraft_render::render_view(doc, page, &view, &Default::default()).is_some()
+/// What the canvas renders with: a preview, with levels of detail when zoomed out.
+fn canvas() -> figcraft_render::Options {
+    figcraft_render::Options { lod: true, ..Default::default() }
 }
 
-/// Render `v` panned right by `dx` page units through the retained renderer.
+fn render(doc: &Document, page: NodeId, v: &ViewState, opts: &figcraft_render::Options) -> bool {
+    let (ox, oy) = v.origin();
+    let view = figcraft_render::View { origin: (ox, oy), scale: v.zoom, width: VIEW_W, height: VIEW_H };
+    figcraft_render::render_view(doc, page, &view, opts).is_some()
+}
+
+/// Render `v` panned right by `dx` page units through the retained renderer, as the canvas does.
 fn retained(r: &mut figcraft_render::Retained, doc: &std::sync::Arc<Document>, page: NodeId, v: &ViewState, dx: f64) -> bool {
     let (ox, oy) = v.origin();
     let view = figcraft_render::View { origin: (ox + dx, oy), scale: v.zoom, width: VIEW_W, height: VIEW_H };
-    r.render(doc, page, &view, &Default::default()).is_some()
+    r.render(doc, page, &view, &canvas()).is_some()
 }
 
 struct Table {
@@ -99,15 +104,17 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
     table.put(col, "load .figcraft", ms(t));
     drop(back);
 
-    // Rendering a 1440×900 viewport: 100% on the first screen, and zoomed out to fit the page.
+    // Rendering a 1440×900 viewport as the canvas does: 100% on the first screen, and zoomed out to
+    // fit the page (also exactly, as an export of the same area would).
     let bounds = doc.page_content_bounds(page).ok_or_else(|| failed("empty page"))?;
     let mut at100 = ViewState { vw: f64::from(VIEW_W), vh: f64::from(VIEW_H), ..Default::default() };
     at100.cx = f64::from(VIEW_W) / 2.0;
     at100.cy = f64::from(VIEW_H) / 2.0;
-    table.put(col, "render 1440×900 @100%", mean(5, |_| _ = render(&doc, page, &at100)));
+    table.put(col, "render 1440×900 @100%", mean(5, |_| _ = render(&doc, page, &at100, &canvas())));
     let mut fit = at100.clone();
     fit.fit(bounds, 1.0);
-    table.put(col, "render 1440×900 zoomed to fit", mean(3, |_| _ = render(&doc, page, &fit)));
+    table.put(col, "render 1440×900 zoomed to fit", mean(5, |_| _ = render(&doc, page, &fit, &canvas())));
+    table.put(col, "render 1440×900 zoomed to fit, exact (no LOD)", mean(3, |_| _ = render(&doc, page, &fit, &Default::default())));
 
     // The canvas keeps its last image: a pan renders the uncovered strips, an edit the layers'
     // areas.
@@ -116,7 +123,7 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
     // Zoomed out, but with content right up to the edges (a fitted page has margins).
     let mut out = fit.clone();
     out.zoom *= 2.0;
-    table.put(col, "render 1440×900 zoomed out (2× fit)", mean(3, |_| _ = render(&doc, page, &out)));
+    table.put(col, "render 1440×900 zoomed out (2× fit)", mean(5, |_| _ = render(&doc, page, &out, &canvas())));
     for (name, v) in [("pan 40 px @100% (retained)", &at100), ("pan 40 px zoomed out (retained)", &out)] {
         let mut r = figcraft_render::Retained::default();
         let _ = retained(&mut r, &doc, page, v, 0.0);

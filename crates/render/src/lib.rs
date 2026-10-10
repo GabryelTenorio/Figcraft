@@ -8,6 +8,7 @@
 pub mod draw;
 pub mod fx;
 pub mod images;
+pub mod lod;
 pub mod paint;
 pub mod retained;
 
@@ -47,6 +48,10 @@ pub struct Options {
     pub outline_mode: bool,
     /// Nodes to leave out (an editor drawing them itself).
     pub skip: Vec<NodeId>,
+    /// A preview (the canvas): when zoomed out, approximate what's too small on screen to see in
+    /// detail, see [`lod`]. Off for everything that must be exact (exports, thumbnails); no
+    /// effect in outline mode.
+    pub lod: bool,
 }
 
 fn new_pixmap(w: u32, h: u32) -> Option<Pixmap> {
@@ -117,16 +122,18 @@ fn render_bands(doc: &Document, page: NodeId, view: &View, opts: &Options, bands
         })
         .collect();
     let mut out = new_pixmap(view.width, view.height)?;
+    let row = out.width() as usize * 4;
     for (y0, part) in parts {
         let Some(part) = part else { continue };
-        out.draw_pixmap(
-            0,
-            y0 as i32,
-            part.as_ref(),
-            &tiny_skia::PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() },
-            tiny_skia::Transform::identity(),
-            None,
-        );
+        // Bands are as wide as the view: their rows go straight into place.
+        let start = y0 as usize * row;
+        let dst = out.data_mut();
+        let n = part.data().len().min(dst.len().saturating_sub(start));
+        if part.width() == view.width.clamp(1, 16_384)
+            && let (Some(d), Some(s)) = (dst.get_mut(start..start + n), part.data().get(..n))
+        {
+            d.copy_from_slice(s);
+        }
     }
     Some(out)
 }
@@ -141,7 +148,8 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
     if let Some(bg) = bg {
         pix.fill(paint::ts_color(bg));
     }
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip };
+    let lod = opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE;
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip, lod };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
     for c in &p.children {
@@ -152,7 +160,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 
 /// Render several nodes (in z-order) into an existing pixmap through `view`.
 pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap) {
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[] };
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[], lod: false };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         draw::draw_node(&ctx, pix, *id, view.transform() * parent_xf, 0);
@@ -313,6 +321,8 @@ pub fn png_insert_chunk(png: Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod band_tests;
+#[cfg(test)]
+mod lod_tests;
 #[cfg(test)]
 mod retained_tests;
 #[cfg(test)]

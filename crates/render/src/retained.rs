@@ -42,6 +42,7 @@ struct Frame {
     doc: Arc<Document>,
     page: NodeId,
     outline: bool,
+    lod: bool,
     skip: Vec<NodeId>,
     background: Option<figcraft_color::Color>,
     scale: u64,
@@ -132,6 +133,7 @@ impl Retained {
         if let Some(last) = self.last.take()
             && last.page == page
             && last.outline == opts.outline_mode
+            && last.lod == opts.lod
             && last.skip == opts.skip
             && last.background == opts.background
             && last.scale == snapped.scale.to_bits()
@@ -172,6 +174,7 @@ impl Retained {
             doc: doc.clone(),
             page,
             outline: opts.outline_mode,
+            lod: opts.lod,
             skip: opts.skip.clone(),
             background: opts.background,
             scale: view.scale.to_bits(),

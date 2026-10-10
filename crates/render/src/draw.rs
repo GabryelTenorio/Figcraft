@@ -9,8 +9,8 @@ use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind, StrokeAlign};
 use figcraft_geom::{Affine, BezPath, Rect, Shape};
 use tiny_skia::{FillRule, IntRect, Mask, MaskType, Pixmap, PixmapPaint, Transform};
 
-use crate::fx;
 use crate::paint::{prepare, ts_blend};
+use crate::{fx, lod};
 
 /// Shared state for one render.
 pub struct Ctx<'a> {
@@ -20,6 +20,8 @@ pub struct Ctx<'a> {
     pub outline_mode: bool,
     /// Nodes not to draw (e.g. text being edited draws through the editor).
     pub skip: &'a [NodeId],
+    /// Approximate what's too small to see in detail (canvas previews; see [`crate::lod`]).
+    pub lod: bool,
 }
 
 pub fn ts_transform(a: Affine) -> Transform {
@@ -249,9 +251,15 @@ fn device_rect(xf: Affine, r: Rect) -> Rect {
     figcraft_geom::transform_rect_bbox(xf, r)
 }
 
+/// The area text may paint without its glyphs being looked at: its box, generously grown.
+fn text_box_bounds(n: &Node) -> Rect {
+    n.local_rect().inflate(n.height.max(10.0), n.height.max(10.0) * 0.5)
+}
+
 /// Local bounds a node paints into (its box grown by stroke/effect reach, plus unclipped children).
-/// Text that overflows its box counts where its glyphs are, so it isn't culled while visible.
-fn local_paint_bounds(doc: &Document, n: &Node, depth: usize) -> Rect {
+/// Text that overflows its box counts where its glyphs are, so it isn't culled while visible;
+/// text greeked at `greek_scale` (see [`lod::greeked`]) paints only inside [`text_box_bounds`].
+fn local_paint_bounds(doc: &Document, n: &Node, depth: usize, greek_scale: Option<f64>) -> Rect {
     let reach = n.paint_reach();
     let mut r = n.local_rect().inflate(reach, reach);
     let clips = n.clip && n.kind.is_frame_like();
@@ -260,13 +268,16 @@ fn local_paint_bounds(doc: &Document, n: &Node, depth: usize) -> Rect {
             if !c.visible {
                 continue;
             }
-            let cb = local_paint_bounds(doc, c, depth + 1);
+            let cb = local_paint_bounds(doc, c, depth + 1, greek_scale);
             r = r.union(figcraft_geom::transform_rect_bbox(c.transform, cb));
         }
     }
     // Text can overflow its box.
     if let NodeKind::Text(_) = n.kind {
-        r = r.inflate(n.height.max(10.0), n.height.max(10.0) * 0.5);
+        r = r.union(text_box_bounds(n).inflate(reach, reach));
+        if greek_scale.is_some_and(|s| lod::greeked(n, s)) {
+            return r;
+        }
         if let Some((l, dy)) = figcraft_text::layout_node(n)
             && let Some(ink) = l.ink_bounds()
         {
@@ -295,7 +306,7 @@ pub fn effect_margin(n: &Node) -> f64 {
 pub fn paint_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
     let n = doc.node(id)?;
     let m = effect_margin(n).abs();
-    let local = local_paint_bounds(doc, n, 0);
+    let local = local_paint_bounds(doc, n, 0, None);
     Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), local).inflate(m, m))
 }
 
@@ -325,7 +336,7 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     }
     let xf = parent_xf * n.transform;
     let (pw, ph) = (pix.width(), pix.height());
-    let local = local_paint_bounds(ctx.doc, n, 0);
+    let local = local_paint_bounds(ctx.doc, n, 0, ctx.lod.then_some(ctx.scale));
     let dev = device_rect(xf, local);
     // Effects that read outside (blur) need a margin when culling.
     let blur_margin = effect_margin(n) * ctx.scale;
@@ -335,6 +346,10 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     }
     if ctx.outline_mode {
         draw_outline(ctx, pix, n, xf, depth);
+        return;
+    }
+    if ctx.lod && dev.width().max(dev.height()) < lod::TINY_PX && lod::splattable(ctx.doc, n, 0) {
+        lod::splat_subtree(ctx, pix, n, xf, None, 1.0, depth);
         return;
     }
     if !needs_layer(n) {
@@ -493,6 +508,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize)
             draw_children(ctx, pix, n, xf, depth);
         }
         NodeKind::Group => draw_children(ctx, pix, n, xf, depth),
+        NodeKind::Text(_) if ctx.lod && lod::greeked(n, ctx.scale) => lod::greek_text(pix, n, xf, text_box_bounds(n)),
         NodeKind::Text(t) => {
             let Some((layout, dy)) = figcraft_text::layout_node(n) else { return };
             let gxf = xf * Affine::translate((0.0, dy));
@@ -524,16 +540,19 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize)
             let _ = t;
         }
         _ => {
-            let outline = node_outline(doc, n);
             let closed = figcraft_doc::geometry::is_closed(n) || matches!(n.kind, NodeKind::BooleanOp { .. });
-            if let Some((path, rule)) = &outline
+            let splatted = ctx.lod && closed && lod::splat_fills(pix, n, xf);
+            let clips = n.clip && n.kind.is_frame_like() && !n.children.is_empty();
+            // The outline fills, clips children to rounded corners and strokes booleans.
+            let outline = if splatted && !(clips && n.corners.uniform() != Some(0.0)) { None } else { node_outline(doc, n) };
+            if !splatted
+                && let Some((path, rule)) = &outline
                 && closed
                 && let Some(tp) = ts_path(path)
             {
                 fill_with(pix, &tp, &n.fills, w, h, xf, *rule, doc, None);
             }
             if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.children.is_empty() {
-                let clips = n.clip && n.kind.is_frame_like();
                 if clips {
                     draw_children_clipped(ctx, pix, n, xf, depth, outline.as_ref().map(|(p, _)| p));
                 } else {
@@ -625,7 +644,11 @@ fn draw_children_clipped(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, dept
     draw_children(ctx, &mut layer, n, lxf, depth);
     let rect_clip = n.corners.uniform() == Some(0.0) && is_axis_aligned(xf);
     if rect_clip {
-        pix.draw_pixmap(lx, ly, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        if ctx.lod {
+            lod::blit_over(pix, lx, ly, &layer);
+        } else {
+            pix.draw_pixmap(lx, ly, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+        }
         return;
     }
     if let Some(cp) = clip.and_then(ts_path)

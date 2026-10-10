@@ -43,7 +43,8 @@ pub fn screen_image(pix: &Pixmap, profile: ColorProfile) -> egui::ColorImage {
 fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     #[cfg(not(target_arch = "wasm32"))]
     let t0 = std::time::Instant::now();
-    let opts = figcraft_render::Options { outline_mode: job.outline, skip: job.skip.clone(), ..Default::default() };
+    // The canvas is a preview: what's too small to see in detail at this zoom is approximated.
+    let opts = figcraft_render::Options { outline_mode: job.outline, skip: job.skip.clone(), lod: true, ..Default::default() };
     let (view, pix, work) = retained.render(&job.doc, job.page, &job.view, &opts)?;
     let image = screen_image(pix, job.doc.color_profile);
     #[cfg(not(target_arch = "wasm32"))]

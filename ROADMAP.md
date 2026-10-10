@@ -120,13 +120,18 @@ dimension measured side by side.
    ~7.5 ms. The layers panel lays out only the rows in view (every screen expanded at 50k: 39 →
    0.6 ms a frame); text layouts are shared instead of re-formatted per lookup; overflowing text is
    culled by its glyphs. At 10k: full 1440×900 renders 7–15 ms, single-layer edits ~10 µs, hit
-   tests ~26 µs. *Left:* zoomed-out renders at 50k (~40 ms: tiles or levels of detail), save/load
-   at 50k (~0.7 s each), a real-world file corpus, Windows/Linux/browser QA, accessibility. 40–60 h.
+   tests ~26 µs. Zoomed out (50% and below) the canvas draws levels of detail: layers under 2 px
+   land as their averaged colour, text under 4 px is greeked into bars, small rectangles and clip
+   layers skip the path pipeline (exports and closer zooms stay exact): a whole 50k-layer page
+   renders in ~8 ms instead of ~50 ms. `.figcraft` at 50k layers saves in ~0.09 s instead of ~1 s
+   and loads in ~0.16 s instead of ~0.86 s (JSON streamed to and from the document without a
+   value tree, layer fields at their defaults left out: 63 → 22 MB of JSON, old files still
+   open). *Left:* a real-world file corpus, Windows/Linux/browser QA, accessibility. 30–50 h.
 
 ### Where we're going
 
-- **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes (in progress).
+- **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); variable
+  width strokes (in progress).
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 

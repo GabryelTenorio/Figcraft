@@ -92,7 +92,7 @@ fn check(r: &mut Retained, doc: &Arc<Document>, page: NodeId, v: &View) -> Work 
 /// Equal up to anti-aliasing: a part rendered on its own sees its paths translated by a whole
 /// number of pixels, and float rounding can move an edge sample (a fraction of one pixel's
 /// coverage along a curve). Stale or missing areas differ by whole colours, over many pixels.
-fn assert_same(a: &Pixmap, b: &Pixmap, what: &str) {
+pub(crate) fn assert_same(a: &Pixmap, b: &Pixmap, what: &str) {
     assert_eq!((a.width(), a.height()), (b.width(), b.height()));
     let (mut slight, mut big, mut first) = (0usize, 0usize, None);
     for (i, (x, y)) in a.data().iter().zip(b.data()).enumerate() {
