@@ -1540,7 +1540,7 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 /// The Inspect tab: size and position, and code for the selected layer.
 /// One group of inspected properties: label, value (with a swatch for colours) and the style or
 /// variable it comes from. Clicking a row copies its value.
-fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspect::Section) {
+pub(crate) fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspect::Section) {
     let t = Tokens::get(ui.ctx());
     widgets::separator(ui);
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());

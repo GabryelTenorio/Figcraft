@@ -6,7 +6,7 @@ use crate::color::Color;
 use crate::proto::*;
 use crate::{Collection, Mode, NodeId, Variable, VariableType, VariableValue, Variables};
 
-fn vars() -> Variables {
+pub(crate) fn vars() -> Variables {
     let values = |a: VariableValue, b: VariableValue| BTreeMap::from([("light".to_string(), a), ("dark".to_string(), b)]);
     let var = |id: &str, kind, values| Variable {
         id: id.into(),

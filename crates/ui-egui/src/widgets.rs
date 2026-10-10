@@ -130,7 +130,8 @@ fn number_field_impl(
             out = Some(FieldEdit::Scrub(nv, lead_resp.drag_stopped()));
         }
     }
-    if editing.is_none() && field_resp.clicked() {
+    let started = editing.is_none() && field_resp.clicked();
+    if started {
         editing = Some(value.map(fmt_num).unwrap_or_default());
         ui.data_mut(|d| d.insert_temp(editing_id, editing.clone().unwrap_or_default()));
         ui.memory_mut(|m| m.request_focus(id.with("te")));
@@ -146,6 +147,7 @@ fn number_field_impl(
                 .vertical_align(egui::Align::Center);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(edit_rect.shrink2(vec2(0.0, 4.0))));
             let r = child.add(te);
+            keep_focus(&r, started);
             if ui.data(|d| d.get_temp::<bool>(id.with("selectall"))).unwrap_or(false)
                 && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id.with("te"))
             {
@@ -338,7 +340,8 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
     } else if resp.hovered() {
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
-    if editing.is_none() && resp.clicked() {
+    let started = editing.is_none() && resp.clicked();
+    if started {
         editing = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(id.with("te")));
     }
@@ -353,6 +356,7 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
                     .font(regular(11.0))
                     .desired_width(rect.width() - 16.0),
             );
+            keep_focus(&r, started);
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if esc {
@@ -370,6 +374,15 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
         }
     }
     out
+}
+
+/// Focus for a field's editor that appears on the click that starts editing: egui takes focus
+/// away from a widget a click lands outside of, and a widget that is new this frame isn't under
+/// the pointer yet, so the focus is asked for again once it exists.
+fn keep_focus(r: &Response, started: bool) {
+    if started && !r.has_focus() {
+        r.request_focus();
+    }
 }
 
 /// A dropdown-looking button showing `label`; returns the response (open a menu on click).

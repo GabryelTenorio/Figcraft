@@ -1,11 +1,12 @@
 //! Prototype actions run by the prototype player on its own copy of the document: set variable (a
 //! value or an expression), set variable mode, choosing the branch of a conditional action, and
-//! where navigating to a section goes.
+//! where navigating to a section goes, and the hotspots a screen offers.
 
 use std::collections::HashMap;
 
 use figcraft_doc::proto::{Action, ConditionalBlock, Expr};
 use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue};
+use figcraft_geom::Rect;
 use serde_json::Value;
 
 use crate::cmd::styles::apply_bindings;
@@ -106,4 +107,43 @@ pub fn remember_sections(doc: &Document, frame: NodeId, visited: &mut HashMap<No
             visited.insert(a, frame);
         }
     }
+}
+
+/// The hotspots of the screen `root` (a presented frame or overlay): its visible layers with
+/// interactions, bottom-most first, with their bounds on the page clipped by the frames around
+/// them that clip content (the presenter flashes them after a click where nothing reacts).
+pub fn hotspots(doc: &Document, root: NodeId) -> Vec<(NodeId, Rect)> {
+    let mut out = Vec::new();
+    // Each visible layer's clip: its bounds cut by the clipping frames around it (inside `root`).
+    let mut clips: HashMap<NodeId, Option<Rect>> = HashMap::new();
+    for id in doc.subtree(root) {
+        let Some(n) = doc.node(id) else { continue };
+        let parent_clip = match n.parent.filter(|_| id != root) {
+            Some(p) => match clips.get(&p) {
+                Some(c) => *c,
+                // The parent is hidden.
+                None => continue,
+            },
+            None => None,
+        };
+        if !n.visible {
+            continue;
+        }
+        let bounds = doc.world_bounds(id);
+        let own = match (parent_clip, bounds) {
+            (Some(c), Some(b)) if n.clip && n.kind.is_frame_like() => Some(c.intersect(b)),
+            (None, Some(b)) if n.clip && n.kind.is_frame_like() => Some(b),
+            (c, _) => c,
+        };
+        clips.insert(id, own);
+        if n.interactions.is_empty() {
+            continue;
+        }
+        let Some(b) = bounds else { continue };
+        let r = parent_clip.map_or(b, |c| c.intersect(b));
+        if r.width() > 0.0 && r.height() > 0.0 {
+            out.push((id, r));
+        }
+    }
+    out
 }

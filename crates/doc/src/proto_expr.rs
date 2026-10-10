@@ -117,7 +117,8 @@ impl Expr {
         }
     }
 
-    /// Readable text, variables by name (`count + 1`, `open == false`).
+    /// Readable text, variables by name (`count + 1`, `open == false`); [`Expr::parse`] reads it
+    /// back.
     pub fn display(&self, vars: &Variables) -> String {
         self.display_at(vars, 0)
     }
@@ -128,13 +129,17 @@ impl Expr {
         }
         match self {
             Expr::Value(VariableValue::Alias(id)) => vars.get(id).map_or_else(|| "(missing variable)".into(), |v| v.name.clone()),
-            Expr::Value(VariableValue::String(s)) => format!("\"{s}\""),
+            Expr::Value(VariableValue::String(s)) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            // Exact numbers and `#` colours, so the text reads back as the same expression.
+            Expr::Value(VariableValue::Number(n)) => format!("{n}"),
+            Expr::Value(VariableValue::Color(c)) => c.to_css_hex(),
             Expr::Value(v) => v.display(),
             Expr::Op { op, args } => {
                 let parts: Vec<String> = args
                     .iter()
                     .map(|a| match a {
-                        Expr::Op { args, .. } if args.len() > 1 => format!("({})", a.display_at(vars, depth + 1)),
+                        // `not` binds looser than what it may sit in (`(not a) == b`).
+                        Expr::Op { op, args } if args.len() > 1 || *op == ExprOp::Not => format!("({})", a.display_at(vars, depth + 1)),
                         _ => a.display_at(vars, depth + 1),
                     })
                     .collect();

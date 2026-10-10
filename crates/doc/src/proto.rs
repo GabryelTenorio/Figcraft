@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 #[path = "proto_expr.rs"]
 mod expr;
 pub use expr::*;
+#[path = "proto_expr_parse.rs"]
+mod expr_parse;
+pub use expr_parse::*;
 
 /// Deepest nesting of conditional blocks followed.
 pub const MAX_ACTION_DEPTH: usize = 16;
