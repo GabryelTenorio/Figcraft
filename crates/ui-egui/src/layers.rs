@@ -217,13 +217,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                 rename_done = Some((id, new));
             }
         } else {
-            ui.painter().text(
-                pos2(r.min.x + 10.0, r.center().y),
-                Align2::LEFT_CENTER,
-                &name,
-                if id == cur { semibold(11.0) } else { regular(11.0) },
-                t.text,
-            );
+            let font = if id == cur { semibold(11.0) } else { regular(11.0) };
+            crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 10.0, r.center().y), &name, font, t.text, r.width() - 14.0);
         }
         if resp.clicked() {
             select = Some(id);
@@ -349,6 +344,75 @@ fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
             matching(doc, *c, q, out);
         }
     }
+}
+
+/// Arrow keys while the layers panel has the keyboard: Up/Down select the row above or below
+/// (Shift extends the range from the anchor), Left collapses a row or goes to its parent, Right
+/// expands a row or goes to its first child. Returns whether the key was used.
+pub(crate) fn key_nav(app: &mut FigApp, key: egui::Key, shift: bool) -> bool {
+    use egui::Key;
+    if !matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight) {
+        return false;
+    }
+    let Ok(ds) = app.session.ds() else { return false };
+    let (doc, page, sel) = (ds.doc.clone(), ds.page, ds.selection.clone());
+    // The rows as listed: the expanded tree, or the search results.
+    let filter = app.ui.layer_filter.trim().to_lowercase();
+    let mut rows = Vec::new();
+    if filter.is_empty() {
+        collect(&doc, page, 0, &app.ui.expanded, &mut rows);
+    } else {
+        matching(&doc, page, &filter, &mut rows);
+    }
+    let select = |app: &mut FigApp, ids: Vec<NodeId>, anchor: NodeId| {
+        app.ui.layer_anchor = Some(anchor);
+        app.run("select.set", json!({"ids": ids}));
+    };
+    let Some((i, row)) = sel.last().and_then(|c| rows.iter().enumerate().find(|(_, r)| r.id == *c)) else {
+        // Nothing listed is selected: Down starts at the top, Up at the bottom.
+        let first = if key == Key::ArrowUp { rows.last() } else { rows.first() };
+        if let Some(r) = first.filter(|_| matches!(key, Key::ArrowUp | Key::ArrowDown)) {
+            select(app, vec![r.id], r.id);
+        }
+        return true;
+    };
+    let (cur, depth, has_kids) = (row.id, row.depth, row.has_kids);
+    match key {
+        Key::ArrowUp | Key::ArrowDown => {
+            let j = if key == Key::ArrowUp { i.checked_sub(1) } else { Some(i + 1).filter(|j| *j < rows.len()) };
+            let Some((j, next)) = j.and_then(|j| rows.get(j).map(|r| (j, r.id))) else { return true };
+            if shift {
+                // The rows from the anchor to the new one, with the moving end last.
+                let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).unwrap_or(cur);
+                let a = rows.iter().position(|r| r.id == anchor).unwrap_or(i);
+                let ids: Vec<NodeId> = if a <= j {
+                    rows.get(a..=j).unwrap_or_default().iter().map(|r| r.id).collect()
+                } else {
+                    rows.get(j..=a).unwrap_or_default().iter().rev().map(|r| r.id).collect()
+                };
+                select(app, ids, anchor);
+            } else {
+                select(app, vec![next], next);
+            }
+        }
+        Key::ArrowLeft => {
+            if has_kids && filter.is_empty() && app.ui.expanded.contains(&cur) {
+                app.ui.expanded.remove(&cur);
+            } else if let Some(p) = doc.node(cur).and_then(|n| n.parent).filter(|p| *p != page) {
+                select(app, vec![p], p);
+            }
+        }
+        _ => {
+            if has_kids && filter.is_empty() {
+                if !app.ui.expanded.contains(&cur) {
+                    app.ui.expanded.insert(cur);
+                } else if let Some(c) = rows.get(i + 1).filter(|r| r.depth == depth + 1).map(|r| r.id) {
+                    select(app, vec![c], c);
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Expand or collapse `id` and everything inside it (Alt-click on a disclosure triangle).
@@ -568,13 +632,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     regular(11.0)
                 };
                 let name = if n.name.is_empty() { n.kind.label().to_string() } else { n.name.clone() };
+                // Room left of the lock and eye buttons.
                 let max_w = (rr.max.x - 56.0 - name_x).max(20.0);
-                let galley = ui.painter().layout(name, font, col, max_w);
-                ui.painter().with_clip_rect(Rect::from_min_max(pos2(name_x, r.min.y), pos2(rr.max.x - 52.0, r.max.y))).galley(
-                    pos2(name_x, r.center().y - galley.size().y / 2.0),
-                    galley,
-                    col,
-                );
+                crate::bidi::paint_name(ui.painter(), pos2(name_x, r.center().y), &name, font, col, max_w);
             }
             // Lock / eye on hover (or when set).
             let show_lock = resp.hovered() || n.locked;
@@ -672,7 +732,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             n => format!("{n} layers"),
         };
         let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("layer_drag_ghost")));
-        let galley = painter.layout_no_wrap(label, regular(11.0), t.text);
+        let galley = crate::bidi::name_galley(&painter, &label, regular(11.0), t.text, 240.0);
         let r = Rect::from_min_size(p + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
         painter.rect_filled(r, CornerRadius::same(5), t.panel);
         painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
@@ -737,6 +797,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         }
     }
     if let Some((id, m)) = clicked {
+        app.ui.layers_focus = true;
         let order: Vec<NodeId> = rows.iter().map(|r| r.id).collect();
         let pos = |x: NodeId| order.iter().position(|o| *o == x);
         let anchor = app.ui.layer_anchor.filter(|a| sel.contains(a)).and_then(pos);

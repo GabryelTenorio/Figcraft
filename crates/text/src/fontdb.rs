@@ -704,3 +704,15 @@ pub fn scan_system_fonts() {
         crate::clear_layout_cache();
     }
 }
+
+/// Whether the system fonts were indexed ([`scan_system_fonts`] finished; always false on the web).
+pub fn system_fonts_scanned() -> bool {
+    db().read().unwrap_or_else(std::sync::PoisonError::into_inner).system_scanned
+}
+
+/// The first of `families` (embedded or system) whose regular face draws `c`, for a UI toolkit
+/// that needs a font for a script its own fonts lack.
+pub fn face_with_char(c: char, families: &[&str]) -> Option<Arc<Face>> {
+    let mut db = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    families.iter().filter_map(|f| db.find(f, "Regular")).find(|f| f.has_char(c))
+}

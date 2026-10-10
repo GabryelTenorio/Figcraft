@@ -48,6 +48,11 @@ pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix:
     number_field_bindable(ui, id, lead, value, suffix, width, step, None).0
 }
 
+/// [`number_field`] that shows `empty` (dim) for no value instead of "Mixed" (e.g. "Auto").
+pub fn number_field_or(ui: &mut Ui, id: Id, value: Option<f64>, empty: &str, width: f32, step: f64) -> Option<FieldEdit> {
+    number_field_impl(ui, id, Lead::None, value, "", width, step, None, empty).0
+}
+
 /// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
 /// a variable button on hover, `Some(Some(name))` = bound (shows the name; click to change, the
 /// detach button unbinds).
@@ -60,6 +65,20 @@ pub fn number_field_bindable(
     width: f32,
     step: f64,
     binding: Option<Option<&str>>,
+) -> (Option<FieldEdit>, Option<BindEvent>) {
+    number_field_impl(ui, id, lead, value, suffix, width, step, binding, "Mixed")
+}
+
+fn number_field_impl(
+    ui: &mut Ui,
+    id: Id,
+    lead: Lead,
+    value: Option<f64>,
+    suffix: &str,
+    width: f32,
+    step: f64,
+    binding: Option<Option<&str>>,
+    empty: &str,
 ) -> (Option<FieldEdit>, Option<BindEvent>) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
@@ -171,7 +190,7 @@ pub fn number_field_bindable(
         None => {
             let s = match value {
                 Some(v) => format!("{}{}", fmt_num(v), suffix),
-                None => "Mixed".into(),
+                None => empty.to_string(),
             };
             let col = if value.is_some() { t.text } else { t.text_secondary };
             ui.painter().text(pos2(edit_rect.min.x, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), col);
@@ -590,13 +609,18 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     if buf.is_none() && (focused || resp.clicked()) {
         buf = Some(value.to_string());
         ui.memory_mut(|m| m.request_focus(te_id));
+        // A rename starts with the whole name selected.
+        let mut state = egui::TextEdit::load_state(ui.ctx(), te_id).unwrap_or_default();
+        let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(value.chars().count()));
+        state.cursor.set_char_range(Some(all));
+        state.store(ui.ctx(), te_id);
     }
     match buf {
         Some(mut text) => {
             ui.painter().rect_filled(rect.expand(2.0), CornerRadius::same(4), t.panel);
             ui.painter().rect_stroke(rect.expand(2.0), CornerRadius::same(4), Stroke::new(1.0, t.accent), StrokeKind::Inside);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-            let r = child.add(egui::TextEdit::singleline(&mut text).id(te_id).frame(egui::Frame::NONE).font(font).desired_width(rect.width()));
+            let r = crate::bidi::single_line(&mut child, te_id, &mut text, font, rect.width());
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
             if esc {
@@ -616,8 +640,7 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
             if resp.hovered() {
                 ui.painter().rect_filled(rect.expand(2.0), CornerRadius::same(4), t.hover);
             }
-            let galley = ui.painter().layout(value.to_string(), font, t.text, rect.width());
-            ui.painter().with_clip_rect(rect).galley(pos2(rect.min.x, rect.center().y - galley.size().y / 2.0), galley, t.text);
+            crate::bidi::paint_name(ui.painter(), rect.left_center(), value, font, t.text, rect.width());
             None
         }
     }

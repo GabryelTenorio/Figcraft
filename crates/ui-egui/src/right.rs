@@ -181,11 +181,16 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
 }
 
 pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
-    menu_item_with(ui, label, shortcut, |_, _, _| {})
+    menu_row(ui, label, shortcut, |_, _, _| {}).clicked()
 }
 
 /// A menu row with art drawn into it after the label (`art(painter, row rect, text colour)`).
 pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
+    menu_row(ui, label, shortcut, art).clicked()
+}
+
+/// A menu row (see [`menu_item_with`]); its response tells hovering too.
+pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width().max(180.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
@@ -204,7 +209,7 @@ pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce
         );
     }
     art(ui.painter(), r, col);
-    resp.clicked()
+    resp
 }
 
 /// A menu item with a check mark when `on` (the unchecked ones line up with it).
@@ -229,7 +234,8 @@ pub(crate) fn block(ui: &mut Ui, h: f32, inset_y: f32, add: impl FnOnce(&mut Ui)
 
 fn design(app: &mut FigApp, ui: &mut Ui) {
     let Ok(ds) = app.session.ds() else { return };
-    let doc = ds.doc.clone();
+    // The panel shows the document itself, not a live text preview over it.
+    let doc = ds.text_preview.clone().unwrap_or_else(|| ds.doc.clone());
     let sel = ds.selection.clone();
     let vector_edit = ds.vector_edit.clone();
     if sel.is_empty() {

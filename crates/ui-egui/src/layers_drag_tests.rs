@@ -9,14 +9,14 @@ use serde_json::json;
 
 use crate::{FigApp, NoServices};
 
-struct Ui {
-    ctx: egui::Context,
-    app: FigApp,
+pub(crate) struct Ui {
+    pub(crate) ctx: egui::Context,
+    pub(crate) app: FigApp,
     time: f64,
 }
 
 impl Ui {
-    fn new(s: Session) -> Self {
+    pub(crate) fn new(s: Session) -> Self {
         let mut u = Self { ctx: egui::Context::default(), app: FigApp::new(s, Box::new(NoServices)), time: 0.0 };
         for _ in 0..3 {
             u.frame(vec![]);
@@ -24,7 +24,7 @@ impl Ui {
         u
     }
 
-    fn frame(&mut self, events: Vec<Event>) {
+    pub(crate) fn frame(&mut self, events: Vec<Event>) {
         self.time += 1.0 / 60.0;
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
@@ -33,7 +33,7 @@ impl Ui {
     }
 
     /// The middle of `id`'s row in the layers panel (found by hovering down the panel).
-    fn row_at(&mut self, id: NodeId) -> Pos2 {
+    pub(crate) fn row_at(&mut self, id: NodeId) -> Pos2 {
         let mut hits = Vec::new();
         for y in (60..900).step_by(2) {
             let p = Pos2::new(150.0, y as f32);
@@ -50,7 +50,7 @@ impl Ui {
         Pos2::new(150.0, (hits[0] + hits[hits.len() - 1]) / 2.0)
     }
 
-    fn button(&mut self, p: Pos2, pressed: bool) {
+    pub(crate) fn button(&mut self, p: Pos2, pressed: bool) {
         self.frame(vec![
             Event::PointerMoved(p),
             Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() },

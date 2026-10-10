@@ -287,7 +287,14 @@ fn library_title(ui: &mut Ui, w: f32, name: &str, open: bool) -> bool {
     let (hr, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
     let chevron = Rect::from_center_size(pos2(hr.min.x + PAD + 5.0, hr.center().y), vec2(12.0, 12.0));
     icons::paint(ui.painter(), chevron, if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
-    ui.painter().text(pos2(chevron.max.x + 6.0, hr.center().y), Align2::LEFT_CENTER, name, semibold(11.0), t.text);
+    crate::bidi::paint_name(
+        ui.painter(),
+        pos2(chevron.max.x + 6.0, hr.center().y),
+        name,
+        semibold(11.0),
+        t.text,
+        hr.max.x - chevron.max.x - 6.0 - PAD,
+    );
     resp.on_hover_text(if open { "Library: click to collapse" } else { "Library: click to expand" }).clicked()
 }
 
@@ -336,8 +343,7 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, act:
                 ),
             }
             let label = Rect::from_min_size(pos2(x, r.max.y + 2.0), vec2(tile, TILE_LABEL - 4.0));
-            let galley = ui.painter().layout(item.name.clone(), regular(11.0), t.text, tile);
-            ui.painter().with_clip_rect(label).galley(pos2(x, label.center().y - galley.size().y / 2.0), galley, t.text);
+            crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.name, regular(11.0), t.text, tile);
             let resp = resp.on_hover_text(format!("{}\nDrag onto the canvas, or click to place in the middle of the view", item.name));
             if resp.drag_started() {
                 *act = Some(Act::Drag(AssetDrag { src: src.clone(), component: item.id, set: item.set }));
@@ -372,7 +378,7 @@ fn style_rows(ui: &mut Ui, w: f32, src: &Source, list: &[StyleRow], act: &mut Op
         if let Some(i) = icon {
             icons::paint(ui.painter(), icon_rect, i, t.icon_secondary);
         }
-        ui.painter().text(pos2(r.min.x + 40.0, r.center().y), Align2::LEFT_CENTER, &s.name, regular(11.0), t.text);
+        crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 40.0, r.center().y), &s.name, regular(11.0), t.text, w - 40.0 - PAD);
         if resp.on_hover_text(format!("{}\nClick to apply to the selection", s.name)).clicked() {
             *act = Some(Act::Style(src.clone(), s.id.clone()));
         }

@@ -132,6 +132,10 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
         app.run("edit.delete", json!({}));
         return true;
     }
+    // Arrows move through the layers panel while it has the keyboard.
+    if app.ui.layers_focus && !m.command && !m.alt && crate::layers::key_nav(app, key, m.shift) {
+        return true;
+    }
     // Arrow nudges.
     let (dx, dy) = match key {
         Key::ArrowLeft => (-1.0, 0.0),

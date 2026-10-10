@@ -23,6 +23,7 @@ pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
 pub mod textedit;
+pub mod textpreview;
 pub mod tools;
 pub mod vectoredit;
 
@@ -234,6 +235,9 @@ pub struct DocState {
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
+    /// The document under a live text preview (a hovered text style or font instance, a dragged
+    /// axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
+    pub text_preview: Option<Arc<Document>>,
     /// The document as of the last version saved (or as opened): autosaves only follow changes.
     checkpoint: Arc<Document>,
 }
@@ -264,6 +268,7 @@ impl DocState {
         if doc.pages.is_empty() {
             doc.repair();
         }
+        doc.link_layer_text_styles();
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
         let mut st = Self {
@@ -284,6 +289,7 @@ impl DocState {
             versions: Vec::new(),
             versions_changed: false,
             preview: None,
+            text_preview: None,
         };
         st.zoom_to_fit();
         st
@@ -312,7 +318,7 @@ impl DocState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        let doc = self.preview.as_ref().map_or(&self.doc, |p| &p.doc);
+        let doc = self.preview.as_ref().map(|p| &p.doc).or(self.text_preview.as_ref()).unwrap_or(&self.doc);
         !Arc::ptr_eq(doc, &self.saved_doc) || self.versions_changed
     }
 
@@ -540,6 +546,16 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        if textpreview::COMMANDS.contains(&id) {
+            // A live preview is no edit: no undo step, normalisation or rollback here.
+            let r = guard::run(id, || (spec.run)(self, params));
+            if r.is_err() {
+                textpreview::end(self);
+            }
+            return r;
+        }
+        // Every other command acts on the document itself, not on a live text preview.
+        textpreview::end(self);
         if ENDS_PREVIEW.contains(&id)
             && let Ok(ds) = self.ds_mut()
         {
@@ -629,6 +645,7 @@ impl Session {
 
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
+        textpreview::end(self);
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));
@@ -682,6 +699,7 @@ impl Session {
     }
 
     pub fn undo(&mut self) -> Result<bool> {
+        textpreview::end(self);
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.undo".into(), PREVIEW_READ_ONLY.into()));
@@ -702,6 +720,7 @@ impl Session {
     }
 
     pub fn redo(&mut self) -> Result<bool> {
+        textpreview::end(self);
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.redo".into(), PREVIEW_READ_ONLY.into()));
@@ -802,6 +821,10 @@ pub fn normalize(doc: &mut Document, before: &Document) {
             cmd::styles::propagate_style(doc, &sid);
         }
     }
+    touched.extend(doc.take_dirty());
+    // Text chars edited away from their text style unlink from it.
+    let live_now: Vec<NodeId> = touched.iter().copied().filter(|i| doc.contains(*i)).collect();
+    cmd::styles::sync_text_styles(doc, &live_now);
     touched.extend(doc.take_dirty());
     let live = |doc: &Document, t: &BTreeSet<NodeId>| -> Vec<NodeId> { t.iter().copied().filter(|i| doc.contains(*i)).collect() };
     // 0b. Fill and hug only where they can apply (a layer moved out of auto layout, a parent that
@@ -926,6 +949,8 @@ mod style_tests;
 mod tests;
 #[cfg(test)]
 mod text_fill_tests;
+#[cfg(test)]
+mod text_style_picker_tests;
 #[cfg(test)]
 mod variable_tests;
 #[cfg(test)]
