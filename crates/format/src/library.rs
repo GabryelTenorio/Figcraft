@@ -87,6 +87,8 @@ pub(crate) fn read<R: Read + Seek>(z: &mut zip::ZipArchive<R>, own: &BTreeMap<St
     // Keep what the snapshot really holds; clip what people see.
     manifest.components.retain(|a| doc.node(a.id).is_some_and(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. })));
     manifest.styles.retain(|s| doc.styles.iter().any(|x| x.id == s.id));
+    manifest.collections.retain(|c| doc.variables.collections.iter().any(|x| x.id == c.id));
+    manifest.variables.retain(|v| doc.variables.variables.iter().any(|x| x.id == v.id && x.collection == v.collection));
     manifest.name = manifest.name.chars().take(MAX_NAME).collect();
     manifest.description = manifest.description.chars().take(MAX_DESCRIPTION).collect();
     Ok(Some(PublishedLibrary { manifest, doc: Arc::new(doc) }))

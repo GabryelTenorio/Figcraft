@@ -100,7 +100,8 @@ Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
 every UI icon at 12, 16, 24 and 32 px over the window, for reviewing the icon set), `colorPicker`
 (`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
-or a collection id or name to show: the Variables editor), `layerFilter` (string:
+or a collection id or name to show, or `{library, collection?}` for an enabled library's collection: the
+Variables editor), `layerFilter` (string:
 open the layers search with that filter; `null` closes it), `collapseLayers` (true: collapse the
 layers tree), `exportPreview` (bool: the Design panel Export section's preview), `preview` (true or a
 frame id: open the prototype preview pane like `proto.preview`; false or `null` closes it),

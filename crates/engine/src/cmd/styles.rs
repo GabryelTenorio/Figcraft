@@ -147,49 +147,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Bind variable",
             "{ids?, field (fill|stroke|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…), variable (null unbinds)}",
             true,
-            |s, p| {
-                let field = req_string("variable.bind", p, "field")?;
-                let var = string(p, "variable");
-                let ids = req_targets("variable.bind", s, p)?;
-                let doc = s.doc_mut()?;
-                if let Some(v) = &var
-                    && doc.variables.get(v).is_none()
-                {
-                    return Err(bad("variable.bind", "no such variable"));
-                }
-                let vid = var.and_then(|v| doc.variables.get(&v).map(|x| x.id.clone()));
-                for i in ids {
-                    let n = doc.get_mut(i)?;
-                    match &vid {
-                        Some(v) => {
-                            n.bound.insert(field.clone(), v.clone());
-                        }
-                        None => {
-                            n.bound.remove(&field);
-                        }
-                    }
-                }
-                ok()
-            }
+            bind
         ),
-        spec!("variable.setMode", "Set variable mode", "{ids? (frames/page), collection, mode}", true, |s, p| {
-            let c = req_string("variable.setMode", p, "collection")?;
-            let m = req_string("variable.setMode", p, "mode")?;
-            let doc = s.doc()?;
-            let coll = doc.variables.collection(&c).ok_or_else(|| bad("variable.setMode", "no such collection"))?;
-            let mode =
-                coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad("variable.setMode", "no such mode"))?;
-            let cid = coll.id.clone();
-            let mut ids = targets(s, p);
-            if ids.is_empty() {
-                ids = vec![s.page()?];
-            }
-            let doc = s.doc_mut()?;
-            for i in ids {
-                doc.get_mut(i)?.var_modes.insert(cid.clone(), mode.clone());
-            }
-            ok()
-        }),
+        spec!("variable.setMode", "Set variable mode", "{ids? (frames/page), collection, mode}", true, set_mode),
         spec!("variable.list", "List variables", "{}", false, |s, _| Ok(serde_json::to_value(&s.doc()?.variables).unwrap_or(Value::Null))),
     ]
 }
@@ -371,6 +331,51 @@ pub fn propagate_style(doc: &mut Document, sid: &str) {
     }
 }
 
+/// `variable.bind`: bind (or with no variable, unbind) `field` of the targets.
+pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.bind";
+    let field = req_string(cmd, p, "field")?;
+    let var = string(p, "variable");
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    let vid = match &var {
+        Some(v) => Some(doc.variables.get(v).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such variable"))?),
+        None => None,
+    };
+    for i in ids {
+        let n = doc.get_mut(i)?;
+        match &vid {
+            Some(v) => {
+                n.bound.insert(field.clone(), v.clone());
+            }
+            None => {
+                n.bound.remove(&field);
+            }
+        }
+    }
+    ok()
+}
+
+/// `variable.setMode`: choose a collection's mode on frames (the page when none are given).
+pub fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.setMode";
+    let c = req_string(cmd, p, "collection")?;
+    let m = req_string(cmd, p, "mode")?;
+    let doc = s.doc()?;
+    let coll = doc.variables.collection(&c).ok_or_else(|| bad(cmd, "no such collection"))?;
+    let mode = coll.modes.iter().find(|x| x.id == m || x.name == m).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such mode"))?;
+    let cid = coll.id.clone();
+    let mut ids = targets(s, p);
+    if ids.is_empty() {
+        ids = vec![s.page()?];
+    }
+    let doc = s.doc_mut()?;
+    for i in ids {
+        doc.get_mut(i)?.var_modes.insert(cid.clone(), mode.clone());
+    }
+    ok()
+}
+
 fn var_value(kind: VariableType, v: &Value) -> Option<VariableValue> {
     if let Some(a) = v.get("alias").and_then(Value::as_str) {
         return Some(VariableValue::Alias(a.to_string()));
@@ -432,11 +437,12 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         values,
         description: string(p, "description").unwrap_or_default(),
         scopes: None,
+        hidden_from_publishing: false,
     });
     Ok(json!({"id": id}))
 }
 
-fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
+pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.set";
     let v = req_string(cmd, p, "variable")?;
     let doc = s.doc_mut()?;

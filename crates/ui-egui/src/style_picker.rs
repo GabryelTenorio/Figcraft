@@ -3,11 +3,11 @@
 //! `/`-separated names (folders collapse); a list or, for colour styles, a grid of swatches. Click
 //! applies a style; its edit button (or a right-click) edits the name, description and values; `+`
 //! creates a style from the selection's current values; the detach button unlinks it. Colour slots
-//! also list colour variables to bind.
+//! also list colour variables to bind (this file's, then each enabled library's).
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::{Document, GridKind, Node, NodeId, Style, StyleKind, VariableType, VariableValue};
+use figcraft_doc::{Document, GridKind, Node, NodeId, Style, StyleKind, VariableType};
 use serde_json::json;
 
 use crate::FigApp;
@@ -183,7 +183,7 @@ pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot:
 /// What the user asked the picker to do this frame.
 enum Act {
     Apply(String),
-    Bind(String),
+    Bind(crate::variable_ui::Pick),
     Create,
     Detach,
     Edit(String),
@@ -352,20 +352,9 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut 
     }
     groups.sort_by_key(|(f, _)| !f.is_empty());
     let editable = |id: &str| !figcraft_engine::library::is_remote_style(doc, id);
-    let modes = std::collections::BTreeMap::new();
-    let colors: Vec<(&figcraft_doc::Variable, figcraft_color::Color)> = if slot.paints() {
-        doc.variables
-            .variables
-            .iter()
-            .filter(|v| v.kind == VariableType::Color && matches(&v.name))
-            .filter_map(|v| match doc.variables.resolve(&v.id, &modes) {
-                Some(VariableValue::Color(c)) => Some((v, c)),
-                _ => None,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let libs = if slot.paints() { crate::variable_ui::libraries(app, doc) } else { Vec::new() };
+    let colors =
+        if slot.paints() { crate::variable_ui::groups(doc, &libs, |_, v| v.kind == VariableType::Color && matches(&v.name)) } else { Vec::new() };
     egui::ScrollArea::vertical().id_salt("style_picker_scroll").max_height(320.0).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         if groups.is_empty() {
@@ -403,15 +392,13 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, act: &mut 
         if !colors.is_empty() {
             ui.add_space(6.0);
             caption(ui, "Color variables");
-            for (v, c) in &colors {
-                let (r, resp) = ui.allocate_exact_size(vec2(W, ROW_H), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
-                }
-                widgets::paint_swatch(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), &Paint::solid(*c));
-                ui.painter().text(pos2(r.min.x + 26.0, r.center().y), Align2::LEFT_CENTER, &v.name, regular(11.0), t.menu_text);
-                if resp.clicked() {
-                    *act = Some(Act::Bind(v.id.clone()));
+        }
+        for (lib, c, vars) in &colors {
+            crate::variable_ui::group_caption(ui, *lib, c);
+            let all = lib.map_or(&doc.variables, |l| &l.doc.variables);
+            for v in vars {
+                if crate::variable_ui::variable_row(ui, all, v, W) {
+                    *act = Some(Act::Bind(crate::variable_ui::Pick { library: lib.map(|l| l.manifest.id.clone()), id: v.id.clone() }));
                 }
             }
         }
@@ -583,8 +570,8 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             app.run("style.apply", q);
             close = true;
         }
-        Some(Act::Bind(variable)) => {
-            app.run("variable.bind", json!({"ids": ids, "field": slot.key(), "variable": variable}));
+        Some(Act::Bind(pick)) => {
+            crate::variable_ui::bind(app, &ids, slot.key(), &pick);
             close = true;
         }
         Some(Act::Detach) => {

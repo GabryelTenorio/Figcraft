@@ -1,10 +1,12 @@
-//! The Variables editor: collections on the left; the selected collection's variables on the
-//! right as a table with one value column per mode. Double-click a name to rename it, right-click
-//! for more; a value's variable button turns it into an alias of another variable. Everything goes
-//! through `variable.*` commands, so it's undoable and the same over MCP.
+//! The Variables editor: collections on the left (this file's, then each enabled library's,
+//! read-only under the library's name); the selected collection's variables on the right as a
+//! table with one value column per mode. Double-click a name to rename it, right-click for more; a
+//! value's variable button turns it into an alias of another variable (a library one too).
+//! Everything goes through `variable.*` commands, so it's undoable and the same over MCP.
 
 use egui::{Align2, Context, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
-use figcraft_doc::{Collection, Variable, VariableType, VariableValue, Variables, scopes_for};
+use figcraft_doc::{Collection, Document, PublishedLibrary, Variable, VariableType, VariableValue, Variables, scopes_for};
+use figcraft_engine::library;
 use serde_json::{Value, json};
 
 use crate::FigApp;
@@ -34,6 +36,8 @@ enum Rename {
 /// The open editor's state (`UiState::variables`; None = closed).
 #[derive(Clone, Default)]
 pub struct Editor {
+    /// The library whose collection is shown (id or name); None for this file's.
+    library: Option<String>,
     /// The selected collection's id.
     collection: Option<String>,
     query: String,
@@ -49,14 +53,89 @@ impl Editor {
     pub fn on(collection: Option<String>) -> Self {
         Editor { collection, ..Default::default() }
     }
+
+    /// An editor showing a collection of enabled library `library` (id or name).
+    pub fn in_library(library: String, collection: Option<String>) -> Self {
+        Editor { library: Some(library), collection, ..Default::default() }
+    }
+}
+
+/// What the editor lists for one source: this file's variables (editable, never library copies)
+/// or an enabled library's published ones (read-only).
+struct View<'a> {
+    vars: &'a Variables,
+    /// The library's (id, name); None for this file.
+    library: Option<(&'a str, &'a str)>,
+    collections: Vec<&'a Collection>,
+    variables: Vec<&'a Variable>,
+}
+
+impl<'a> View<'a> {
+    fn local(doc: &'a Document) -> Self {
+        View {
+            vars: &doc.variables,
+            library: None,
+            collections: library::local_collections(doc).collect(),
+            variables: doc.variables.variables.iter().filter(|v| !library::is_remote_variable(doc, &v.id)).collect(),
+        }
+    }
+
+    fn of(lib: &'a PublishedLibrary) -> Self {
+        View {
+            vars: &lib.doc.variables,
+            library: Some((&lib.manifest.id, &lib.manifest.name)),
+            collections: library::published_collections(lib).collect(),
+            variables: library::published_variables(lib).collect(),
+        }
+    }
+
+    fn id(&self) -> Option<&'a str> {
+        self.library.map(|l| l.0)
+    }
+
+    fn editable(&self) -> bool {
+        self.library.is_none()
+    }
+
+    /// Whether the editor's `library` (id or name) names this view.
+    fn is(&self, library: Option<&str>) -> bool {
+        match (self.library, library) {
+            (None, None) => true,
+            (Some((id, name)), Some(l)) => l == id || l == name,
+            _ => false,
+        }
+    }
+
+    /// Collection `c` (id or name).
+    fn collection(&self, c: &str) -> Option<&'a Collection> {
+        self.collections.iter().copied().find(|x| x.id == c).or_else(|| self.collections.iter().copied().find(|x| x.name == c))
+    }
+
+    fn in_collection(&self, c: &str) -> impl Iterator<Item = &'a Variable> {
+        self.variables.iter().copied().filter(move |v| v.collection == c)
+    }
 }
 
 /// Show the editor while it's open (call once per frame).
 pub fn show(app: &mut FigApp, ctx: &Context) {
     let Some(mut st) = app.ui.variables.take() else { return };
     let Ok(doc) = app.session.ds().map(|d| d.doc.clone()) else { return };
-    let vars = &doc.variables;
-    st.collection = st.collection.as_ref().and_then(|c| vars.collection(c)).or_else(|| vars.collections.first()).map(|c| c.id.clone());
+    let libs = crate::variable_ui::libraries(app, &doc);
+    let views: Vec<View> = std::iter::once(View::local(&doc)).chain(libs.iter().map(|l| View::of(l))).collect();
+    // The selected collection (its source's first when none is), else this file's first.
+    let found = views.iter().find(|v| v.is(st.library.as_deref())).and_then(|v| {
+        let c = match st.collection.as_deref() {
+            Some(c) => v.collection(c),
+            None => v.collections.first().copied(),
+        };
+        Some((v, c?))
+    });
+    let Some((view, coll)) = found.map(|(v, c)| (v, Some(c))).or_else(|| views.first().map(|v| (v, v.collections.first().copied()))) else {
+        app.ui.variables = Some(st);
+        return;
+    };
+    st.library = view.id().map(str::to_string);
+    st.collection = coll.map(|c| c.id.clone());
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
     let size = vec2(880.0_f32.min(screen.width() - 80.0).max(480.0), 480.0_f32.min(screen.height() - 120.0).max(240.0));
@@ -77,13 +156,13 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             let h = (size.y - 44.0).max(160.0);
             let top_down = egui::Layout::top_down(egui::Align::Min);
             ui.horizontal_top(|ui| {
-                ui.allocate_ui_with_layout(vec2(SIDEBAR_W, h), top_down, |ui| sidebar(app, ui, vars, &mut st));
+                ui.allocate_ui_with_layout(vec2(SIDEBAR_W, h), top_down, |ui| sidebar(app, ui, &views, &doc.variables, &mut st));
                 let (line, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
                 ui.painter().rect_filled(line, CornerRadius::ZERO, t.border);
-                ui.allocate_ui_with_layout(vec2(size.x - SIDEBAR_W - 1.0, h), top_down, |ui| table(app, ui, vars, &mut st));
+                ui.allocate_ui_with_layout(vec2(size.x - SIDEBAR_W - 1.0, h), top_down, |ui| table(app, ui, view, &mut st));
             });
         });
-    details(app, ctx, vars, &mut st);
+    details(app, ctx, &doc.variables, &mut st);
     app.ui.variables = open.then_some(st);
 }
 
@@ -133,7 +212,7 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     (1..10_000).map(|k| if k == 1 { base.to_string() } else { format!("{base} {k}") }).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
 }
 
-fn sidebar(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
+fn sidebar(app: &mut FigApp, ui: &mut Ui, views: &[View], local: &Variables, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
     let (hr, _) = ui.allocate_exact_size(vec2(SIDEBAR_W, 40.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Collections", semibold(11.0), t.text_secondary);
@@ -144,54 +223,83 @@ fn sidebar(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
         Icon::Plus,
         "Create collection",
     ) {
-        create_collection(app, ui, vars, st);
+        create_collection(app, ui, local, st);
     }
     egui::ScrollArea::vertical().id_salt("vars_collections").auto_shrink([false, false]).show(ui, |ui| {
-        for c in &vars.collections {
-            let (r, resp) = ui.allocate_exact_size(vec2(SIDEBAR_W, 30.0), Sense::click());
-            let r = r.shrink2(vec2(8.0, 1.0));
-            let selected = st.collection.as_deref() == Some(c.id.as_str());
-            if selected {
-                ui.painter().rect_filled(r, CornerRadius::same(5), t.selected_row);
-            } else if resp.hovered() {
-                ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        for view in views {
+            if let Some((_, name)) = view.library
+                && !view.collections.is_empty()
+            {
+                library_title(ui, name);
             }
-            let target = Rename::Collection(c.id.clone());
-            let count = vars.variables.iter().filter(|v| v.collection == c.id).count();
-            ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, count.to_string(), regular(11.0), t.text_tertiary);
-            let name_r = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 4.0), pos2(r.max.x - 32.0, r.max.y - 4.0));
-            if st.rename.as_ref() == Some(&target) {
-                if let Some(name) = rename_field(ui, st, &target, &c.name, name_r, regular(11.0)) {
-                    app.run("variable.renameCollection", json!({"collection": c.id, "name": name}));
-                }
-            } else {
-                let font = if selected { semibold(11.0) } else { regular(11.0) };
-                ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, &c.name, font, t.text);
-            }
-            if resp.clicked() {
-                if !selected {
-                    st.group = None;
-                }
-                st.collection = Some(c.id.clone());
-            }
-            if resp.double_clicked() {
-                start_rename(ui, st, target.clone());
-            }
-            resp.context_menu(|ui| {
-                if menu_item(ui, "Rename", "") {
-                    start_rename(ui, st, target.clone());
-                    ui.close();
-                }
-                if menu_item(ui, "Delete collection", "") {
-                    app.run("variable.deleteCollection", json!({"collection": c.id}));
-                    ui.close();
-                }
-            });
-            if selected {
-                group_rows(app, ui, vars, c, st);
+            for c in &view.collections {
+                collection_row(app, ui, view, c, st);
             }
         }
     });
+}
+
+/// A library's heading in the sidebar: its collections follow, read-only.
+fn library_title(ui: &mut Ui, name: &str) {
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(8.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(SIDEBAR_W, 26.0), Sense::hover());
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 22.0, r.center().y), vec2(12.0, 12.0)), Icon::Library, t.icon_secondary);
+    let name_r = Rect::from_min_max(pos2(r.min.x + 34.0, r.min.y), pos2(r.max.x - 8.0, r.max.y));
+    ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, name, semibold(11.0), t.text_secondary);
+    resp.on_hover_text("Library: its variables are read-only here; edit them in the library file and publish it");
+}
+
+/// One collection in the sidebar (with its groups while selected).
+fn collection_row(app: &mut FigApp, ui: &mut Ui, view: &View, c: &Collection, st: &mut Editor) {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(SIDEBAR_W, 30.0), Sense::click());
+    let r = r.shrink2(vec2(8.0, 1.0));
+    let selected = view.is(st.library.as_deref()) && st.collection.as_deref() == Some(c.id.as_str());
+    if selected {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.selected_row);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+    }
+    let target = Rename::Collection(c.id.clone());
+    let count = view.in_collection(&c.id).count();
+    ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, count.to_string(), regular(11.0), t.text_tertiary);
+    let indent = if view.editable() { 8.0 } else { 26.0 };
+    let name_r = Rect::from_min_max(pos2(r.min.x + indent, r.min.y + 4.0), pos2(r.max.x - 32.0, r.max.y - 4.0));
+    if view.editable() && st.rename.as_ref() == Some(&target) {
+        if let Some(name) = rename_field(ui, st, &target, &c.name, name_r, regular(11.0)) {
+            app.run("variable.renameCollection", json!({"collection": c.id, "name": name}));
+        }
+    } else {
+        let font = if selected { semibold(11.0) } else { regular(11.0) };
+        ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, &c.name, font, t.text);
+    }
+    if resp.clicked() {
+        if !selected {
+            st.group = None;
+            st.query.clear();
+        }
+        st.library = view.id().map(str::to_string);
+        st.collection = Some(c.id.clone());
+    }
+    if view.editable() {
+        if resp.double_clicked() {
+            start_rename(ui, st, target.clone());
+        }
+        resp.context_menu(|ui| {
+            if menu_item(ui, "Rename", "") {
+                start_rename(ui, st, target.clone());
+                ui.close();
+            }
+            if menu_item(ui, "Delete collection", "") {
+                app.run("variable.deleteCollection", json!({"collection": c.id}));
+                ui.close();
+            }
+        });
+    }
+    if selected {
+        group_rows(app, ui, view, c, st);
+    }
 }
 
 /// Every group path in `names` with its ancestors ("a/b/c" → "a", "a/b"), sorted.
@@ -211,10 +319,11 @@ fn groups<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
 }
 
 /// "All variables" and the collection's groups (indented by depth): picking one filters the
-/// table; groups can be renamed (every variable in them follows) or deleted.
-fn group_rows(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection, st: &mut Editor) {
+/// table; this file's groups can be renamed (every variable in them follows) or deleted.
+fn group_rows(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
-    let names: Vec<&str> = vars.variables.iter().filter(|v| v.collection == coll.id).map(|v| v.name.as_str()).collect();
+    let members: Vec<&Variable> = view.in_collection(&coll.id).collect();
+    let names: Vec<&str> = members.iter().map(|v| v.name.as_str()).collect();
     let list = groups(names.iter().copied());
     if list.is_empty() {
         return;
@@ -243,15 +352,18 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection
             continue;
         };
         let target = Rename::Group(coll.id.clone(), g.clone());
-        if st.rename.as_ref() == Some(&target) {
+        if view.editable() && st.rename.as_ref() == Some(&target) {
             if let Some(new) = rename_field(ui, st, &target, label, name_r, regular(11.0)) {
-                rename_group(app, vars, coll, g, &new, st);
+                rename_group(app, &members, g, &new, st);
             }
         } else {
             ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, label, regular(11.0), t.text);
         }
         if resp.clicked() {
             st.group = Some(g.clone());
+        }
+        if !view.editable() {
+            continue;
         }
         if resp.double_clicked() {
             start_rename(ui, st, target.clone());
@@ -262,10 +374,9 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection
                 ui.close();
             }
             if menu_item(ui, "Delete group", "") {
-                let steps: Vec<serde_json::Value> = vars
-                    .variables
+                let steps: Vec<serde_json::Value> = members
                     .iter()
-                    .filter(|v| v.collection == coll.id && v.name.starts_with(&format!("{g}/")))
+                    .filter(|v| v.name.starts_with(&format!("{g}/")))
                     .map(|v| json!({"command": "variable.delete", "params": {"variable": v.id}}))
                     .collect();
                 app.run("command.batch", json!({"label": "Delete group", "commands": steps}));
@@ -278,8 +389,9 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection
     }
 }
 
-/// Rename the last part of group `g` to `new`: every variable under it moves along (one undo step).
-fn rename_group(app: &mut FigApp, vars: &Variables, coll: &Collection, g: &str, new: &str, st: &mut Editor) {
+/// Rename the last part of group `g` of a collection (its variables `members`) to `new`: every
+/// variable under it moves along (one undo step).
+fn rename_group(app: &mut FigApp, members: &[&Variable], g: &str, new: &str, st: &mut Editor) {
     let new = new.trim().replace('/', "-");
     if new.is_empty() {
         return;
@@ -289,10 +401,9 @@ fn rename_group(app: &mut FigApp, vars: &Variables, coll: &Collection, g: &str, 
         None => new,
     };
     let prefix = format!("{g}/");
-    let steps: Vec<serde_json::Value> = vars
-        .variables
+    let steps: Vec<serde_json::Value> = members
         .iter()
-        .filter(|v| v.collection == coll.id && v.name.starts_with(&prefix))
+        .filter(|v| v.name.starts_with(&prefix))
         .map(|v| json!({"command": "variable.update", "params": {"variable": v.id, "name": format!("{renamed}/{}", &v.name[prefix.len()..])}}))
         .collect();
     if app.run("command.batch", json!({"label": "Rename group", "commands": steps})).is_some()
@@ -307,6 +418,7 @@ fn create_collection(app: &mut FigApp, ui: &Ui, vars: &Variables, st: &mut Edito
     if let Some(id) =
         app.run("variable.createCollection", json!({"name": name, "modes": ["Mode 1"]})).and_then(|r| r["id"].as_str().map(str::to_string))
     {
+        st.library = None;
         st.collection = Some(id.clone());
         start_rename(ui, st, Rename::Collection(id));
     }
@@ -317,9 +429,14 @@ fn group_of(name: &str) -> &str {
     name.rsplit_once('/').map(|(g, _)| g).unwrap_or("")
 }
 
-fn table(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
+fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
-    let Some(coll) = st.collection.as_ref().and_then(|c| vars.collection(c)).cloned() else {
+    // A sidebar click this frame picked another source: shown next frame.
+    if !view.is(st.library.as_deref()) {
+        ui.ctx().request_repaint();
+        return;
+    }
+    let Some(coll) = st.collection.as_deref().and_then(|c| view.collection(c)) else {
         ui.add_space(24.0);
         ui.horizontal(|ui| {
             ui.add_space(24.0);
@@ -331,7 +448,7 @@ fn table(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
                 );
                 ui.add_space(12.0);
                 if widgets::button(ui, "Create collection", true, true).clicked() {
-                    create_collection(app, ui, vars, st);
+                    create_collection(app, ui, view.vars, st);
                 }
             });
         });
@@ -352,15 +469,20 @@ fn table(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
             .font(regular(11.0))
             .vertical_align(egui::Align::Center),
     );
+    if let Some((_, name)) = view.library {
+        let note = Rect::from_min_max(pos2(field.max.x + 16.0, sr.min.y), pos2(sr.max.x - 16.0, sr.max.y));
+        let text = format!("From the library \"{name}\": read-only");
+        ui.painter().with_clip_rect(note).text(note.right_center(), Align2::RIGHT_CENTER, text, regular(11.0), t.text_secondary);
+    }
     let q = st.query.trim().to_lowercase();
     let in_group = |v: &Variable| st.group.as_ref().is_none_or(|g| v.name.starts_with(&format!("{g}/")));
     let mut list: Vec<&Variable> =
-        vars.variables.iter().filter(|v| v.collection == coll.id && in_group(v) && (q.is_empty() || v.name.to_lowercase().contains(&q))).collect();
+        view.in_collection(&coll.id).filter(|v| in_group(v) && (q.is_empty() || v.name.to_lowercase().contains(&q))).collect();
     list.sort_by(|a, b| group_of(&a.name).cmp(group_of(&b.name)));
     let width = (NAME_W + coll.modes.len() as f32 * MODE_W + 40.0).max(ui.available_width());
     egui::ScrollArea::both().id_salt("vars_table").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-        header_row(app, ui, &coll, st, width);
+        header_row(app, ui, view, coll, st, width);
         let mut group: Option<&str> = None;
         for v in &list {
             let g = group_of(&v.name);
@@ -371,17 +493,19 @@ fn table(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
                     ui.painter().text(pos2(r.min.x + 16.0, r.center().y + 2.0), Align2::LEFT_CENTER, g, semibold(11.0), t.text_secondary);
                 }
             }
-            var_row(app, ui, vars, &coll, v, st, width);
+            var_row(app, ui, view, coll, v, st, width);
         }
         if list.is_empty() && !q.is_empty() {
             let (r, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
             ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "No matching variables", regular(11.0), t.text_secondary);
         }
-        create_row(app, ui, vars, &coll, st);
+        if view.editable() {
+            create_row(app, ui, view, coll, st);
+        }
     });
 }
 
-fn header_row(app: &mut FigApp, ui: &mut Ui, coll: &Collection, st: &mut Editor, width: f32) {
+fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st: &mut Editor, width: f32) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
     ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Name", regular(11.0), t.text_secondary);
@@ -389,23 +513,22 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, coll: &Collection, st: &mut Editor,
         let x = r.min.x + NAME_W + i as f32 * MODE_W;
         let cell = Rect::from_min_max(pos2(x + 4.0, r.min.y + 4.0), pos2(x + MODE_W - 8.0, r.max.y - 4.0));
         let target = Rename::Mode(coll.id.clone(), m.id.clone());
-        if st.rename.as_ref() == Some(&target) {
+        if view.editable() && st.rename.as_ref() == Some(&target) {
             if let Some(name) = rename_field(ui, st, &target, &m.name, cell.shrink2(vec2(4.0, 2.0)), regular(11.0)) {
                 app.run("variable.renameMode", json!({"collection": coll.id, "mode": m.id, "name": name}));
             }
+            continue;
+        }
+        let name_pos = pos2(cell.min.x + 4.0, cell.center().y);
+        if !view.editable() {
+            ui.painter().with_clip_rect(cell).text(name_pos, Align2::LEFT_CENTER, &m.name, regular(11.0), t.text_secondary);
             continue;
         }
         let resp = ui.interact(cell, Id::new(("vars_mode", &m.id)), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(cell, CornerRadius::same(4), t.hover);
         }
-        ui.painter().with_clip_rect(cell).text(
-            pos2(cell.min.x + 4.0, cell.center().y),
-            Align2::LEFT_CENTER,
-            &m.name,
-            regular(11.0),
-            t.text_secondary,
-        );
+        ui.painter().with_clip_rect(cell).text(name_pos, Align2::LEFT_CENTER, &m.name, regular(11.0), t.text_secondary);
         if resp.double_clicked() {
             start_rename(ui, st, target.clone());
         }
@@ -421,7 +544,9 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, coll: &Collection, st: &mut Editor,
         });
     }
     let x = r.min.x + NAME_W + coll.modes.len() as f32 * MODE_W;
-    if small_button(ui, Id::new("vars_add_mode"), Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(24.0, 24.0)), Icon::Plus, "Add mode") {
+    if view.editable()
+        && small_button(ui, Id::new("vars_add_mode"), Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(24.0, 24.0)), Icon::Plus, "Add mode")
+    {
         let name = unique("Mode", |n| coll.modes.iter().any(|m| m.name == n));
         if let Some(id) = app.run("variable.addMode", json!({"collection": coll.id, "name": name})).and_then(|r| r["id"].as_str().map(str::to_string))
         {
@@ -431,16 +556,17 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, coll: &Collection, st: &mut Editor,
     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.border));
 }
 
-fn var_row(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection, v: &Variable, st: &mut Editor, width: f32) {
+fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Variable, st: &mut Editor, width: f32) {
     let t = Tokens::get(ui.ctx());
+    let editable = view.editable();
     let (r, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
-    if resp.hovered() || st.details.as_deref() == Some(v.id.as_str()) {
+    if resp.hovered() || (editable && st.details.as_deref() == Some(v.id.as_str())) {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
     }
-    kind_glyph(ui, vars, v, coll, Rect::from_center_size(pos2(r.min.x + 24.0, r.center().y), vec2(14.0, 14.0)));
+    kind_glyph(ui, view.vars, v, coll, Rect::from_center_size(pos2(r.min.x + 24.0, r.center().y), vec2(14.0, 14.0)));
     let name_r = Rect::from_min_max(pos2(r.min.x + 40.0, r.min.y + 8.0), pos2(r.min.x + NAME_W - 8.0, r.max.y - 8.0));
     let target = Rename::Variable(v.id.clone());
-    if st.rename.as_ref() == Some(&target) {
+    if editable && st.rename.as_ref() == Some(&target) {
         if let Some(name) = rename_field(ui, st, &target, &v.name, name_r, regular(11.0)) {
             app.run("variable.update", json!({"variable": v.id, "name": name}));
         }
@@ -449,39 +575,34 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection, v
         let short = v.name.rsplit('/').next().unwrap_or(&v.name);
         ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, short, regular(11.0), t.text);
     }
-    if resp.double_clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < name_r.max.x) {
-        start_rename(ui, st, target.clone());
-    }
     for (i, m) in coll.modes.iter().enumerate() {
         let x = r.min.x + NAME_W + i as f32 * MODE_W;
-        value_cell(
-            app,
-            ui,
-            vars,
-            v,
-            coll,
-            &m.id,
-            Rect::from_min_max(pos2(x + 4.0, r.center().y - 12.0), pos2(x + MODE_W - 8.0, r.center().y + 12.0)),
-        );
+        let cell = Rect::from_min_max(pos2(x + 4.0, r.center().y - 12.0), pos2(x + MODE_W - 8.0, r.center().y + 12.0));
+        value_cell(app, ui, view, v, coll, &m.id, cell);
     }
-    resp.context_menu(|ui| {
-        if menu_item(ui, "Edit variable", "") {
-            st.details = Some(v.id.clone());
-            ui.close();
-        }
-        if menu_item(ui, "Rename", "") {
+    if editable {
+        if resp.double_clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < name_r.max.x) {
             start_rename(ui, st, target.clone());
-            ui.close();
         }
-        if menu_item(ui, "Duplicate", "") {
-            app.run("variable.duplicate", json!({"variable": v.id}));
-            ui.close();
-        }
-        if menu_item(ui, "Delete variable", "") {
-            app.run("variable.delete", json!({"variable": v.id}));
-            ui.close();
-        }
-    });
+        resp.context_menu(|ui| {
+            if menu_item(ui, "Edit variable", "") {
+                st.details = Some(v.id.clone());
+                ui.close();
+            }
+            if menu_item(ui, "Rename", "") {
+                start_rename(ui, st, target.clone());
+                ui.close();
+            }
+            if menu_item(ui, "Duplicate", "") {
+                app.run("variable.duplicate", json!({"variable": v.id}));
+                ui.close();
+            }
+            if menu_item(ui, "Delete variable", "") {
+                app.run("variable.delete", json!({"variable": v.id}));
+                ui.close();
+            }
+        });
+    }
     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.border));
 }
 
@@ -524,48 +645,50 @@ fn set(app: &mut FigApp, v: &Variable, mode: &str, value: Value) {
 }
 
 /// One value cell: an editor for the value, or the aliased variable's chip; the variable button
-/// on the right makes it an alias.
-fn value_cell(app: &mut FigApp, ui: &mut Ui, vars: &Variables, v: &Variable, coll: &Collection, mode: &str, rect: Rect) {
+/// on the right makes it an alias. A library's values only show.
+fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &Collection, mode: &str, rect: Rect) {
     let t = Tokens::get(ui.ctx());
     let Some(val) = v.values.get(mode) else { return };
+    let editable = view.editable();
     let id = Id::new(("var_cell", &v.id, mode));
     // The value editor leaves room for the alias button.
     let body = Rect::from_min_max(rect.min, pos2(rect.max.x - 26.0, rect.max.y));
     let alias_btn = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(22.0, 22.0));
-    let hovered = ui.rect_contains_pointer(rect.expand2(vec2(4.0, 6.0)));
-    match val {
-        VariableValue::Alias(target) => {
-            let full = vars.get(target).map(|x| x.name.as_str()).unwrap_or("Missing variable");
-            let resp = ui.interact(body, id.with("alias"), Sense::click()).on_hover_text("Change alias");
-            ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
-            let chip = body.shrink2(vec2(3.0, 3.0));
-            ui.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
-            ui.painter().rect_stroke(
-                chip,
-                CornerRadius::same(4),
-                Stroke::new(1.0, if resp.hovered() { t.border_strong } else { t.border }),
-                StrokeKind::Inside,
-            );
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(chip.min.x + 11.0, chip.center().y), vec2(12.0, 12.0)),
-                Icon::Variable,
-                t.icon_secondary,
-            );
-            let text_r = Rect::from_min_max(pos2(chip.min.x + 21.0, chip.min.y), pos2(chip.max.x - 4.0, chip.max.y));
-            ui.painter().with_clip_rect(text_r).text(text_r.left_center(), Align2::LEFT_CENTER, full, regular(11.0), t.text);
-            if resp.clicked() {
-                crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
-            }
-            // Detach: keep the value it resolves to now.
-            if hovered && small_button(ui, id.with("detach"), alias_btn, Icon::Detach, "Detach alias") {
-                let modes = [(coll.id.clone(), mode.to_string())].into_iter().collect();
-                if let Some(resolved) = vars.resolve(&v.id, &modes) {
-                    set(app, v, mode, value_json(&resolved));
-                }
-            }
-            return;
+    let hovered = editable && ui.rect_contains_pointer(rect.expand2(vec2(4.0, 6.0)));
+    if let VariableValue::Alias(target) = val {
+        let full = view.vars.get(target).map(|x| x.name.as_str()).unwrap_or("Missing variable");
+        let resp = ui.interact(body, id.with("alias"), if editable { Sense::click() } else { Sense::hover() });
+        let resp = if editable { resp.on_hover_text("Change alias") } else { resp };
+        ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
+        let chip = body.shrink2(vec2(3.0, 3.0));
+        ui.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
+        let border = if editable && resp.hovered() { t.border_strong } else { t.border };
+        ui.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, border), StrokeKind::Inside);
+        icons::paint(
+            ui.painter(),
+            Rect::from_center_size(pos2(chip.min.x + 11.0, chip.center().y), vec2(12.0, 12.0)),
+            Icon::Variable,
+            t.icon_secondary,
+        );
+        let text_r = Rect::from_min_max(pos2(chip.min.x + 21.0, chip.min.y), pos2(chip.max.x - 4.0, chip.max.y));
+        ui.painter().with_clip_rect(text_r).text(text_r.left_center(), Align2::LEFT_CENTER, full, regular(11.0), t.text);
+        if resp.clicked() {
+            crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
         }
+        // Detach: keep the value it resolves to now.
+        if hovered && small_button(ui, id.with("detach"), alias_btn, Icon::Detach, "Detach alias") {
+            let modes = [(coll.id.clone(), mode.to_string())].into_iter().collect();
+            if let Some(resolved) = view.vars.resolve(&v.id, &modes) {
+                set(app, v, mode, value_json(&resolved));
+            }
+        }
+        return;
+    }
+    if !editable {
+        read_only_value(ui, val, body);
+        return;
+    }
+    match val {
         VariableValue::Color(c) => {
             ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
             let sw = Rect::from_center_size(pos2(body.min.x + 13.0, body.center().y), vec2(14.0, 14.0));
@@ -581,8 +704,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, vars: &Variables, v: &Variable, col
                 let nc = if h.trim().trim_start_matches('#').len() == 8 { nc } else { nc.with_alpha(c.a) };
                 set(app, v, mode, json!(nc.to_css_hex()));
             }
-            let pct = format!("{}%", (c.a * 100.0).round());
-            ui.painter().text(pos2(body.max.x - 8.0, body.center().y), Align2::RIGHT_CENTER, pct, regular(11.0), t.text_secondary);
+            alpha_text(ui, c, body);
         }
         VariableValue::Number(x) => {
             let mut child = ui.new_child(UiBuilder::new().max_rect(body));
@@ -606,13 +728,40 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, vars: &Variables, v: &Variable, col
                 set(app, v, mode, json!(!b));
             }
         }
+        VariableValue::Alias(_) => {}
     }
     if hovered && small_button(ui, id.with("mkalias"), alias_btn, Icon::Variable, "Create alias") {
         crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
     }
 }
 
-fn create_row(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection, st: &mut Editor) {
+/// A colour's alpha as a percentage at the right end of `body`.
+fn alpha_text(ui: &Ui, c: &figcraft_color::Color, body: Rect) {
+    let t = Tokens::get(ui.ctx());
+    let pct = format!("{}%", (c.a * 100.0).round());
+    ui.painter().text(pos2(body.max.x - 8.0, body.center().y), Align2::RIGHT_CENTER, pct, regular(11.0), t.text_secondary);
+}
+
+/// A value that only shows (a library's): its swatch and hex for colours, else its text.
+fn read_only_value(ui: &Ui, val: &VariableValue, body: Rect) {
+    let t = Tokens::get(ui.ctx());
+    ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
+    let mut x = body.min.x + 8.0;
+    if let VariableValue::Color(c) = val {
+        let sw = Rect::from_center_size(pos2(body.min.x + 13.0, body.center().y), vec2(14.0, 14.0));
+        widgets::paint_swatch(ui.painter(), sw, &figcraft_color::Paint::solid(*c));
+        x = sw.max.x + 8.0;
+        alpha_text(ui, c, body);
+    }
+    let text = match val {
+        VariableValue::Boolean(b) => (if *b { "True" } else { "False" }).to_string(),
+        other => other.display(),
+    };
+    let text_r = Rect::from_min_max(pos2(x, body.min.y), pos2(body.max.x - 44.0, body.max.y));
+    ui.painter().with_clip_rect(text_r).text(text_r.left_center(), Align2::LEFT_CENTER, text, regular(11.0), t.text);
+}
+
+fn create_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st: &mut Editor) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
@@ -626,7 +775,7 @@ fn create_row(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection
                     VariableType::Boolean => "Boolean",
                 };
                 if menu_item(ui, label, "") {
-                    let name = unique(label, |n| vars.variables.iter().any(|v| v.collection == coll.id && v.name == n));
+                    let name = unique(label, |n| view.in_collection(&coll.id).any(|v| v.name == n));
                     let params = json!({"collection": coll.id, "name": name, "type": kind.id()});
                     if let Some(id) = app.run("variable.create", params).and_then(|r| r["id"].as_str().map(str::to_string)) {
                         st.query.clear();
@@ -640,9 +789,10 @@ fn create_row(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection
     ui.add_space(12.0);
 }
 
-/// The details of one variable: name, description and where pickers offer it.
+/// The details of one of this file's variables: name, description, where pickers offer it and
+/// whether publishing the file as a library leaves it out.
 fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
-    let Some(v) = st.details.as_ref().and_then(|id| vars.get(id)).cloned() else {
+    let Some(v) = st.details.as_ref().filter(|_| st.library.is_none()).and_then(|id| vars.get(id)).cloned() else {
         st.details = None;
         return;
     };
@@ -665,6 +815,10 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
             widgets::label(ui, "Description", t.text_secondary);
             if let Some(d) = widgets::text_field(ui, Id::new(("var_detail_desc", &v.id)), &v.description, 260.0, "What it's for") {
                 app.run("variable.update", json!({"variable": v.id, "description": d}));
+            }
+            ui.add_space(6.0);
+            if widgets::checkbox(ui, v.hidden_from_publishing, "Hide from publishing") {
+                app.run("variable.update", json!({"variable": v.id, "hiddenFromPublishing": !v.hidden_from_publishing}));
             }
             let scopes = scopes_for(v.kind);
             if scopes.is_empty() {
