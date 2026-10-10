@@ -19,6 +19,7 @@ pub mod export_panel;
 pub mod font_preview;
 pub mod frame_labels;
 pub mod frame_presets;
+pub mod frame_stats;
 pub mod guides;
 pub mod handles;
 pub mod home;
@@ -55,6 +56,8 @@ mod canvas_drag_tests;
 mod comments_tests;
 #[cfg(test)]
 mod frame_label_tests;
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
@@ -152,6 +155,18 @@ pub enum TitleBar {
 /// How often open documents get an autosave checkpoint (seconds).
 pub const AUTOSAVE_SECS: f64 = 30.0 * 60.0;
 
+/// How long a toast shows (seconds).
+const TOAST_SECS: f64 = 3.0;
+
+/// Draw another frame `secs` from now (nothing else needs drawing until then: an idle window draws
+/// no frames).
+#[track_caller]
+pub(crate) fn repaint_in(ctx: &egui::Context, secs: f64) {
+    if secs.is_finite() {
+        ctx.request_repaint_after(std::time::Duration::from_secs_f64(secs.max(0.0)));
+    }
+}
+
 /// UI-only state (serialisable for `ui.inspect`).
 pub struct UiState {
     pub left_width: f32,
@@ -182,7 +197,8 @@ pub struct UiState {
     pub title_bar: TitleBar,
     /// Every icon on one screen, for reviewing the set (control channel `ui.set {iconGallery}`).
     pub icon_gallery: bool,
-    pub toast: Option<(String, f64)>,
+    /// A message at the bottom of the window and when it first showed (UI clock, seconds).
+    pub toast: Option<(String, Option<f64>)>,
     pub present: Option<present::Presenter>,
     /// The full-window presenter's options (how it sizes the prototype), kept between
     /// presentations.
@@ -326,6 +342,8 @@ pub struct FigApp {
     pub control_queue: Vec<ControlRequest>,
     /// Input events from the control channel (`ui.input`) for the next frame's raw input.
     pub control_input: Vec<egui::Event>,
+    /// Frames drawn and what asked for them (`ui.inspect`).
+    pub frame_stats: frame_stats::FrameStats,
 }
 
 impl FigApp {
@@ -341,6 +359,7 @@ impl FigApp {
             field_focus: false,
             control_queue: Vec::new(),
             control_input: Vec::new(),
+            frame_stats: frame_stats::FrameStats::default(),
         }
     }
 
@@ -398,7 +417,7 @@ impl FigApp {
     }
 
     pub fn toast(&mut self, msg: impl Into<String>) {
-        self.ui.toast = Some((msg.into(), 0.0));
+        self.ui.toast = Some((msg.into(), None));
     }
 
     /// Act on UI requests queued by commands (dialogs, panels).
@@ -556,8 +575,11 @@ impl FigApp {
 
     /// Every [`AUTOSAVE_SECS`], each open document with unsaved changes since its last version
     /// gets an autosave checkpoint in its version history.
-    fn autosave_tick(&mut self, now: f64) {
+    fn autosave_tick(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
         if now < self.ui.next_autosave {
+            // Wake up for it even if nothing else draws a frame by then.
+            repaint_in(ctx, self.ui.next_autosave - now);
             return;
         }
         if self.ui.next_autosave > 0.0 {
@@ -569,6 +591,7 @@ impl FigApp {
             self.session.active = active;
         }
         self.ui.next_autosave = now + AUTOSAVE_SECS;
+        repaint_in(ctx, AUTOSAVE_SECS);
     }
 
     /// Draw the whole UI.
@@ -576,9 +599,10 @@ impl FigApp {
         #[cfg(not(target_arch = "wasm32"))]
         let t0 = std::time::Instant::now();
         let ctx = ui.ctx().clone();
+        self.frame_stats.record(&ctx);
         let first = !self.fonts_installed;
         self.logic(&ctx);
-        self.autosave_tick(ctx.input(|i| i.time));
+        self.autosave_tick(&ctx);
         if first {
             // New fonts apply from the next frame; draw nothing until then.
             ctx.request_repaint();
@@ -668,15 +692,16 @@ impl FigApp {
     }
 
     fn toast_ui(&mut self, ctx: &egui::Context) {
-        let Some((msg, age)) = self.ui.toast.clone() else { return };
-        let dt = ctx.input(|i| i.stable_dt) as f64;
-        let age = age + dt;
-        if age > 3.0 {
+        let Some((msg, shown)) = &mut self.ui.toast else { return };
+        let now = ctx.input(|i| i.time);
+        let left = TOAST_SECS - (now - *shown.get_or_insert(now));
+        if left <= 0.0 {
             self.ui.toast = None;
             return;
         }
-        self.ui.toast = Some((msg.clone(), age));
-        ctx.request_repaint();
+        let msg = msg.clone();
+        // Nothing moves while it shows: the next frame it needs is the one that hides it.
+        repaint_in(ctx, left);
         let screen = ctx.content_rect();
         egui::Area::new(egui::Id::new("toast"))
             .fixed_pos(egui::pos2(screen.center().x, screen.max.y - 96.0))
@@ -723,6 +748,8 @@ impl FigApp {
             },
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,
+            "framesDrawn": self.frame_stats.frames,
+            "repaintCauses": self.frame_stats.causes(),
             "canvas": {
                 "rect": [self.canvas.rect.min.x, self.canvas.rect.min.y, self.canvas.rect.max.x, self.canvas.rect.max.y],
                 "renderWork": self.canvas.render_work.map(|w| match w {

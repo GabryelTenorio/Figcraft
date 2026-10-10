@@ -64,7 +64,10 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 UI state: panels and tabs, current tool (`tool`: its id, overlay hints and, for a selected
 ellipse, its arc handles `arcHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
-`renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
+`renderMs`), frames drawn since start or the last `ui.set {resetFrameStats: true}` (`framesDrawn`;
+an idle window draws none) with the most frequent repaint requests behind them (`repaintCauses`:
+`[{at: "file:line", count}]`, every request made in the frame before each one, delayed ones such as
+the autosave deadline included; egui's `context.rs` begin-pass line means input events) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
 the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, the screen's `scroll` offset and `scrollRange`, the
@@ -133,7 +136,7 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, resetFrameStats?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -159,13 +162,15 @@ closes it), `commentDraft` (`{x, y}`: start a new comment there), `commentFilter
 (`date|page`), `commentSearch` (the panel's search text), `commentReply` (the open thread's reply
 text, focused with the cursor at its end: an `@` there shows the mention picker), `commentEdit` (a
 message index of the open thread to edit, 0 for the first; `null` stops), `presentComments` (bool:
-the presenter shows the presented frame's comments, also Shift+C there). Returns `ui.inspect`
+the presenter shows the presented frame's comments, also Shift+C there), `resetFrameStats` (true:
+start `framesDrawn` and `repaintCauses` over). Returns `ui.inspect`
 (which reports `stylePicker`, `stylePickerView`, and `comments`: `open`, `draft`, `filter`, `sort`,
 `search`, `editing` and the `mentions` the picker offers).
 
 ### `ui.screenshot {path}`
 
-PNG of the whole window, UI included (needs a visible window). Returns `{path, width, height}`.
+PNG of the whole window, UI included (needs a visible window; an idle one draws the frame to
+capture). Returns `{path, width, height}`, or an error after 60 s when the window doesn't deliver.
 
 ### `ui.render {path, scale?, ids?}`
 

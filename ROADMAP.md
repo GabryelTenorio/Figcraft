@@ -259,7 +259,13 @@ dimension measured side by side.
    main's layer used ~900 times 188/226 → 4/18 ms, adding a layer to it 430 → 21 ms, a label style
    in all 72 button variants (1,800 copies) 450 → 57 ms, switching a variant, reset, detach, push
    and paste ~450 → under 3 ms, accepting a library update 460 → 64 ms; the Assets panel with 2,000
-   assets 3.4 → 1.3 ms a frame. *Left:* a real-world file corpus, Windows/Linux/browser QA,
+   assets 3.4 → 1.3 ms a frame. An idle window draws no frames: it redrew ~240 times a second
+   (the window title was re-sent every frame, and each viewport command asks for another), ~33% of
+   a core in a debug build, and now sits at 0 frames and ~0% CPU; the toast, the autosave
+   checkpoint and the presenter's "after delay" timers wake it at their deadline, the interaction
+   editor's curve preview plays when it shows, changes or is hovered, and a screenshot keeps frames
+   coming only until it arrives (`ui.inspect` `framesDrawn` and `repaintCauses` show what asked for
+   frames; headless tests hold it). *Left:* a real-world file corpus, Windows/Linux/browser QA,
    accessibility. 30–50 h.
 
 ### Where we're going

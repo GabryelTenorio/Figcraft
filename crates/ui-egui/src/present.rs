@@ -1328,6 +1328,37 @@ struct Layout {
     closing: Vec<(NodeId, Place, Rect)>,
 }
 
+impl Layout {
+    /// The active layer (the top overlay, else the presented frame `current`), where it's placed
+    /// and what it may draw into.
+    fn active(&self, current: NodeId) -> (NodeId, Place, Rect) {
+        match self.overlays.last() {
+            Some((id, pl, _)) => (*id, *pl, self.screen),
+            None => (current, self.place, self.clip),
+        }
+    }
+}
+
+/// The soonest "after delay" interaction in `root`'s subtree that hasn't fired yet, and the seconds
+/// until it's due (zero or less: due now).
+fn next_delay(p: &Presenter, doc: &Document, root: NodeId, now: f64) -> Option<((NodeId, usize), f64)> {
+    let mut next: Option<((NodeId, usize), f64)> = None;
+    for id in doc.subtree(root) {
+        let Some(n) = doc.node(id) else { continue };
+        for (k, it) in n.interactions.iter().enumerate() {
+            if let Trigger::AfterDelay { ms } = it.trigger
+                && !p.delays_fired.contains(&(id, k))
+            {
+                let due = p.arrived + f64::from(ms) / 1000.0 - now;
+                if next.is_none_or(|(_, d)| due < d) {
+                    next = Some(((id, k), due));
+                }
+            }
+        }
+    }
+    next
+}
+
 /// The width of a device's screen of `size` held upright (its short side when turned).
 fn upright_w(size: Vec2, landscape: bool) -> f32 {
     if landscape { size.y } else { size.x }
@@ -1810,31 +1841,19 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     if let Some((d, _)) = body {
         device_glass(&painter, d.name, l.screen, l.landscape);
     }
-    // Timers: wake up for the soonest pending "after delay".
-    let mut next: Option<f64> = None;
-    for id in l.disp.subtree(p.current) {
-        let Some(n) = l.disp.node(id) else { continue };
-        for (k, it) in n.interactions.iter().enumerate() {
-            if let Trigger::AfterDelay { ms } = it.trigger
-                && !p.delays_fired.contains(&(id, k))
-            {
-                let due = p.arrived + f64::from(ms) / 1000.0 - now;
-                next = Some(next.map_or(due, |x: f64| x.min(due)));
-            }
-        }
-    }
-    if let Some(d) = next {
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(d.clamp(0.0, 60.0)));
+    // Timers: wake up for the soonest pending "after delay" of the layer that can fire it (they
+    // wait while a transition plays, which draws every frame anyway).
+    if p.anim.is_none()
+        && let Some((_, due)) = next_delay(p, &l.disp, l.active(p.current).0, now)
+    {
+        crate::repaint_in(&ctx, due.min(60.0));
     }
     action
 }
 
 /// Inspecting: the layer under the pointer becomes the inspected one; it is outlined.
 fn inspect_hover(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Layout, area: Rect) {
-    let (root, place, clip) = match l.overlays.last() {
-        Some((id, pl, _)) => (*id, *pl, l.screen),
-        None => (p.current, l.place, l.clip),
-    };
+    let (root, place, clip) = l.active(p.current);
     if let Some(q) = ctx.pointer_hover_pos().filter(|q| area.contains(*q) && clip.contains(*q))
         && let Some(id) = layer_at(&l.disp, root, &place, q)
     {
@@ -2068,10 +2087,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         p.fling = Some(Fling { target: t, vel: (along(velocity.x, r.0), along(velocity.y, r.1)), decay: DECAY_DRAG, bounce: true, at: now });
     }
     // The active layer: the top overlay, else the frame.
-    let (root, place, clip) = match l.overlays.last() {
-        Some((id, pl, _)) => (*id, *pl, l.screen),
-        None => (p.current, l.place, l.clip),
-    };
+    let (root, place, clip) = l.active(p.current);
     let doc = &l.disp;
     let hot = hotspots(doc, root, &place, clip);
     p.hot.clone_from(&hot);
@@ -2293,27 +2309,12 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         }
     }
     // After delay (timers start when the frame appears; not while animating).
-    if p.anim.is_none() {
-        let mut due: Option<(NodeId, usize)> = None;
-        for id in doc.subtree(root) {
-            let Some(n) = doc.node(id) else { continue };
-            for (k, it) in n.interactions.iter().enumerate() {
-                if let Trigger::AfterDelay { ms } = it.trigger
-                    && !p.delays_fired.contains(&(id, k))
-                    && now - p.arrived >= f64::from(ms) / 1000.0
-                {
-                    due = Some((id, k));
-                    break;
-                }
-            }
-            if due.is_some() {
-                break;
-            }
-        }
-        if let Some((id, k)) = due {
-            p.delays_fired.insert((id, k));
-            p.fire(id, k, None, now);
-        }
+    if p.anim.is_none()
+        && let Some(((id, k), due)) = next_delay(p, doc, root, now)
+        && due <= 0.0
+    {
+        p.delays_fired.insert((id, k));
+        p.fire(id, k, None, now);
     }
 }
 
@@ -2443,10 +2444,7 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
     p.closing.retain(|(at, o)| now - at < o.dur);
     // Hotspot flash after a click on nothing.
     if now < p.flash_until {
-        let (root, place, clip) = match l.overlays.last() {
-            Some((id, pl, _)) => (*id, *pl, l.screen),
-            None => (p.current, l.place, l.clip),
-        };
+        let (root, place, clip) = l.active(p.current);
         let a = ((p.flash_until - now) / FLASH_SECS) as f32;
         for (_, r) in hotspots(&l.disp, root, &place, clip) {
             painter.rect_filled(r, CornerRadius::same(4), ACCENT.gamma_multiply(0.25 * a));

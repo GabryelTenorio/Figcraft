@@ -21,6 +21,9 @@ struct App {
     fig: FigApp,
     queue: Arc<Mutex<Vec<ControlRequest>>>,
     ctx_slot: Arc<Mutex<Option<egui::Context>>>,
+    /// The window title last sent: a viewport command asks for another frame, so it's only sent
+    /// when the title changes (sending it every frame kept an idle window redrawing).
+    title: String,
 }
 
 impl eframe::App for App {
@@ -39,7 +42,10 @@ impl eframe::App for App {
             Ok(ds) => format!("{}{} – FigCraft", ds.doc.name, if ds.is_dirty() { " •" } else { "" }),
             Err(_) => "FigCraft".into(),
         };
-        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
@@ -55,6 +61,7 @@ impl eframe::App for App {
                 e.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
             log::error!("UI panic: {msg}");
             self.fig.toast(format!("Internal error (please report): {msg}"));
+            ui.ctx().request_repaint();
             services::emergency_save(&self.fig.session);
         }
     }
@@ -89,8 +96,16 @@ fn main() -> eframe::Result {
         }
         i += 1;
     }
-    // System fonts: index them in the background.
-    std::thread::spawn(figcraft_text::scan_system_fonts);
+    // System fonts: index them in the background, then wake the UI (an idle window draws no frames)
+    // to lay text out again with them.
+    let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
+    let fonts_slot = ctx_slot.clone();
+    std::thread::spawn(move || {
+        figcraft_text::scan_system_fonts();
+        if let Some(c) = fonts_slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+            c.request_repaint();
+        }
+    });
     let mut session = Session::empty();
     for f in &files {
         if let Err(e) = session.execute("file.open", &json!({"path": f})) {
@@ -107,7 +122,6 @@ fn main() -> eframe::Result {
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
     let queue: Arc<Mutex<Vec<ControlRequest>>> = Arc::new(Mutex::new(Vec::new()));
-    let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
     if let Some(p) = port {
         control_server::start(p, queue.clone(), ctx_slot.clone());
     }
@@ -130,5 +144,5 @@ fn main() -> eframe::Result {
         viewport = viewport.with_icon(icon);
     }
     let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
-    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { fig, queue, ctx_slot }))))
+    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { fig, queue, ctx_slot, title: String::new() }))))
 }
