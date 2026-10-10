@@ -1,5 +1,6 @@
 //! Prototype expressions: the values set-variable actions write and the conditions of
-//! conditional actions, built from literals, variable references and operators.
+//! conditional actions, built from literals, variable references (also a variable's value in a
+//! given mode of its collection), the current mode of a collection, and operators.
 
 use std::collections::BTreeMap;
 
@@ -20,6 +21,12 @@ pub enum Expr {
     Value(VariableValue),
     /// An operator applied to its arguments.
     Op { op: ExprOp, args: Vec<Expr> },
+    /// The name of the mode collection `collection` is in where the expression is evaluated (the
+    /// layer whose interaction runs), as text: `mode(Theme) == "Dark"`.
+    Mode { collection: CollectionId },
+    /// Variable `variable`'s value in mode `mode` of its collection, whichever mode is chosen:
+    /// `accent[Dark]`.
+    InMode { variable: String, mode: ModeId },
 }
 
 /// Expression operators.
@@ -96,6 +103,14 @@ impl Expr {
             Expr::Value(VariableValue::Alias(id)) => return vars.resolve(id, modes),
             Expr::Value(VariableValue::Number(n)) => return n.is_finite().then_some(VariableValue::Number(*n)),
             Expr::Value(v) => return Some(v.clone()),
+            Expr::Mode { collection } => return vars.collection(collection)?.current_mode(modes).map(|m| VariableValue::String(m.name.clone())),
+            Expr::InMode { variable, mode } => {
+                let v = vars.get(variable)?;
+                let c = vars.collection(&v.collection)?;
+                let mut at = modes.clone();
+                at.insert(c.id.clone(), c.find_mode(mode)?.id.clone());
+                return vars.resolve(&v.id, &at);
+            }
             Expr::Op { op, args } => (*op, args),
         };
         let vals: Vec<VariableValue> = args.iter().map(|a| a.eval_at(vars, modes, depth + 1)).collect::<Option<_>>()?;
@@ -111,7 +126,7 @@ impl Expr {
 
     fn collect_variables<'a>(&'a self, out: &mut Vec<&'a str>, depth: usize) {
         match self {
-            Expr::Value(VariableValue::Alias(id)) => out.push(id),
+            Expr::Value(VariableValue::Alias(id)) | Expr::InMode { variable: id, .. } => out.push(id),
             Expr::Op { args, .. } if depth < MAX_EXPR_DEPTH => args.iter().for_each(|a| a.collect_variables(out, depth + 1)),
             _ => {}
         }
@@ -129,11 +144,21 @@ impl Expr {
         }
         match self {
             Expr::Value(VariableValue::Alias(id)) => vars.get(id).map_or_else(|| "(missing variable)".into(), |v| v.name.clone()),
-            Expr::Value(VariableValue::String(s)) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            Expr::Value(VariableValue::String(s)) => quote(s),
             // Exact numbers and `#` colours, so the text reads back as the same expression.
             Expr::Value(VariableValue::Number(n)) => format!("{n}"),
             Expr::Value(VariableValue::Color(c)) => c.to_css_hex(),
             Expr::Value(v) => v.display(),
+            Expr::Mode { collection } => {
+                let name = vars.collection(collection).map_or("(missing collection)", |c| c.name.as_str());
+                format!("mode({})", name_arg(name))
+            }
+            Expr::InMode { variable, mode } => {
+                let var = vars.get(variable);
+                let mode =
+                    var.and_then(|v| vars.collection(&v.collection)).and_then(|c| c.find_mode(mode)).map_or("(missing mode)", |m| m.name.as_str());
+                format!("{}[{}]", Expr::var(variable.clone()).display_at(vars, depth + 1), name_arg(mode))
+            }
             Expr::Op { op, args } => {
                 let parts: Vec<String> = args
                     .iter()
@@ -151,6 +176,18 @@ impl Expr {
             }
         }
     }
+}
+
+/// A collection or mode name as written inside `mode(…)` or `[…]`: as it is, or quoted when it has
+/// spaces at its ends, quotes or brackets.
+fn name_arg(name: &str) -> String {
+    let plain = !name.is_empty() && name.trim() == name && !name.contains(['"', '\'', '\\', '(', ')', '[', ']', '{', '}']);
+    if plain { name.to_string() } else { quote(name) }
+}
+
+/// `s` as a double-quoted text literal ([`Expr::parse`] reads it back).
+fn quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn number(v: &VariableValue) -> Option<f64> {

@@ -434,7 +434,7 @@ pub struct Node {
     pub annotations: Vec<Annotation>,
 }
 
-fn yes() -> bool {
+pub(crate) fn yes() -> bool {
     true
 }
 fn one() -> f32 {

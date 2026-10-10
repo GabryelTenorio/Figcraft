@@ -355,6 +355,9 @@ impl Ctx<'_> {
             return None;
         }
         if let Some((function, args)) = expr_parts(data) {
+            if function == "VAR_MODE_LOOKUP" {
+                return self.mode_lookup(args);
+            }
             let op = match function {
                 "ADDITION" => ExprOp::Add,
                 "SUBTRACTION" => ExprOp::Subtract,
@@ -371,7 +374,7 @@ impl Ctx<'_> {
                 "NOT" => ExprOp::Not,
                 "NEGATE" => ExprOp::Negate,
                 _ => {
-                    self.warn("prototype expressions with unsupported functions (like variable mode lookups) were skipped");
+                    self.warn("prototype expressions with unsupported functions were skipped");
                     return None;
                 }
             };
@@ -400,6 +403,25 @@ impl Ctx<'_> {
             },
         };
         variables::value(kind, v).map(Expr::Value)
+    }
+
+    /// A variable mode lookup (`VAR_MODE_LOOKUP` over a variable reference and the id of one of its
+    /// collection's modes): the variable's value in that mode.
+    fn mode_lookup(&mut self, args: &[Value]) -> Option<Expr> {
+        let parts = match args {
+            [var, mode] => var.get("value").and_then(variables::alias).zip(mode.get("value").and_then(Value::as_str)),
+            _ => None,
+        };
+        let vars = &self.doc.variables;
+        let found = parts.filter(|(id, _)| self.var_kinds.contains_key(*id)).and_then(|(id, mode)| {
+            let v = vars.get(id)?;
+            let m = vars.collection(&v.collection)?.modes.iter().find(|m| m.id == mode)?;
+            Some(Expr::InMode { variable: v.id.clone(), mode: m.id.clone() })
+        });
+        if found.is_none() {
+            self.warn("variable mode lookups in prototype expressions that aren't a variable and one of its modes were skipped");
+        }
+        found
     }
 
     /// The imported layer a REST id names.

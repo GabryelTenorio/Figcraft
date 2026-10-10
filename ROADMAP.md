@@ -145,16 +145,20 @@ dimension measured side by side.
    presenter's flow picker and under each flow; conditional actions (if / else if / else over
    variable expressions) and set-variable-mode actions run in the presenter (from REST files or
    commands). Conditionals are built in the interaction editor: an interaction's actions are a list
-   (add, reorder, remove, open one to edit it), "Add action ▸ Conditional" adds an if whose
+   (add, reorder by dragging a row's grip, also inside conditional blocks, or from its menu, remove,
+   open one to edit it; one undo step per move), "Add action ▸ Conditional" adds an if whose
    condition comes from a builder (a variable from the variable picker, an operator, a value or
    another variable) or is typed as an expression (`count >= 3 and not done`, checked when entered,
    what's wrong shown under the field), each block with its own actions (the same editors,
    nested), plus "Else if" and "Else"; set variable values can be expressions (`count + 1`,
-   `"Hi " + name`); every edit is an undo step (`proto.action.*`, `proto.conditional.*`). Hotspot
-   hints: a click where nothing reacts flashes the screen's hotspots (an Options menu toggle, on by
-   default); the presenter's Inspect panel shows the hovered layer's properties. *Left:* dragging
-   actions to reorder them (a menu moves them now), QA against larger prototypes with
-   conditionals. 2–4 h.
+   `"Hi " + name`); expressions read a variable's value in a given mode of its collection
+   (`accent[Dark]`, also from REST files' variable mode lookups) and the mode a collection is in
+   where the interaction runs (`mode(Theme) == "Dark"`, following set variable mode actions); every
+   edit is an undo step (`proto.action.*`, `proto.conditional.*`). Hotspot hints: a click where
+   nothing reacts flashes the screen's hotspots (an Options menu toggle, on by default); the
+   presenter's Inspect panel shows the hovered layer's properties. Overlays opened through commands
+   close on a click outside unless told not to, as in the editor. *Left:* QA against larger
+   real-world prototypes. 1–2 h.
 6. **Interop**: *landed:* image crop handles; REST API file JSON import (`file.open` / `file.import`
    / CLI: pages, layer tree, geometry, paints, strokes, effects, text runs, vectors from geometry
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
@@ -172,8 +176,7 @@ dimension measured side by side.
    vectors, real selectable text in subset fonts with clickable hyperlinks, images embedded once,
    opacity and blend modes, clip content, alpha/luminance/vector masks, shadows and layer and
    background blurs as images; checked by rendering the PDFs back against PNG exports.
-   *Left:* .fig import (best effort), variable mode lookups in prototype expressions, PDF print
-   options (bleed, CMYK). 10–20 h.
+   *Left:* .fig import (best effort), PDF print options (bleed, CMYK). 10–20 h.
 7. **Look & feel and interaction-fidelity pass**: *landed:* keyboard shortcuts audited against the
    public shortcut reference: one keymap (`figcraft_engine::keymap`) drives the menus, the canvas,
    the control channel and MCP, with macOS and Windows/Linux keys where they differ (mask, bring to
@@ -301,8 +304,8 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
-| Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
-| Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
+| Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |
+| Import/export | 6 | 66% | .fig import (best effort), PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 

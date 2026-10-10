@@ -223,11 +223,17 @@ names; modes chosen on layers inside the screen still win); `{type: "conditional
 "else"). Expressions are `{value: {type: number|string|boolean|color|alias, value}}` (`alias` reads
 a variable) or `{op: {op, args}}` with `add` (text joins when a string is involved), `subtract`,
 `multiply`, `divide`, `equals`, `notEqual`, `less`, `lessOrEqual`, `greater`, `greaterOrEqual`,
-`and`, `or`, `not` and `negate`. Expressions can also be written as text: `expression: "count + 1"`
+`and`, `or`, `not` and `negate`; `{inMode: {variable, mode}}` reads a variable's value in one mode
+of its collection whichever mode is chosen, and `{mode: {collection}}` gives the name of the mode a
+collection is in where the interaction runs (as text; it follows set variable mode actions).
+Variables, collections and modes may be given by name; they are stored by id. Expressions can also
+be written as text: `expression: "count + 1"`
 on a set variable action, or `expression: "count >= 3 and not done"` on a conditional block, in
 place of `expr` / `condition` (variables by name, `{name}` for any name; numbers, `"text"`,
 `true` / `false`, `#RRGGBB`; `or` / `||`, `and` / `&&`, `not` / `!`, `==` (or `=`), `!=`, `<`,
-`<=`, `>`, `>=`, `+` (joins text), `-`, `*`, `/` and brackets). Text expressions are checked: a
+`<=`, `>`, `>=`, `+` (joins text), `-`, `*`, `/` and brackets; `accent[Dark]` for a variable's
+value in a mode, `mode(Theme) == "Dark"` for a collection's current mode, names with brackets or
+spaces at their ends in quotes). Text expressions are checked: a
 condition must give true or false and a set variable's expression a value the variable can hold,
 otherwise the command fails with what's wrong (`Something is missing at the end`, `No variable
 \`x\``, `Can't compare a number with text`). Single actions, also inside conditionals, are edited
@@ -360,7 +366,8 @@ The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, 
 `run_command {command: "file.import", params: {path}}` (pages appended to the current document,
 with their flows, prototype settings and variables).
 The result's `warnings` list what was skipped or approximated (unsupported layer, paint and effect
-types, video and gamepad triggers, variable mode lookups in expressions, bindings to library
+types, video and gamepad triggers, expression functions other than a variable mode lookup over a
+variable and one of its modes, bindings to library
 variables, instances of components outside the file, which come in as frames). Pages, the layer
 tree, geometry, paints, strokes, effects, corners, constraints, auto layout, layout grids, exports,
 text with styled runs, vectors, components, component sets, instances and component properties are
