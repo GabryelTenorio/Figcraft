@@ -9,49 +9,20 @@ use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use figcraft_collab::Client;
-use figcraft_collab::message::{self, ClientMsg, Peer, Presence, ServerMsg};
-use figcraft_engine::live::{Event, Role, SessionInfo, Status};
+use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
+use figcraft_engine::live::{Event, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::{CloseFrame, Role as WsRole, WebSocket};
 use tungstenite::{Bytes, Message};
 
-use crate::host::ENDED;
 use crate::inbox::Inbox;
-use crate::invite::Invite;
-use crate::net::{Duplex, NetLimits, config, shutdown};
+pub use crate::join::GuestConfig;
+use crate::join::{Next, Outcome, Seen, Taken, after, closed, take};
+use crate::net::{Duplex, config, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
-
-/// How a guest connects and reconnects.
-#[derive(Clone, Debug)]
-pub struct GuestConfig {
-    pub invite: Invite,
-    /// Your name (empty: the host picks one).
-    pub name: String,
-    pub limits: NetLimits,
-    pub connect_timeout: Duration,
-    /// The pause before the first reconnect; it doubles each time up to `max_backoff`.
-    pub backoff: Duration,
-    pub max_backoff: Duration,
-    /// Reconnect attempts before giving up.
-    pub attempts: u32,
-}
-
-impl GuestConfig {
-    pub fn new(invite: Invite, name: String) -> Self {
-        Self {
-            invite,
-            name,
-            limits: NetLimits::default(),
-            connect_timeout: Duration::from_secs(5),
-            backoff: Duration::from_millis(500),
-            max_backoff: Duration::from_secs(10),
-            attempts: 12,
-        }
-    }
-}
 
 /// A joined (or joining) session. Dropping it leaves.
 pub struct Guest {
@@ -68,18 +39,6 @@ enum Cmd {
     Welcomed(u64),
     /// Connection `epoch` ended.
     Lost(u64, Outcome),
-}
-
-/// How a connection ended.
-enum Outcome {
-    /// Dropped: try again.
-    Retry(String),
-    /// The host said no (bad token, full…): final.
-    Refused(String),
-    /// The host ended the session: final.
-    Ended(String),
-    /// You left.
-    Left,
 }
 
 impl Guest {
@@ -156,10 +115,6 @@ fn connect(cfg: &GuestConfig) -> Result<Conn, String> {
     Ok(Conn { reader, writer, sock })
 }
 
-fn backoff(cfg: &GuestConfig, attempt: u32) -> Duration {
-    cfg.backoff.saturating_mul(1u32 << attempt.saturating_sub(1).min(16)).min(cfg.max_backoff)
-}
-
 fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<Cmd>) {
     let mut attempt = 0u32;
     let mut was_live = false;
@@ -172,21 +127,15 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
             Ok(c) => session(c, cfg, inbox, rx, me, epoch, &mut pending, &mut was_live, &mut attempt),
             Err(e) => Outcome::Retry(e),
         };
-        match outcome {
-            Outcome::Left => return,
-            Outcome::Refused(why) => return inbox.push(Event::Status(Status::Failed { reason: format!("The host refused: {why}") })),
-            Outcome::Ended(why) => return inbox.push(Event::Ended { reason: why }),
-            Outcome::Retry(why) if !was_live => {
-                return inbox.push(Event::Status(Status::Failed { reason: format!("Couldn't join the live session: {why}") }));
-            }
-            Outcome::Retry(why) => {
-                attempt += 1;
-                if attempt > cfg.attempts {
-                    return inbox.push(Event::Status(Status::Failed { reason: format!("Lost the connection to the host ({why})") }));
+        match after(outcome, cfg, was_live, &mut attempt, inbox) {
+            Next::Stop(e) => {
+                if let Some(e) = e {
+                    inbox.push(e);
                 }
-                log::info!("live session: connection lost ({why}); reconnecting, attempt {attempt}");
-                inbox.push(Event::Status(Status::Reconnecting { attempt }));
-                let until = Instant::now() + backoff(cfg, attempt);
+                return;
+            }
+            Next::Reconnect(pause) => {
+                let until = Instant::now() + pause;
                 loop {
                     match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
                         Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => return,
@@ -291,33 +240,21 @@ struct ReaderCtx {
     cfg: GuestConfig,
 }
 
-/// What the reader knows of the session (to tell the UI who's here).
-struct Seen {
-    info: Option<SessionInfo>,
-    peers: Vec<Peer>,
-}
-
 fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
-    let mut seen = Seen { info: None, peers: Vec::new() };
+    let mut seen = Seen::default();
     let outcome = loop {
         match ws.read() {
             Ok(Message::Binary(b)) => match message::decode::<ServerMsg>(&b, ctx.cfg.limits.max_server_message) {
-                Ok(m) => {
-                    if let Some(o) = take(m, ctx, &mut seen) {
-                        break o;
+                Ok(m) => match take(m, &ctx.cfg, &ctx.inbox, &mut seen) {
+                    Taken::Continue => {}
+                    Taken::Welcomed => {
+                        let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
                     }
-                }
+                    Taken::End(o) => break o,
+                },
                 Err(e) => break Outcome::Refused(format!("the host sent a message this version can't read ({e})")),
             },
-            Ok(Message::Close(f)) => {
-                break match f {
-                    Some(f) if f.code == CloseCode::Away => {
-                        Outcome::Ended(if f.reason.is_empty() { ENDED.to_string() } else { f.reason.to_string() })
-                    }
-                    Some(f) if f.code == CloseCode::Policy => Outcome::Refused(f.reason.to_string()),
-                    _ => Outcome::Retry("the host closed the connection".into()),
-                };
-            }
+            Ok(Message::Close(f)) => break f.map_or_else(|| closed(0, ""), |f| closed(f.code.into(), &f.reason)),
             Ok(Message::Text(_)) => break Outcome::Refused("the host sent a text message".into()),
             Ok(_) => {}
             Err(tungstenite::Error::Capacity(_)) => break Outcome::Refused("the host sent a message over the size limit".into()),
@@ -325,59 +262,4 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
         }
     };
     let _ = ctx.tx.send(Cmd::Lost(ctx.epoch, outcome));
-}
-
-/// Take in one message from the host; `Some` when the connection should end.
-fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
-    match m {
-        ServerMsg::Welcome { client_id, ref peers, .. } => {
-            // The sync client opens the document (and fills in its name and pages).
-            let peers = peers.clone();
-            let inv = &ctx.cfg.invite;
-            let network = inv.host.parse::<SocketAddr>().map_or(true, |a| !a.ip().is_loopback());
-            let info = SessionInfo {
-                role: Role::Guest,
-                me: client_id,
-                name: ctx.cfg.name.clone(),
-                color: String::new(),
-                file_name: String::new(),
-                pages: Vec::new(),
-                link: inv.link(),
-                url: inv.url(),
-                address: inv.host.clone(),
-                network,
-            };
-            seen.peers = peers.clone();
-            seen.info = Some(info.clone());
-            ctx.inbox.push(Event::Welcome { info, peers });
-            ctx.inbox.push(Event::Sync(m));
-            let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
-        }
-        ServerMsg::PeerJoined(p) => match seen.info.as_mut() {
-            // The host tells you how you are shown.
-            Some(info) if p.client_id == info.me => {
-                info.name = p.name;
-                info.color = p.color;
-                ctx.inbox.push(Event::Welcome { info: info.clone(), peers: seen.peers.clone() });
-            }
-            _ => {
-                seen.peers.retain(|q| q.client_id != p.client_id);
-                seen.peers.push(p.clone());
-                ctx.inbox.push(Event::PeerJoined(p));
-            }
-        },
-        ServerMsg::PeerLeft { client_id } => {
-            seen.peers.retain(|q| q.client_id != client_id);
-            ctx.inbox.push(Event::PeerLeft(client_id));
-        }
-        ServerMsg::Presence { client_id, presence } => {
-            if seen.info.as_ref().is_some_and(|i| i.me != client_id) {
-                ctx.inbox.presence(client_id, presence);
-            }
-        }
-        ServerMsg::Refused { reason } => return Some(Outcome::Refused(reason)),
-        ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => ctx.inbox.push(Event::Sync(m)),
-        ServerMsg::Pong => {}
-    }
-    None
 }

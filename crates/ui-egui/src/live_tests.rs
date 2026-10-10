@@ -35,9 +35,9 @@ impl LiveLink for Mock {
     }
 }
 
-struct Harness {
-    ctx: egui::Context,
-    app: FigApp,
+pub(crate) struct Harness {
+    pub(crate) ctx: egui::Context,
+    pub(crate) app: FigApp,
     time: f64,
     events: Arc<Mutex<Vec<LiveEvent>>>,
 }
@@ -58,7 +58,7 @@ fn flat(shapes: &[egui::epaint::ClippedShape]) -> Vec<Shape> {
 }
 
 impl Harness {
-    fn new() -> (Self, NodeId) {
+    pub(crate) fn new() -> (Self, NodeId) {
         let mut s = Session::new();
         let rect = id(&s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 200, "height": 100})).unwrap());
         s.execute("select.set", &json!({"ids": []})).unwrap();
@@ -69,7 +69,7 @@ impl Harness {
     }
 
     /// One frame; the shapes it painted and the repaint delay it asked for.
-    fn frame(&mut self, events: Vec<Event>) -> (Vec<Shape>, Duration) {
+    pub(crate) fn frame(&mut self, events: Vec<Event>) -> (Vec<Shape>, Duration) {
         self.time += 1.0 / 60.0;
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
@@ -80,7 +80,7 @@ impl Harness {
         (flat(&out.shapes), delay)
     }
 
-    fn frames(&mut self, n: usize) -> Vec<Shape> {
+    pub(crate) fn frames(&mut self, n: usize) -> Vec<Shape> {
         let mut last = Vec::new();
         for _ in 0..n {
             last = self.frame(vec![]).0;
@@ -88,7 +88,7 @@ impl Harness {
         last
     }
 
-    fn click(&mut self, p: Pos2) {
+    pub(crate) fn click(&mut self, p: Pos2) {
         for pressed in [true, false] {
             self.frame(vec![
                 Event::PointerMoved(p),
@@ -150,12 +150,12 @@ fn texts(shapes: &[Shape]) -> Vec<(String, Pos2, egui::Vec2)> {
         .collect()
 }
 
-fn has_text(shapes: &[Shape], s: &str) -> bool {
+pub(crate) fn has_text(shapes: &[Shape], s: &str) -> bool {
     texts(shapes).iter().any(|(t, _, _)| t == s)
 }
 
 /// The middle of the text `s` on screen.
-fn text_center(shapes: &[Shape], s: &str) -> Pos2 {
+pub(crate) fn text_center(shapes: &[Shape], s: &str) -> Pos2 {
     let (_, p, size) = texts(shapes).into_iter().find(|(t, _, _)| t == s).unwrap_or_else(|| panic!("no text {s:?}"));
     p + size / 2.0
 }

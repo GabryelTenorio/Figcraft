@@ -1,5 +1,5 @@
-//! Live sessions over the network for FigCraft (milestone M9, step 2 of
-//! `docs/collab-protocol.md`): the WebSocket transport, the session host the desktop app embeds,
+//! Live sessions over the network for FigCraft (milestone M9, steps 2 and 4
+//! of `docs/collab-protocol.md`): the WebSocket transport, the session host the desktop app embeds,
 //! invite links, and presence relay. It carries the collaboration core's messages
 //! ([`figcraft_collab::message`]) and runs its [`Server`](figcraft_collab::Server) as the host's
 //! authority.
@@ -8,12 +8,18 @@
 //! engine's `collab.*` commands drive it and the UI reads the engine's live state. Network
 //! threads wake the UI through a [`Waker`] only when something arrives; nothing polls.
 //!
-//! The browser build has a stand-in [`NetLink`] whose host and join say it's not available yet
-//! (a `web-sys` WebSocket client is step 4).
+//! The browser build's [`NetLink`] joins sessions through the browser's WebSocket API (`web-sys`);
+//! hosting needs the desktop app. Its connection logic (`driver.rs`) is target-independent and
+//! tested natively.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod driver;
 pub mod inbox;
 pub mod invite;
+mod join;
+pub mod limits;
+pub mod throttle;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod guest;
@@ -22,9 +28,9 @@ pub mod host;
 #[cfg(not(target_arch = "wasm32"))]
 mod link;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod net;
+pub mod links;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod throttle;
+pub mod net;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod token;
 
@@ -33,13 +39,18 @@ mod web;
 
 pub use inbox::{Inbox, Waker};
 pub use invite::Invite;
+pub use limits::NetLimits;
 #[cfg(not(target_arch = "wasm32"))]
 pub use link::{DEFAULT_PORT, NetLink, lan_ip};
 #[cfg(target_arch = "wasm32")]
 pub use web::NetLink;
 
 #[cfg(test)]
+mod driver_tests;
+#[cfg(test)]
 mod invite_tests;
+#[cfg(test)]
+mod links_tests;
 #[cfg(test)]
 mod loopback_tests;
 #[cfg(test)]

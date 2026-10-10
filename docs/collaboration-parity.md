@@ -1,17 +1,18 @@
 # Collaboration parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (the multiplayer core landed in #103) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 Figma is multiplayer first; FigCraft is local first. **Ready ~12% (estimated):** comments and version
-history work inside one file on one machine; the real-time collaboration core landed in #103
-(sync model, server ordering, client reconciliation, convergence tests) without networking, so
-nobody can co-edit yet ([`collab-protocol.md`](collab-protocol.md)). Remaining: 55–110 h
+history work inside one file; the real-time collaboration core landed in #103 (sync model,
+server ordering, client reconciliation, convergence tests), and live sessions (preview) let
+several apps co-edit a file hosted by one desktop app, joined from the desktop app or the browser
+([`collab-protocol.md`](collab-protocol.md)). Remaining: 55–110 h
 (multiplayer 45–90 h, shared libraries 10–20 h), plus branching 8–15 h.
 
 | Feature | Figma | FigCraft | Hours |
 |---|---|---|---|
-| Real-time co-editing | yes | **core built, no networking** (#103): client-scoped ids, per-property change sets with fractional positions, server ordering and validation, optimistic clients, binary messages; randomized multi-client convergence tests over real commands. Live sessions over the network landed (`crates/collab-net`): the WebSocket transport (keep-alive, size and rate limits, reconnect with backoff), hosting from the app (this machine or the local network) with invite links, live cursors with name tags, selections, avatars and follow, `collab.*` commands. Document sync between apps works over them (the host's server orders every batch; guests open the host's file as a new tab). Left: per-user undo, resuming after a reconnect, browser client, standalone server | 25–55 |
-| Live cursors, selections, viewports; follow / observation mode; spotlight | yes | no (presence messages encoded; no UI or transport) | 8–15 |
+| Real-time co-editing | yes | **core built, no networking** (#103): client-scoped ids, per-property change sets with fractional positions, server ordering and validation, optimistic clients, binary messages; randomized multi-client convergence tests over real commands. Live sessions over the network landed (`crates/collab-net`): the WebSocket transport (keep-alive, size and rate limits, reconnect with backoff), hosting from the app (this machine or the local network) with invite links, live cursors with name tags, selections, avatars and follow, `collab.*` commands. Document sync between apps works over them (the host's server orders every batch; guests open the host's file as a new tab). The browser build joins (same messages through the browser's WebSocket API); `figcraft://` invite links open the desktop app and join. Left: per-user undo, resuming after a reconnect, standalone server with TLS | 25–55 |
+| Live cursors, selections, viewports; follow / observation mode; spotlight | yes | **partial**: cursors with name tags, selections, avatars and follow in live sessions; no spotlight | 8–15 |
 | Cursor chat, audio, high-fives | yes | no | 4–8 |
 | Share links, permissions (view / edit), teams and projects | yes | no | 8–17 |
 | Comments: pins on frames and layers, threads, reactions, @mentions, resolve, unread, search and filters, links, in the presenter | yes (shared) | **done, local**: stored in the file, your name from Preferences | (shared once multiplayer lands) |
@@ -24,5 +25,6 @@ nobody can co-edit yet ([`collab-protocol.md`](collab-protocol.md)). Remaining: 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

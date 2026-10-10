@@ -29,14 +29,12 @@ use tungstenite::protocol::{CloseFrame, Role, WebSocket};
 use tungstenite::{Bytes, Message};
 
 use crate::inbox::Inbox;
+pub use crate::join::ENDED;
 use crate::net::{Bucket, Duplex, NetLimits, config, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
 /// How long a closing connection waits for the peer to hang up.
 const LINGER: Duration = Duration::from_secs(2);
-
-/// What the host tells everyone when it stops (the WebSocket close reason).
-pub const ENDED: &str = "The host ended the session";
 
 /// What a hosted session needs.
 pub struct HostConfig {

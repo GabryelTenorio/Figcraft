@@ -73,6 +73,8 @@ mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
 #[cfg(test)]
+mod live_join_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
@@ -739,6 +741,7 @@ impl FigApp {
         present::show_pane(self, &ctx);
         comments::keys(self, &ctx);
         dev_compare::keys(self, &ctx);
+        live::join_keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
