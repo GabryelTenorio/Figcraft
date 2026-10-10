@@ -285,6 +285,10 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
         return;
     };
+    // A press on the canvas gives the keyboard back to it (arrows nudge again).
+    if resp.hovered() && ctx.input(|i| i.pointer.any_pressed()) {
+        app.ui.layers_focus = false;
+    }
     // Zoom (pinch, Cmd/Ctrl+scroll) about the pointer; plain scroll pans.
     if resp.hovered() {
         if (zoom_delta - 1.0).abs() > 1e-4 {
