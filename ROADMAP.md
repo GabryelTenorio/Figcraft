@@ -150,7 +150,9 @@ dimension measured side by side.
   variants, properties, slots), styles and variables, prototype commands, find/replace, batch rename,
   copy/paste (internal + SVG/text), file new/open/save/import/export (native `.figcraft`, SVG
   in/out, PNG/JPG/WebP), version snapshots.
-- **UI (egui, swappable):** the incumbent's 2026 layout: tab strip, icon rail, file header, pages and
+- **UI (egui, swappable):** the incumbent's 2026 layout: tab strip that is also the window's title
+  bar (frameless on Windows/Linux with drawn window buttons, drag, double-click maximise and edge
+  resizing; macOS window buttons inset into it), icon rail, file header, pages and
   layers tree (rename, visibility/lock, drag to reorder/reparent), Assets panel, floating bottom
   toolbar with flyouts and mode switcher, Design / Prototype / Inspect (CSS) panels, colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,

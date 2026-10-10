@@ -46,6 +46,10 @@ pub enum Icon {
     Page,
     Check,
     Close,
+    /// Window buttons: minimise, maximise, restore.
+    WinMinimize,
+    WinMaximize,
+    WinRestore,
     Search,
     Grid,
     AlignLeft,
@@ -388,6 +392,16 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Close => {
             p.line(4.0, 4.0, 12.0, 12.0);
             p.line(12.0, 4.0, 4.0, 12.0);
+        }
+        WinMinimize => p.line(3.5, 8.0, 12.5, 8.0),
+        WinMaximize => p.rect(3.5, 3.5, 12.5, 12.5, 0.5),
+        WinRestore => {
+            // A window in front of another.
+            p.rect(3.5, 5.5, 10.5, 12.5, 0.5);
+            p.line(5.5, 5.5, 5.5, 3.5);
+            p.line(5.5, 3.5, 12.5, 3.5);
+            p.line(12.5, 3.5, 12.5, 10.5);
+            p.line(12.5, 10.5, 10.5, 10.5);
         }
         Search => {
             p.circle(7.0, 7.0, 4.0);
