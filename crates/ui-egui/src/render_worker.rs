@@ -5,8 +5,9 @@
 
 use std::sync::Arc;
 
+use figcraft_color::ColorProfile;
 use figcraft_doc::{Document, NodeId};
-use figcraft_render::{Retained, View, Work};
+use figcraft_render::{Pixmap, Retained, View, Work};
 
 #[derive(Clone)]
 pub struct Job {
@@ -28,12 +29,23 @@ pub struct Done {
     pub work: Work,
 }
 
+/// A render of a document in `profile` as a texture image for the screen (sRGB).
+pub fn screen_image(pix: &Pixmap, profile: ColorProfile) -> egui::ColorImage {
+    let size = [pix.width() as usize, pix.height() as usize];
+    if profile.is_srgb() {
+        return egui::ColorImage::from_rgba_premultiplied(size, pix.data());
+    }
+    let mut data = pix.data().to_vec();
+    profile.conversion_to(ColorProfile::Srgb).apply_pixels(&mut data);
+    egui::ColorImage::from_rgba_premultiplied(size, &data)
+}
+
 fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     #[cfg(not(target_arch = "wasm32"))]
     let t0 = std::time::Instant::now();
     let opts = figcraft_render::Options { outline_mode: job.outline, skip: job.skip.clone(), ..Default::default() };
     let (view, pix, work) = retained.render(&job.doc, job.page, &job.view, &opts)?;
-    let image = egui::ColorImage::from_rgba_premultiplied([pix.width() as usize, pix.height() as usize], pix.data());
+    let image = screen_image(pix, job.doc.color_profile);
     #[cfg(not(target_arch = "wasm32"))]
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     #[cfg(target_arch = "wasm32")]

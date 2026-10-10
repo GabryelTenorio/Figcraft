@@ -138,6 +138,8 @@ impl Retained {
             && last.pix.width() == snapped.width
             && last.pix.height() == snapped.height
             && last.fonts == fonts
+            // Images are decoded into the file's colour space: a new profile redraws everything.
+            && last.doc.color_profile == doc.color_profile
         {
             let same_doc = Arc::ptr_eq(&last.doc, doc);
             let s = if same_doc { last.sensitive.clone() } else { Arc::new(sensitive(doc)) };

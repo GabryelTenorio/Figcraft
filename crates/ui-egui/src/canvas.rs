@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::render_worker::{Job, Worker};
-use crate::theme::{ACCENT, COMPONENT, Tokens, c32, regular, semibold};
+use crate::theme::{ACCENT, COMPONENT, Tokens, doc_c32, regular, semibold};
 
 pub struct CanvasState {
     pub rect: Rect,
@@ -161,7 +161,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
         .ds()
         .ok()
         .and_then(|ds| match ds.doc.node(ds.page).map(|n| &n.kind) {
-            Some(NodeKind::Page { background, .. }) => Some(c32(*background)),
+            Some(NodeKind::Page { background, .. }) => Some(doc_c32(&ctx, *background)),
             _ => None,
         })
         .unwrap_or(t.canvas);
@@ -542,7 +542,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         if view.layout_grids && !n.grids.is_empty() {
             let w = doc.world_transform(*c);
             for g in n.grids.iter().filter(|g| g.visible) {
-                let col = c32(g.color);
+                let col = doc_c32(painter.ctx(), g.color);
                 for r in figcraft_layout::grid_lines(g, n.width, n.height) {
                     let a = w * Point::new(r.x0, r.y0);
                     let b = w * Point::new(r.x1, r.y1);

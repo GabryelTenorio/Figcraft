@@ -84,13 +84,10 @@ pub fn render_page(doc: &Document, page: NodeId, scale: f64) -> CliResult<figcra
     figcraft_render::render_view(doc, page, &view, &Default::default()).ok_or_else(|| CliError::Failed("render failed".into()))
 }
 
-fn encode(pix: &figcraft_render::Pixmap, e: &str) -> CliResult<Vec<u8>> {
-    match e {
-        "jpg" | "jpeg" => figcraft_render::encode_jpeg(pix, figcraft_doc::color::Color::WHITE, 90),
-        "webp" => figcraft_render::encode_webp(pix),
-        _ => figcraft_render::encode_png(pix),
-    }
-    .map_err(CliError::Failed)
+/// Encode a render as the format extension `e` names, tagged with `doc`'s colour profile.
+fn encode(doc: &Document, pix: &figcraft_render::Pixmap, e: &str) -> CliResult<Vec<u8>> {
+    let format = ExportFormat::from_ext(e).unwrap_or_default();
+    figcraft_render::encode_export(pix, format, doc.color_profile).map_err(CliError::Failed)
 }
 
 /// Write `doc` to `out`, choosing the format by extension.
@@ -105,10 +102,10 @@ pub fn write_doc(doc: &Document, page: NodeId, out: &str) -> CliResult<()> {
             let v = figcraft_format::to_json(doc).map_err(|e| CliError::Failed(e.to_string()))?;
             serde_json::to_vec_pretty(&v).map_err(|e| CliError::Failed(e.to_string()))?
         }
-        "svg" => figcraft_svg::export_svg(doc, &children(doc, page), &Default::default())
+        "svg" => figcraft_svg::export_svg(&doc.in_srgb(), &children(doc, page), &Default::default())
             .ok_or_else(|| CliError::Failed("the page is empty: nothing to export".into()))?
             .into_bytes(),
-        "png" | "jpg" | "jpeg" | "webp" => encode(&render_page(doc, page, 1.0)?, &e)?,
+        "png" | "jpg" | "jpeg" | "webp" => encode(doc, &render_page(doc, page, 1.0)?, &e)?,
         "pdf" => figcraft_engine::cmd::file::export_bytes(doc, &children(doc, page), ExportFormat::Pdf, 1.0)
             .map_err(|e| CliError::Failed(e.to_string()))?,
         other => return Err(CliError::Usage(format!("unknown output format `.{other}` (figcraft, json, svg, png, jpg, webp, pdf)"))),
@@ -242,7 +239,7 @@ pub fn render(file: &str, out: &str, scale: f64, page: Option<&str>) -> CliResul
         return Err(CliError::Usage(format!("render writes .png, .jpg or .webp, not `{out}`")));
     }
     let pix = render_page(&doc, page, scale)?;
-    write(out, &encode(&pix, &e)?)?;
+    write(out, &encode(&doc, &pix, &e)?)?;
     println!("{out} ({}×{})", pix.width(), pix.height());
     Ok(ExitCode::SUCCESS)
 }

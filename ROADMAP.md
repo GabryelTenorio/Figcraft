@@ -120,8 +120,7 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
-  a real-file corpus); variable width strokes; library variables; paint colour profiles and style
-  picker polish (in progress).
+  a real-file corpus); variable width strokes (in progress); library variables.
 - **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
@@ -171,14 +170,14 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
 | Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
 | Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
-| Paint | 7 | 65% | colour profiles (Display P3), paint style picker polish, image adjustment presets | 6–10 |
+| Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 71% | library variables | 2–4 |
-| Styles & variables | 5 | 75% | binding effects, line height and letter spacing | 2–4 |
+| Styles & variables | 5 | 78% | binding effects | 1–3 |
 | Prototyping | 6 | 76% | device rotation, presentation scaling options, scroll momentum | 1–3 |
 | Import/export | 6 | 58% | PDF (in progress), .fig import, REST import of conditional and variable-mode prototype actions | 13–25 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |

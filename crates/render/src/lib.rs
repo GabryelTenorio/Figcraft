@@ -15,8 +15,8 @@ pub use draw::{node_outline, paint_bounds, subtree_outline, ts_path};
 pub use retained::{Retained, Work};
 pub use tiny_skia::{FillRule, Pixmap};
 
-use figcraft_color::Color;
-use figcraft_doc::{Document, NodeId, NodeKind};
+use figcraft_color::{Color, ColorProfile};
+use figcraft_doc::{Document, ExportFormat, NodeId, NodeKind};
 use figcraft_geom::{Affine, Rect};
 
 /// Which part of a page to draw, and how big.
@@ -205,17 +205,35 @@ pub fn to_rgba8(p: &Pixmap) -> Vec<u8> {
     out
 }
 
-/// Encode as PNG.
-pub fn encode_png(p: &Pixmap) -> Result<Vec<u8>, String> {
-    let rgba = to_rgba8(p);
+/// Bring a render of a document in `profile` into sRGB, the space the screen and the system
+/// clipboard expect (out-of-gamut colours clip). A no-op for sRGB documents.
+pub fn to_srgb(pix: &mut Pixmap, profile: ColorProfile) {
+    profile.conversion_to(ColorProfile::Srgb).apply_pixels(pix.data_mut());
+}
+
+/// Write `pixels` with `enc`, embedding `icc` when given.
+fn write_encoded(
+    mut enc: impl image::ImageEncoder,
+    pixels: &[u8],
+    p: &Pixmap,
+    kind: image::ExtendedColorType,
+    icc: Option<Vec<u8>>,
+) -> Result<(), String> {
+    if let Some(icc) = icc {
+        enc.set_icc_profile(icc).map_err(|e| e.to_string())?;
+    }
+    enc.write_image(pixels, p.width(), p.height(), kind).map_err(|e| e.to_string())
+}
+
+/// Encode as PNG, with an `iCCP` chunk when `icc` is given.
+fn png_with(p: &Pixmap, icc: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    let enc = image::codecs::png::PngEncoder::new(&mut out);
-    image::ImageEncoder::write_image(enc, &rgba, p.width(), p.height(), image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+    write_encoded(image::codecs::png::PngEncoder::new(&mut out), &to_rgba8(p), p, image::ExtendedColorType::Rgba8, icc)?;
     Ok(out)
 }
 
-/// Encode as JPEG over `background` (JPEG has no alpha).
-pub fn encode_jpeg(p: &Pixmap, background: Color, quality: u8) -> Result<Vec<u8>, String> {
+/// Encode as JPEG over `background` (JPEG has no alpha), with an ICC profile when given.
+fn jpeg_with(p: &Pixmap, background: Color, quality: u8, icc: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
     let rgba = to_rgba8(p);
     let bg = background.to_rgba8();
     let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
@@ -229,17 +247,68 @@ pub fn encode_jpeg(p: &Pixmap, background: Color, quality: u8) -> Result<Vec<u8>
     }
     let mut out = Vec::new();
     let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
-    image::ImageEncoder::write_image(enc, &rgb, p.width(), p.height(), image::ExtendedColorType::Rgb8).map_err(|e| e.to_string())?;
+    write_encoded(enc, &rgb, p, image::ExtendedColorType::Rgb8, icc)?;
     Ok(out)
+}
+
+/// Encode as lossless WebP, with an ICC profile when given.
+fn webp_with(p: &Pixmap, icc: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    write_encoded(image::codecs::webp::WebPEncoder::new_lossless(&mut out), &to_rgba8(p), p, image::ExtendedColorType::Rgba8, icc)?;
+    Ok(out)
+}
+
+/// Encode as PNG (untagged).
+pub fn encode_png(p: &Pixmap) -> Result<Vec<u8>, String> {
+    png_with(p, None)
+}
+
+/// Encode as JPEG over `background` (JPEG has no alpha).
+pub fn encode_jpeg(p: &Pixmap, background: Color, quality: u8) -> Result<Vec<u8>, String> {
+    jpeg_with(p, background, quality, None)
 }
 
 /// Encode as lossless WebP.
 pub fn encode_webp(p: &Pixmap) -> Result<Vec<u8>, String> {
-    let rgba = to_rgba8(p);
-    let mut out = Vec::new();
-    let enc = image::codecs::webp::WebPEncoder::new_lossless(&mut out);
-    image::ImageEncoder::write_image(enc, &rgba, p.width(), p.height(), image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
-    Ok(out)
+    webp_with(p, None)
+}
+
+/// Encode an export in `format` (PNG, JPEG over white, WebP) tagged with the document's colour
+/// `profile`. An sRGB PNG gets an `sRGB` chunk; a Display P3 PNG gets the profile as `iCCP` plus
+/// `cICP` code points; Display P3 JPEG and WebP files embed the ICC profile (untagged files are read
+/// as sRGB). SVG and PDF are not pixel formats: an error.
+pub fn encode_export(p: &Pixmap, format: ExportFormat, profile: ColorProfile) -> Result<Vec<u8>, String> {
+    let icc = (!profile.is_srgb()).then(|| profile.icc());
+    match format {
+        ExportFormat::Png => {
+            let png = png_with(p, icc)?;
+            Ok(if profile.is_srgb() { png_insert_chunk(png, b"sRGB", &[0]) } else { png_insert_chunk(png, b"cICP", &profile.cicp()) })
+        }
+        ExportFormat::Jpg => jpeg_with(p, Color::WHITE, 90, icc),
+        ExportFormat::Webp => webp_with(p, icc),
+        ExportFormat::Svg | ExportFormat::Pdf => Err(format!("{} is not a pixel format", format.label())),
+    }
+}
+
+/// Insert a chunk right after a PNG's `IHDR` (where colour-space chunks go: before `PLTE` and
+/// `IDAT`). Anything that isn't a PNG comes back unchanged.
+pub fn png_insert_chunk(png: Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    const IHDR_END: usize = 8 + 8 + 13 + 4;
+    let (Some(head), Some(rest)) = (png.get(..IHDR_END), png.get(IHDR_END..)) else { return png };
+    if head.get(12..16) != Some(b"IHDR".as_slice()) {
+        return png;
+    }
+    let mut crc = crc32fast::Hasher::new();
+    crc.update(kind);
+    crc.update(data);
+    let mut out = Vec::with_capacity(png.len() + 12 + data.len());
+    out.extend_from_slice(head);
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    out.extend_from_slice(&crc.finalize().to_be_bytes());
+    out.extend_from_slice(rest);
+    out
 }
 
 #[cfg(test)]

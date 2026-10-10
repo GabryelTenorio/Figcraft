@@ -128,8 +128,7 @@ pub(crate) fn thumbnail(ctx: &egui::Context, doc: &Document, id: NodeId, px: f32
     }
     let scale = (f64::from(px) / side).min(2.0);
     let pix = figcraft_render::render_node(doc, id, scale)?;
-    let size = [pix.width() as usize, pix.height() as usize];
-    let img = egui::ColorImage::from_rgba_unmultiplied(size, &figcraft_render::to_rgba8(&pix));
+    let img = crate::render_worker::screen_image(&pix, doc.color_profile);
     Some(ctx.load_texture(format!("asset-thumb-{}", id.0), img, egui::TextureOptions::LINEAR))
 }
 

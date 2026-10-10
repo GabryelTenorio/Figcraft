@@ -94,8 +94,11 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "edit.copyAsPng" => {
             let ids = app.session.selection();
             if let Some(first) = ids.first()
-                && let Some(pix) = app.session.doc().ok().and_then(|d| figcraft_render::render_node(d, *first, 2.0))
+                && let Some((mut pix, profile)) =
+                    app.session.doc().ok().and_then(|d| Some((figcraft_render::render_node(d, *first, 2.0)?, d.color_profile)))
             {
+                // Clipboard images are read as sRGB.
+                figcraft_render::to_srgb(&mut pix, profile);
                 let rgba = figcraft_render::to_rgba8(&pix);
                 app.services.clipboard_set_png(pix.width(), pix.height(), &rgba);
                 app.toast("Copied as PNG");

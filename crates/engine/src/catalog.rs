@@ -37,6 +37,7 @@ pub static MENU: &[MenuItem] = &[
     m!("File", SEP, "", ""),
     m!("File", "Duplicate", "file.duplicate", ""),
     m!("File", "Rename", "file.rename", ""),
+    m!("File", "Color profile…", "file.colorProfile", ""),
     m!("File", "Revert to saved", "file.revert", ""),
     m!("File", "Close tab", "file.close", "Cmd+W"),
     m!("File", "Open recent", "file.openRecent", ""),

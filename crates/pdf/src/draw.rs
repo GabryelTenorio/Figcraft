@@ -382,7 +382,7 @@ impl<'a> Exporter<'a> {
         }
         let data = self.doc.images.get(&img.image);
         // Decoding through the renderer checks the image is readable and applies adjustments.
-        let made = figcraft_render::images::get(&img.image, data, &img.filters).map(|pm| {
+        let made = figcraft_render::images::get(&img.image, data, &img.filters, self.doc.color_profile).map(|pm| {
             let (pw, ph) = (pm.width(), pm.height());
             // Unadjusted images embed their original bytes (JPEG stays JPEG).
             let original = data.filter(|_| img.filters.is_identity()).and_then(|d| {

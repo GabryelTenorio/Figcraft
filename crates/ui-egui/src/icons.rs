@@ -131,6 +131,12 @@ pub enum Icon {
     AbsolutePosition,
     /// A component slot: a dashed frame with a plus, a place that takes any content.
     Slot,
+    /// Edit settings: two sliders.
+    Adjust,
+    /// Show as a list.
+    ViewList,
+    /// Show as a grid of swatches.
+    ViewGrid,
 }
 
 struct P<'a> {
@@ -727,6 +733,23 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             }
             p.line(8.0, 5.5, 8.0, 10.5);
             p.line(5.5, 8.0, 10.5, 8.0);
+        }
+        Adjust => {
+            p.line(2.5, 5.0, 13.5, 5.0);
+            p.line(2.5, 11.0, 13.5, 11.0);
+            p.dot(10.0, 5.0, 2.0);
+            p.dot(6.0, 11.0, 2.0);
+        }
+        ViewList => {
+            for y in [4.0, 8.0, 12.0] {
+                p.fill_rect(2.5, y - 1.25, 5.0, y + 1.25, 0.5);
+                p.line(7.0, y, 13.5, y);
+            }
+        }
+        ViewGrid => {
+            for (x, y) in [(2.5, 2.5), (9.0, 2.5), (2.5, 9.0), (9.0, 9.0)] {
+                p.rect(x, y, x + 4.5, y + 4.5, 1.0);
+            }
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

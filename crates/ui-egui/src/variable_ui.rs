@@ -91,6 +91,33 @@ pub fn number_field(
     edit
 }
 
+/// When `field` of `ids` is bound: the variable's chip in `rect` (change or detach it) and true;
+/// otherwise nothing and false.
+pub fn bound_chip(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kind: VariableType, rect: Rect) -> bool {
+    let Some(name) = app.session.doc().ok().and_then(|d| bound_name(d, ids, field)) else { return false };
+    let ev = widgets::bound_field(ui, Id::new(("bound_chip", field)), Lead::None, rect, &name);
+    handle(app, ui, ids, field, kind, ev);
+    true
+}
+
+/// A variable button at the right end of `rect` while the pointer is over it: opens the picker
+/// to bind `field` of `ids`.
+pub fn bind_button(ui: &mut Ui, rect: Rect, ids: &[NodeId], field: &str, kind: VariableType) {
+    if !ui.rect_contains_pointer(rect) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let b = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
+    let resp = ui.interact(b, Id::new(("bind_button", field)), Sense::click()).on_hover_text("Apply variable");
+    if resp.hovered() {
+        ui.painter().rect_filled(b, CornerRadius::same(4), t.hover);
+    }
+    icons::paint(ui.painter(), b.shrink(3.0), Icon::Variable, t.icon_secondary);
+    if resp.clicked() {
+        open(ui, ids, field, kind, rect.left_bottom());
+    }
+}
+
 /// A field showing the variable `field` of `ids` is bound to, for bindings without a value field
 /// of their own (text content, visibility): `width` wide, at most the row. Nothing when unbound.
 pub fn bound_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kind: VariableType, lead: Lead, width: f32) {

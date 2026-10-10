@@ -2,13 +2,13 @@
 //! hex and RGB fields, gradient stops, image fills and document colours.
 
 use egui::{Align2, Color32, CornerRadius, Id, Mesh, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use figcraft_color::{Color, ColorStop, Gradient, GradientKind, Hsb, ImageScaleMode, Paint, PaintKind};
+use figcraft_color::{Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::{EffectKind, NodeId, NodeKind};
 use serde_json::json;
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::theme::{Tokens, c32, regular, semibold};
+use crate::theme::{Tokens, doc_c32, regular, semibold};
 use crate::widgets;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -34,6 +34,19 @@ pub enum PickerTarget {
         id: String,
         mode: String,
     },
+    /// One paint of a colour style (edited from the style picker).
+    Style {
+        id: String,
+        index: usize,
+    },
+}
+
+/// The paints of colour style `id`.
+fn style_paints(doc: &figcraft_doc::Document, id: &str) -> Option<Vec<Paint>> {
+    match &doc.style(id)?.kind {
+        figcraft_doc::StyleKind::Paint { paints } => Some(paints.clone()),
+        _ => None,
+    }
 }
 
 /// The fills a text range paints with (its own, else the layer's).
@@ -68,6 +81,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             }
             _ => None,
         },
+        PickerTarget::Style { id, index } => style_paints(doc, id)?.get(*index).cloned(),
     }
 }
 
@@ -99,6 +113,13 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
         PickerTarget::Variable { id, mode } => {
             let c = paint.solid_color().unwrap_or(Color::BLACK);
             app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.with_alpha(c.a * paint.opacity).to_css_hex()}))
+        }
+        PickerTarget::Style { id, index } => {
+            let Some(mut paints) = app.session.doc().ok().and_then(|d| style_paints(d, id)) else { return };
+            if let Some(slot) = paints.get_mut(*index) {
+                *slot = paint.clone();
+            }
+            app.session.execute("style.update", &json!({"style": id, "value": paints}))
         }
     };
     if let Err(e) = r {
@@ -244,14 +265,14 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<Color> {
     out
 }
 
-fn hue_color(h: f32) -> Color32 {
-    c32(Hsb { h, s: 1.0, b: 1.0 }.to_color())
+fn hue_color(ctx: &egui::Context, h: f32) -> Color32 {
+    doc_c32(ctx, Hsb { h, s: 1.0, b: 1.0 }.to_color())
 }
 
 fn sv_square(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     // White → hue horizontally, then transparent → black vertically.
     let mut m = Mesh::default();
-    let hc = hue_color(hsb.h);
+    let hc = hue_color(ui.ctx(), hsb.h);
     let corners = [(rect.left_top(), Color32::WHITE), (rect.right_top(), hc), (rect.right_bottom(), hc), (rect.left_bottom(), Color32::WHITE)];
     for (p, c) in corners {
         m.colored_vertex(p, c);
@@ -292,7 +313,7 @@ fn hue_slider(ui: &mut Ui, rect: Rect, hsb: &mut Hsb) -> (bool, bool) {
     for i in 0..=n {
         let t = i as f32 / n as f32;
         let x = rect.min.x + t * rect.width();
-        let c = hue_color(t * 360.0);
+        let c = hue_color(ui.ctx(), t * 360.0);
         m.colored_vertex(pos2(x, rect.min.y), c);
         m.colored_vertex(pos2(x, rect.max.y), c);
         if i > 0 {
@@ -329,7 +350,7 @@ fn slider_knob(ui: &mut Ui, rect: Rect, t: f32, id: Id) -> Option<(f32, bool)> {
 fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     widgets::checker(&ui.painter().with_clip_rect(rect), rect, rect.height() / 2.0);
     let mut m = Mesh::default();
-    let opaque = c32(color.with_alpha(1.0));
+    let opaque = doc_c32(ui.ctx(), color.with_alpha(1.0));
     for (p, c) in [
         (rect.left_top(), Color32::TRANSPARENT),
         (rect.right_top(), opaque),
@@ -445,7 +466,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     let a = i as f32 / n as f32;
                     let b = (i + 1) as f32 / n as f32;
                     let r = Rect::from_min_max(pos2(bar.min.x + a * bar.width(), bar.min.y), pos2(bar.min.x + b * bar.width(), bar.max.y));
-                    ui.painter().rect_filled(r, CornerRadius::ZERO, c32(g.sample((a + b) / 2.0)));
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, doc_c32(ui.ctx(), g.sample((a + b) / 2.0)));
                 }
                 let mut changed = false;
                 let mut done = false;
@@ -453,7 +474,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     let x = bar.min.x + s.position * bar.width();
                     let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
                     let resp = ui.interact(r, Id::new(("cp_stopk", i)), Sense::click_and_drag());
-                    ui.painter().rect_filled(r, CornerRadius::same(3), c32(s.color.with_alpha(1.0)));
+                    ui.painter().rect_filled(r, CornerRadius::same(3), doc_c32(ui.ctx(), s.color.with_alpha(1.0)));
                     ui.painter().rect_stroke(
                         r,
                         CornerRadius::same(3),
@@ -545,6 +566,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                         write(app, &target, &paint, false);
                     }
                 });
+                image_presets(app, ui, &target, &mut paint, img.filters);
                 for (label, val) in [
                     ("Exposure", img.filters.exposure),
                     ("Contrast", img.filters.contrast),
@@ -556,7 +578,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
-                        ui.label(egui::RichText::new(label).font(regular(11.0)));
+                        // Labels share a column so the sliders line up.
+                        let (lr, _) = ui.allocate_exact_size(vec2(72.0, 18.0), Sense::hover());
+                        ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, label, regular(11.0), t.text);
                         let mut v = val;
                         let r = ui.add(egui::Slider::new(&mut v, -1.0..=1.0).show_value(false));
                         if r.changed() {
@@ -686,6 +710,126 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         app.ui.picker = None;
     }
     let _ = Pos2::ZERO;
+}
+
+/// What the image preset row was asked to do.
+enum PresetAction {
+    Apply(String),
+    Delete(String),
+}
+
+/// A saved preset in the presets menu: click applies it, the trailing button deletes it.
+fn saved_preset_row(ui: &mut Ui, name: &str) -> Option<PresetAction> {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width().max(180.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
+    let del = Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), vec2(20.0, 20.0));
+    let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).on_hover_text("Delete preset");
+    let hot = resp.hovered() || del_resp.hovered();
+    if hot {
+        ui.painter().rect_filled(r, CornerRadius::same(5), crate::theme::ACCENT);
+    }
+    let col = if hot { Color32::WHITE } else { t.text };
+    ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.5), col);
+    if hot {
+        icons::paint(ui.painter(), del.shrink(4.0), Icon::Close, col);
+    }
+    if del_resp.clicked() {
+        Some(PresetAction::Delete(name.to_string()))
+    } else if resp.clicked() {
+        Some(PresetAction::Apply(name.to_string()))
+    } else {
+        None
+    }
+}
+
+/// The image paint's adjustment presets: a menu of the built-in presets and the file's saved ones
+/// (named after the one in effect), "Save as preset…" and Reset.
+fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &mut Paint, filters: ImageFilters) {
+    let saved: Vec<(String, ImageFilters)> =
+        app.session.doc().map(|d| d.image_presets.iter().map(|p| (p.name.clone(), p.filters)).collect()).unwrap_or_default();
+    let built_in = ImageFilters::PRESETS.iter().filter(|(id, ..)| *id != "reset");
+    let current = built_in
+        .clone()
+        .map(|(_, label, f)| (label.to_string(), *f))
+        .chain(saved.iter().cloned())
+        .find(|(_, f)| *f == filters)
+        .map(|(name, _)| name)
+        .unwrap_or_else(|| if filters.is_identity() { "No preset".into() } else { "Custom".into() });
+    let name_id = Id::new("cp_preset_name");
+    let mut naming: Option<String> = ui.data(|d| d.get_temp(name_id));
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let resp = widgets::dropdown(ui, &current, 152.0, None).on_hover_text("Adjustment presets");
+        egui::Popup::menu(&resp).show(|ui| {
+            for (id, label, _) in built_in {
+                if crate::right::menu_item(ui, label, "") {
+                    action = Some(PresetAction::Apply(id.to_string()));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            for (name, _) in &saved {
+                if let Some(a) = saved_preset_row(ui, name) {
+                    action = Some(a);
+                    ui.close();
+                }
+            }
+            if !saved.is_empty() {
+                ui.separator();
+            }
+            if crate::right::menu_item(ui, "Save as preset…", "") {
+                naming = Some(format!("Preset {}", saved.len() + 1));
+                ui.close();
+            }
+        });
+        if widgets::button(ui, "Reset", false, !filters.is_identity()).on_hover_text("Reset adjustments").clicked() {
+            action = Some(PresetAction::Apply("reset".into()));
+        }
+    });
+    if let Some(name) = naming.as_mut() {
+        let mut save = false;
+        ui.horizontal(|ui| {
+            ui.add_space(16.0);
+            let r = ui.add(egui::TextEdit::singleline(name).font(regular(11.0)).desired_width(136.0));
+            if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
+                r.request_focus();
+            }
+            save = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            save |= widgets::button(ui, "Save", true, !name.trim().is_empty()).clicked();
+        });
+        if save && !name.trim().is_empty() {
+            app.run("image.savePreset", json!({"name": name.trim(), "filters": filters}));
+            naming = None;
+        }
+    }
+    ui.data_mut(|d| match &naming {
+        Some(n) => {
+            d.insert_temp(name_id, n.clone());
+        }
+        None => d.remove::<String>(name_id),
+    });
+    match action {
+        Some(PresetAction::Delete(name)) => {
+            app.run("image.deletePreset", json!({"name": name}));
+        }
+        Some(PresetAction::Apply(name)) => match target {
+            // Layer paints go through the command; other targets (a text range, a style) get the
+            // preset's values written like any edit.
+            PickerTarget::Paint { fills, index, ids } => {
+                app.run("image.adjust", json!({"ids": ids, "target": if *fills { "fill" } else { "stroke" }, "index": index, "preset": name}));
+            }
+            _ => {
+                let preset = app.session.doc().ok().and_then(|d| figcraft_engine::cmd::image::find_preset(d, &name));
+                if let (Some(f), PaintKind::Image(img)) = (preset, &mut paint.kind) {
+                    img.filters = f;
+                    write(app, target, paint, false);
+                }
+            }
+        },
+        None => {}
+    }
 }
 
 fn figcraft_format_add(doc: &mut figcraft_doc::Document, bytes: Vec<u8>) -> Option<String> {

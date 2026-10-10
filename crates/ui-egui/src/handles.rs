@@ -249,7 +249,7 @@ pub fn draw(app: &FigApp, painter: &egui::Painter) {
         for (i, s) in g.stops.iter().enumerate() {
             let p = a + (b - a) * s.position;
             let r = Rect::from_center_size(p, vec2(12.0, 12.0));
-            painter.rect_filled(r, CornerRadius::same(2), crate::theme::c32(s.color.with_alpha(1.0)));
+            painter.rect_filled(r, CornerRadius::same(2), crate::theme::doc_c32(painter.ctx(), s.color.with_alpha(1.0)));
             painter.rect_stroke(r, CornerRadius::same(2), Stroke::new(2.0, Color32::WHITE), StrokeKind::Outside);
             if i == selected {
                 painter.rect_stroke(r.expand(2.0), CornerRadius::same(3), Stroke::new(1.5, ACCENT), StrokeKind::Outside);
