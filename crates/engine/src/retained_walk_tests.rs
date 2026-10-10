@@ -4,7 +4,7 @@
 
 use std::sync::{Arc, Once};
 
-use figcraft_doc::{Document, Effect, EffectKind, NodeId, Shadow};
+use figcraft_doc::{Blur, BlurType, Document, Effect, EffectKind, NodeId, Shadow};
 use figcraft_render::{Options, Pixmap, Retained, View, Work, render_view};
 use serde_json::{Value, json};
 
@@ -94,7 +94,7 @@ fn scene() -> (Session, NodeId) {
         shape(&mut s, "shape.rectangle", Some(al), [0.0, 0.0, 40.0, 40.0], c);
     }
     let blurred = s.doc().unwrap().node(al).unwrap().children[1];
-    let blur = serde_json::to_value(Effect { kind: EffectKind::LayerBlur { radius: 3.0 }, visible: true }).unwrap();
+    let blur = serde_json::to_value(Effect { kind: EffectKind::LayerBlur(Blur { radius: 3.0, ..Blur::default() }), visible: true }).unwrap();
     s.execute("node.set", &json!({"id": blurred, "effects": [blur]})).unwrap();
     s.execute("text.create", &json!({"text": "A line of text that overflows its box", "x": 200, "y": 120, "width": 70, "props": {"fontSize": 13, "textAutoResize": "none", "height": 18}})).unwrap();
     let inset = shape(&mut s, "shape.rectangle", None, [190.0, 200.0, 50.0, 30.0], "#FFFFFF");
@@ -169,9 +169,12 @@ fn step(s: &mut Session, page: NodeId, view: &mut View, rng: &mut Rng) -> String
                     rng.range(0.0, 16.0).round(),
                     rng.range(0.0, 6.0).round()
                 )]),
-                _ => json!([
-                    serde_json::to_value(Effect { kind: EffectKind::LayerBlur { radius: rng.range(1.0, 10.0).round() }, visible: true }).unwrap()
-                ]),
+                _ => {
+                    // Uniform or progressive (the radius ramping across the layer).
+                    let blur_type = if rng.chance(0.5) { BlurType::Uniform } else { BlurType::Progressive };
+                    let blur = Blur { radius: rng.range(1.0, 10.0).round(), blur_type, ..Blur::default() };
+                    json!([serde_json::to_value(Effect { kind: EffectKind::LayerBlur(blur), visible: true }).unwrap()])
+                }
             };
             ("node.set", json!({"id": n, "effects": fx}))
         }

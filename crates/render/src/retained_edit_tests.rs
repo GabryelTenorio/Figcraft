@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use figcraft_color::{Color, Paint};
-use figcraft_doc::{Document, Effect, EffectKind, NodeId, NodeKind};
+use figcraft_doc::{Blur, Document, Effect, EffectKind, NodeId, NodeKind};
 use figcraft_geom::Affine;
 
 use crate::retained_tests::assert_same;
@@ -47,7 +47,7 @@ fn a_clip_edge_on_a_pixel_boundary_clips_the_same_in_every_render() {
     d.get_mut(f).unwrap().fills = vec![Paint::solid(Color::from_hex("FFE0B0").unwrap())];
     let c = d.create(f, NodeKind::Rectangle, "C", 58.0, 10.0, 40.0, 40.0).unwrap();
     d.get_mut(c).unwrap().fills = vec![Paint::solid(Color::from_hex("3070E0").unwrap())];
-    d.get_mut(c).unwrap().effects.push(Effect { kind: EffectKind::LayerBlur { radius: 3.0 }, visible: true });
+    d.get_mut(c).unwrap().effects.push(Effect { kind: EffectKind::LayerBlur(Blur { radius: 3.0, ..Blur::default() }), visible: true });
     let doc = Arc::new(d);
     // The frame's new right edge (x 280) is device pixel 172 exactly.
     let v = View { origin: (-150.0, 132.8), scale: 0.4, width: 320, height: 240 };
