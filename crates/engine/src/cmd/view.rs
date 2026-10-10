@@ -212,6 +212,21 @@ pub fn specs() -> Vec<CommandSpec> {
                 tool(s, t)
             }
         ),
+        spec!(
+            "tool.scaleAnchor",
+            "Scale anchor",
+            "{anchor?: tl|t|tr|l|c|r|bl|b|br} (the point of the selection that stays put when the Scale tool scales; omit to read it)",
+            false,
+            |s, p| {
+                if let Some(a) = string(p, "anchor") {
+                    s.tool.scale_anchor = crate::tools::anchor_of(&a).ok_or_else(|| bad("tool.scaleAnchor", format!("unknown anchor `{a}`")))?;
+                    if let Ok(ds) = s.ds_mut() {
+                        ds.revision += 1;
+                    }
+                }
+                Ok(json!({"anchor": crate::tools::anchor_name(s.tool.scale_anchor)}))
+            }
+        ),
         spec!("tool.move", "Move", "{}", false, |s, _| tool(s, ToolId::Move)),
         spec!("tool.scale", "Scale", "{}", false, |s, _| tool(s, ToolId::Scale)),
         spec!("tool.hand", "Hand", "{}", false, |s, _| tool(s, ToolId::Hand)),

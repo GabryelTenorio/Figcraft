@@ -120,7 +120,7 @@ and its release (or a double-click's two clicks) as separate calls. Returns `{qu
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -137,7 +137,10 @@ profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid|text`
 picker for the selection, `text` being the text style browser of the Typography section; `null`
 closes it) with `stylePickerEdit` (a style id or name: open its editor), `stylePickerView`
 (`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that interaction's editor in the
-Prototype panel; `null` closes it). Comments: `commentOpen` (a thread id opens its popover, `null`
+Prototype panel; `null` closes it), `contextMenu` (`[sx, sy]`: right-click the canvas at that screen
+point, selecting what is under it (with `cmd: true`, the nested layer) and opening the context menu;
+`null` closes it), `contextSelectLayer` (bool: open the context menu's Select layer submenu, which
+lists every layer under the click). Comments: `commentOpen` (a thread id opens its popover, `null`
 closes it), `commentDraft` (`{x, y}`: start a new comment there), `commentFilter`
 (`open|resolved|mine|unread|all`: what the Comments panel and the pins show), `commentSort`
 (`date|page`), `commentSearch` (the panel's search text), `commentReply` (the open thread's reply

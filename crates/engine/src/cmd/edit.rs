@@ -66,6 +66,13 @@ pub fn specs() -> Vec<CommandSpec> {
             s.set_selection(sel);
             Ok(json!({"selection": s.selection()}))
         }),
+        spec!(
+            "select.layersAt",
+            "Layers at a point",
+            "{x, y (page coordinates)} → {layers: [{id, name, type, depth}]} (every layer under the point, front-most first; what the context menu's Select layer lists)",
+            false,
+            layers_at
+        ),
         spec!("select.all", "Select all", "{}", false, select_all),
         spec!("select.none", "Select none", "{}", false, |s, _| {
             s.set_selection(vec![]);
@@ -642,6 +649,17 @@ fn paste_props(s: &mut Session, p: &Value) -> Result<Value> {
         super::props::apply("edit.pasteProperties", doc, i, &m)?;
     }
     ok()
+}
+
+fn layers_at(s: &mut Session, p: &Value) -> Result<Value> {
+    let (x, y) = (req_num("select.layersAt", p, "x")?, req_num("select.layersAt", p, "y")?);
+    let doc = s.doc()?;
+    let zoom = s.ds()?.view.zoom.max(1e-6);
+    let layers: Vec<Value> = figcraft_doc::geometry::layers_at(doc, s.page()?, figcraft_geom::Point::new(x, y), 2.0 / zoom)
+        .into_iter()
+        .filter_map(|(id, depth)| doc.node(id).map(|n| json!({"id": id, "name": n.name, "type": n.kind.type_name(), "depth": depth})))
+        .collect();
+    Ok(json!({"layers": layers}))
 }
 
 fn select_all(s: &mut Session, _p: &Value) -> Result<Value> {

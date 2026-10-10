@@ -330,12 +330,37 @@ fn rotate_by(s: &mut Session, p: &Value, deg: f64) -> Result<Value> {
     ok()
 }
 
-/// Scale nodes uniformly including strokes, effects, radii and text sizes (the Scale tool).
+/// Scale a node and everything in it uniformly (the Scale tool): sizes and positions (whatever
+/// the children's constraints), strokes, effects, radii, auto layout spacing, min/max sizes,
+/// layout grids, ruler guides, tiled images and text sizes.
 pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
     let k = if k.is_finite() && k > 0.0 { k } else { return Ok(()) };
     let sub = doc.subtree(id);
+    let tiles = |paints: &mut Vec<figcraft_color::Paint>| {
+        for p in paints {
+            if let figcraft_color::PaintKind::Image(img) = &mut p.kind
+                && img.scale_mode == figcraft_color::ImageScaleMode::Tile
+            {
+                img.scale *= k;
+            }
+        }
+    };
     for (depth, i) in sub.iter().enumerate() {
         let n = doc.get_mut(*i)?;
+        tiles(&mut n.fills);
+        tiles(&mut n.strokes);
+        let cl = &mut n.child_layout;
+        for v in [&mut cl.min_w, &mut cl.max_w, &mut cl.min_h, &mut cl.max_h].into_iter().flatten() {
+            *v *= k;
+        }
+        for g in &mut n.grids {
+            g.size *= k;
+            g.gutter *= k;
+            g.offset *= k;
+        }
+        for g in &mut n.guides {
+            g.offset *= k;
+        }
         n.stroke.weight *= k;
         if let Some(sides) = n.stroke.sides.as_mut() {
             for v in sides.iter_mut() {
@@ -373,6 +398,9 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
             l.gap *= k;
             l.cross_gap *= k;
             l.padding = l.padding.map(|x| x * k);
+            for t in l.column_tracks.iter_mut().chain(l.row_tracks.iter_mut()).filter(|t| t.sizing == Sizing::Fixed) {
+                t.value *= k;
+            }
         }
         if let NodeKind::Text(t) = &mut n.kind {
             t.style.font_size *= k;
@@ -387,8 +415,12 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
                 if let LineHeight::Pixels(v) = &mut r.style.line_height {
                     *v *= k;
                 }
+                if let LetterSpacing::Pixels(v) = &mut r.style.letter_spacing {
+                    *v *= k;
+                }
             }
             t.paragraph_spacing *= k;
+            t.paragraph_indent *= k;
         }
         if let NodeKind::Vector { network } = &mut n.kind {
             network.scale(k, k);
@@ -427,18 +459,8 @@ fn scale_cmd(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(crate) fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets("transform.resize", s, p)?;
-    let anchor = string(p, "anchor").unwrap_or_else(|| "tl".into());
-    let (ax, ay) = match anchor.as_str() {
-        "t" => (0.5, 0.0),
-        "tr" => (1.0, 0.0),
-        "l" => (0.0, 0.5),
-        "c" => (0.5, 0.5),
-        "r" => (1.0, 0.5),
-        "bl" => (0.0, 1.0),
-        "b" => (0.5, 1.0),
-        "br" => (1.0, 1.0),
-        _ => (0.0, 0.0),
-    };
+    let (col, row) = string(p, "anchor").and_then(|a| crate::tools::anchor_of(&a)).unwrap_or((0, 0));
+    let (ax, ay) = (f64::from(col) / 2.0, f64::from(row) / 2.0);
     let doc = s.doc_mut()?;
     for i in ids {
         let n = doc.get(i)?;

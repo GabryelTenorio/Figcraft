@@ -8,7 +8,7 @@ use figcraft_geom::{Point, Rect, Vec2};
 use serde::Serialize;
 
 /// A guide line to draw: from (x0, y0) to (x1, y1) in page coordinates, with an optional label
-/// (a distance) at its middle.
+/// (a distance) at its middle; `dashed` marks a measurement's extension line.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Guide {
     pub x0: f64,
@@ -16,6 +16,15 @@ pub struct Guide {
     pub x1: f64,
     pub y1: f64,
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dashed: bool,
+}
+
+impl Guide {
+    /// A plain line from `a` to `b` (a marker when they are the same point).
+    pub fn new(a: Point, b: Point) -> Self {
+        Self { x0: a.x, y0: a.y, x1: b.x, y1: b.y, label: None, dashed: false }
+    }
 }
 
 /// A line to snap: its position on one axis and the span it covers on the other (x, y0, y1 for a
@@ -138,7 +147,7 @@ impl Targets {
         let (dx, dy, mut guides) = self.snap_spans(&xs, &ys, threshold);
         let d = Vec2::new(dx.unwrap_or(0.0), dy.unwrap_or(0.0));
         for p in pts.iter().map(|p| *p + d) {
-            let marker = Guide { x0: p.x, y0: p.y, x1: p.x, y1: p.y, label: None };
+            let marker = Guide::new(p, p);
             if self.points.iter().any(|t| (*t - p).hypot() < 1e-6) && !guides.contains(&marker) {
                 guides.push(marker);
             }
@@ -185,12 +194,12 @@ impl Targets {
         let mut out = Vec::new();
         for x in xs {
             if let Some((y0, y1)) = span(&self.xs, *x) {
-                out.push(Guide { x0: x.0, y0, x1: x.0, y1, label: None });
+                out.push(Guide::new(Point::new(x.0, y0), Point::new(x.0, y1)));
             }
         }
         for y in ys {
             if let Some((x0, x1)) = span(&self.ys, *y) {
-                out.push(Guide { x0, y0: y.0, x1, y1: y.0, label: None });
+                out.push(Guide::new(Point::new(x0, y.0), Point::new(x1, y.0)));
             }
         }
         out
@@ -201,38 +210,4 @@ impl Targets {
 fn rect_spans(r: Rect) -> ([Span; 3], [Span; 3]) {
     let c = r.center();
     ([(r.x0, r.y0, r.y1), (c.x, r.y0, r.y1), (r.x1, r.y0, r.y1)], [(r.y0, r.x0, r.x1), (c.y, r.x0, r.x1), (r.y1, r.x0, r.x1)])
-}
-
-/// Distance lines from `r` to the nearest box on each side (Alt-hover measuring), or to `other`.
-pub fn measure(r: Rect, other: Rect) -> Vec<Guide> {
-    let mut out = Vec::new();
-    let fmt = |d: f64| {
-        let v = (d * 100.0).round() / 100.0;
-        if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") }
-    };
-    if other.contains(r.origin()) && other.contains(Point::new(r.x1, r.y1)) {
-        // Inside: distances to each edge of the container.
-        let cy = r.center().y;
-        let cx = r.center().x;
-        out.push(Guide { x0: other.x0, y0: cy, x1: r.x0, y1: cy, label: Some(fmt(r.x0 - other.x0)) });
-        out.push(Guide { x0: r.x1, y0: cy, x1: other.x1, y1: cy, label: Some(fmt(other.x1 - r.x1)) });
-        out.push(Guide { x0: cx, y0: other.y0, x1: cx, y1: r.y0, label: Some(fmt(r.y0 - other.y0)) });
-        out.push(Guide { x0: cx, y0: r.y1, x1: cx, y1: other.y1, label: Some(fmt(other.y1 - r.y1)) });
-        return out;
-    }
-    let cy = (r.y0.max(other.y0) + r.y1.min(other.y1)) / 2.0;
-    let cx = (r.x0.max(other.x0) + r.x1.min(other.x1)) / 2.0;
-    let cy = if r.y0.max(other.y0) <= r.y1.min(other.y1) { cy } else { r.center().y };
-    let cx = if r.x0.max(other.x0) <= r.x1.min(other.x1) { cx } else { r.center().x };
-    if other.x0 >= r.x1 {
-        out.push(Guide { x0: r.x1, y0: cy, x1: other.x0, y1: cy, label: Some(fmt(other.x0 - r.x1)) });
-    } else if other.x1 <= r.x0 {
-        out.push(Guide { x0: other.x1, y0: cy, x1: r.x0, y1: cy, label: Some(fmt(r.x0 - other.x1)) });
-    }
-    if other.y0 >= r.y1 {
-        out.push(Guide { x0: cx, y0: r.y1, x1: cx, y1: other.y0, label: Some(fmt(other.y0 - r.y1)) });
-    } else if other.y1 <= r.y0 {
-        out.push(Guide { x0: cx, y0: other.y1, x1: cx, y1: r.y0, label: Some(fmt(r.y0 - other.y1)) });
-    }
-    out
 }

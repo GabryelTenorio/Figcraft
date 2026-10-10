@@ -337,18 +337,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         return;
     }
     if resp.secondary_clicked() {
-        // Right-click: select what's under the pointer, then the context menu.
-        let ev = pointer_event(app, PointerKind::Hover, pos, &mods);
-        if let Ok(ds) = app.session.ds() {
-            let (doc, page, sel) = (ds.doc.clone(), ds.page, ds.selection.clone());
-            if let Some(leaf) = doc.hit_test(page, Point::new(ev.x, ev.y), 2.0 / ev.zoom) {
-                let target = figcraft_doc::geometry::select_target(&doc, leaf, &sel, mods.command);
-                if !sel.contains(&target) {
-                    app.session.set_selection(vec![target]);
-                }
-            }
-        }
-        app.ui.context_menu = Some((pos, app.session.selection()));
+        open_context_menu(app, pos, mods.command);
         return;
     }
     if resp.double_clicked() {
@@ -391,6 +380,22 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
         app.handle_ui_requests();
     }
+}
+
+/// Right-click at screen `pos`: select what's under the pointer (`deep`: the nested layer), then
+/// open the context menu there.
+pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
+    let p = app.to_page(pos);
+    if let Ok(ds) = app.session.ds() {
+        let (doc, page, sel, zoom) = (ds.doc.clone(), ds.page, ds.selection.clone(), ds.view.zoom.max(1e-6));
+        if let Some(leaf) = doc.hit_test(page, p, 2.0 / zoom) {
+            let target = figcraft_doc::geometry::select_target(&doc, leaf, &sel, deep);
+            if !sel.contains(&target) {
+                app.session.set_selection(vec![target]);
+            }
+        }
+    }
+    app.ui.context_menu = Some((pos, app.session.selection()));
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -461,6 +466,14 @@ fn slot_badges(app: &FigApp, painter: &egui::Painter, doc: &Document, sel: &[Nod
         crate::icons::paint(painter, Rect::from_min_size(pos2(at.x, at.y + (h - 11.0) / 2.0), vec2(11.0, 11.0)), crate::icons::Icon::Slot, COMPONENT);
         painter.galley(pos2(at.x + 14.0, at.y + (h - galley.size().y) / 2.0), galley, COMPONENT);
     }
+}
+
+/// The outline colour for a layer: purple for components, sets and instances and every layer in
+/// them, blue otherwise.
+fn outline_colour(doc: &Document, id: NodeId) -> Color32 {
+    use figcraft_engine::components::{owning_component, owning_instance};
+    let set = matches!(doc.node(id).map(|n| &n.kind), Some(NodeKind::ComponentSet { .. }));
+    if set || owning_component(doc, id).is_some() || owning_instance(doc, id).is_some() { COMPONENT } else { ACCENT }
 }
 
 /// The outline path of shapes (ellipses, vectors) for hover/selection outlines.
@@ -605,18 +618,14 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     }
     // Prototype connections.
     crate::proto_canvas::draw(app, painter);
-    // Hover outline.
+    // Hover outline (measuring outlines the measured box in red instead).
     if let Some(h) = ds.hover
         && !sel.contains(&h)
-        && app.session.tool.tool == ToolId::Move
+        && matches!(app.session.tool.tool, ToolId::Move | ToolId::Scale)
         && app.session.prefs.highlight_on_hover
+        && app.session.tool.overlay.measure_box.is_none()
     {
-        let col =
-            if matches!(doc.node(h).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. })) {
-                COMPONENT
-            } else {
-                ACCENT
-            };
+        let col = outline_colour(&doc, h);
         match outline_shape(app, &doc, h) {
             Some(lines) => {
                 for l in lines {
@@ -648,6 +657,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         painter.add(Shape::dashed_line(&pts, stroke(ACCENT, 1.5), 4.0, 3.0));
     }
     // Vector edit mode, with the transform box around several selected points.
+    // The selection's size label, which measurement labels keep clear of.
+    let mut size_label = None;
     if let Some(ve) = ds.vector_edit.clone()
         && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, &ve)
     {
@@ -658,16 +669,13 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             width_overlay(app, painter, &doc, &ve, zoom);
         } else if let Some(c) = app.session.vector_edit_box() {
             let label = format!("{} × {}", fmt((c[1] - c[0]).hypot()), fmt((c[3] - c[0]).hypot()));
-            transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), ACCENT, true, 4, label);
+            size_label = transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), ACCENT, true, 4, label);
         }
     }
     // Selection.
     let editing = ds.text_edit.clone();
     if !sel.is_empty() && editing.is_none() && ds.vector_edit.is_none() {
-        let any_component = sel.iter().any(|i| {
-            matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Component { .. } | NodeKind::Instance { .. } | NodeKind::ComponentSet { .. }))
-        });
-        let col = if any_component { COMPONENT } else { ACCENT };
+        let col = if sel.iter().any(|i| outline_colour(&doc, *i) == COMPONENT) { COMPONENT } else { ACCENT };
         for id in &sel {
             match outline_shape(app, &doc, *id) {
                 Some(lines) => {
@@ -688,8 +696,24 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             && let Some((_, w, h)) = selection_frame(&doc, &sel)
         {
             let is_line = sel.len() == 1 && matches!(sel.first().and_then(|i| doc.node(*i)).map(|n| &n.kind), Some(NodeKind::Line));
-            let label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
-            transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, if is_line { 2 } else { 4 }, label);
+            let mut label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
+            let scale = app.session.tool.overlay.scale;
+            if let Some(hint) = scale {
+                label = format!("{label} · {}x", fmt(hint.factor.abs()));
+            }
+            size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, if is_line { 2 } else { 4 }, label);
+            if app.session.tool.tool == ToolId::Scale {
+                // The point that stays put: the dragged pivot, else the anchor.
+                let pivot = scale
+                    .map(|h| Point::new(h.pivot[0], h.pivot[1]))
+                    .or_else(|| figcraft_engine::tools::scale_anchor_point(&doc, &sel, app.session.tool.scale_anchor));
+                if let Some(p) = pivot {
+                    let c = app.to_screen(p.x, p.y);
+                    painter.circle_filled(c, 4.0, Color32::WHITE);
+                    painter.circle_stroke(c, 4.0, stroke(col, 1.5));
+                    painter.circle_filled(c, 1.5, col);
+                }
+            }
         }
     }
     if app.session.tool.tool == ToolId::ShapeBuilder
@@ -748,24 +772,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             painter.line_segment([p, p + vec2(0.0, 14.0 * zoom as f32)], stroke(t.text, 1.0));
         }
     }
-    // Smart guides and measurements; a zero-length guide marks a point snapped onto.
-    for g in &ov.guides {
-        let (a, b) = (app.to_screen(g.x0, g.y0), app.to_screen(g.x1, g.y1));
-        if g.x0 == g.x1 && g.y0 == g.y1 {
-            for d in [vec2(4.0, 4.0), vec2(4.0, -4.0)] {
-                painter.line_segment([a - d, a + d], stroke(t.guide, 1.5));
-            }
-            continue;
-        }
-        painter.line_segment([a, b], stroke(t.guide, 1.0));
-        if let Some(l) = &g.label {
-            let galley = painter.layout_no_wrap(l.clone(), semibold(10.0), Color32::WHITE);
-            let mid = pos2((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-            let r = Rect::from_center_size(mid, galley.size() + vec2(8.0, 4.0));
-            painter.rect_filled(r, CornerRadius::same(3), t.guide);
-            painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
-        }
-    }
+    // Smart guides and measurements (their labels kept clear of the size label).
+    crate::measure_overlay::draw(app, painter, t, size_label);
     // Marquee.
     if let Some([x0, y0, x1, y1]) = ov.marquee {
         let r = Rect::from_two_pos(app.to_screen(x0, y0), app.to_screen(x1, y1));
@@ -811,8 +819,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
 }
 
 /// A transform box (screen corners tl, tr, br, bl): its outline when `outline`, the first `handles`
-/// corner handles and, when dimensions are shown, the size `label` under it.
-fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color32, outline: bool, handles: usize, label: String) {
+/// corner handles and, when dimensions are shown, the size `label` under it (its box returned).
+fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color32, outline: bool, handles: usize, label: String) -> Option<Rect> {
     if outline {
         quad(painter, q, stroke(col, 1.0));
     }
@@ -828,7 +836,9 @@ fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color
         let r = Rect::from_center_size(pos2(cx, bottom + 8.0 + galley.size().y / 2.0 + 3.0), galley.size() + vec2(8.0, 4.0));
         painter.rect_filled(r, CornerRadius::same(3), col);
         painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
+        return Some(r);
     }
+    None
 }
 
 /// Variable width tool: each width point on the path with a bar across the stroke to its two

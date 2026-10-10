@@ -391,6 +391,31 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
 it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
 
+### Measuring, the Scale tool and selecting
+
+- **Measure** (what Alt/Option-hover shows): `measure.distances {ids? (default the selection), to?
+  (a layer; default the selection's parent)}` returns `{lines: [{x0, y0, x1, y1, label, dashed}]}`
+  in page coordinates, between bounding boxes (several layers by their union, rotated ones by
+  their bounds): one box inside the other measures to each edge, boxes apart measure the gaps
+  (`dashed` lines extend a gap line to a box it passes beside), overlapping boxes measure between
+  matching edges. `measure.padding {id? (an auto layout frame or a child)}` returns `{frame, lines}`:
+  the frame's padding and the gaps between neighbouring children (what Shift+Alt-hover shows).
+  With `pointer`, `alt: true` hovers measure (add `cmd` for nested layers, `shift` for padding) and
+  `alt` drags show live distances to the neighbours; `inspect_ui` reports them under
+  `tool.overlay` (`guides`, and `measure_box` for the box measured to).
+- **Scale tool** (`tool.scale`, K): dragging a selection handle with `pointer` scales everything by
+  one factor (sizes and positions whatever the constraints, strokes, effects, corner radii, auto
+  layout spacing, min/max sizes, layout grids, guides, tiled images, text), one undo step per drag,
+  about the anchor point `tool.scaleAnchor {anchor?: tl|t|tr|l|c|r|bl|b|br}` (or, when the anchor
+  lies on the side being dragged, the opposite handle; `alt: true` scales from the centre), with the
+  factor and pivot in `tool.overlay.scale` while dragging. Without
+  dragging, `transform.scale {ids?, factor, cx?, cy?}` does the same numerically.
+- **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
+  depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
+  / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`
+  clicks select the nested layer, `cmd` drags from empty canvas select the nested layers they touch,
+  and `shift` drags toggle what they touch.
+
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.
 

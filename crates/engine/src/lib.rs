@@ -13,6 +13,7 @@ pub mod cmd;
 pub mod codegen;
 pub mod components;
 pub mod devinspect;
+pub mod distance;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
@@ -963,6 +964,8 @@ mod library_variables_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
+mod measure_tests;
+#[cfg(test)]
 mod nested_override_tests;
 #[cfg(test)]
 mod paint_tests;
@@ -979,9 +982,13 @@ mod proto_run_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]
+mod scale_tool_tests;
+#[cfg(test)]
 mod section_contents_tests;
 #[cfg(test)]
 mod section_tests;
+#[cfg(test)]
+mod selection_depth_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
 #[cfg(test)]
