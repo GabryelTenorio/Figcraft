@@ -357,6 +357,35 @@ pub struct ToolState {
     pub scale_anchor: (u8, u8),
     /// The last drag move handled (a held button repeats it every frame).
     pub(crate) last_move: Option<PointerEvent>,
+    /// The name labels of top-level frames and sections as the canvas last drew them (each label's
+    /// corners on the page, turned with its frame): the Move and Scale tools treat a press or
+    /// hover on one as on its frame.
+    pub labels: Vec<(NodeId, [Point; 4])>,
+}
+
+/// The frame whose name label (see [`ToolState::labels`]) is under `p` on `page`: the topmost
+/// one drawn, if it can be selected (still there, on the page, visible and unlocked).
+pub fn label_at(doc: &Document, page: NodeId, labels: &[(NodeId, [Point; 4])], p: Point) -> Option<NodeId> {
+    labels
+        .iter()
+        .rev()
+        .find(|(id, q)| in_quad(q, p) && doc.page_of(*id) == Some(page) && doc.node(*id).is_some_and(|n| n.visible && !n.locked))
+        .map(|(id, _)| *id)
+}
+
+/// Whether `p` is inside the convex quadrilateral `q` (either winding; edges included).
+fn in_quad(q: &[Point; 4], p: Point) -> bool {
+    let (mut left, mut right) = (false, false);
+    for (a, b) in q.iter().zip(q.iter().cycle().skip(1)) {
+        let side = (*b - *a).cross(p - *a);
+        if !side.is_finite() {
+            return false;
+        }
+        left |= side < 0.0;
+        right |= side > 0.0;
+    }
+    // On one side of every edge (a point can't be on all four edges of a quad with an area).
+    left != right
 }
 
 /// An anchor name (`tl`, `t`, `tr`, `l`, `c`, `r`, `bl`, `b`, `br`) as column and row (0 start,
@@ -778,7 +807,8 @@ impl Session {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
-                hover = doc.hit_test(page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd));
+                hover = label_at(&doc, page, &self.tool.labels, ev.p())
+                    .or_else(|| doc.hit_test(page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
                 if ev.alt || self.tool.redlines {
                     use crate::distance::{Hover, guide_at, hover_lines, padding_frame, parent_of};
                     // Shift+Alt over an auto layout frame: its padding and gaps. Otherwise from the
@@ -861,10 +891,11 @@ impl Session {
             };
             return Ok(());
         }
-        let leaf = doc.hit_test(page, ev.p(), ev.tol() * 2.0);
-        match leaf {
-            Some(leaf) => {
-                let target = select_target(&doc, leaf, &sel, ev.cmd);
+        // A frame's name label picks the frame itself.
+        let target = label_at(&doc, page, &self.tool.labels, ev.p())
+            .or_else(|| doc.hit_test(page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
+        match target {
+            Some(target) => {
                 // Clicking inside the current selection's box keeps it (drag them all).
                 let in_sel_box = sel.len() > 1 && doc.bounds_of(&sel).is_some_and(|b| b.contains(ev.p())) && !ev.shift;
                 let new_sel = if in_sel_box && (sel.contains(&target) || sel.iter().any(|s| doc.is_ancestor(*s, target))) {

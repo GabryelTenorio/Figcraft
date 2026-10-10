@@ -74,7 +74,9 @@ dimension measured side by side.
    unlinks the chars edited). Live previews of a hovered named instance or font style and of a
    dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
    paragraph's font, renames start with the name selected and centred, Max lines shows while
-   truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
+   truncating. Right-to-left paragraphs mirror lists and indents: bullets and numbers (".1") on
+   the right, wrapped lines hanging from the right, the paragraph indent on the right, trailing
+   spaces hanging outside the line (canvas, PNG, PDF and SVG). *Left:* visual QA. 0.5 h.
 3. **Auto layout and sections depth**: *landed:* on-canvas padding/gap handles (also wrapped-row
    and grid column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed,
    hugging text wraps at its max), ignore auto layout (absolute position) with constraints, text
@@ -330,7 +332,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 80% | frame labels along a rotated frame's top edge, visual QA at extreme zooms | 1 |
+| Canvas & navigation | 6 | 82% | visual QA at extreme zooms | 0.5–1 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
 | Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |
@@ -339,7 +341,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Effects | 4 | 84% | glass and progressive blur tuned side by side; SVG draws noise, texture, progressive and background blur as embedded images | 2–4 |
 | Frames, groups, sections, masks | 5 | 80% | comparing what changed in ready-for-dev frames and sections, visual QA | 1–2 |
 | Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
-| Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
+| Text | 8 | 79% | visual QA | 0.5–1 |
 | Components & variants | 9 | 79% | QA with real-world (not synthetic) libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |

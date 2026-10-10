@@ -18,5 +18,6 @@ fn markers_use_the_paragraph_font() {
     }
     assert_eq!(markers[0].face.id, markers[1].face.id, "both bullets in one font");
     assert_eq!(markers[0].gid, markers[1].gid);
-    assert!((markers[0].x - markers[1].x).abs() < 1e-9);
+    // The Hebrew paragraph's bullet is on its right (see `rtl_list_tests`).
+    assert!(markers[1].x > markers[0].x);
 }
