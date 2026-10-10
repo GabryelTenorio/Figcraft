@@ -232,7 +232,9 @@ dimension measured side by side.
    Shift+C: read and reply). All of it through `comment.*` commands. Version history
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
-   minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
+   minutes, folded in the panel). Real-time collaboration is designed (`docs/collab-protocol.md`:
+   WebSocket sessions the app can host itself, server-ordered per-property changes, live cursors);
+   multiplayer and plugins are not built yet. 20–50 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -379,3 +381,4 @@ Weighted feature depth ≈ **79%** (self-graded, from the table).
 | M5 Prototype & present | ~82% |
 | M6 Interop & dev mode | ~62% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |
+| M9 Real-time collaboration (WebSocket sessions hosted from the app, then a self-hosted server; live cursors; see `docs/collab-protocol.md`) | protocol designed |
