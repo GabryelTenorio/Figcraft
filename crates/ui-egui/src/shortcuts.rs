@@ -70,7 +70,7 @@ fn cached_tip(label: &'static str, key: Option<&'static str>) -> &'static str {
 pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
     note_platform(ctx);
     // Text fields in panels own the keyboard (also the key that ends their editing).
-    if typing || ctx.memory(|m| m.focused().is_some()) || app.ui.palette.is_some() {
+    if typing || crate::a11y::field_focused(ctx) || app.ui.palette.is_some() {
         return;
     }
     let events: Vec<Event> = ctx.input(|i| i.events.clone());

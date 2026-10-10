@@ -7,6 +7,7 @@ use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets;
@@ -361,7 +362,7 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<A
         }
         icons::paint(ui.painter(), br.shrink(5.0), Icon::Dots, t.icon);
     }
-    let more = more.on_hover_text("More");
+    let more = more.tip("More");
     let mut menu = |ui: &mut Ui| {
         for (label, a) in [
             ("Restore this version", Action::Restore(row.id.clone())),

@@ -995,7 +995,15 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, active: bool, tooltip: &
     // The glyph at its native 16 px in the usual buttons, smaller in compact ones.
     let glyph = if size >= 22.0 { 16.0 } else { 12.0 };
     paint(ui.painter(), Rect::from_center_size(rect.center(), Vec2::splat(glyph)), icon, col);
-    if tooltip.is_empty() { resp } else { resp.on_hover_text(tooltip) }
+    if tooltip.is_empty() {
+        return resp;
+    }
+    let resp = crate::a11y::Tip::tip(resp, tooltip);
+    // Shown pressed (an open option): a pressed toggle to screen readers.
+    if active {
+        crate::a11y::toggle(&resp, tooltip, true);
+    }
+    resp
 }
 
 /// Every icon at the sizes the UI uses, labelled: for reviewing the set (`ui.set {iconGallery}`).

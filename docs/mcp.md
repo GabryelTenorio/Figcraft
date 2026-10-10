@@ -176,6 +176,12 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `view.designPrototype` (`Shift+E`), `view.devMode` (`Shift+D`) and `view.leftSidebar`
   (`Shift+Cmd+\`) switch the right panel's tab or hide the left sidebar in the app (no-ops headless).
 - `doc.nextTab` / `doc.previousTab` (`Ctrl+Tab` / `Ctrl+Shift+Tab`): the next or previous open file.
+- `view.nextRegion` / `view.previousRegion` (`F6` / `Shift+F6`, live while editing text too): move
+  the keyboard between the app's regions (toolbar, layers, canvas, properties). In the app, Tab and
+  Shift+Tab then move between the region's controls, Enter or Space activate one, the arrows move
+  along the toolbar and through the layer rows, and Escape returns to the canvas (no-ops headless).
+- `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
+  accessibility setting turns it on too). Prototype transitions still play.
 
 ### Editing vectors
 

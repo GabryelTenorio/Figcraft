@@ -15,6 +15,7 @@ use figcraft_engine::library;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::colorpicker::PickerTarget;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
@@ -286,7 +287,7 @@ struct Frame {
 /// An icon button on the dark popover.
 fn menu_icon(ui: &mut Ui, rect: Rect, icon: Icon, tip: &str, on: bool) -> Response {
     let t = Tokens::get(ui.ctx());
-    let resp = ui.interact(rect, ui.id().with(("style_picker_btn", tip)), Sense::click()).on_hover_text(tip);
+    let resp = ui.interact(rect, ui.id().with(("style_picker_btn", tip)), Sense::click()).tip(tip);
     if on || resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(5), t.menu_hover);
     }
@@ -531,7 +532,7 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
     }
     ui.add_space(4.0);
     let r = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text("Search").font(regular(11.0)).desired_width(W));
-    if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
+    if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
         r.request_focus();
     }
     ui.add_space(4.0);

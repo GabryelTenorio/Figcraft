@@ -125,6 +125,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    crate::a11y::canvas(&mut app.ui.nav, &resp, || describe(&app.session));
     if let Ok(ds) = app.session.ds_mut()
         && ((ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5)
     {
@@ -225,6 +226,25 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
 }
 
+/// What the canvas says to screen readers: the selected layer ("Rectangle 1, Rectangle, 120 by 80,
+/// selected"), how many are selected, or the page with nothing selected.
+pub fn describe(s: &figcraft_engine::Session) -> String {
+    let Ok(ds) = s.ds() else { return String::new() };
+    match ds.selection.as_slice() {
+        [] => format!("{}, nothing selected", ds.doc.node(ds.page).map(|p| p.name.as_str()).unwrap_or("Page")),
+        [id] => match ds.doc.node(*id) {
+            Some(n) => {
+                let kind = n.kind.label();
+                let name = if n.name.is_empty() { kind } else { n.name.as_str() };
+                let (w, h) = (crate::widgets::fmt_num(n.width), crate::widgets::fmt_num(n.height));
+                format!("{name}, {kind}, {w} by {h}, selected")
+            }
+            None => String::new(),
+        },
+        many => format!("{} layers selected", many.len()),
+    }
+}
+
 /// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past it.
 fn pixel_preview(ds: &figcraft_engine::DocState) -> Option<f64> {
     let k = f64::from(ds.view.pixel_scale.clamp(1, 2));
@@ -303,7 +323,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     let (mods, scroll, zoom_delta, hover_pos, space) =
         ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
-    let typing_elsewhere = ctx.memory(|m| m.focused().is_some());
+    let typing_elsewhere = crate::a11y::field_focused(&ctx);
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
     // Dropped files import onto the canvas.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());

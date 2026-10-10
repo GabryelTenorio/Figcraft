@@ -551,7 +551,7 @@ fn composer(ui: &mut Ui, id: Id, text: &mut String, hint: &str, people: &[String
                 .desired_width(ui.available_width() - 30.0)
                 .show(ui);
             let resp = out.response.response;
-            if !resp.has_focus() && ui.memory(|m| m.focused().is_none()) {
+            if !resp.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
                 resp.request_focus();
             }
             if resp.has_focus() {
@@ -574,7 +574,7 @@ fn composer(ui: &mut Ui, id: Id, text: &mut String, hint: &str, people: &[String
     // name takes it from the field for a moment).
     let found = cursor.and_then(|c| mention_query(text, c)).filter(|r| pick.dismissed != Some((id, r.0)));
     let names = found.map(|r| mention_matches(people, text.get(r.0 + 1..r.1).unwrap_or(""), me)).unwrap_or_default();
-    let elsewhere = cursor.is_none() && ui.memory(|m| m.focused().is_some());
+    let elsewhere = cursor.is_none() && crate::a11y::field_focused(ui.ctx());
     match found {
         Some(r) if !names.is_empty() => {
             if pick.field != Some(id) || pick.range.0 != r.0 {
@@ -1005,7 +1005,7 @@ pub fn keys(app: &mut FigApp, ctx: &egui::Context) {
     if app.session.tool.tool != ToolId::Comment || cu.draft.is_some() || cu.editing.is_some() || cu.mention.active() {
         return;
     }
-    let free = match ctx.memory(|m| m.focused()) {
+    let free = match ctx.memory(|m| m.focused()).filter(|_| crate::a11y::field_focused(ctx)) {
         None => true,
         Some(f) => cu.open.is_some_and(|o| f == reply_id(o)) && cu.reply.is_empty(),
     };

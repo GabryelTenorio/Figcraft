@@ -5,6 +5,7 @@
 //! below this crate knows about egui, so the frontend can be replaced.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod a11y;
 pub mod assets_panel;
 pub mod bidi;
 pub mod canvas;
@@ -48,6 +49,8 @@ pub mod vector_panel;
 pub mod versions;
 pub mod widgets;
 
+#[cfg(test)]
+mod a11y_tests;
 #[cfg(test)]
 mod canvas_drag_tests;
 #[cfg(test)]
@@ -113,6 +116,10 @@ pub trait Services {
         Vec::new()
     }
     fn add_recent(&mut self, _path: &str) {}
+    /// The system asks for reduced motion (its accessibility setting).
+    fn reduce_motion(&self) -> bool {
+        false
+    }
 }
 
 /// No-op services (tests, headless screenshots).
@@ -235,6 +242,8 @@ pub struct UiState {
     pub next_autosave: f64,
     /// The Assets panel shows the libraries view (publish this file, enabled libraries).
     pub libraries: bool,
+    /// Keyboard navigation: the region with the keyboard, keyboard mode (F6, Tab).
+    pub nav: a11y::Nav,
 }
 
 impl Default for UiState {
@@ -298,6 +307,7 @@ impl Default for UiState {
             last_copy: None,
             next_autosave: 0.0,
             libraries: false,
+            nav: a11y::Nav::default(),
         }
     }
 }
@@ -414,6 +424,7 @@ impl FigApp {
                     self.ui.right_tab = if self.ui.right_tab == RightTab::Inspect { RightTab::Design } else { RightTab::Inspect };
                 }
                 "panel.leftSidebar" => self.ui.left_collapsed = !self.ui.left_collapsed,
+                "focus.region" => self.ui.nav.step(r.data.get("step").and_then(Value::as_i64).unwrap_or(1).clamp(-4, 4) as i32),
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
                 "panel.versionHistory" => versions::open(self),
@@ -524,6 +535,11 @@ impl FigApp {
         }
     }
 
+    /// Reduced motion: the preference or the system's setting.
+    pub fn reduce_motion(&self) -> bool {
+        self.session.prefs.reduce_motion || self.services.reduce_motion()
+    }
+
     /// Per-frame logic that doesn't draw (control requests, theme).
     pub fn logic(&mut self, ctx: &egui::Context) {
         if !self.fonts_installed {
@@ -540,7 +556,7 @@ impl FigApp {
             _ => false,
         };
         self.ui.dark = dark;
-        theme::apply(ctx, if dark { theme::Tokens::dark() } else { theme::Tokens::light() });
+        theme::apply_with(ctx, if dark { theme::Tokens::dark() } else { theme::Tokens::light() }, self.reduce_motion());
         if self.worker.is_none() {
             self.worker = Some(render_worker::Worker::new(ctx.clone()));
         }
@@ -580,9 +596,11 @@ impl FigApp {
         // A field that had the keyboard when the frame began keeps its keys from the shortcuts
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
         // focus on Escape before the frame, which cancels the field's edit and nothing else).
-        let typing = std::mem::take(&mut self.field_focus) || ctx.memory(|m| m.focused().is_some());
+        let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
+        // Before any widget: the navigation keys (F6, Tab, arrows, Escape) move the keyboard.
+        a11y::begin(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
             tabs::resize_edges(&ctx);
         }
@@ -609,7 +627,10 @@ impl FigApp {
                 .exact_size(56.0)
                 .resizable(false)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
-                .show(ui, |ui| layers::rail(self, ui));
+                .show(ui, |ui| {
+                    a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Navigation, "Sidebar");
+                    layers::rail(self, ui)
+                });
         }
         if !hidden && !self.ui.left_collapsed {
             egui::Panel::left("left_panel")
@@ -617,7 +638,15 @@ impl FigApp {
                 .default_size(self.ui.left_width)
                 .size_range(200.0..=480.0)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
-                .show(ui, |ui| layers::left_panel(self, ui));
+                .show(ui, |ui| {
+                    let label = match self.ui.left_tab {
+                        _ if self.ui.versions.open => "Version history",
+                        LeftTab::File => "Layers",
+                        LeftTab::Assets => "Assets",
+                    };
+                    a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Pane, label);
+                    layers::left_panel(self, ui)
+                });
         }
         if !hidden {
             egui::Panel::right("right_panel")
@@ -625,7 +654,15 @@ impl FigApp {
                 .default_size(self.ui.right_width)
                 .size_range(240.0..=480.0)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
-                .show(ui, |ui| right::right_panel(self, ui));
+                .show(ui, |ui| {
+                    let label = match self.ui.right_tab {
+                        RightTab::Design => "Design",
+                        RightTab::Prototype => "Prototype",
+                        RightTab::Inspect => "Dev Mode",
+                    };
+                    a11y::region(&mut self.ui.nav, ui, a11y::Region::Properties, egui::accesskit::Role::Pane, label);
+                    right::right_panel(self, ui)
+                });
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
             let worker = self.worker.take();
@@ -633,7 +670,10 @@ impl FigApp {
             canvas::show(self, ui, &mut worker);
             self.worker = Some(worker);
             if !hidden {
-                toolbar::show(self, ui);
+                ui.scope_builder(egui::UiBuilder::new().id_salt("toolbar"), |ui| {
+                    a11y::container(ui, egui::accesskit::Role::Toolbar, "Tools");
+                    toolbar::show(self, ui);
+                });
             }
         });
         // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor, and
@@ -652,7 +692,8 @@ impl FigApp {
         if self.ui.rename.is_some_and(|r| r.start) && !hidden && !self.ui.left_collapsed && self.ui.left_tab == LeftTab::File {
             ctx.request_repaint();
         }
-        self.field_focus = ctx.memory(|m| m.focused().is_some());
+        a11y::end(self, &ctx);
+        self.field_focus = a11y::field_focused(&ctx);
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -692,6 +733,8 @@ impl FigApp {
             "leftTab": self.ui.left_tab,
             "home": self.ui.home,
             "dark": self.ui.dark,
+            "focus": {"region": self.ui.nav.region.id(), "keyboard": self.ui.nav.keyboard},
+            "reduceMotion": self.reduce_motion(),
             "presenting": self.ui.present.is_some(),
             "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
             "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame, "comments": self.ui.present_view.comments, "hotspotHints": self.ui.present_view.hotspot_hints, "inspect": self.ui.present_view.inspect},

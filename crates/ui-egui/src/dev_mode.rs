@@ -9,6 +9,7 @@ use figcraft_engine::codegen::{CodeLang, code_for};
 use figcraft_engine::devinspect::{self, DevItem, Prop};
 use serde_json::json;
 
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::right::{menu_check, menu_popup, prop_row, row};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
@@ -178,7 +179,7 @@ pub fn annotations_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: No
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
         ui.painter().text(pos2(r.min.x + PAD, r.center().y), Align2::LEFT_CENTER, format!("Note {}", k + 1), semibold(10.0), t.text_secondary);
         let del = Rect::from_center_size(pos2(r.max.x - PAD - 4.0, r.center().y), vec2(22.0, 22.0));
-        let resp = ui.interact(del, Id::new(("annot_del", id, k)), Sense::click()).on_hover_text("Remove annotation");
+        let resp = ui.interact(del, Id::new(("annot_del", id, k)), Sense::click()).tip("Remove annotation");
         if resp.hovered() {
             ui.painter().rect_filled(del, CornerRadius::same(5), t.hover);
         }
@@ -276,7 +277,7 @@ pub fn ready_list(app: &mut FigApp, ui: &mut Ui) {
     let mut go = None;
     for item in &app.ui.dev.ready {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
-        let resp = resp.on_hover_text(format!("Go to {}", item.name));
+        let resp = resp.tip(format!("Go to {}", item.name));
         if resp.hovered() {
             ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
         }

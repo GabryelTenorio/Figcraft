@@ -7,6 +7,7 @@ use figcraft_doc::{NodeId, NodeKind};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, doc_c32, regular, semibold};
 use crate::widgets;
@@ -721,7 +722,7 @@ fn saved_preset_row(ui: &mut Ui, name: &str) -> Option<PresetAction> {
     let w = ui.available_width().max(180.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
     let del = Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), vec2(20.0, 20.0));
-    let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).on_hover_text("Delete preset");
+    let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).tip("Delete preset");
     let hot = resp.hovered() || del_resp.hovered();
     if hot {
         ui.painter().rect_filled(r, CornerRadius::same(5), crate::theme::ACCENT);
@@ -790,7 +791,7 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             let r = ui.add(egui::TextEdit::singleline(name).font(regular(11.0)).desired_width(136.0));
-            if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
+            if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
                 r.request_focus();
             }
             save = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));

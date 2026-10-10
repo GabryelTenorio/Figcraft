@@ -39,6 +39,9 @@ pub struct Tokens {
     pub menu_text: Color32,
     pub menu_hover: Color32,
     pub menu_dim: Color32,
+    /// The ring around the control with the keyboard (keyboard navigation): at least 3:1 against
+    /// the panels and the canvas.
+    pub focus: Color32,
 }
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x0D, 0x99, 0xFF);
@@ -58,7 +61,8 @@ impl Tokens {
             border: Color32::from_rgb(0xE6, 0xE6, 0xE6),
             border_strong: Color32::from_rgb(0xD9, 0xD9, 0xD9),
             text: Color32::from_rgb(0x1E, 0x1E, 0x1E),
-            text_secondary: Color32::from_rgb(0x75, 0x75, 0x75),
+            // 4.7:1 on fields and hovered rows (#F5F5F5), 4.6:1 on selected rows: WCAG AA.
+            text_secondary: Color32::from_rgb(0x6E, 0x6E, 0x6E),
             text_tertiary: Color32::from_rgb(0xB3, 0xB3, 0xB3),
             icon: Color32::from_rgb(0x1E, 0x1E, 0x1E),
             icon_secondary: Color32::from_rgb(0x75, 0x75, 0x75),
@@ -68,7 +72,8 @@ impl Tokens {
             field_hover_border: Color32::from_rgb(0xE6, 0xE6, 0xE6),
             accent: ACCENT,
             accent_hover: Color32::from_rgb(0x00, 0x7B, 0xE5),
-            accent_text: Color32::from_rgb(0x00, 0x7B, 0xE5),
+            // 5.2:1 on white, 4.6:1 on selected rows: WCAG AA for text.
+            accent_text: Color32::from_rgb(0x00, 0x6B, 0xD1),
             selected_row: Color32::from_rgb(0xE5, 0xF4, 0xFF),
             selected_row_child: Color32::from_rgb(0xF2, 0xF9, 0xFF),
             component: COMPONENT,
@@ -84,6 +89,7 @@ impl Tokens {
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             menu_hover: ACCENT,
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
+            focus: Color32::from_rgb(0x00, 0x6B, 0xD1),
         }
     }
 
@@ -122,6 +128,7 @@ impl Tokens {
             menu_text: Color32::from_rgb(0xFF, 0xFF, 0xFF),
             menu_hover: ACCENT,
             menu_dim: Color32::from_rgb(0x9A, 0x9A, 0x9A),
+            focus: ACCENT,
         }
     }
 
@@ -134,8 +141,17 @@ fn tokens_id() -> egui::Id {
     egui::Id::new("figcraft_tokens")
 }
 
+/// egui's default for how long hover fades and openings animate.
+const ANIMATION_TIME: f32 = 0.2;
+
 /// Install tokens and egui visuals.
 pub fn apply(ctx: &Context, t: Tokens) {
+    apply_with(ctx, t, false);
+}
+
+/// [`apply`], with egui's own animations (hover fades, openings, smooth scrolling to a target) off
+/// when the system or the preferences ask for reduced motion. Prototype transitions still play.
+pub fn apply_with(ctx: &Context, t: Tokens, reduce_motion: bool) {
     ctx.data_mut(|d| d.insert_temp(tokens_id(), t));
     ctx.set_visuals(visuals(t));
     ctx.global_style_mut(|s| {
@@ -153,6 +169,8 @@ pub fn apply(ctx: &Context, t: Tokens) {
         ]
         .into();
         s.interaction.tooltip_delay = 0.4;
+        s.animation_time = if reduce_motion { 0.0 } else { ANIMATION_TIME };
+        s.scroll_animation = if reduce_motion { egui::style::ScrollAnimation::none() } else { egui::style::ScrollAnimation::default() };
     });
 }
 

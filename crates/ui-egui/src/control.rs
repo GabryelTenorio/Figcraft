@@ -12,7 +12,7 @@
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}]}`
 //!   — raw pointer and key events for the next frame, as if from the window (panels, popovers)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
-//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, preview?, presentScroll?, …}`
+//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
 //! - `app.quit {}`
@@ -122,7 +122,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
             app.session.doc().map(|d| figcraft_engine::inspect::node_json(d, id, depth)).map_err(|e| e.to_string())
         }
-        "ui.inspect" => Ok(app.inspect()),
+        "ui.inspect" => {
+            let mut v = app.inspect();
+            // The name of the control with the keyboard (what a screen reader announces).
+            if let Some(f) = v.get_mut("focus") {
+                f["control"] = json!(crate::a11y::focused_name(ctx));
+            }
+            Ok(v)
+        }
         "ui.pointer" => pointer(app, p),
         "ui.key" => {
             let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
@@ -259,6 +266,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
+            }
+            // Give a region the keyboard as F6 would: toolbar, layers, canvas or properties.
+            if let Some(r) = p.get("focusRegion").and_then(Value::as_str) {
+                app.ui.nav.go(crate::a11y::Region::parse(r).ok_or_else(|| format!("unknown region `{r}`"))?);
             }
             // A right-click on the canvas at screen [sx, sy] (null closes the menu);
             // `contextSelectLayer` opens its Select layer submenu.

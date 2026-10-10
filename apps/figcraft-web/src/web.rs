@@ -34,7 +34,8 @@ pub fn start() {
                     if let Some(rs) = &cc.wgpu_render_state {
                         log::info!("figcraft-web: wgpu backend {:?}", rs.adapter.get_info().backend);
                     }
-                    let fig = FigApp::new(Session::new(), Box::new(WebServices));
+                    let reduce_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
+                    let fig = FigApp::new(Session::new(), Box::new(WebServices { reduce_motion }));
                     Ok(Box::new(WebShell { fig }))
                 }),
             )
@@ -65,7 +66,10 @@ impl eframe::App for WebShell {
 
 /// Browser services. File dialogs return nothing for now (the trait's defaults); the clipboard
 /// goes through egui's own web clipboard handling.
-struct WebServices;
+struct WebServices {
+    /// `prefers-reduced-motion: reduce` (it follows the setting while the page is open).
+    reduce_motion: Option<web_sys::MediaQueryList>,
+}
 
 impl Services for WebServices {
     fn open_url(&mut self, url: &str) {
@@ -73,5 +77,8 @@ impl Services for WebServices {
         if let Err(e) = window.open_with_url_and_target(url, "_blank") {
             log::error!("couldn't open {url}: {e:?}");
         }
+    }
+    fn reduce_motion(&self) -> bool {
+        self.reduce_motion.as_ref().is_some_and(web_sys::MediaQueryList::matches)
     }
 }

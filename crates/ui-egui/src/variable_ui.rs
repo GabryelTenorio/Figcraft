@@ -13,6 +13,7 @@ use figcraft_engine::library;
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, BindEvent, FieldEdit, Lead};
@@ -280,7 +281,7 @@ pub fn variable_button(ui: &mut Ui, rect: Rect, id: Id) -> bool {
     }
     let t = Tokens::get(ui.ctx());
     let b = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
-    let resp = ui.interact(b, id, Sense::click()).on_hover_text("Apply variable");
+    let resp = ui.interact(b, id, Sense::click()).tip("Apply variable");
     if resp.hovered() {
         ui.painter().rect_filled(b, CornerRadius::same(4), t.hover);
     }
@@ -335,7 +336,7 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
             });
             ui.add_space(4.0);
             let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").font(regular(11.0)).desired_width(224.0));
-            if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
+            if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
                 r.request_focus();
             }
             ui.add_space(4.0);
