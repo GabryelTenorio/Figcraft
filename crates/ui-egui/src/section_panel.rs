@@ -7,7 +7,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::icons::Icon;
-use crate::right::{common, menu_item, row};
+use crate::right::{common, menu_item, menu_popup, row};
 use crate::widgets;
 
 /// Section fill presets: light tints that keep dark text readable.
@@ -45,7 +45,7 @@ pub fn status_dropdown(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[Nod
         None => "Mixed",
     };
     let resp = widgets::dropdown(ui, label, width, Some(Icon::Code));
-    egui::Popup::menu(&resp).show(|ui| {
+    menu_popup(&resp).show(|ui| {
         for d in DevStatus::ALL {
             if menu_item(ui, d.label(), "") {
                 app.set_props(ids, json!({"devStatus": d.id()}));

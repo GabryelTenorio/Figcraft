@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::FigApp;
 use crate::icons::{self, Icon};
 use crate::proto_editor::{Cx, Slot, set_action};
-use crate::right::{menu_item, row};
+use crate::right::{menu_item, menu_popup, row};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
 
@@ -380,7 +380,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
     row(ui, 32.0, |ui| {
         let w = ui.available_width() - if rotates { 32.0 } else { 0.0 };
         let resp = widgets::dropdown(ui, &settings.device, w, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             let mut pick = None;
             if crate::right::menu_check(ui, settings.device == "None", "None", "") {
                 pick = Some("None");
@@ -448,12 +448,12 @@ fn device_colors(app: &mut FigApp, ui: &mut Ui, colors: &[proto::DeviceColor], c
         }
         let w = ui.available_width();
         let resp = widgets::dropdown(ui, current.map_or("", |c| c.name), w, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for c in colors {
                 let on = current.is_some_and(|x| x.name == c.name);
                 let label = format!("{}{}", if on { "✓ " } else { "    " }, c.name);
                 let paint = color_paint(*c);
-                let picked = crate::right::menu_item_with(ui, &label, "", |p, r, _| {
+                let picked = crate::right::menu_item_with(ui, &label, "", 22.0, |p, r, _| {
                     widgets::paint_swatch(p, Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(12.0, 12.0)), &paint);
                 });
                 if picked {
@@ -645,7 +645,7 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
     widgets::sublabels(ui, "Trigger", None);
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, trigger_kind(&it.trigger), ui.available_width(), None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for (i, l) in TRIGGERS.iter().enumerate() {
                 if i == 4 || i == 5 || i == 9 {
                     ui.separator();
@@ -741,7 +741,7 @@ fn dest_dropdown(
     row(ui, 32.0, |ui| {
         let text = cur.map(|d| name_of(doc, d)).unwrap_or_else(|| "None".into());
         let resp = widgets::dropdown(ui, &text, ui.available_width(), Some(Icon::Frame));
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for d in options {
                     let n = name_of(doc, *d);
@@ -798,7 +798,7 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
             widgets::sublabels(ui, "Overlay position", None);
             row(ui, 32.0, |ui| {
                 let resp = widgets::dropdown(ui, position.label(), ui.available_width(), None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for p in OverlayPosition::ALL {
                         if menu_item(ui, p.label(), "") {
                             set_action(app, slot, Action::OpenOverlay { dest, position: p, close_on_outside, background });
@@ -845,7 +845,7 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
             widgets::sublabels(ui, "Collection", None);
             row(ui, 32.0, |ui| {
                 let resp = widgets::dropdown(ui, current.map_or("Choose collection", |c| c.name.as_str()), ui.available_width(), None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for c in colls {
                         if menu_item(ui, &c.name, "")
                             && let Some(m) = c.modes.first()
@@ -861,7 +861,7 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
                 let modes = current.map(|c| c.modes.as_slice()).unwrap_or_default();
                 let name = modes.iter().find(|m| &m.id == mode).map_or("Choose mode", |m| m.name.as_str());
                 let resp = widgets::dropdown(ui, name, ui.available_width(), None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for m in modes {
                         if menu_item(ui, &m.name, "") {
                             set_action(app, slot, Action::SetVariableMode { collection: collection.clone(), mode: m.id.clone() });
@@ -881,7 +881,7 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
     widgets::sublabels(ui, "Animation", None);
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, it.transition.label(), ui.available_width(), None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for (i, l) in TRANSITIONS.iter().enumerate() {
                 if i == 3 {
                     ui.separator();
@@ -908,7 +908,7 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
     if !matches!(it.transition, Transition::Instant) {
         row(ui, 32.0, |ui| {
             let resp = widgets::dropdown(ui, it.easing.label(), ui.available_width() - 80.0, None);
-            egui::Popup::menu(&resp).width(220.0).show(|ui| {
+            menu_popup(&resp).width(220.0).show(|ui| {
                 let custom = [Easing::CUSTOM_BEZIER, Easing::CUSTOM_SPRING];
                 for (i, e) in Easing::ALL.iter().chain(custom.iter()).enumerate() {
                     if i == 7 || i == Easing::ALL.len() {
@@ -1050,7 +1050,7 @@ fn scroll_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId],
                 ScrollPosition::Sticky => "Sticky",
             };
             let resp = widgets::dropdown(ui, cur, ui.available_width(), None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, v) in [("Scroll with parent", "scrolls"), ("Fixed", "fixed"), ("Sticky", "sticky")] {
                     if menu_item(ui, l, "") {
                         app.set_props(sel, json!({"scrollPosition": v}));
@@ -1070,7 +1070,7 @@ fn scroll_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId],
                 Overflow::Both => "Both directions",
             };
             let resp = widgets::dropdown(ui, cur, ui.available_width(), None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, v) in [("No scrolling", "none"), ("Horizontal", "horizontal"), ("Vertical", "vertical"), ("Both directions", "both")] {
                     if menu_item(ui, l, "") {
                         app.set_props(sel, json!({"overflow": v}));

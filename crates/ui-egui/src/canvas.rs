@@ -703,6 +703,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 label = format!("{label} · {}x", fmt(hint.factor.abs()));
             }
             size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, if is_line { 2 } else { 4 }, label);
+            arc_overlay(app, painter, col);
             if app.session.tool.tool == ToolId::Scale {
                 // The point that stays put: the dragged pivot, else the anchor.
                 let pivot = scale
@@ -833,13 +834,40 @@ fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color
     if app.session.prefs.show_dimensions {
         let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
         let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;
-        let galley = painter.layout_no_wrap(label, semibold(11.0), Color32::WHITE);
-        let r = Rect::from_center_size(pos2(cx, bottom + 8.0 + galley.size().y / 2.0 + 3.0), galley.size() + vec2(8.0, 4.0));
-        painter.rect_filled(r, CornerRadius::same(3), col);
-        painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
-        return Some(r);
+        return Some(pill(painter, pos2(cx, bottom + 9.0), Align2::CENTER_TOP, label, col));
     }
     None
+}
+
+/// A canvas readout: white `text` on a `col` pill placed at `at` by `align` (its box returned).
+fn pill(painter: &egui::Painter, at: Pos2, align: Align2, text: String, col: Color32) -> Rect {
+    let galley = painter.layout_no_wrap(text, semibold(11.0), Color32::WHITE);
+    let r = align.anchor_size(at, galley.size() + vec2(8.0, 4.0));
+    painter.rect_filled(r, CornerRadius::same(3), col);
+    painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
+    r
+}
+
+/// The selected ellipse's arc handles (the hovered or dragged one larger, Start with a dot inside)
+/// and, while one is dragged, its readout beside it.
+fn arc_overlay(app: &FigApp, painter: &egui::Painter, col: Color32) {
+    use figcraft_engine::arc_handles::ArcHandle;
+    let Some(hs) = app.session.arc_handles() else { return };
+    let ov = &app.session.tool.overlay;
+    for h in [ArcHandle::Ratio, ArcHandle::Start, ArcHandle::Sweep] {
+        let Some([x, y]) = hs.at(h) else { continue };
+        let c = app.to_screen(x, y);
+        let r = if ov.arc_hover == Some(h) { 5.0 } else { 4.0 };
+        painter.circle_filled(c, r, Color32::WHITE);
+        painter.circle_stroke(c, r, stroke(col, 1.0));
+        if h == ArcHandle::Start {
+            painter.circle_filled(c, 1.5, col);
+        }
+    }
+    if let Some(hint) = &ov.arc {
+        let c = app.to_screen(hint.at[0], hint.at[1]);
+        pill(painter, c + vec2(12.0, 12.0), Align2::LEFT_TOP, hint.label.clone(), col);
+    }
 }
 
 /// Variable width tool: each width point on the path with a bar across the stroke to its two

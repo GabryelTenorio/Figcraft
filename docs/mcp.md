@@ -478,7 +478,7 @@ first, the last one is on top (the Design panel lists them the other way round, 
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
 it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
 
-### Measuring, the Scale tool and selecting
+### Measuring, the Scale tool, arc handles and selecting
 
 - **Measure** (what Alt/Option-hover shows): `measure.distances {ids? (default the selection), to?
   (a layer; default the selection's parent)}` returns `{lines: [{x0, y0, x1, y1, label, dashed}]}`
@@ -497,6 +497,17 @@ it. In the app, a guide dragged out of a ruler and dropped on a frame becomes th
   lies on the side being dragged, the opposite handle; `alt: true` scales from the centre), with the
   factor and pivot in `tool.overlay.scale` while dragging. Without
   dragging, `transform.scale {ids?, factor, cx?, cy?}` does the same numerically.
+- **Arc handles**: with the Move tool, a single selected ellipse (at least 40 px on screen, unlocked)
+  shows its arc handles, listed by `inspect_ui` under `tool.arcHandles` (`{id, sweep: [x, y],
+  start, ratio}` in page coordinates; `start` once there is an arc, `ratio` once there is an arc or
+  a ring). Drag them with `pointer`. **Sweep** starts inside the right edge. Dragged round the
+  ellipse, it opens an arc: positive up from the right edge, negative down. It closes again back at
+  the start. **Start** turns the arc and keeps its sweep. **Ratio** (the centre, or the inner edge
+  halfway round a ring) drags out to make a ring, and into the gap to show the other part.
+  `shift: true` snaps angles to 15° steps and the ratio to 5% steps. Each drag is one undo step
+  and writes `node.set`'s `arcStart` / `arcSweep` (degrees) and `arcInner` (0–0.99).
+  `tool.overlay.arc` holds the readout while dragging (`{handle, label: "Sweep 75%", at}`), and
+  `tool.overlay.arc_hover` holds the handle under the pointer.
 - **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
   depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
   / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`

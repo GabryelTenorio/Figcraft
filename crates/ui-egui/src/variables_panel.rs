@@ -285,7 +285,7 @@ fn collection_row(app: &mut FigApp, ui: &mut Ui, view: &View, c: &Collection, st
         if resp.double_clicked() {
             start_rename(ui, st, target.clone());
         }
-        resp.context_menu(|ui| {
+        crate::right::context_popup(&resp).show(|ui| {
             if menu_item(ui, "Rename", "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
@@ -367,7 +367,7 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
         if resp.double_clicked() {
             start_rename(ui, st, target.clone());
         }
-        resp.context_menu(|ui| {
+        crate::right::context_popup(&resp).show(|ui| {
             if menu_item(ui, "Rename group", "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
@@ -531,7 +531,7 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
         if resp.double_clicked() {
             start_rename(ui, st, target.clone());
         }
-        resp.context_menu(|ui| {
+        crate::right::context_popup(&resp).show(|ui| {
             if menu_item(ui, "Rename mode", "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
@@ -583,7 +583,7 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Va
         if resp.double_clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < name_r.max.x) {
             start_rename(ui, st, target.clone());
         }
-        resp.context_menu(|ui| {
+        crate::right::context_popup(&resp).show(|ui| {
             if menu_item(ui, "Edit variable", "") {
                 st.details = Some(v.id.clone());
                 ui.close();
@@ -765,7 +765,7 @@ fn create_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         let resp = widgets::button(ui, "+ Create variable", false, true);
-        egui::Popup::menu(&resp).show(|ui| {
+        crate::right::menu_popup(&resp).show(|ui| {
             for kind in TYPES {
                 let label = match kind {
                     VariableType::Color => "Color",

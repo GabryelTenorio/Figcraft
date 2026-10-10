@@ -10,6 +10,7 @@ use figcraft_geom::{Affine, Point, Rect, Vec2};
 use serde::Serialize;
 use serde_json::json;
 
+use crate::arc_handles::{ArcHandle, ArcHint};
 use crate::cmd::arrange::move_world;
 use crate::cmd::create::frame_at;
 use crate::cmd::edit::roots;
@@ -242,6 +243,10 @@ pub struct Overlay {
     pub measure_box: Option<[f64; 4]>,
     /// Scale tool drag: the factor so far and the point that stays put.
     pub scale: Option<ScaleHint>,
+    /// The selected ellipse's arc handle under the pointer, and the readout while one is dragged
+    /// (see [`crate::arc_handles`]).
+    pub arc_hover: Option<ArcHandle>,
+    pub arc: Option<ArcHint>,
 }
 
 /// The Scale tool's live readout while dragging a handle.
@@ -314,6 +319,12 @@ pub(crate) enum Gesture {
     },
     /// Vector edit mode gestures (handled in `vectoredit`).
     Vector(crate::vectoredit::VGesture),
+    /// Dragging an ellipse's arc handle: the arc so far (see [`crate::arc_handles`]).
+    Arc {
+        id: NodeId,
+        handle: ArcHandle,
+        arc: crate::arc_handles::Arc,
+    },
     /// Shape builder: regions collected so far (handled in `shapebuilder`).
     ShapeBuild {
         picked: Vec<usize>,
@@ -759,7 +770,9 @@ impl Session {
         let mut hover = None;
         let mut guides = Vec::new();
         let mut measure_box = None;
-        if matches!(tool, ToolId::Move | ToolId::Scale) {
+        let arc_hover = if self.arc_handles_shown() { crate::arc_handles::hit(&doc, &sel, ev.p(), ev.zoom).map(|(_, h)| h) } else { None };
+        self.tool.overlay.arc_hover = arc_hover;
+        if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
@@ -814,7 +827,17 @@ impl Session {
             }
             textedit::end(self)?;
         }
-        // Handles first.
+        // Handles first: a selected ellipse's arc handles (drawn over the box), then the box's.
+        if self.arc_handles_shown()
+            && let Some((id, handle)) = crate::arc_handles::hit(&doc, &sel, ev.p(), ev.zoom)
+            && let Some(arc) = crate::arc_handles::arc_of(&doc, id)
+        {
+            self.begin_interaction("Arc")?;
+            self.tool.gesture = Gesture::Arc { id, handle, arc };
+            self.tool.overlay.arc =
+                crate::arc_handles::handle_at(&doc, id, handle, arc, ev.zoom).map(|at| ArcHint { handle, label: arc.label(handle), at });
+            return Ok(());
+        }
         if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
             let ids = roots(&doc, &sel);
             if let Handle::Rotate(_) = h {
@@ -1052,6 +1075,11 @@ impl Session {
                 self.tool.gesture = g;
                 return self.draw_drag(ev, start, id, parent, &targets);
             }
+            Gesture::Arc { id, handle, arc } => {
+                let (id, handle, arc) = (*id, *handle, *arc);
+                self.tool.gesture = g;
+                return self.arc_drag(ev, id, handle, arc);
+            }
             Gesture::Pan { sx, sy, cx, cy } => {
                 let ds = self.ds_mut()?;
                 let z = ds.view.zoom.max(1e-6);
@@ -1093,6 +1121,19 @@ impl Session {
         };
         self.tool.gesture = g;
         res
+    }
+
+    /// An arc handle drag: the new arc, written through `node.set`'s keys.
+    fn arc_drag(&mut self, ev: &PointerEvent, id: NodeId, handle: ArcHandle, arc: crate::arc_handles::Arc) -> Result<()> {
+        let doc = self.doc()?.clone();
+        let Some(next) = crate::arc_handles::drag(&doc, id, handle, arc, ev.p(), ev.shift, ev.zoom) else { return Ok(()) };
+        let props = crate::arc_handles::props(next);
+        self.preview(|doc, _| crate::cmd::props::apply("node.set", doc, id, &props))?;
+        self.tool.gesture = Gesture::Arc { id, handle, arc: next };
+        let at = crate::arc_handles::handle_at(self.doc()?, id, handle, next, ev.zoom);
+        self.tool.overlay.arc = at.map(|at| ArcHint { handle, label: next.label(handle), at });
+        self.tool.overlay.arc_hover = Some(handle);
+        Ok(())
     }
 
     fn resize_drag(&mut self, ev: &PointerEvent, start: Point, r: &ResizeStart, scale_tool: bool) -> Result<()> {
@@ -1312,6 +1353,7 @@ impl Session {
         self.tool.overlay.marquee = None;
         self.tool.overlay.guides.clear();
         self.tool.overlay.scale = None;
+        self.tool.overlay.arc = None;
         self.tool.overlay.measure_box = None;
         self.tool.overlay.insert_line = None;
         self.tool.overlay.drop_cell = None;
@@ -1360,7 +1402,7 @@ impl Session {
                     let _ = ev;
                 }
             }
-            Gesture::Resize { .. } | Gesture::Rotate { .. } => self.commit_interaction()?,
+            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } => self.commit_interaction()?,
             Gesture::Draw { start, id, parent, .. } => {
                 let tiny = (ev.p() - start).hypot() * ev.zoom < 3.0;
                 if tiny || id.is_none() {
@@ -1730,9 +1772,24 @@ impl Session {
         Ok(())
     }
 
+    /// Whether the Move tool shows arc handles now (not while another gesture runs, nor in vector
+    /// or text edit mode).
+    fn arc_handles_shown(&self) -> bool {
+        let arc_drag = matches!(self.tool.gesture, Gesture::Arc { .. });
+        self.tool.tool == ToolId::Move
+            && (arc_drag || !self.tool.busy())
+            && self.ds().is_ok_and(|ds| ds.vector_edit.is_none() && ds.text_edit.is_none())
+    }
+
+    /// The selected ellipse's arc handles as the canvas shows them at the current zoom.
+    pub fn arc_handles(&self) -> Option<crate::arc_handles::ArcHandles> {
+        let ds = self.ds().ok()?;
+        self.arc_handles_shown().then(|| crate::arc_handles::handles(&ds.doc, &ds.selection, ds.view.zoom)).flatten()
+    }
+
     /// Snapshot of tool state for the UI / inspect.
     pub fn tool_info(&self) -> serde_json::Value {
-        json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay})
+        json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay, "arcHandles": self.arc_handles()})
     }
 }
 

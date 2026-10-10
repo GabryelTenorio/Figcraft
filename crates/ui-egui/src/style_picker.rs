@@ -695,7 +695,7 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         });
         (family_resp, style_resp)
     });
-    egui::Popup::menu(&family_resp).width(260.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+    crate::right::menu_popup(&family_resp).width(260.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         if let Some(f) = crate::typography::font_picker(ui, Some(&def.font_family), family_resp.clicked()) {
             set(out, &|d| {
                 d.font_family = f.clone();
@@ -708,7 +708,7 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
         }
     });
     if let Some(sr) = style_resp {
-        egui::Popup::menu(&sr).width(200.0).show(|ui| {
+        crate::right::menu_popup(&sr).width(200.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for s in figcraft_text::family_styles(&def.font_family) {
                     let mark = if def.font_style == s { "✓ " } else { "   " };

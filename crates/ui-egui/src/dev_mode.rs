@@ -10,7 +10,7 @@ use figcraft_engine::devinspect::{self, DevItem, Prop};
 use serde_json::json;
 
 use crate::icons::{self, Icon};
-use crate::right::{menu_check, prop_row, row};
+use crate::right::{menu_check, menu_popup, prop_row, row};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets::{self, PAD};
 use crate::{FigApp, RightTab};
@@ -230,7 +230,7 @@ fn pin_menu(ui: &mut Ui, id: Id, sections: &[devinspect::Section], pinned: &[Str
     let w = ui.available_width() - PAD * 2.0;
     row(ui, 30.0, |ui| {
         let resp = ui.push_id(id, |ui| widgets::dropdown(ui, "Pin a property", w, Some(Icon::Plus))).inner;
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for p in PINNABLE {
                 let on = pinned.iter().any(|q| q == p.id);
                 if (on || annotations::applies(sections, p)) && menu_check(ui, on, p.label, "") {
@@ -260,7 +260,7 @@ pub fn ready_list(app: &mut FigApp, ui: &mut Ui) {
     let w = ui.available_width() - PAD * 2.0;
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, FILTERS.get(filter).map_or("", |f| f.1), w, Some(Icon::Code));
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for (i, (_, label)) in FILTERS.iter().enumerate() {
                 if menu_check(ui, i == filter, label, "") {
                     app.ui.dev.filter = i;

@@ -62,7 +62,8 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 ### `ui.inspect {}`
 
-UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings (`frameMs`,
+UI state: panels and tabs, current tool (`tool`: its id, overlay hints and, for a selected
+ellipse, its arc handles `arcHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
 `renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
 the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its

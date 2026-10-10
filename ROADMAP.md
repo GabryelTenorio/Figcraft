@@ -18,7 +18,7 @@ _Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and sel
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
 | Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~77%** |
+| Feature depth (weighted rubric below) | **~78%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
 | Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
 | Time to **full parity** (feature parity + fidelity pass + hardening) | **~115–195 h** one agent · **~32–55 h** with 4–6 agents |
@@ -52,8 +52,10 @@ dimension measured side by side.
    to move; the Design panel's X/Y/W/H and flip/rotate act on the points), point snapping while
    dragging points or handles and with both pens (to the points and segment midpoints of this and
    other vectors, the usual layer targets and the pixel grid, with guides and a marker on the point
-   landed on; Ctrl/Cmd turns it off). *Left:* arc handles on the canvas, live boolean editing,
-   one-sided widths. 4–8 h.
+   landed on; Ctrl/Cmd turns it off), arc handles on the canvas (sweep, start and ratio with a
+   live readout, Shift snapping, closing at the start, the other part from the gap; rotated and
+   flipped ellipses, any zoom). *Left:* live boolean editing, one-sided widths, Design panel arc
+   fields. 4–8 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -271,7 +273,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
-| Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
+| Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
 | Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
@@ -285,7 +287,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
-Weighted feature depth ≈ **77%** (self-graded, from the table).
+Weighted feature depth ≈ **78%** (self-graded, from the table).
 
 ## Milestones
 
