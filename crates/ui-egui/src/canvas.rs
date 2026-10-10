@@ -635,11 +635,15 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
         painter.add(Shape::dashed_line(&pts, stroke(ACCENT, 1.5), 4.0, 3.0));
     }
-    // Vector edit mode.
+    // Vector edit mode, with the transform box around several selected points.
     if let Some(ve) = ds.vector_edit.clone()
         && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, &ve)
     {
         vector_overlay(app, painter, &o);
+        if let Some(c) = app.session.vector_edit_box() {
+            let label = format!("{} × {}", fmt((c[1] - c[0]).hypot()), fmt((c[3] - c[0]).hypot()));
+            transform_box(app, painter, c.map(|p| app.to_screen(p.x, p.y)), ACCENT, true, 4, label);
+        }
     }
     // Selection.
     let editing = ds.text_edit.clone();
@@ -665,32 +669,11 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
         // The shape builder reshapes by regions: no transform box.
         if app.session.tool.tool != ToolId::ShapeBuilder
             && let Some(b) = selection_box(&doc, &sel)
+            && let Some((_, w, h)) = selection_frame(&doc, &sel)
         {
-            let q = b.map(|p| app.to_screen(p.x, p.y));
-            if sel.len() > 1 {
-                quad(painter, q, stroke(col, 1.0));
-            }
             let is_line = sel.len() == 1 && matches!(sel.first().and_then(|i| doc.node(*i)).map(|n| &n.kind), Some(NodeKind::Line));
-            for (i, c) in q.iter().enumerate() {
-                if is_line && i >= 2 {
-                    continue;
-                }
-                let r = Rect::from_center_size(*c, vec2(8.0, 8.0));
-                painter.rect_filled(r, CornerRadius::same(1), Color32::WHITE);
-                painter.rect_stroke(r, CornerRadius::same(1), stroke(col, 1.0), StrokeKind::Inside);
-            }
-            // Size label under the box.
-            if app.session.prefs.show_dimensions
-                && let Some((_, w, h)) = selection_frame(&doc, &sel)
-            {
-                let label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
-                let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
-                let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;
-                let galley = painter.layout_no_wrap(label, semibold(11.0), Color32::WHITE);
-                let r = Rect::from_center_size(pos2(cx, bottom + 8.0 + galley.size().y / 2.0 + 3.0), galley.size() + vec2(8.0, 4.0));
-                painter.rect_filled(r, CornerRadius::same(3), col);
-                painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
-            }
+            let label = if is_line { fmt(w) } else { format!("{} × {}", fmt(w), fmt(h)) };
+            transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, if is_line { 2 } else { 4 }, label);
         }
     }
     if app.session.tool.tool == ToolId::ShapeBuilder
@@ -749,9 +732,15 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             painter.line_segment([p, p + vec2(0.0, 14.0 * zoom as f32)], stroke(t.text, 1.0));
         }
     }
-    // Smart guides and measurements.
+    // Smart guides and measurements; a zero-length guide marks a point snapped onto.
     for g in &ov.guides {
         let (a, b) = (app.to_screen(g.x0, g.y0), app.to_screen(g.x1, g.y1));
+        if g.x0 == g.x1 && g.y0 == g.y1 {
+            for d in [vec2(4.0, 4.0), vec2(4.0, -4.0)] {
+                painter.line_segment([a - d, a + d], stroke(t.guide, 1.5));
+            }
+            continue;
+        }
         painter.line_segment([a, b], stroke(t.guide, 1.0));
         if let Some(l) = &g.label {
             let galley = painter.layout_no_wrap(l.clone(), semibold(10.0), Color32::WHITE);
@@ -802,6 +791,27 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     // Rulers.
     if view.rulers {
         rulers(app, painter, t, &doc, &sel);
+    }
+}
+
+/// A transform box (screen corners tl, tr, br, bl): its outline when `outline`, the first `handles`
+/// corner handles and, when dimensions are shown, the size `label` under it.
+fn transform_box(app: &FigApp, painter: &egui::Painter, q: [Pos2; 4], col: Color32, outline: bool, handles: usize, label: String) {
+    if outline {
+        quad(painter, q, stroke(col, 1.0));
+    }
+    for c in q.iter().take(handles) {
+        let r = Rect::from_center_size(*c, vec2(8.0, 8.0));
+        painter.rect_filled(r, CornerRadius::same(1), Color32::WHITE);
+        painter.rect_stroke(r, CornerRadius::same(1), stroke(col, 1.0), StrokeKind::Inside);
+    }
+    if app.session.prefs.show_dimensions {
+        let bottom = q.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+        let cx = q.iter().map(|p| p.x).sum::<f32>() / 4.0;
+        let galley = painter.layout_no_wrap(label, semibold(11.0), Color32::WHITE);
+        let r = Rect::from_center_size(pos2(cx, bottom + 8.0 + galley.size().y / 2.0 + 3.0), galley.size() + vec2(8.0, 4.0));
+        painter.rect_filled(r, CornerRadius::same(3), col);
+        painter.galley(r.min + vec2(4.0, 2.0), galley, Color32::WHITE);
     }
 }
 

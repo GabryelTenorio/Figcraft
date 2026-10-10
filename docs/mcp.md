@@ -146,6 +146,16 @@ from the pen's open end; clicking a point connects or branches), `vector.edit.pe
 `vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
 `vector.edit.state`; local coordinates are the layer's own.
 
+The selected points' transform box: `vector.edit.bounds` (`{x, y, width, height, corners,
+points}`: the box in the vector's axes, `x`/`y` in the parent's coordinates like the Position
+fields), `vector.edit.resize {width?, height?, center?}` (keeps the top-left unless `center`),
+`vector.edit.rotate {angle, cx?, cy?}` (degrees counter-clockwise about the box centre or a page
+pivot), `vector.edit.transform {matrix: [a, b, c, d, e, f], vertices?}` (any page-space affine).
+While points are selected, `object.flipH` / `object.flipV` and the 90°/180° rotations act on them.
+On the canvas (`pointer`), dragging points, handles and pen clicks snap to other points and segment
+midpoints (this vector's and other vectors'), the usual layer targets and the pixel grid; `cmd`
+held while dragging turns the object snapping off.
+
 ### Prototypes
 
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep

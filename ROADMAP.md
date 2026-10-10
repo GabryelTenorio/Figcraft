@@ -43,8 +43,14 @@ dimension measured side by side.
    closed area (faces with holes), point/segment selection, handle mirroring (none/angle/angle and
    length) with a Point panel (position, corner radius, mirroring), smooth/sharp points, join and
    merge, delete vs delete-and-heal, nudging, one undo step per gesture, eraser (⇧E), shape builder
-   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept).
-   *Left:* variable width strokes, transform box for several points, point snapping. 10–15 h.
+   (⇧M: the regions of overlapping shapes, click or drag to merge, Alt to remove, curves kept),
+   a transform box around several selected points (corners and edges scale them, Shift keeps
+   proportions, Alt from the centre; just outside a corner rotates, Shift in 15° steps; drag inside
+   to move; the Design panel's X/Y/W/H and flip/rotate act on the points), point snapping while
+   dragging points or handles and with both pens (to the points and segment midpoints of this and
+   other vectors, the usual layer targets and the pixel grid, with guides and a marker on the point
+   landed on; Ctrl/Cmd turns it off). *Left:* variable width strokes (in progress), arc handles on
+   the canvas, live boolean editing. 4–8 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the

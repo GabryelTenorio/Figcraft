@@ -1,5 +1,6 @@
-//! Design panel in vector edit mode: the selected points' position, corner radius and handle
-//! mirroring (in place of the layer's position section).
+//! Design panel in vector edit mode: the selected points' position and dimensions (their
+//! transform box), corner radius and handle mirroring (in place of the layer's position and
+//! dimensions while points are selected).
 
 use egui::{Id, Ui};
 use figcraft_doc::{Document, HandleMirroring};
@@ -51,6 +52,15 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
         let e = widgets::number_field(ui, Id::new("vpt_y"), Lead::Text("Y"), pos.map(|p| round(p.y)), "", col, 1.0);
         point_field(app, "vector.edit.position", e, |v| json!({"y": v}));
     });
+    if let Some(b) = vectoredit::transform::point_box(doc, ve).filter(|b| b.points.len() > 1) {
+        widgets::sublabels(ui, "Dimensions", None);
+        row(ui, 32.0, |ui| {
+            let e = widgets::number_field(ui, Id::new("vpt_w"), Lead::Text("W"), Some(round(b.width)), "", col, 1.0);
+            point_field(app, "vector.edit.resize", e, |v| json!({"width": v.max(0.0)}));
+            let e = widgets::number_field(ui, Id::new("vpt_h"), Lead::Text("H"), Some(round(b.height)), "", col, 1.0);
+            point_field(app, "vector.edit.resize", e, |v| json!({"height": v.max(0.0)}));
+        });
+    }
     let common = |f: &dyn Fn(usize) -> Option<f64>| -> Option<f64> {
         let mut it = pts.iter().map(|v| f(*v));
         let first = it.next().flatten()?;

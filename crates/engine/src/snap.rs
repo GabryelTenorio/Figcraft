@@ -1,9 +1,10 @@
 //! Snapping and smart guides: while moving or resizing, edges and centres snap to nearby layers'
 //! edges/centres, the parent frame, layout grid columns and page guides; the matches come back as
-//! guide lines (with spacing labels) for the canvas to draw in red.
+//! guide lines (with spacing labels) for the canvas to draw in red. Vector points also snap to
+//! other points (see `vectoredit::snap`); landing on one shows a marker (a zero-length guide).
 
 use figcraft_doc::{Document, NodeId, NodeKind};
-use figcraft_geom::Rect;
+use figcraft_geom::{Point, Rect, Vec2};
 use serde::Serialize;
 
 /// A guide line to draw: from (x0, y0) to (x1, y1) in page coordinates, with an optional label
@@ -17,15 +18,21 @@ pub struct Guide {
     pub label: Option<String>,
 }
 
+/// A line to snap: its position on one axis and the span it covers on the other (x, y0, y1 for a
+/// vertical line; y, x0, x1 for a horizontal one).
+pub type Span = (f64, f64, f64);
+
 /// Snap candidates gathered once at the start of a gesture.
 #[derive(Clone, Debug, Default)]
 pub struct Targets {
     /// Vertical lines (x) with the y-span of the rect they came from.
-    pub xs: Vec<(f64, f64, f64)>,
+    pub xs: Vec<Span>,
     /// Horizontal lines (y) with the x-span.
-    pub ys: Vec<(f64, f64, f64)>,
+    pub ys: Vec<Span>,
     /// Sibling boxes (for spacing labels).
     pub boxes: Vec<Rect>,
+    /// Points to land on exactly (see [`Targets::add_point`]).
+    pub points: Vec<Point>,
 }
 
 impl Targets {
@@ -84,14 +91,52 @@ impl Targets {
         t
     }
 
+    /// A point to snap onto (a vector point, a segment midpoint): lines through it on both axes,
+    /// and a marker when a moving point lands on it.
+    pub fn add_point(&mut self, p: Point) {
+        self.xs.push((p.x, p.y, p.y));
+        self.ys.push((p.y, p.x, p.x));
+        self.points.push(p);
+    }
+
     /// Snap a moving box: returns the (dx, dy) correction and guides to draw.
     pub fn snap_rect(&self, r: Rect, threshold: f64) -> (f64, f64, Vec<Guide>) {
-        let xs = [r.x0, r.center().x, r.x1];
-        let ys = [r.y0, r.center().y, r.y1];
-        let best = |cands: &[(f64, f64, f64)], vals: &[f64]| -> Option<f64> {
+        let (xs, ys) = rect_spans(r);
+        let (dx, dy, guides) = self.snap_spans(&xs, &ys, threshold);
+        (dx.unwrap_or(0.0), dy.unwrap_or(0.0), guides)
+    }
+
+    /// Snap a single point (resize handles, drawing).
+    pub fn snap_point(&self, x: f64, y: f64, threshold: f64) -> (f64, f64, Vec<Guide>) {
+        let (dx, dy, guides) = self.snap_spans(&[(x, y, y)], &[(y, x, x)], threshold);
+        (dx.unwrap_or(0.0), dy.unwrap_or(0.0), guides)
+    }
+
+    /// Snap several moving points together (vector points): the correction on each axis (`None`
+    /// where nothing was in reach), the guides, and a marker (a zero-length guide) on every target
+    /// point a moving point lands on.
+    pub fn snap_points(&self, pts: &[Point], threshold: f64) -> (Option<f64>, Option<f64>, Vec<Guide>) {
+        let xs: Vec<Span> = pts.iter().map(|p| (p.x, p.y, p.y)).collect();
+        let ys: Vec<Span> = pts.iter().map(|p| (p.y, p.x, p.x)).collect();
+        let (dx, dy, mut guides) = self.snap_spans(&xs, &ys, threshold);
+        let d = Vec2::new(dx.unwrap_or(0.0), dy.unwrap_or(0.0));
+        for p in pts.iter().map(|p| *p + d) {
+            let marker = Guide { x0: p.x, y0: p.y, x1: p.x, y1: p.y, label: None };
+            if self.points.iter().any(|t| (*t - p).hypot() < 1e-6) && !guides.contains(&marker) {
+                guides.push(marker);
+            }
+        }
+        (dx, dy, guides)
+    }
+
+    /// Snap moving lines: `xs` are vertical ones (x with the y-span they cover), `ys` horizontal
+    /// ones. Returns the nearest correction on each axis within `threshold` and the guides for the
+    /// lines that coincide with targets afterwards.
+    pub fn snap_spans(&self, xs: &[Span], ys: &[Span], threshold: f64) -> (Option<f64>, Option<f64>, Vec<Guide>) {
+        let best = |cands: &[Span], vals: &[Span]| -> Option<f64> {
             let mut best: Option<f64> = None;
             for (line, _, _) in cands {
-                for v in vals {
+                for (v, _, _) in vals {
                     let d = line - v;
                     if d.abs() <= threshold && best.is_none_or(|b| d.abs() < b.abs()) {
                         best = Some(d);
@@ -100,63 +145,45 @@ impl Targets {
             }
             best
         };
-        let dx = best(&self.xs, &xs).unwrap_or(0.0);
-        let dy = best(&self.ys, &ys).unwrap_or(0.0);
-        let snapped = Rect::new(r.x0 + dx, r.y0 + dy, r.x1 + dx, r.y1 + dy);
-        let guides = self.guides_for(snapped);
-        (dx, dy, guides)
-    }
-
-    /// Snap a single point (resize handles, drawing).
-    pub fn snap_point(&self, x: f64, y: f64, threshold: f64) -> (f64, f64, Vec<Guide>) {
-        let mut bx: Option<f64> = None;
-        for (line, _, _) in &self.xs {
-            let d = line - x;
-            if d.abs() <= threshold && bx.is_none_or(|b| d.abs() < b.abs()) {
-                bx = Some(d);
-            }
-        }
-        let mut by: Option<f64> = None;
-        for (line, _, _) in &self.ys {
-            let d = line - y;
-            if d.abs() <= threshold && by.is_none_or(|b| d.abs() < b.abs()) {
-                by = Some(d);
-            }
-        }
-        let (nx, ny) = (x + bx.unwrap_or(0.0), y + by.unwrap_or(0.0));
-        let mut g = Vec::new();
-        if bx.is_some() {
-            let span = self.xs.iter().filter(|(l, _, _)| (l - nx).abs() < 1e-6).fold((ny, ny), |a, (_, y0, y1)| (a.0.min(*y0), a.1.max(*y1)));
-            g.push(Guide { x0: nx, y0: span.0, x1: nx, y1: span.1, label: None });
-        }
-        if by.is_some() {
-            let span = self.ys.iter().filter(|(l, _, _)| (l - ny).abs() < 1e-6).fold((nx, nx), |a, (_, x0, x1)| (a.0.min(*x0), a.1.max(*x1)));
-            g.push(Guide { x0: span.0, y0: ny, x1: span.1, y1: ny, label: None });
-        }
-        (bx.unwrap_or(0.0), by.unwrap_or(0.0), g)
+        let (dx, dy) = (best(&self.xs, xs), best(&self.ys, ys));
+        let (ox, oy) = (dx.unwrap_or(0.0), dy.unwrap_or(0.0));
+        let xs: Vec<Span> = xs.iter().map(|(x, a, b)| (x + ox, a + oy, b + oy)).collect();
+        let ys: Vec<Span> = ys.iter().map(|(y, a, b)| (y + oy, a + ox, b + ox)).collect();
+        (dx, dy, self.guides_spans(&xs, &ys))
     }
 
     /// Guide lines for edges of `r` that coincide with targets.
     pub fn guides_for(&self, r: Rect) -> Vec<Guide> {
+        let (xs, ys) = rect_spans(r);
+        self.guides_spans(&xs, &ys)
+    }
+
+    /// Guides for moving lines (as in [`Self::snap_spans`]) that coincide with targets, each
+    /// spanning the line and the targets on it.
+    fn guides_spans(&self, xs: &[Span], ys: &[Span]) -> Vec<Guide> {
+        let span = |cands: &[Span], (v, a, b): Span| -> Option<(f64, f64)> {
+            let hits: Vec<&Span> = cands.iter().filter(|(l, _, _)| (l - v).abs() < 1e-6).collect();
+            (!hits.is_empty()).then(|| (hits.iter().map(|h| h.1).fold(a, f64::min).max(-1e6), hits.iter().map(|h| h.2).fold(b, f64::max).min(1e6)))
+        };
         let mut out = Vec::new();
-        for x in [r.x0, r.center().x, r.x1] {
-            let hits: Vec<&(f64, f64, f64)> = self.xs.iter().filter(|(l, _, _)| (l - x).abs() < 1e-6).collect();
-            if !hits.is_empty() {
-                let y0 = hits.iter().map(|h| h.1).fold(r.y0, f64::min).max(-1e6);
-                let y1 = hits.iter().map(|h| h.2).fold(r.y1, f64::max).min(1e6);
-                out.push(Guide { x0: x, y0, x1: x, y1, label: None });
+        for x in xs {
+            if let Some((y0, y1)) = span(&self.xs, *x) {
+                out.push(Guide { x0: x.0, y0, x1: x.0, y1, label: None });
             }
         }
-        for y in [r.y0, r.center().y, r.y1] {
-            let hits: Vec<&(f64, f64, f64)> = self.ys.iter().filter(|(l, _, _)| (l - y).abs() < 1e-6).collect();
-            if !hits.is_empty() {
-                let x0 = hits.iter().map(|h| h.1).fold(r.x0, f64::min).max(-1e6);
-                let x1 = hits.iter().map(|h| h.2).fold(r.x1, f64::max).min(1e6);
-                out.push(Guide { x0, y0: y, x1, y1: y, label: None });
+        for y in ys {
+            if let Some((x0, x1)) = span(&self.ys, *y) {
+                out.push(Guide { x0, y0: y.0, x1, y1: y.0, label: None });
             }
         }
         out
     }
+}
+
+/// A box's edges and centre lines as moving lines (see [`Targets::snap_spans`]).
+fn rect_spans(r: Rect) -> ([Span; 3], [Span; 3]) {
+    let c = r.center();
+    ([(r.x0, r.y0, r.y1), (c.x, r.y0, r.y1), (r.x1, r.y0, r.y1)], [(r.y0, r.x0, r.x1), (c.y, r.x0, r.x1), (r.y1, r.x0, r.x1)])
 }
 
 /// Distance lines from `r` to the nearest box on each side (Alt-hover measuring), or to `other`.
@@ -166,7 +193,7 @@ pub fn measure(r: Rect, other: Rect) -> Vec<Guide> {
         let v = (d * 100.0).round() / 100.0;
         if v.fract() == 0.0 { format!("{}", v as i64) } else { format!("{v}") }
     };
-    if other.contains(r.origin()) && other.contains(figcraft_geom::Point::new(r.x1, r.y1)) {
+    if other.contains(r.origin()) && other.contains(Point::new(r.x1, r.y1)) {
         // Inside: distances to each edge of the container.
         let cy = r.center().y;
         let cx = r.center().x;
