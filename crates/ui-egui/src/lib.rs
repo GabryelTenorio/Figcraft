@@ -30,6 +30,7 @@ pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;
 pub mod live;
+pub mod live_text;
 pub mod measure_overlay;
 pub mod menus;
 pub mod plugins_ui;
@@ -74,6 +75,8 @@ mod layers_keys_tests;
 mod layers_rename_tests;
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod live_text_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
@@ -783,7 +786,10 @@ impl FigApp {
                     .corner_radius(egui::CornerRadius::same(8))
                     .inner_margin(egui::Margin::symmetric(14, 10))
                     .show(ui, |ui| {
-                        ui.label(egui::RichText::new(msg).color(egui::Color32::WHITE).font(theme::regular(12.0)));
+                        // Wrapped at a readable width (the area alone would wrap at a sliver).
+                        let width = (screen.width() - 64.0).clamp(120.0, 480.0);
+                        let galley = ui.painter().layout(msg, theme::regular(12.0), egui::Color32::WHITE, width);
+                        ui.label(galley);
                     });
             });
     }

@@ -7,8 +7,9 @@ reconciliation, derived data and the message encoding. **Step 2 is implemented**
 embeds, invite links, document sync end to end (several apps edit one file), live cursors,
 selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
 handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
-session and the transport). The rest is the plan the next implementation PRs follow and update;
-sections say what is built.
+session and the transport). Styles, variables, collections, modes and comments created in a
+session take ids from their creator's id space, and others' text carets show on the canvas. The
+rest is the plan the next implementation PRs follow and update; sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -68,9 +69,30 @@ fit FigCraft's architecture:
 - An id is never *allocated* twice. A deleted node can come back with its id only by being
   created again whole (what undo does): the server accepts creating an id that doesn't exist only
   if it was deleted before or lies in the sender's own id space.
-- Styles, variables, collections and comments keep their existing string or numeric ids (made
-  unique by the engine); a client-scoped scheme for them is still to come (until then two people
-  creating one at the same moment can get the same id, and the later write wins).
+- **Document-level ids** (`figcraft_doc::ids`): styles, variables, variable collections, modes
+  and comment threads created during a session take a number from the same allocator as node ids
+  (`client_id << 32 | counter`, never handed out twice): `S:<n>`, `VariableID:<n>`,
+  `VariableCollectionId:<n>`, `<collection>/mode<n>` and comment id `n`. So two people creating a
+  style (or a variable, a comment…) at the same moment get different ids and both survive; before,
+  both got the next free number and the later write replaced the earlier object. Outside a session
+  ids are made exactly as before (`S:<k>` with the first free `k`, one above the highest for
+  variables, collections and comments, the first free `mode<k>`), so existing files and single-user
+  editing are unchanged. The number's high 32 bits are its id space; ids from before (small
+  numbers) and ids of other forms (library copies `library:key`, files placed into the document)
+  are in space 0. Server client ids start above every space used by any of these, not only by
+  layers.
+- The server refuses a batch that creates a document-level entry (by `Put` or by replacing a whole
+  list) whose id lies in the space of another client this session gave an id to, unless the entry
+  was removed earlier in the session (undo puts entries back, whoever made them). Ids in space 0 or
+  in spaces this session never handed out (earlier sessions, other files) are accepted: they can't
+  collide with what a connected client makes, because a client's numbers continue above every id of
+  its space already in the document. Removed entries are part of the saved session state
+  (`SessionState::removed`).
+- Objects inside an entry are not separate objects: modes are part of their collection, a
+  variable's values per mode part of the variable and replies part of their comment thread. Two
+  people adding a mode to the same collection, editing different modes of one variable, or replying
+  to the same thread at the same moment still resolve last-writer-wins on the whole entry (mode ids
+  no longer collide, so nothing is mixed up; one of the two additions is lost).
 
 ## The document as objects and properties
 
@@ -112,8 +134,8 @@ As built:
   hash, the encoded bytes as base64). The page order is the pages' positions.
 - **Next**: this file's published library (it embeds a snapshot document; it moves with an asset
   channel, together with images, which then stop travelling inside batches); the version history
-  (kept beside the document, not in it) with the standalone server; client-scoped ids for new
-  styles, variables and comments.
+  (kept beside the document, not in it) with the standalone server; finer entries for modes,
+  per-mode variable values and comment replies (see Identifiers).
 - **Changes** (`Change`): `Create {id, kind, parent, position, props}` (only the properties that
   differ from a new node of that kind), `Set {id, prop, value}`, `Delete {id}` (the subtree; a
   delete of something already gone does nothing), and for document-level data
@@ -185,7 +207,8 @@ messages).
 As built: the server validates each batch as a whole by applying it to a copy (limits on changes
 per batch and layers per file; values of the right type; finite, in-range sizes, transforms and
 opacity; known nodes; parents that exist and can hold layers; pages only at the top; no cycles; at
-least one page; new ids from the sender's space), then either commits it with the next sequence
+least one page; new layer ids from the sender's space; new styles, variables, collections and
+comments not in another client's space), then either commits it with the next sequence
 number or rejects it with the current values of what it touched as fixes. The client keeps the
 confirmed state, applies its own batches at once, and on someone else's batch or a rejection
 rebuilds its view as the confirmed state with its pending batches replayed leniently (the fixes
@@ -293,6 +316,18 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   outlines in the person's colour, and avatars (initials) at the top of the right panel beside
   Share; click an avatar to **follow** that person's viewport (`collab.follow {client}`), click
   again, press Escape or pan/zoom yourself to stop. The chevron lists everyone.
+- **Text carets.** While someone types in a text layer of the shared document on your page, their
+  caret and selected characters show on it in their colour (the text layout's own caret and
+  selection geometry, so they sit at the right glyphs of your copy), with their name in a tag above
+  the caret. Their caret counts characters of their own copy: typing syncs as one batch when they
+  finish (text editing is one gesture), so until then a caret past the end of your copy sits at its
+  end. Remote carets don't blink, so they never ask for frames of their own.
+- **Two people in one text layer.** Starting to type in a layer someone else is typing in shows
+  "Hana is editing this text too: the version finished last is kept" (the session's message), and
+  their caret's tag reads "Hana is editing this text" while you type. Both edits sync when each
+  person finishes, as whole values: the one the server orders last wins, as for any property.
+  `collab.peers` reports who types where (`editing {node, layer, caret, selection}` per person, and
+  yours).
 - Never stored; dropped when a client disconnects. Throttled to about 30 updates a second on both
   ends, latest wins (a value offered too soon waits and is replaced by newer ones, so the last
   position always arrives). A newcomer gets everyone's latest presence after its welcome.
@@ -305,7 +340,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   popover). After a newcomer's `Welcome` the host sends it its own `PeerJoined`, which is how it
   learns its name and colour.
 - Idle cost is zero: network threads block, wake the window (`request_repaint`) only when a
-  message arrives, and cursors only ask for frames while they glide.
+  message arrives, cursors only ask for frames while they glide, and text carets never do.
 
 ## Hosting and joining
 
@@ -420,8 +455,8 @@ sessions; an agent can be a participant with its own cursor.
 
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
-`"connecting"` and `collab.peers` tells when it is live (or why it failed). An agent's pointer is
-`collab.cursor {x, y}`. The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
+`"connecting"` and `collab.peers` tells when it is live (or why it failed) and who is typing in
+which text layer. An agent's pointer is `collab.cursor {x, y}`. The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
 live sessions aren't available.
 
 ## Security
@@ -472,6 +507,7 @@ chooses to share on the network; the default is the invite link with a random to
    client and reaches the network only through the `LiveLink` the app installs).
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
    editing. **Done** (the core's client and server, the engine's live session, the guest's
-   resuming connection).
+   resuming connection), followed by client-scoped ids for document-level objects and remote text
+   carets on the canvas.
 4. **Browser client** (WebSocket through `web-sys`).
 5. **Standalone `figcraft-server`** with persistence, compaction and accounts.

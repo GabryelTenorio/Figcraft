@@ -80,10 +80,11 @@ pub fn pointer(painter: &egui::Painter, tip: Pos2, fill: Color32) {
     painter.add(Shape::closed_line(vec![tip, left, notch, right], Stroke::new(1.5, Color32::WHITE)));
 }
 
-/// The name tag next to a remote pointer.
-fn name_tag(painter: &egui::Painter, tip: Pos2, name: &str, fill: Color32) {
+/// A name tag in a person's colour, placed by `align` at `anchor` (next to their pointer, above
+/// their text caret).
+pub(crate) fn name_tag(painter: &egui::Painter, anchor: Pos2, align: Align2, name: &str, fill: Color32) {
     let galley = painter.layout_no_wrap(name.to_string(), semibold(11.0), text_on(fill));
-    let r = Rect::from_min_size(tip + vec2(12.0, 16.0), galley.size() + vec2(12.0, 6.0));
+    let r = align.anchor_size(anchor, galley.size() + vec2(12.0, 6.0));
     painter.rect_filled(r, CornerRadius::same(4), fill);
     painter.galley(r.min + vec2(6.0, 3.0), galley, text_on(fill));
 }
@@ -156,7 +157,7 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
         shown.insert(id, (sx, sy));
         let tip = app.to_screen(sx, sy);
         pointer(painter, tip, fill);
-        name_tag(painter, tip, &name, fill);
+        name_tag(painter, tip + vec2(12.0, 16.0), Align2::LEFT_TOP, &name, fill);
     }
     app.ui.live.shown = shown;
     if gliding {

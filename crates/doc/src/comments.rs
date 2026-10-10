@@ -218,9 +218,10 @@ impl Document {
         self.comments.iter_mut().find(|c| c.id == id)
     }
 
-    /// The next free comment id.
+    /// The next free comment id outside a live session (one above the highest; see
+    /// [`new_comment_id`](Self::new_comment_id)).
     pub fn next_comment_id(&self) -> u64 {
-        self.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1
+        self.comments.iter().map(|c| c.id).max().unwrap_or(0).saturating_add(1)
     }
 
     /// Everyone named in the file's comments (authors and those who reacted), sorted.

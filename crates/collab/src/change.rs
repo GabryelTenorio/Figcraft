@@ -295,6 +295,33 @@ impl DocProp {
 }
 
 impl Entry {
+    /// The client id space the entry's id lies in ([`figcraft_doc::ids`]): ids made during a live
+    /// session carry their creator's client id, ids from before and ids of other forms are in
+    /// space 0. `None` for entries keyed by something else (dev snapshots by layer, images by
+    /// content).
+    pub fn id_space(&self) -> Option<u32> {
+        use figcraft_doc::ids::{COLLECTION_ID_PREFIX, STYLE_ID_PREFIX, VARIABLE_ID_PREFIX, id_space, space_of};
+        match self {
+            Entry::Style(id) => Some(id_space(id, STYLE_ID_PREFIX)),
+            Entry::Variable(id) => Some(id_space(id, VARIABLE_ID_PREFIX)),
+            Entry::Collection(id) => Some(id_space(id, COLLECTION_ID_PREFIX)),
+            Entry::Comment(id) => Some(space_of(*id)),
+            Entry::DevSnapshot(_) | Entry::Image(_) => None,
+        }
+    }
+
+    /// What the entry is, for messages ("style S:3").
+    pub fn describe(&self) -> String {
+        match self {
+            Entry::Style(id) => format!("style {id}"),
+            Entry::Comment(id) => format!("comment thread {id}"),
+            Entry::Collection(id) => format!("variable collection {id}"),
+            Entry::Variable(id) => format!("variable {id}"),
+            Entry::DevSnapshot(id) => format!("ready-for-dev snapshot of {id}"),
+            Entry::Image(hash) => format!("image {hash}"),
+        }
+    }
+
     /// The list this entry belongs to (dev snapshots and images aren't ordered lists).
     pub(crate) fn list(&self) -> Option<Family> {
         match self {

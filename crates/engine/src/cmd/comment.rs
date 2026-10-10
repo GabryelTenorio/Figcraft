@@ -393,7 +393,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let anchor = anchor_at(doc, page, x, y, get(p, "anchor"));
                 let (lx, ly) = local(doc, anchor, x, y);
                 let mut c = Comment {
-                    id: doc.next_comment_id(),
+                    id: s.doc_mut()?.new_comment_id(),
                     page,
                     x: lx,
                     y: ly,
