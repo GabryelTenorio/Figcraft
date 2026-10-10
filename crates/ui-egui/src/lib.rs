@@ -36,6 +36,7 @@ pub mod right;
 pub mod scale_panel;
 pub mod section_panel;
 pub mod shortcuts;
+pub mod shortcuts_panel;
 pub mod style_picker;
 pub mod tabs;
 pub mod theme;
@@ -71,6 +72,8 @@ mod present_view_tests;
 mod proto_editor_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
+#[cfg(test)]
+mod shortcuts_tests;
 #[cfg(test)]
 mod titlebar_tests;
 
@@ -164,6 +167,11 @@ pub struct UiState {
     pub about_tab: dialogs::AboutTab,
     pub preferences: bool,
     pub shortcuts_panel: bool,
+    /// The Keyboard shortcuts panel's tab and search text.
+    pub shortcuts_tab: figcraft_engine::keymap::Group,
+    pub shortcuts_query: String,
+    /// An opacity digit just typed and when (a second one soon after makes an exact percentage).
+    pub opacity_digit: Option<(u32, f64)>,
     pub home: bool,
     /// How the window's title bar is drawn (the desktop app sets it when it opens the window).
     pub title_bar: TitleBar,
@@ -247,6 +255,9 @@ impl Default for UiState {
             about_tab: dialogs::AboutTab::About,
             preferences: false,
             shortcuts_panel: false,
+            shortcuts_tab: figcraft_engine::keymap::Group::Essential,
+            shortcuts_query: String::new(),
+            opacity_digit: None,
             home: false,
             title_bar: TitleBar::Native,
             icon_gallery: false,
@@ -396,6 +407,13 @@ impl FigApp {
                 "palette.actions" => self.ui.palette = Some(String::new()),
                 "panel.design" => self.ui.right_tab = RightTab::Design,
                 "panel.prototype" => self.ui.right_tab = RightTab::Prototype,
+                "panel.designPrototype" => {
+                    self.ui.right_tab = if self.ui.right_tab == RightTab::Prototype { RightTab::Design } else { RightTab::Prototype };
+                }
+                "panel.devMode" => {
+                    self.ui.right_tab = if self.ui.right_tab == RightTab::Inspect { RightTab::Design } else { RightTab::Inspect };
+                }
+                "panel.leftSidebar" => self.ui.left_collapsed = !self.ui.left_collapsed,
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
                 "panel.versionHistory" => versions::open(self),

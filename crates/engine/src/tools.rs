@@ -108,27 +108,16 @@ impl ToolId {
             ToolId::ShapeBuilder => "Shape builder",
         }
     }
+    /// The tool's key (from [`crate::keymap`]; empty when it has none).
     pub fn shortcut(self) -> &'static str {
-        match self {
-            ToolId::Move => "V",
-            ToolId::Scale => "K",
-            ToolId::Hand => "H",
-            ToolId::Frame => "F",
-            ToolId::Section => "Shift+S",
-            ToolId::Slice => "S",
-            ToolId::Rectangle => "R",
-            ToolId::Line => "L",
-            ToolId::Arrow => "Shift+L",
-            ToolId::Ellipse => "O",
-            ToolId::Pen => "P",
-            ToolId::Pencil => "Shift+P",
-            ToolId::Text => "T",
-            ToolId::Comment => "C",
-            ToolId::Eyedropper => "I",
-            ToolId::ShapeBuilder => "Shift+M",
-            _ => "",
-        }
+        let id = self.id();
+        crate::keymap::KEYS
+            .iter()
+            .find(|b| if self == ToolId::Eyedropper { b.id == "edit.pickColor" } else { b.id.strip_prefix("tool.") == Some(id) })
+            .and_then(|b| b.keys(crate::keymap::Platform::current()).first().copied())
+            .unwrap_or("")
     }
+
     fn draws_shape(self) -> bool {
         matches!(
             self,
@@ -281,7 +270,6 @@ pub(crate) enum Gesture {
     Move {
         start: Point,
         ids: Vec<NodeId>,
-        bounds: Rect,
         targets: Targets,
         duplicate: bool,
         moved: bool,
@@ -897,10 +885,9 @@ impl Session {
                     return Ok(());
                 }
                 let ids = roots(&doc, &new_sel);
-                let bounds = doc.bounds_of(&ids).unwrap_or_default();
                 let targets = Targets::gather(&doc, page, &ids);
                 self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" })?;
-                self.tool.gesture = Gesture::Move { start: ev.p(), ids, bounds, targets, duplicate: ev.alt, moved: false };
+                self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false };
                 self.tool.overlay.cursor = if ev.alt { Cursor::Copy } else { Cursor::Default };
             }
             None => {
@@ -948,7 +935,7 @@ impl Session {
                 self.set_selection(sel);
                 Ok(())
             }
-            Gesture::Move { start, ids, bounds, targets, duplicate, .. } => {
+            Gesture::Move { start, ids, targets, duplicate, .. } => {
                 let mut d = ev.p() - *start;
                 if ev.shift {
                     if d.x.abs() > d.y.abs() {
@@ -960,16 +947,13 @@ impl Session {
                 let snap_on = self.ds().map(|ds| ds.view.snap_objects).unwrap_or(true) && !ev.cmd;
                 let mut guides = Vec::new();
                 if snap_on {
-                    let moved = Rect::new(bounds.x0 + d.x, bounds.y0 + d.y, bounds.x1 + d.x, bounds.y1 + d.y);
-                    let (sx, sy, g2) = targets.snap_rect(moved, SNAP_PX / ev.zoom.max(1e-6));
-                    d.x += sx;
-                    d.y += sy;
+                    let (c, g2) = targets.snap_move(d, SNAP_PX / ev.zoom.max(1e-6));
+                    d += c;
                     guides = g2;
                 }
                 if self.ds().map(|ds| ds.view.snap_pixel).unwrap_or(true) {
-                    // Keep the box's origin on whole pixels.
-                    d.x = (bounds.x0 + d.x).round() - bounds.x0;
-                    d.y = (bounds.y0 + d.y).round() - bounds.y0;
+                    // Keep the box's origin on whole pixels (a rotated parent frame's, inside one).
+                    d = targets.round_move(d);
                 }
                 let ids = ids.clone();
                 let dup = *duplicate;

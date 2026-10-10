@@ -975,8 +975,13 @@ pub fn grid_lines(g: &LayoutGrid, w: f64, h: f64) -> Vec<Rect> {
 
 /// Snap targets of a frame's visible layout grids (page coordinates): column/row edges.
 pub fn grid_snap_lines(doc: &Document, frame: NodeId) -> (Vec<f64>, Vec<f64>) {
+    grid_snap_lines_in(doc, frame, doc.world_transform(frame))
+}
+
+/// [`grid_snap_lines`] mapped from the frame's coordinates by `xf` (the frame's world transform
+/// for page lines).
+pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64>, Vec<f64>) {
     let Some(f) = doc.node(frame) else { return (vec![], vec![]) };
-    let xf = doc.world_transform(frame);
     let mut xs = Vec::new();
     let mut ys = Vec::new();
     for g in f.grids.iter().filter(|g| g.visible) {

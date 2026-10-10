@@ -3,7 +3,7 @@
 
 use base64::Engine as _;
 use figcraft_doc::{ExportFormat, NodeId};
-use figcraft_engine::{PointerEvent, PointerKind, Session, ToolId, textedit};
+use figcraft_engine::{PointerEvent, PointerKind, Session, textedit};
 use serde_json::{Value, json};
 
 use crate::backend::Backend;
@@ -32,14 +32,6 @@ fn f(p: &Value, k: &str) -> Option<f64> {
 
 fn ids_of(p: &Value) -> Vec<NodeId> {
     p.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(figcraft_engine::params::id_of).collect()).unwrap_or_default()
-}
-
-/// Does a catalog shortcut like `Shift+Cmd+I` match `key` with these modifiers (any order)?
-fn shortcut_matches(shortcut: &str, key: &str, shift: bool, alt: bool, cmd: bool, ctrl: bool) -> bool {
-    let parts: Vec<&str> = shortcut.split('+').collect();
-    let Some((k, mods)) = parts.split_last() else { return false };
-    let has = |m: &str| mods.iter().any(|x| x.eq_ignore_ascii_case(m));
-    k.eq_ignore_ascii_case(key) && has("shift") == shift && (has("alt") || has("option")) == alt && has("cmd") == cmd && has("ctrl") == ctrl
 }
 
 impl Headless {
@@ -118,60 +110,64 @@ impl Headless {
     }
 
     fn key(&mut self, p: &Value) -> Result<Value, String> {
+        use figcraft_engine::keymap::{Context, Mods, Platform, lookup, normalize};
         let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
-        let (shift, alt, cmd, ctrl) = (b(p, "shift"), b(p, "alt"), b(p, "cmd"), b(p, "ctrl"));
-        // Text editing keys go to the editor.
-        if self.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false) && !(cmd && key.len() == 1) {
-            textedit::key(&mut self.session, key, shift, alt, cmd).map_err(|e| e.to_string())?;
-            return Ok(json!({"ok": true, "textEdit": true}));
-        }
-        if let Some(item) = figcraft_engine::catalog::MENU
-            .iter()
-            .find(|m| !m.shortcut.is_empty() && !m.id.is_empty() && shortcut_matches(m.shortcut, key, shift, alt, cmd, ctrl))
-        {
-            if item.id == "select.none" {
-                self.session.escape().map_err(|e| e.to_string())?;
-            } else {
-                self.execute(item.id, &json!({}))?;
+        let m = Mods { shift: b(p, "shift"), alt: b(p, "alt"), cmd: b(p, "cmd"), ctrl: b(p, "ctrl") };
+        let platform = Platform::current();
+        // Text editing keys go to the editor, after the shortcuts live while editing; other
+        // Cmd+letter shortcuts (undo…) still reach the canvas.
+        if self.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false) {
+            if let Some(bd) = lookup(platform, Context::Text, key, m).filter(|_| m.cmd || m.alt || m.ctrl) {
+                self.execute(bd.id, &json!({}))?;
+                return Ok(json!({"command": bd.id}));
             }
-            return Ok(json!({"command": item.id}));
+            if !(m.cmd && key.len() == 1) {
+                textedit::key(&mut self.session, key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())?;
+                return Ok(json!({"ok": true, "textEdit": true}));
+            }
         }
-        if !cmd
-            && !alt
-            && !ctrl
-            && let Some(t) =
-                ToolId::ALL.into_iter().find(|t| !t.shortcut().is_empty() && shortcut_matches(t.shortcut(), key, shift, false, false, false))
-        {
-            self.session.set_tool(t);
-            return Ok(json!({"tool": t.id()}));
-        }
-        match key {
-            "Escape" | "Esc" => self.session.escape().map(|_| json!({"ok": true})).map_err(|e| e.to_string()),
-            "Delete" | "Backspace" => self.execute("edit.delete", &json!({})),
-            "Enter" | "Return" => {
-                // Enter on a text layer starts editing it; otherwise finish the pen path.
-                let sel = self.session.selection();
-                let is_text = sel
-                    .first()
-                    .and_then(|i| self.session.doc().ok().and_then(|d| d.node(*i).map(|n| matches!(n.kind, figcraft_doc::NodeKind::Text(_)))))
-                    .unwrap_or(false);
-                if sel.len() == 1 && is_text {
-                    self.execute("text.edit.begin", &json!({"id": sel.first()}))
-                } else {
+        if let Some(bd) = lookup(platform, Context::Canvas, key, m) {
+            match bd.id {
+                "select.none" => self.session.escape().map_err(|e| e.to_string())?,
+                // Enter on a text layer starts editing it.
+                "select.children" if self.single_text().is_some() => {
+                    self.execute("text.edit.begin", &json!({"id": self.single_text()}))?;
+                }
+                "select.children" if self.session.tool.pen.is_some() => {
                     let _ = self.session.pen_finish();
-                    Ok(json!({"ok": true}))
+                }
+                id => {
+                    self.execute(id, &json!({}))?;
                 }
             }
-            "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" | "Left" | "Right" | "Up" | "Down" => {
-                let (dx, dy) = match key {
-                    "ArrowLeft" | "Left" => (-1, 0),
-                    "ArrowRight" | "Right" => (1, 0),
-                    "ArrowUp" | "Up" => (0, -1),
+            return Ok(json!({"command": bd.id, "tool": self.session.tool.tool.id()}));
+        }
+        let (name, _) = normalize(key).ok_or_else(|| format!("unknown key `{key}`"))?;
+        match name {
+            "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
+                let (dx, dy) = match name {
+                    "ArrowLeft" => (-1, 0),
+                    "ArrowRight" => (1, 0),
+                    "ArrowUp" => (0, -1),
                     _ => (0, 1),
                 };
-                self.execute("transform.nudge", &json!({"dx": dx, "dy": dy, "big": shift}))
+                self.execute("transform.nudge", &json!({"dx": dx, "dy": dy, "big": m.shift}))
+            }
+            // Number keys set the selection's opacity.
+            d if m.is_none() && d.len() == 1 && d.chars().all(|c| c.is_ascii_digit()) && self.session.prefs.number_keys_opacity => {
+                self.execute("object.opacityKeys", &json!({"digits": d}))
             }
             _ => Err(format!("no shortcut for `{key}` with these modifiers")),
+        }
+    }
+
+    /// The selected layer when exactly one text layer is selected.
+    fn single_text(&self) -> Option<NodeId> {
+        let sel = self.session.selection();
+        let doc = self.session.doc().ok()?;
+        match sel.as_slice() {
+            [id] if doc.node(*id).is_some_and(|n| matches!(n.kind, figcraft_doc::NodeKind::Text(_))) => Some(*id),
+            _ => None,
         }
     }
 

@@ -90,7 +90,7 @@ fn frosted_doc(radius: f64) -> (Document, NodeId, NodeId) {
         let n = d.get_mut(panel).unwrap();
         n.fills = vec![Paint::solid(Color::from_hex("FFFFFF40").unwrap())];
         n.corners.radii = [12.0; 4];
-        n.effects = vec![Effect { kind: EffectKind::BackgroundBlur { radius }, visible: true }];
+        n.effects = vec![Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(radius)), visible: true }];
     }
     // Drawn after the panel: never part of its backdrop.
     let above = d.create(f, NodeKind::Rectangle, "Above", 0.0, 0.0, 30.0, 30.0).unwrap();
@@ -260,7 +260,7 @@ fn hostile_effects_and_masks_never_panic() {
     }
     // Background blur on a page root itself, and nested three groups deep.
     let (mut d, f, _) = frosted_doc(8.0);
-    d.get_mut(f).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur { radius: 4.0 }, visible: true }];
+    d.get_mut(f).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(4.0)), visible: true }];
     assert!(export_pdf(&d, &[f], &PdfOptions::default()).is_ok());
 }
 

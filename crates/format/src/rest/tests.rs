@@ -237,8 +237,8 @@ fn strokes_and_effects() {
     assert_eq!((d.offset, d.radius, d.spread, d.show_behind), ((2.0, 6.0), 8.0, 3.0, true));
     assert!(close(f64::from(d.color.a), 0.5));
     assert!(matches!(&s.effects[1].kind, EffectKind::InnerShadow(i) if i.radius == 2.0) && !s.effects[1].visible);
-    assert!(matches!(s.effects[2].kind, EffectKind::LayerBlur { radius } if radius == 5.0));
-    assert!(matches!(s.effects[3].kind, EffectKind::BackgroundBlur { radius } if radius == 9.0));
+    assert!(matches!(s.effects[2].kind, EffectKind::LayerBlur(ref b) if b.radius == 5.0));
+    assert!(matches!(s.effects[3].kind, EffectKind::BackgroundBlur(ref b) if b.radius == 9.0));
     assert!(warnings.iter().any(|w| w.contains("SPARKLE")), "{warnings:?}");
     let l = named(&doc, "L");
     assert!(matches!(l.kind, NodeKind::Line));

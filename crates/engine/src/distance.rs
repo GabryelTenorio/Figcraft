@@ -146,7 +146,7 @@ pub fn to_guide(a: Rect, vertical: bool, at: f64) -> Vec<Guide> {
 }
 
 /// The ruler guides near page point `p` (within `tol`): the page's and those of the frames
-/// around `around` (axis-aligned frames only), as (vertical, page offset).
+/// around `around` (those that run along the page's axes), as (vertical, page offset).
 pub fn guide_at(doc: &Document, page: NodeId, around: &[NodeId], p: Point, tol: f64) -> Option<(bool, f64)> {
     let mut lines: Vec<(bool, f64)> = Vec::new();
     if let Some(n) = doc.node(page) {
@@ -163,14 +163,7 @@ pub fn guide_at(doc: &Document, page: NodeId, around: &[NodeId], p: Point, tol: 
     for f in frames {
         let Some(n) = doc.node(f).filter(|n| !n.guides.is_empty()) else { continue };
         let w = doc.world_transform(f);
-        let c = w.as_coeffs();
-        if c[1].abs() > EPS || c[2].abs() > EPS {
-            continue;
-        }
-        for g in &n.guides {
-            let q = w * Point::new(g.offset, g.offset);
-            lines.push((g.vertical, if g.vertical { q.x } else { q.y }));
-        }
+        lines.extend(n.guides.iter().filter_map(|g| crate::guides::line_in(w, g.vertical, g.offset)));
     }
     lines
         .into_iter()

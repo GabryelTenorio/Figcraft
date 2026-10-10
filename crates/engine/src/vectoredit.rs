@@ -74,13 +74,13 @@ impl VTool {
             VTool::Width => "Variable width",
         }
     }
-    /// Catalog-style shortcut ("Shift+B"); the Bend tool is held with Cmd (Ctrl elsewhere).
+    /// Keymap-style shortcut ("Shift+E"); the Bend tool is held with Cmd (Ctrl elsewhere).
     pub fn shortcut(self) -> &'static str {
         match self {
             VTool::Move => "V",
             VTool::Pen => "P",
             VTool::Bend => "Cmd",
-            VTool::Paint => "Shift+B",
+            VTool::Paint => "B",
             VTool::Lasso => "Q",
             VTool::Cut => "X",
             VTool::Eraser => "Shift+E",
@@ -496,7 +496,8 @@ pub fn key(s: &mut Session, name: &str, shift: bool, alt: bool, cmd: bool) -> Re
         }
         ("V", false, false, false) => set_tool(s, VTool::Move)?,
         ("P", false, false, false) => set_tool(s, VTool::Pen)?,
-        ("B", true, false, false) => set_tool(s, VTool::Paint)?,
+        // B (Shift+B still works, as it did before).
+        ("B", _, false, false) => set_tool(s, VTool::Paint)?,
         ("Q", false, false, false) => set_tool(s, VTool::Lasso)?,
         ("X", false, false, false) => set_tool(s, VTool::Cut)?,
         ("E", true, false, false) => set_tool(s, VTool::Eraser)?,

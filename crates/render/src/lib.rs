@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod backdrop;
+pub mod blur;
 pub mod draw;
 pub mod fx;
 pub mod glass;
@@ -165,6 +166,48 @@ pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut 
     }
 }
 
+/// How an export draws a node by itself (see [`render_alone`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alone {
+    /// With its effects, opacity and blend, but its backdrop effects (background blur and glass
+    /// read what lies under it: see [`backdrop::effects_beneath`]).
+    WithEffects,
+    /// Its content only: no effects, opacity or blend.
+    Plain,
+}
+
+/// Node `id` drawn by itself into `view` (a mask layer as a plain layer), for exports that draw
+/// what vectors can't (blurs, grain, shadows) as images.
+pub fn render_alone(doc: &Document, id: NodeId, view: &View, how: Alone) -> Option<Pixmap> {
+    let mut tmp = doc.clone();
+    let n = tmp.node_mut(id)?;
+    n.is_mask = false;
+    match how {
+        Alone::WithEffects => {
+            n.effects.retain(|e| !matches!(e.kind, figcraft_doc::EffectKind::BackgroundBlur(_) | figcraft_doc::EffectKind::Glass(_)))
+        }
+        Alone::Plain => {
+            n.effects.clear();
+            n.opacity = 1.0;
+            n.blend = figcraft_color::BlendMode::Normal;
+        }
+    }
+    let mut pix = Pixmap::new(view.width.clamp(1, 16_384), view.height.clamp(1, 16_384))?;
+    render_nodes_into(&tmp, &[id], view, &mut pix);
+    Some(pix)
+}
+
+/// The page area node `id` paints into with its effects (blurs, shadows and texture reach past
+/// its bounds): what an export rasterises of it.
+pub fn raster_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
+    let n = doc.node(id)?;
+    let sc = doc.world_transform(id).determinant().abs().sqrt();
+    let sc = if sc.is_finite() && sc > 0.0 { sc } else { 1.0 };
+    let m = draw::effect_margin(n).abs() * sc;
+    let m = if m.is_finite() { m } else { 0.0 };
+    Some(doc.world_render_bounds(id)?.inflate(m, m))
+}
+
 /// The page-space rectangle a node exports: a clipping frame's box (plus its own effects), else
 /// everything it paints.
 pub fn export_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
@@ -322,9 +365,13 @@ mod backdrop_tests;
 #[cfg(test)]
 mod band_tests;
 #[cfg(test)]
+mod effect_order_tests;
+#[cfg(test)]
 mod grain_tests;
 #[cfg(test)]
 mod lod_tests;
+#[cfg(test)]
+mod progressive_tests;
 #[cfg(test)]
 mod retained_edit_tests;
 #[cfg(test)]

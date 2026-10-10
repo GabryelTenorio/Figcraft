@@ -52,7 +52,7 @@ fn scene(holder: Holder) -> (Document, NodeId, NodeId) {
     let pane = d.create(parent, NodeKind::Rectangle, "Pane", 60.0, 40.0, 120.0, 80.0).unwrap();
     let n = d.get_mut(pane).unwrap();
     n.fills = vec![];
-    n.effects = vec![Effect { kind: EffectKind::BackgroundBlur { radius: BLUR }, visible: true }];
+    n.effects = vec![Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(BLUR)), visible: true }];
     (d, f, pane)
 }
 
@@ -276,8 +276,8 @@ fn hostile_backdrop_values_do_not_crash() {
         assert!(render_node(&d, f, 1.0).is_some());
     }
     let (mut d, f, pane) = scene(Holder::ClipFrame);
-    d.get_mut(pane).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur { radius: f64::NAN }, visible: true }];
+    d.get_mut(pane).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(f64::NAN)), visible: true }];
     assert!(render_node(&d, f, 1.0).is_some());
-    d.get_mut(pane).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur { radius: 1e12 }, visible: true }];
+    d.get_mut(pane).unwrap().effects = vec![Effect { kind: EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(1e12)), visible: true }];
     assert!(render_node(&d, f, 0.5).is_some());
 }

@@ -54,6 +54,25 @@ fn step(z: f64, up: bool) -> f64 {
     }
 }
 
+/// The zoom tool: a click zooms a step in (or out) about the clicked point, a dragged area fills
+/// the view.
+fn zoom_at(s: &mut Session, p: &Value) -> Result<Value> {
+    let (Some(x), Some(y)) = (num(p, "x").filter(|v| v.is_finite()), num(p, "y").filter(|v| v.is_finite())) else {
+        return Err(bad("view.zoomAt", "`x` and `y` (page coordinates) are required"));
+    };
+    let v = view(s)?;
+    match (num(p, "width"), num(p, "height")) {
+        (Some(w), Some(h)) if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 => {
+            v.fit(figcraft_geom::Rect::new(x, y, x + w, y + h), ViewState::MAX_ZOOM);
+        }
+        _ => {
+            let z = step(v.zoom, !boolean(p, "out").unwrap_or(false));
+            v.set_zoom_at(z, (x, y));
+        }
+    }
+    Ok(json!({"zoom": v.zoom, "cx": v.cx, "cy": v.cy}))
+}
+
 fn zoom_frame(s: &mut Session, dir: i64) -> Result<Value> {
     let ds = s.ds()?;
     let frames = ds.doc.top_frames(ds.page);
@@ -146,6 +165,13 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             Ok(serde_json::to_value(&*v).unwrap_or(Value::Null))
         }),
+        spec!(
+            "view.zoomAt",
+            "Zoom tool",
+            "{x, y (page point kept in place), out? (zoom out a step), width?, height? (an area to fit instead)}",
+            false,
+            zoom_at
+        ),
         spec!("view.get", "Get view", "{}", false, |s, _| Ok(serde_json::to_value(&s.ds()?.view).unwrap_or(Value::Null))),
         spec!("view.prevFrame", "Zoom to previous frame", "{}", false, |s, _| zoom_frame(s, -1)),
         spec!("view.nextFrame", "Zoom to next frame", "{}", false, |s, _| zoom_frame(s, 1)),
@@ -167,6 +193,9 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.assets", "Assets panel", "{}", false, |s, _| ui(s, "panel.assets")),
         spec!("view.design", "Design panel", "{}", false, |s, _| ui(s, "panel.design")),
         spec!("view.prototype", "Prototype panel", "{}", false, |s, _| ui(s, "panel.prototype")),
+        spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
+        spec!("view.devMode", "Dev Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
+        spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),
         spec!("view.themeLight", "Light theme", "{}", false, |s, _| {
             s.prefs.theme = "light".into();
             ok()

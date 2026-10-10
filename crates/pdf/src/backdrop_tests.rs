@@ -13,7 +13,7 @@ fn solid(d: &mut Document, id: NodeId, hex: &str) {
 }
 
 /// A red clipping frame with stripes and a transparent pane (80..200 × 40..120) with `effect`.
-fn scene(effect: EffectKind) -> (Document, NodeId, NodeId) {
+pub(crate) fn scene(effect: EffectKind) -> (Document, NodeId, NodeId) {
     let mut d = Document::new("pdf backdrop");
     let p = d.first_page().unwrap();
     let f = d.create(p, NodeKind::Frame, "Frame", 0.0, 0.0, 240.0, 160.0).unwrap();
@@ -32,7 +32,7 @@ fn scene(effect: EffectKind) -> (Document, NodeId, NodeId) {
 
 /// The PDF's backdrop image of `pane` and the PNG export of `frame` at the same scale: the largest
 /// channel difference over the pane's inside (2 page units in from its edges).
-fn pdf_vs_png(d: &Document, frame: NodeId, pane: NodeId) -> u8 {
+pub(crate) fn pdf_vs_png(d: &Document, frame: NodeId, pane: NodeId) -> u8 {
     let opts = PdfOptions::default();
     let mut ex = Exporter::new(d, &opts);
     let b = figcraft_render::export_bounds(d, frame).unwrap();
@@ -60,7 +60,7 @@ fn pdf_vs_png(d: &Document, frame: NodeId, pane: NodeId) -> u8 {
 
 #[test]
 fn pdf_background_blur_matches_the_png() {
-    let (d, f, pane) = scene(EffectKind::BackgroundBlur { radius: 12.0 });
+    let (d, f, pane) = scene(EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(12.0)));
     let diff = pdf_vs_png(&d, f, pane);
     assert!(diff <= 3, "{diff}");
 }
@@ -78,7 +78,7 @@ fn pdf_places_the_backdrop_image() {
         let pdf = crate::export_pdf(d, &[f], &PdfOptions::default()).unwrap();
         String::from_utf8_lossy(&pdf).matches("/Subtype/Image").count()
     };
-    let (mut d, f, pane) = scene(EffectKind::BackgroundBlur { radius: 12.0 });
+    let (mut d, f, pane) = scene(EffectKind::BackgroundBlur(figcraft_doc::Blur::uniform(12.0)));
     let with = images(&d, f);
     d.get_mut(pane).unwrap().effects.clear();
     let without = images(&d, f);

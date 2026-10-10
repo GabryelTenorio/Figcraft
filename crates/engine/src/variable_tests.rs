@@ -109,9 +109,9 @@ fn effects_follow_their_variables() {
         }
         k => panic!("{k:?}"),
     }
-    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur { radius } if radius == 12.0));
+    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur(ref b) if b.radius == 12.0));
     s.execute("variable.set", &json!({"variable": "blur", "value": -3})).unwrap();
-    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur { radius } if radius == 0.0), "clamped");
+    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur(ref b) if b.radius == 0.0), "clamped");
     // Pickers offer effect-scoped variables for these fields.
     let doc = s.doc().unwrap();
     assert_eq!(crate::cmd::variables::field_scope(doc, r, "effects/0/color"), Some("EFFECT_COLOR"));

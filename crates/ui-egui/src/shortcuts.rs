@@ -1,63 +1,82 @@
-//! Keyboard handling: the catalog's shortcuts, tool keys, nudging, and text editing keys.
+//! Keyboard handling: the shortcuts of [`figcraft_engine::keymap`], tool keys, nudging, opacity
+//! digits and text editing keys.
+
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use egui::{Context, Event, Key, Modifiers};
-use figcraft_engine::catalog::MENU;
+use figcraft_engine::keymap::{self, Platform};
 use serde_json::json;
 
 use crate::FigApp;
 
-/// Parse "Shift+Cmd+K" into modifiers + key.
-pub fn parse(s: &str) -> Option<(Modifiers, Key)> {
-    let mut m = Modifiers::NONE;
-    let mut key = None;
-    for part in s.split('+') {
-        match part {
-            "Shift" => m.shift = true,
-            "Cmd" => m.command = true,
-            "Alt" => m.alt = true,
-            "Ctrl" => m.ctrl = true,
-            "" => {}
-            k => key = key_of(k),
-        }
+/// Two opacity digits typed within this long make one exact percentage ("4" then "5": 45%).
+pub const OPACITY_CHAIN_SECS: f64 = 0.6;
+
+/// 0: not known yet (use the build's platform), 1: macOS, 2: Windows/Linux.
+static PLATFORM: AtomicU8 = AtomicU8::new(0);
+
+/// The platform whose keys apply: the build's, or in the browser the one egui detected.
+pub fn platform() -> Platform {
+    match PLATFORM.load(Ordering::Relaxed) {
+        1 => Platform::Mac,
+        2 => Platform::Other,
+        _ => Platform::current(),
     }
-    key.map(|k| (m, k))
 }
 
-fn key_of(k: &str) -> Option<Key> {
-    Some(match k {
-        "Delete" => Key::Backspace,
-        "Enter" => Key::Enter,
-        "Escape" => Key::Escape,
-        "Tab" => Key::Tab,
-        "PageUp" => Key::PageUp,
-        "PageDown" => Key::PageDown,
-        "=" => Key::Equals,
-        "-" => Key::Minus,
-        "[" => Key::OpenBracket,
-        "]" => Key::CloseBracket,
-        "\\" => Key::Backslash,
-        "'" => Key::Quote,
-        "," => Key::Comma,
-        "." => Key::Period,
-        "/" | "?" => Key::Slash,
-        other => Key::from_name(other)?,
-    })
+fn note_platform(ctx: &Context) {
+    PLATFORM.store(if ctx.os() == egui::os::OperatingSystem::Mac { 1 } else { 2 }, Ordering::Relaxed);
 }
 
-/// Whether the modifiers held match a shortcut's. Off macOS, Ctrl is the command key (egui sets
-/// both `ctrl` and `command` for it), so a held command stands for Ctrl too.
-fn mods_match(want: Modifiers, got: Modifiers) -> bool {
-    want.shift == got.shift && want.command == got.command && want.alt == got.alt && (want.ctrl == got.ctrl || got.mac_cmd || got.command)
+/// The keymap's view of egui's modifiers (Ctrl off macOS sets egui's `command` too).
+pub fn mods(m: Modifiers) -> keymap::Mods {
+    keymap::Mods { shift: m.shift, alt: m.alt, cmd: m.command || m.mac_cmd, ctrl: m.ctrl }
+}
+
+/// The key a menu shows for a command.
+pub fn shortcut(id: &str) -> Option<&'static str> {
+    keymap::primary(id, platform())
+}
+
+/// A tooltip naming a command's key on this platform ("Align left  ⌥A"; just the label unbound).
+pub fn tip(label: &'static str, id: &str) -> &'static str {
+    cached_tip(label, shortcut(id))
+}
+
+/// A tooltip naming a key ("Resources  ⇧I").
+pub fn key_tip(label: &'static str, key: &'static str) -> &'static str {
+    cached_tip(label, Some(key))
+}
+
+/// Panels ask for their tooltips every frame: each (label, key, platform) is built once.
+fn cached_tip(label: &'static str, key: Option<&'static str>) -> &'static str {
+    type Entry = (Platform, &'static str, &'static str, &'static str);
+    static CACHE: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+    let Some(key) = key else { return label };
+    let p = platform();
+    let Ok(mut cache) = CACHE.lock() else { return label };
+    if let Some(e) = cache.iter().find(|e| e.0 == p && e.1 == label && e.2 == key) {
+        return e.3;
+    }
+    // A bounded set: one entry per tooltip in the code.
+    let text: &'static str = Box::leak(format!("{label}  {}", keymap::display(key, p)).into_boxed_str());
+    cache.push((p, label, key, text));
+    text
 }
 
 /// Run the shortcuts this frame's keys press. `typing`: a field had the keyboard when the frame
 /// began.
 pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
+    note_platform(ctx);
     // Text fields in panels own the keyboard (also the key that ends their editing).
     if typing || ctx.memory(|m| m.focused().is_some()) || app.ui.palette.is_some() {
         return;
     }
     let events: Vec<Event> = ctx.input(|i| i.events.clone());
+    if events.is_empty() {
+        return;
+    }
     let editing = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
     if editing {
         text_keys(app, ctx, &events);
@@ -69,12 +88,13 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
     if paste_key && !paste_event {
         crate::menus::paste(app, None);
     }
+    let now = ctx.input(|i| i.time);
     for ev in &events {
         match ev {
             Event::Copy => crate::menus::invoke(app, "edit.copy"),
             Event::Cut => crate::menus::invoke(app, "edit.cut"),
             Event::Paste(text) => crate::menus::paste(app, Some(text)),
-            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat, ctx) => {
+            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat, now, ctx) => {
                 // handled
             }
             _ => {}
@@ -82,7 +102,25 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
     }
 }
 
-fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Context) -> bool {
+/// Run the command a shortcut is bound to, with the keyboard's own twists (Escape steps out
+/// before it deselects, Delete ends a pen path, Enter edits the selected text or vector).
+pub fn run_binding(app: &mut FigApp, id: &str) {
+    match id {
+        "select.none" => {
+            if let Err(e) = app.session.escape() {
+                app.toast(e.to_string());
+            }
+            app.ui.context_menu = None;
+        }
+        "edit.delete" if app.session.tool.pen.is_some() => {
+            let _ = app.session.pen_finish();
+        }
+        "select.children" if enter_text(app) => {}
+        _ => crate::menus::invoke(app, id),
+    }
+}
+
+fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, ctx: &Context) -> bool {
     // A gradient open in the colour picker: Delete removes its selected stop.
     if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && app.ui.picker.is_some() && crate::handles::remove_selected_stop(app, ctx) {
         return true;
@@ -97,43 +135,14 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
             return true;
         }
     }
-    // Catalog shortcuts (exact modifier match).
-    for item in MENU.iter().filter(|i| !i.shortcut.is_empty()) {
-        if let Some((want, k)) = parse(item.shortcut)
-            && k == key
-            && mods_match(want, m)
-        {
-            // Copy/cut/paste arrive as clipboard events on most platforms.
-            if matches!(item.id, "edit.copy" | "edit.cut" | "edit.paste") {
-                return true;
-            }
-            if repeat && !matches!(item.id, "edit.undo" | "edit.redo" | "view.zoomIn" | "view.zoomOut") {
-                return true;
-            }
-            if item.id == "select.none" {
-                if let Err(e) = app.session.escape() {
-                    app.toast(e.to_string());
-                }
-                app.ui.context_menu = None;
-                return true;
-            }
-            if item.id == "edit.delete" {
-                // Delete key also removes the pen path / ends gestures.
-                if app.session.tool.pen.is_some() {
-                    let _ = app.session.pen_finish();
-                    return true;
-                }
-            }
-            if item.id == "select.children" && enter_text(app) {
-                return true;
-            }
-            crate::menus::invoke(app, item.id);
+    if let Some(b) = keymap::lookup(platform(), keymap::Context::Canvas, key.name(), mods(m)) {
+        // Copy/cut/paste arrive as clipboard events on most platforms.
+        if matches!(b.id, "edit.copy" | "edit.cut" | "edit.paste") {
             return true;
         }
-    }
-    // Delete also via the Delete key.
-    if key == Key::Delete && m.is_none() {
-        app.run("edit.delete", json!({}));
+        if !repeat || matches!(b.id, "edit.undo" | "edit.redo" | "view.zoomIn" | "view.zoomOut") {
+            run_binding(app, b.id);
+        }
         return true;
     }
     // Arrows move through the layers panel while it has the keyboard.
@@ -159,32 +168,7 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
         }
         return true;
     }
-    // Number keys: opacity.
-    if app.session.prefs.number_keys_opacity && m.is_none() && !app.session.selection().is_empty() {
-        let digit = match key {
-            Key::Num0 => Some(1.0),
-            Key::Num1 => Some(0.1),
-            Key::Num2 => Some(0.2),
-            Key::Num3 => Some(0.3),
-            Key::Num4 => Some(0.4),
-            Key::Num5 => Some(0.5),
-            Key::Num6 => Some(0.6),
-            Key::Num7 => Some(0.7),
-            Key::Num8 => Some(0.8),
-            Key::Num9 => Some(0.9),
-            _ => None,
-        };
-        if let Some(o) = digit {
-            let ids = app.session.selection();
-            app.set_props(&ids, json!({"opacity": o}));
-            return true;
-        }
-    }
-    if let Some((want, k)) = parse(crate::present::PRESENT_SHORTCUT)
-        && k == key
-        && mods_match(want, m)
-    {
-        app.run("proto.present", json!({}));
+    if m.is_none() && !repeat && opacity_digit(app, key, now) {
         return true;
     }
     // Enter while the pen is drawing finishes it.
@@ -193,6 +177,33 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, ctx: &Conte
         return true;
     }
     false
+}
+
+/// The digit a number key types.
+fn digit(key: Key) -> Option<u32> {
+    let name = key.name();
+    let mut chars = name.chars();
+    let d = chars.next()?.to_digit(10)?;
+    chars.next().is_none().then_some(d)
+}
+
+/// Number keys set the selection's opacity: one digit is tens of percent (0: 100%), a second digit
+/// typed soon after makes the exact percentage.
+pub fn opacity_digit(app: &mut FigApp, key: Key, now: f64) -> bool {
+    let Some(d) = digit(key) else { return false };
+    if !app.session.prefs.number_keys_opacity || app.session.selection().is_empty() {
+        return false;
+    }
+    let first = app.ui.opacity_digit.take().filter(|(_, t)| now - t <= OPACITY_CHAIN_SECS).map(|(d, _)| d);
+    let digits = match first {
+        Some(f) => format!("{f}{d}"),
+        None => {
+            app.ui.opacity_digit = Some((d, now));
+            d.to_string()
+        }
+    };
+    app.run("object.opacityKeys", json!({"digits": digits}));
+    true
 }
 
 /// Enter on a single selected text layer starts editing it.
@@ -252,7 +263,7 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
                 }
             }
             Event::Key { key, pressed: true, modifiers: m, .. } => {
-                if (m.command || m.alt) && text_shortcut(app, *key, *m) {
+                if (m.command || m.alt || m.ctrl) && text_shortcut(app, *key, *m) {
                     skip_text = true;
                     continue;
                 }
@@ -303,18 +314,15 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
     ime_output(app, ctx);
 }
 
-/// Text-menu shortcuts (Bold, lists, alignment, size/weight/spacing steps…) while editing text.
+/// Shortcuts live while editing text (Bold, lists, alignment, size/weight/spacing steps, Save…).
 fn text_shortcut(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
-    for item in MENU.iter().filter(|i| i.id.starts_with("text.") && !i.shortcut.is_empty()) {
-        if let Some((want, k)) = parse(item.shortcut)
-            && k == key
-            && mods_match(want, m)
-        {
-            crate::menus::invoke(app, item.id);
-            return true;
+    match keymap::lookup(platform(), keymap::Context::Text, key.name(), mods(m)) {
+        Some(b) => {
+            crate::menus::invoke(app, b.id);
+            true
         }
+        None => false,
     }
-    false
 }
 
 /// Tell the platform where the caret is (inside the composition while composing) so IME
@@ -343,20 +351,4 @@ fn ime_output(app: &FigApp, ctx: &Context) {
             should_interrupt_composition: false,
         })
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_catalog_shortcuts() {
-        let (m, k) = parse("Shift+Cmd+Z").unwrap();
-        assert!(m.shift && m.command && k == Key::Z);
-        assert_eq!(parse("Alt+Cmd+]").map(|x| x.1), Some(Key::CloseBracket));
-        // Every catalog shortcut parses.
-        for item in MENU.iter().filter(|i| !i.shortcut.is_empty()) {
-            assert!(parse(item.shortcut).is_some(), "{}", item.shortcut);
-        }
-    }
 }

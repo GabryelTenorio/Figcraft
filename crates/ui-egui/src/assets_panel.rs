@@ -460,7 +460,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         title(ui, w, "Local components");
         if listing.local.is_empty() {
-            hint(ui, if q.is_empty() { "No components yet. Select layers and press ⌥⌘K." } else { "No matching components" });
+            if q.is_empty() {
+                let keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("component.create").unwrap_or(""));
+                hint(ui, &format!("No components yet. Select layers and press {keys}."));
+            } else {
+                hint(ui, "No matching components");
+            }
         }
         tiles(ui, w, &Source::Local, &listing.local, &thumbs, &mut act);
         crate::widgets::separator(ui);

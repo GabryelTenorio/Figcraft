@@ -126,69 +126,55 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "ui.pointer" => pointer(app, p),
         "ui.key" => {
             let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
-            let mut spec = String::new();
-            for (k, m) in [("shift", "Shift"), ("alt", "Alt"), ("cmd", "Cmd"), ("ctrl", "Ctrl")] {
-                if b(p, k) {
-                    spec.push_str(m);
-                    spec.push('+');
-                }
-            }
-            spec.push_str(key);
-            // Text editing keys go to the editor.
+            let m = figcraft_engine::keymap::Mods { shift: b(p, "shift"), alt: b(p, "alt"), cmd: b(p, "cmd"), ctrl: b(p, "ctrl") };
+            let platform = crate::shortcuts::platform();
+            use figcraft_engine::keymap::{Context, lookup, normalize};
+            // Text editing keys go to the editor (after the shortcuts live while editing).
             if app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false) {
-                figcraft_engine::textedit::key(&mut app.session, key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())?;
+                if let Some(bd) = lookup(platform, Context::Text, key, m).filter(|_| m.cmd || m.alt || m.ctrl) {
+                    crate::menus::invoke(app, bd.id);
+                    return Ok(json!({"command": bd.id}));
+                }
+                figcraft_engine::textedit::key(&mut app.session, key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())?;
                 return Ok(json!({"ok": true}));
             }
             // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter).
-            if app.session.tool_key(key, b(p, "shift"), b(p, "alt"), b(p, "cmd")).map_err(|e| e.to_string())? {
+            if app.session.tool_key(key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())? {
                 return Ok(json!({"ok": true}));
             }
             // The Comment tool's arrows step through the comment threads.
-            if app.session.tool.tool == figcraft_engine::ToolId::Comment && matches!(spec.as_str(), "ArrowUp" | "ArrowDown") {
-                let r = crate::comments::step(app, ctx, if spec == "ArrowUp" { -1 } else { 1 });
+            if app.session.tool.tool == figcraft_engine::ToolId::Comment && m.is_none() && matches!(key, "ArrowUp" | "ArrowDown" | "Up" | "Down") {
+                let r = crate::comments::step(app, ctx, if matches!(key, "ArrowUp" | "Up") { -1 } else { 1 });
                 return Ok(json!({"comment": r.and_then(|v| v.get("id").cloned())}));
             }
-            match crate::shortcuts::parse(&spec) {
-                Some(want) => {
-                    let id = figcraft_engine::catalog::MENU
-                        .iter()
-                        .find(|m| !m.shortcut.is_empty() && crate::shortcuts::parse(m.shortcut) == Some(want))
-                        .map(|m| m.id);
-                    match id {
-                        Some(id) => {
-                            if id == "select.none" {
-                                app.session.escape().map_err(|e| e.to_string())?;
-                            } else {
-                                crate::menus::invoke(app, id);
-                            }
-                            Ok(json!({"command": id}))
-                        }
-                        None => match key {
-                            "Escape" => app.session.escape().map(|_| json!({"ok": true})).map_err(|e| e.to_string()),
-                            "Delete" | "Backspace" => app.session.execute("edit.delete", &json!({})).map_err(|e| e.to_string()),
-                            "Enter" => {
-                                let _ = app.session.pen_finish();
-                                Ok(json!({"ok": true}))
-                            }
-                            "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
-                                let (dx, dy) = match key {
-                                    "ArrowLeft" => (-1, 0),
-                                    "ArrowRight" => (1, 0),
-                                    "ArrowUp" => (0, -1),
-                                    _ => (0, 1),
-                                };
-                                let (cmd, params) = if b(p, "cmd") {
-                                    ("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": b(p, "shift")}))
-                                } else {
-                                    ("transform.nudge", json!({"dx": dx, "dy": dy, "big": b(p, "shift")}))
-                                };
-                                app.session.execute(cmd, &params).map_err(|e| e.to_string())
-                            }
-                            _ => Err(format!("no shortcut `{spec}`")),
-                        },
+            if let Some(bd) = lookup(platform, Context::Canvas, key, m) {
+                crate::shortcuts::run_binding(app, bd.id);
+                return Ok(json!({"command": bd.id}));
+            }
+            let (name, _) = normalize(key).ok_or_else(|| format!("unknown key `{key}`"))?;
+            match name {
+                "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
+                    let (dx, dy) = match name {
+                        "ArrowLeft" => (-1, 0),
+                        "ArrowRight" => (1, 0),
+                        "ArrowUp" => (0, -1),
+                        _ => (0, 1),
+                    };
+                    let (cmd, params) = if m.cmd || m.ctrl {
+                        ("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": m.shift}))
+                    } else {
+                        ("transform.nudge", json!({"dx": dx, "dy": dy, "big": m.shift}))
+                    };
+                    app.session.execute(cmd, &params).map_err(|e| e.to_string())
+                }
+                _ => {
+                    // Number keys: opacity (two in quick succession make an exact percentage).
+                    let now = ctx.input(|i| i.time);
+                    match egui::Key::from_name(name) {
+                        Some(k) if m.is_none() && crate::shortcuts::opacity_digit(app, k, now) => Ok(json!({"opacity": true})),
+                        _ => Err(format!("no shortcut `{key}`")),
                     }
                 }
-                None => Err(format!("unknown key `{key}`")),
             }
         }
         "ui.input" => {

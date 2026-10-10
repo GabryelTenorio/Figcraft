@@ -27,9 +27,9 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     let has_al = matches!(al, Some(Some(_)));
     let title = if has_al { "Auto layout" } else { "Layout" };
     let btns: Vec<(Icon, &str)> = if frames && !has_al {
-        vec![(Icon::Plus, "Add auto layout  ⇧A")]
+        vec![(Icon::Plus, crate::shortcuts::tip("Add auto layout", "layout.add"))]
     } else if has_al {
-        vec![(Icon::Minus, "Remove auto layout  ⌥⇧A")]
+        vec![(Icon::Minus, crate::shortcuts::tip("Remove auto layout", "layout.remove"))]
     } else {
         vec![]
     };

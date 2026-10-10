@@ -4,9 +4,9 @@
 use figcraft_doc::color::{BlendMode, Color, ColorStop, Gradient, GradientKind, ImageFilters, ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::geom::Affine;
 use figcraft_doc::{
-    AutoLayout, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass, GridAlign, GridKind,
-    HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, Texture,
-    VConstraint,
+    AutoLayout, Blur, BlurType, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass, GridAlign,
+    GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps,
+    Texture, VConstraint,
 };
 use serde_json::Value;
 
@@ -215,8 +215,8 @@ fn effect(cx: &mut Ctx, e: &Value) -> Option<Effect> {
     let kind = match text(e, "type")? {
         "DROP_SHADOW" => EffectKind::DropShadow(shadow()),
         "INNER_SHADOW" => EffectKind::InnerShadow(shadow()),
-        "LAYER_BLUR" => EffectKind::LayerBlur { radius },
-        "BACKGROUND_BLUR" => EffectKind::BackgroundBlur { radius },
+        "LAYER_BLUR" => EffectKind::LayerBlur(blur(e, radius)),
+        "BACKGROUND_BLUR" => EffectKind::BackgroundBlur(blur(e, radius)),
         "NOISE" => {
             let d = Noise::default();
             let (size, size_y) = noise_size(e, d.size);
@@ -266,6 +266,21 @@ fn effect(cx: &mut Ctx, e: &Value) -> Option<Effect> {
         }
     };
     Some(Effect { kind, visible: flag(e, "visible").unwrap_or(true) })
+}
+
+/// A layer or background blur of `radius`: progressive (`blurType` `PROGRESSIVE`) from
+/// `startRadius` at `startOffset` to `radius` at `endOffset`, else uniform.
+fn blur(e: &Value, radius: f64) -> Blur {
+    let d = Blur::default();
+    let blur_type = if text(e, "blurType") == Some("PROGRESSIVE") { BlurType::Progressive } else { BlurType::Uniform };
+    Blur {
+        radius,
+        blur_type,
+        start_radius: len(e, "startRadius").unwrap_or(d.start_radius),
+        start: e.get("startOffset").and_then(vec2).unwrap_or(d.start),
+        end: e.get("endOffset").and_then(vec2).unwrap_or(d.end),
+    }
+    .sanitized()
 }
 
 /// A noise or texture effect's grain size: `noiseSize` on both axes, or `noiseSizeVector`.

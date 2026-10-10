@@ -257,8 +257,16 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
                 let v = format!("{} {} {} {} {}", num(s.offset.0), num(s.offset.1), num(s.radius), num(s.spread), color_text(s.color));
                 prop(label, v).color(s.color)
             }
-            EffectKind::LayerBlur { radius } => prop("Layer blur", num(*radius)),
-            EffectKind::BackgroundBlur { radius } => prop("Background blur", num(*radius)),
+            EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => {
+                let label = if matches!(e.kind, EffectKind::LayerBlur(_)) { "Layer blur" } else { "Background blur" };
+                let at = |(x, y): (f64, f64)| format!("{}% {}%", pct(x), pct(y));
+                let v = if b.is_progressive() {
+                    format!("Progressive {} → {} from {} to {}", num(b.start_radius), num(b.radius), at(b.start), at(b.end))
+                } else {
+                    num(b.radius)
+                };
+                prop(label, v)
+            }
             EffectKind::Noise(nz) => {
                 let colors = match nz.mode {
                     NoiseMode::Mono => color_text(nz.color),

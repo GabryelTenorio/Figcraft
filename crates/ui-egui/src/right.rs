@@ -74,7 +74,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
     let (tri_r, chev_r) =
         (Rect::from_min_max(play.min, pos2(play.max.x - 16.0, play.max.y)), Rect::from_min_max(pos2(play.max.x - 16.0, play.min.y), play.max));
-    let present_keys = crate::toolbar::pretty_shortcut(crate::present::PRESENT_SHORTCUT);
+    let present_keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("proto.present").unwrap_or(""));
     let presp = ui.interact(tri_r, ui.id().with("play"), Sense::click()).on_hover_text(format!("Present  {present_keys}"));
     let mresp = ui.interact(chev_r, ui.id().with("play_menu"), Sense::click()).on_hover_text("Present or preview");
     if presp.hovered() || mresp.hovered() {
@@ -135,7 +135,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             ("Zoom to 200%", "view.zoom200"),
             ("Zoom to selection", "view.zoomSelection"),
         ] {
-            if menu_item(ui, label, figcraft_engine::catalog::shortcut(cmd).unwrap_or("")) {
+            if menu_item(ui, label, crate::shortcuts::shortcut(cmd).unwrap_or("")) {
                 app.run(cmd, json!({}));
                 ui.close();
             }
@@ -157,7 +157,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             ("Outlines", "view.outlines", v.outlines),
         ];
         for (label, cmd, on) in toggles {
-            if menu_check(ui, on, label, figcraft_engine::catalog::shortcut(cmd).unwrap_or("")) {
+            if menu_check(ui, on, label, crate::shortcuts::shortcut(cmd).unwrap_or("")) {
                 app.run(cmd, json!({}));
                 ui.close();
             }
@@ -454,13 +454,14 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     // Quick actions on the right.
     let mut x = r.max.x - 8.0;
-    let actions: Vec<(Icon, &str, &str)> = vec![
-        (Icon::Component, "Create component  ⌥⌘K", "component.create"),
+    let actions = [
+        (Icon::Component, "Create component", "component.create"),
         (Icon::Mask, "Use as mask", "object.mask"),
         (Icon::Union, "Boolean groups", "bool.union"),
     ];
-    for (icon, tip, cmd) in actions.into_iter().rev() {
+    for (icon, label, cmd) in actions.into_iter().rev() {
         let br = Rect::from_min_size(pos2(x - 24.0, r.center().y - 12.0), vec2(24.0, 24.0));
+        let tip = if cmd == "bool.union" { label } else { crate::shortcuts::tip(label, cmd) };
         let bresp = ui.interact(br, ui.id().with(("qa", cmd)), Sense::click()).on_hover_text(tip);
         if bresp.hovered() {
             ui.painter().rect_filled(br, CornerRadius::same(5), t.hover);
@@ -475,7 +476,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                     ("Exclude", "bool.exclude"),
                     ("Flatten", "vector.flatten"),
                 ] {
-                    if menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
+                    if menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
                         app.run(c, json!({}));
                         ui.close();
                     }
@@ -495,15 +496,16 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, "Alignment", None);
     row(ui, 32.0, |ui| {
-        let items = [
-            (Icon::AlignLeft, "Align left  ⌥A"),
-            (Icon::AlignHCenter, "Align horizontal centers  ⌥H"),
-            (Icon::AlignRight, "Align right  ⌥D"),
-            (Icon::AlignTop, "Align top  ⌥W"),
-            (Icon::AlignVCenter, "Align vertical centers  ⌥V"),
-            (Icon::AlignBottom, "Align bottom  ⌥S"),
-        ];
         let cmds = ["align.left", "align.hcenter", "align.right", "align.top", "align.vcenter", "align.bottom"];
+        let tip = crate::shortcuts::tip;
+        let items = [
+            (Icon::AlignLeft, tip("Align left", cmds[0])),
+            (Icon::AlignHCenter, tip("Align horizontal centers", cmds[1])),
+            (Icon::AlignRight, tip("Align right", cmds[2])),
+            (Icon::AlignTop, tip("Align top", cmds[3])),
+            (Icon::AlignVCenter, tip("Align vertical centers", cmds[4])),
+            (Icon::AlignBottom, tip("Align bottom", cmds[5])),
+        ];
         let w = col / 3.0;
         if let Some(i) = widgets::segmented(ui, &items[..3], None, w) {
             app.run(cmds[i], json!({"ids": ids}));
@@ -519,7 +521,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                     ("Distribute vertical spacing", "distribute.vertical"),
                     ("Tidy up", "arrange.tidy"),
                 ] {
-                    if menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
+                    if menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
                         app.run(c, json!({"ids": ids}));
                         ui.close();
                     }
@@ -552,7 +554,11 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     row(ui, 32.0, |ui| {
         let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius), rot, "°", col, 1.0);
         app.field(&ids, "rotation", e, |v| json!(v));
-        let items = [(Icon::Rotate, "Rotate 90° right"), (Icon::FlipH, "Flip horizontal  ⇧H"), (Icon::FlipV, "Flip vertical  ⇧V")];
+        let items = [
+            (Icon::Rotate, "Rotate 90° right"),
+            (Icon::FlipH, crate::shortcuts::tip("Flip horizontal", "object.flipH")),
+            (Icon::FlipV, crate::shortcuts::tip("Flip vertical", "object.flipV")),
+        ];
         if let Some(i) = widgets::segmented(ui, &items, None, col / 3.0) {
             app.run(["object.rotateRight", "object.flipH", "object.flipV"][i], json!({"ids": ids}));
         }
@@ -607,7 +613,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         ui,
         "Appearance",
         &[
-            (if visible { Icon::Eye } else { Icon::EyeOff }, "Show/Hide  ⇧⌘H"),
+            (if visible { Icon::Eye } else { Icon::EyeOff }, crate::shortcuts::tip("Show/Hide", "object.toggleVisible")),
             (Icon::Variable, "Apply variable to visibility"),
             (Icon::Blend, "Blend mode"),
         ],
@@ -1299,11 +1305,11 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let Some(list) = list else { return };
     let mut drag = ListDrag::new(ui, "effects");
     for (i, e) in list.iter().enumerate().rev() {
-        let mut open = ui.data(|d| d.get_temp::<bool>(Id::new(("fx_open", i)))).unwrap_or(false);
+        let mut open = effect_open(ui.ctx(), i);
         let header = row_rect(ui, 32.0, |ui| {
             if icons::button(ui, Icon::Effects, 24.0, open, "Effect settings").clicked() {
                 open = !open;
-                ui.data_mut(|d| d.insert_temp(Id::new(("fx_open", i)), open));
+                ui.data_mut(|d| d.insert_temp(Id::new((FX_OPEN, i)), open));
             }
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, e.label(), w, None);
@@ -1333,11 +1339,19 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     if let Some((from, to)) = drag.finish(ui) {
         app.run("effect.move", json!({"ids": ids, "from": from, "to": to}));
-        move_flags(ui, "fx_open", list.len(), from, to);
+        move_flags(ui, FX_OPEN, list.len(), from, to);
         if let Some(crate::colorpicker::PickerTarget::Effect { index, .. }) = &mut app.ui.picker {
             *index = moved_index(*index, from, to);
         }
     }
+}
+
+/// Salt of the flags that keep effect rows' settings open.
+const FX_OPEN: &str = "fx_open";
+
+/// Whether effect `i`'s settings are open in the Design panel.
+pub(crate) fn effect_open(ctx: &egui::Context, i: usize) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new((FX_OPEN, i)))).unwrap_or(false)
 }
 
 /// A number field of effect `i` that can be bound to a variable (`effects/<i>/<prop>`).
@@ -1406,14 +1420,36 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                 });
             }
         }
-        EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => {
-            let bg = matches!(e.kind, EffectKind::BackgroundBlur { .. });
+        EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => {
+            let with = |f: &dyn Fn(&mut Blur)| {
+                let mut e2 = e.clone();
+                if let Some(b2) = e2.blur_mut() {
+                    f(b2);
+                }
+                e2
+            };
             row(ui, 32.0, |ui| {
-                let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), *radius, half * 2.0 + 8.0);
-                edit(app, ed, &|v| Effect {
-                    kind: if bg { EffectKind::BackgroundBlur { radius: v.max(0.0) } } else { EffectKind::LayerBlur { radius: v.max(0.0) } },
-                    visible: e.visible,
+                let resp = widgets::dropdown(ui, b.blur_type.label(), half * 2.0 + 8.0, None);
+                menu_popup(&resp).show(|ui| {
+                    for t in BlurType::ALL {
+                        if menu_item(ui, t.label(), "") {
+                            set(app, with(&|b2| b2.blur_type = t), None);
+                            ui.close();
+                        }
+                    }
                 });
+            });
+            row(ui, 32.0, |ui| {
+                if b.is_progressive() {
+                    // The ramp's start and end points are dragged on the canvas.
+                    let ed = fx_field(app, ui, ids, i, "startRadius", Lead::Text("Start"), b.start_radius, half);
+                    edit(app, ed, &|v| with(&|b2| b2.start_radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                    let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("End"), b.radius, half);
+                    edit(app, ed, &|v| with(&|b2| b2.radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                } else {
+                    let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), b.radius, half * 2.0 + 8.0);
+                    edit(app, ed, &|v| with(&|b2| b2.radius = v.clamp(0.0, MAX_BLUR_RADIUS)));
+                }
             });
         }
         EffectKind::Noise(nz) => {

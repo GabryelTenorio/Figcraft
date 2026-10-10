@@ -1,10 +1,11 @@
 //! Ruler guides on the canvas: drag out of a ruler to add one, drag a guide to move it, drag it
 //! back onto its ruler to remove it. A guide dropped on a frame belongs to that frame: it's kept in
-//! the frame's coordinates, moves with it and spans only the frame. Guides show while the rulers
-//! do; layers snap to them.
+//! the frame's coordinates, moves with it and spans only the frame (along the frame's own axes when
+//! it's rotated). Guides show while the rulers do; layers snap to them.
 
 use egui::{Color32, CornerRadius, Id, Pos2, Rect, Stroke, pos2, vec2};
 use figcraft_doc::{Document, NodeId};
+use figcraft_engine::guides;
 use figcraft_geom::Point;
 use serde_json::json;
 
@@ -30,12 +31,11 @@ struct Placed {
     owner: NodeId,
     index: usize,
     vertical: bool,
-    /// Its offset in the owner's coordinates (what its label shows).
+    /// Its offset in the owner's coordinates (what its label shows; page coordinates for a page).
     offset: f64,
-    /// Its page position (x for vertical guides, y for horizontal).
-    at: f64,
-    /// A frame guide's extent across it on the page (y span for vertical guides); None: the page.
-    span: Option<(f64, f64)>,
+    /// A frame guide's page segment, along the frame's own axis across it; None: a page guide,
+    /// across the whole canvas.
+    line: Option<[Point; 2]>,
 }
 
 fn drag_id() -> Id {
@@ -57,7 +57,7 @@ fn placed_guides(app: &FigApp) -> Vec<Placed> {
         .unwrap_or_default()
         .iter()
         .enumerate()
-        .map(|(index, g)| Placed { owner: ds.page, index, vertical: g.vertical, offset: g.offset, at: g.offset, span: None })
+        .map(|(index, g)| Placed { owner: ds.page, index, vertical: g.vertical, offset: g.offset, line: None })
         .collect();
     let mut stack: Vec<(NodeId, usize)> = doc.node(ds.page).map(|n| n.children.iter().map(|c| (*c, 0)).collect()).unwrap_or_default();
     while let Some((id, depth)) = stack.pop() {
@@ -76,40 +76,27 @@ fn placed_guides(app: &FigApp) -> Vec<Placed> {
 
 /// Where guide `index` of frame `owner` at `offset` (frame coordinates) lands on the page.
 fn place(doc: &Document, owner: NodeId, index: usize, vertical: bool, offset: f64) -> Option<Placed> {
-    let b = doc.world_bounds(owner)?;
-    let xf = doc.world_transform(owner);
-    let (at, span) = if vertical { ((xf * Point::new(offset, 0.0)).x, (b.y0, b.y1)) } else { ((xf * Point::new(0.0, offset)).y, (b.x0, b.x1)) };
-    Some(Placed { owner, index, vertical, offset, at, span: Some(span) })
+    Some(Placed { owner, index, vertical, offset, line: Some(guides::segment(doc, owner, vertical, offset)?) })
 }
 
-/// A guide dropped at page point `p`: on the frame under it (in the frame's coordinates) or on the
-/// page.
+/// Guide `index` of `owner` (a page or frame) through page point `p`, its offset rounded to whole
+/// pixels with `snap` (else to hundredths).
+fn through(app: &FigApp, owner: NodeId, index: usize, vertical: bool, p: Point, snap: bool) -> Option<Placed> {
+    let ds = app.session.ds().ok()?;
+    let v = guides::offset_at(&ds.doc, owner, vertical, p)?;
+    let offset = if snap { v.round() } else { (v * 100.0).round() / 100.0 };
+    if owner == ds.page { Some(Placed { owner, index, vertical, offset, line: None }) } else { place(&ds.doc, owner, index, vertical, offset) }
+}
+
+/// A guide dragged out of a ruler (`vertical`: the left one) and dropped at page point `p`: on the
+/// frame under it, in the frame's coordinates and along its axis nearer the ruler's, or on the page.
 fn drop_target(app: &FigApp, p: Point, vertical: bool, snap: bool) -> Option<Placed> {
     let ds = app.session.ds().ok()?;
-    let round = |v: f64| if snap { v.round() } else { (v * 100.0).round() / 100.0 };
     let frame = figcraft_engine::cmd::create::frame_at(&ds.doc, ds.page, p, &[]).filter(|f| ds.doc.node(*f).is_some_and(|n| n.kind.is_frame_like()));
     match frame {
-        Some(f) => {
-            let local = ds.doc.world_transform(f).inverse() * p;
-            place(&ds.doc, f, usize::MAX, vertical, round(if vertical { local.x } else { local.y }))
-        }
-        None => {
-            let at = round(if vertical { p.x } else { p.y });
-            Some(Placed { owner: ds.page, index: usize::MAX, vertical, offset: at, at, span: None })
-        }
+        Some(f) => through(app, f, usize::MAX, guides::frame_axis(&ds.doc, f, vertical), p, snap),
+        None => through(app, ds.page, usize::MAX, vertical, p, snap),
     }
-}
-
-/// Where the moved guide of `owner` lands with the pointer at page point `p`.
-fn moved(app: &FigApp, owner: NodeId, index: usize, vertical: bool, p: Point, snap: bool) -> Option<Placed> {
-    let ds = app.session.ds().ok()?;
-    let round = |v: f64| if snap { v.round() } else { (v * 100.0).round() / 100.0 };
-    if owner == ds.page {
-        let at = round(if vertical { p.x } else { p.y });
-        return Some(Placed { owner, index, vertical, offset: at, at, span: None });
-    }
-    let local = ds.doc.world_transform(owner).inverse() * p;
-    place(&ds.doc, owner, index, vertical, round(if vertical { local.x } else { local.y }))
 }
 
 /// A guide command's params: frame guides name their frame, page guides need no owner.
@@ -126,21 +113,19 @@ fn rulers_on(app: &FigApp) -> bool {
     app.session.ds().is_ok_and(|d| d.view.rulers)
 }
 
-/// Screen coordinate of a guide (x for vertical guides, y for horizontal).
-fn screen_of(app: &FigApp, g: &Placed) -> f32 {
-    if g.vertical { app.to_screen(g.at, 0.0).x } else { app.to_screen(0.0, g.at).y }
-}
-
-/// The guide's line on screen, clipped to the canvas `r`.
+/// The guide's line on screen: a page guide across the canvas `r`, a frame guide across its frame.
 fn segment(app: &FigApp, g: &Placed, r: Rect) -> [Pos2; 2] {
-    let s = screen_of(app, g);
-    let (a, b) = match g.span {
-        Some((a, b)) if g.vertical => (app.to_screen(0.0, a).y.max(r.min.y), app.to_screen(0.0, b).y.min(r.max.y)),
-        Some((a, b)) => (app.to_screen(a, 0.0).x.max(r.min.x), app.to_screen(b, 0.0).x.min(r.max.x)),
-        None if g.vertical => (r.min.y, r.max.y),
-        None => (r.min.x, r.max.x),
-    };
-    if g.vertical { [pos2(s, a), pos2(s, b)] } else { [pos2(a, s), pos2(b, s)] }
+    match g.line {
+        Some([a, b]) => [app.to_screen(a.x, a.y), app.to_screen(b.x, b.y)],
+        None if g.vertical => {
+            let x = app.to_screen(g.offset, 0.0).x;
+            [pos2(x, r.min.y), pos2(x, r.max.y)]
+        }
+        None => {
+            let y = app.to_screen(0.0, g.offset).y;
+            [pos2(r.min.x, y), pos2(r.max.x, y)]
+        }
+    }
 }
 
 /// The guide within a few points of `pos` (frame guides and later ones first).
@@ -148,13 +133,29 @@ fn guide_at(app: &FigApp, pos: Pos2) -> Option<Placed> {
     let r = app.canvas.rect;
     placed_guides(app).into_iter().rev().find(|g| {
         let [a, b] = segment(app, g, r);
-        let (across, along, lo, hi) = if g.vertical { (pos.x - a.x, pos.y, a.y, b.y) } else { (pos.y - a.y, pos.x, a.x, b.x) };
-        across.abs() <= 3.0 && along >= lo - 3.0 && along <= hi + 3.0
+        let ab = b - a;
+        let t = if ab.length_sq() > 1e-6 { ((pos - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+        (a + ab * t).distance(pos) <= 3.0
     })
 }
 
 fn cursor(vertical: bool) -> egui::CursorIcon {
     if vertical { egui::CursorIcon::ResizeHorizontal } else { egui::CursorIcon::ResizeVertical }
+}
+
+/// The resize cursor for dragging guide `g` across itself, whichever way it runs on screen.
+fn cursor_across(app: &FigApp, g: &Placed, r: Rect) -> egui::CursorIcon {
+    let [a, b] = segment(app, g, r);
+    let d = b - a;
+    // The line's direction in eighths of a turn, rounded (screen y points down): 0 runs across,
+    // 2 runs down.
+    let eighths = (d.y.atan2(d.x).to_degrees().rem_euclid(180.0) + 22.5) / 45.0;
+    match eighths as u8 % 4 {
+        0 => egui::CursorIcon::ResizeVertical,
+        1 => egui::CursorIcon::ResizeNeSw,
+        2 => egui::CursorIcon::ResizeHorizontal,
+        _ => egui::CursorIcon::ResizeNwSe,
+    }
 }
 
 /// Pointer handling; returns true when the event belongs to a ruler or guide.
@@ -173,7 +174,7 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
         let snap = app.session.ds().map(|d| d.view.snap_pixel).unwrap_or(true);
         let at = match drag {
             GuideDrag::New { vertical } => drop_target(app, p, vertical, snap),
-            GuideDrag::Move { owner, index, vertical } => moved(app, owner, index, vertical, p, snap),
+            GuideDrag::Move { owner, index, vertical } => through(app, owner, index, vertical, p, snap),
         };
         ctx.data_mut(|d| match at {
             Some(g) => {
@@ -181,18 +182,23 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
             }
             None => d.remove::<Placed>(preview_id()),
         });
-        ctx.set_cursor_icon(cursor(vertical));
+        ctx.set_cursor_icon(at.map_or(cursor(vertical), |g| cursor_across(app, &g, r)));
         if released {
             ctx.data_mut(|d| {
                 d.remove::<GuideDrag>(drag_id());
                 d.remove::<Placed>(preview_id());
             });
-            // Released over its own ruler: no guide (a moved one is removed).
-            let on_ruler = if vertical { pos.x < r.min.x + RULER } else { pos.y < r.min.y + RULER };
+            // Released over its own ruler (the left one for a guide running down the screen): no
+            // guide (a moved one is removed).
+            let down = at.map_or(vertical, |g| {
+                let [a, b] = segment(app, &g, r);
+                (b.y - a.y).abs() >= (b.x - a.x).abs()
+            });
+            let on_ruler = if down { pos.x < r.min.x + RULER } else { pos.y < r.min.y + RULER };
             let page = app.session.ds().map(|d| d.page).ok();
             match (drag, on_ruler, at) {
                 (GuideDrag::New { .. }, false, Some(g)) => {
-                    app.run("guide.add", owned(g.owner, page, json!({"vertical": vertical, "offset": g.offset})));
+                    app.run("guide.add", owned(g.owner, page, json!({"vertical": g.vertical, "offset": g.offset})));
                 }
                 (GuideDrag::Move { owner, index, .. }, true, _) => {
                     app.run("guide.remove", owned(owner, page, json!({"index": index})));
@@ -222,7 +228,7 @@ pub fn input(app: &mut FigApp, ctx: &egui::Context, pos: Pos2) -> bool {
     let idle =
         app.session.tool.tool == figcraft_engine::ToolId::Move && app.session.ds().is_ok_and(|d| d.text_edit.is_none() && d.vector_edit.is_none());
     if idle && let Some(g) = guide_at(app, pos) {
-        ctx.set_cursor_icon(cursor(g.vertical));
+        ctx.set_cursor_icon(cursor_across(app, &g, r));
         if pressed {
             ctx.data_mut(|d| d.insert_temp(drag_id(), GuideDrag::Move { owner: g.owner, index: g.index, vertical: g.vertical }));
         }
@@ -267,7 +273,7 @@ fn label(app: &FigApp, painter: &egui::Painter, r: Rect, g: &Placed) {
     let galley = painter.layout_no_wrap(crate::canvas::fmt(g.offset), semibold(10.0), Color32::WHITE);
     let size = galley.size() + vec2(8.0, 4.0);
     let [a, _] = segment(app, g, r);
-    let at = if g.vertical { pos2(a.x + 4.0, a.y.max(r.min.y + RULER) + 4.0) } else { pos2(a.x.max(r.min.x + RULER) + 4.0, a.y + 4.0) };
+    let at = pos2(a.x.clamp(r.min.x + RULER, r.max.x) + 4.0, a.y.clamp(r.min.y + RULER, r.max.y) + 4.0);
     let tag = Rect::from_min_size(at, size);
     painter.rect_filled(tag, CornerRadius::same(3), GUIDE);
     painter.galley(tag.min + vec2(4.0, 2.0), galley, Color32::WHITE);

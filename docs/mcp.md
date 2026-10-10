@@ -138,7 +138,7 @@ Or in a project's `.mcp.json`:
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
-| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (menu shortcuts, tool keys, Escape, Delete, arrows; text editing keys while editing text). |
+| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
 
@@ -158,6 +158,24 @@ first.
 along the flow, to the previous/next row of a wrapping layout, to the neighbouring grid cell, and,
 at the end of a flow or across a row's axis, into the neighbouring nested auto layout frame when the
 frame around flows that way (a list of rows: Down moves an item into the row below).
+
+### Keyboard shortcuts
+
+The default shortcuts live in one table (`figcraft_engine::keymap`), grouped like the public shortcut
+reference (Essential, Tools, View, Zoom, Text, Shape, Selection, Edit, Transform, Arrange,
+Components, Prototype) with the macOS keys and, where they differ, the Windows/Linux keys (for
+example Use as mask is ⌃⌘M on macOS and Ctrl+Alt+M elsewhere; Bring to front ⌥⌘] and
+Ctrl+Shift+]). `list_commands` reports each command's first key for the platform the server runs
+on; `key` resolves keys the way the canvas does. Commands behind keys:
+
+- `object.opacityKeys {digits, ids?}`: the opacity number keys. One digit is tens of percent (`"0"`
+  is 100%); two digits are the exact percentage (`"45"` is 45%, `"05"` is 5%), what typing two
+  digits in quick succession does on the canvas.
+- `view.zoomAt {x, y, out?, width?, height?}`: the zoom tool (hold Z on the canvas; Alt zooms out).
+  A point zooms one step in (or out) keeping that page point in place; an area fills the view.
+- `view.designPrototype` (`Shift+E`), `view.devMode` (`Shift+D`) and `view.leftSidebar`
+  (`Shift+Cmd+\`) switch the right panel's tab or hide the left sidebar in the app (no-ops headless).
+- `doc.nextTab` / `doc.previousTab` (`Ctrl+Tab` / `Ctrl+Shift+Tab`): the next or previous open file.
 
 ### Editing vectors
 
@@ -442,6 +460,28 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
   order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
   frames and, with nothing selected, lists them with a status filter (click one to go to it).
 
+### Effects
+
+`effect.add {ids?, type? | effect?}` adds an effect (`dropShadow`, `innerShadow`, `layerBlur`,
+`backgroundBlur`, `noise`, `texture`, `glass`) with its defaults, or the full `effect` object;
+`effect.set {ids?, index, effect}` replaces one. A layer paints its drop shadows first, then its
+fills, inner shadows, children and strokes (strokes draw over inner shadows), with layer blur,
+noise and texture over the result.
+
+- **Blurs** (`layerBlur`, `backgroundBlur`) are uniform (`{"radius": 8}`) or progressive:
+  `{"type": "layerBlur", "blurType": "progressive", "startRadius": 0, "radius": 24, "startOffset":
+  [0.5, 0], "endOffset": [0.5, 1]}` ramps the radius linearly from `startRadius` at `startOffset` to
+  `radius` at `endOffset`, points in the layer's unit box (0–1 across and down, like a gradient's
+  handles; before the start and past the end the radius stays). Radii above 10,000 draw as
+  10,000. In the app, the Design panel's blur row picks Uniform or Progressive, and while a
+  progressive blur's settings are open its start and end points are handles on the canvas.
+  Generated CSS leaves progressive blurs out (CSS blurs are uniform); Inspect lists the ramp.
+- **Exports:** PNG, PDF and SVG draw the same pixels as the canvas. PDF and SVG keep layers vector
+  and embed images for what vectors can't show: background blur and glass (from what lies under
+  the layer: on the page in PDF, among the exported layers in SVG), layer blur, noise and texture
+  in PDF; noise grains (an image over the vector layer), texture and progressive layer blur (the
+  layer whole) in SVG, where uniform layer blur and shadows stay SVG filters.
+
 ### Paint, effect and layout grid lists
 
 A layer's fills, strokes, effects and layout grids are lists kept **bottom first**: index 0 paints
@@ -456,7 +496,7 @@ first, the last one is on top (the Design panel lists them the other way round, 
 - **Variable bindings follow their items** when a list is reordered or an item removed
   (`fill.remove`, `stroke.remove`, `effect.remove`, `grid.remove`); a removed item's bindings go
   with it. Binding fields (`variable.bind {field}`): `fill` / `stroke` (the first paint's colour) or
-  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|spread|color>`,
+  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color>`,
   `layoutGrids/<i>/<size|count|gutter|offset>` (number variables; count is kept to 1–1000, size and
   gutter are never negative). Moving a bound paint rewrites its key (`fill` becomes `fills/2/color`).
 - **Instance properties:** `variable.bind {ids: [instance], field: "componentProperties/<name>",
@@ -476,7 +516,10 @@ first, the last one is on top (the Design panel lists them the other way round, 
 `guide.remove {index, …}` and `guide.clear {…}` edit the guides of the current page, another
 `page`, or a `frame` (frames, components and instances). A frame's guides are in its own
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
-it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
+it. On a rotated frame they run along its own axes, and the layers inside it snap to them (and to
+their siblings and the frame's edges) along those axes, keeping whole pixels in the frame's
+coordinates. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's
+guide, along the frame's axis nearer the ruler's.
 
 ### Measuring, the Scale tool, arc handles and selecting
 

@@ -6,11 +6,11 @@
 //! will be: the frame's own fill under a clipped child, the page under that. [`Under`] records the
 //! stack of surfaces as the render descends; [`backdrop`] flattens it for a rectangle.
 //!
-//! The PDF export, which has no pixels to read, renders what lies under the layer instead
-//! ([`render_beneath`]) and draws the same [`effects`] from it.
+//! The PDF and SVG exports, which have no pixels to read, render what lies under the layer instead
+//! ([`effects_beneath`]) and draw the same [`effects`] from it.
 
 use figcraft_doc::{Document, EffectKind, Node, NodeId};
-use figcraft_geom::Affine;
+use figcraft_geom::{Affine, Rect};
 use tiny_skia::{Mask, Pixmap, PixmapPaint, Transform};
 
 use crate::shadow::{Outline, spread_alpha};
@@ -93,9 +93,9 @@ pub fn effects(n: &Node, shape: &Outline, back: &Pixmap, pad: u32, w: u32, h: u3
     let mut cov: Option<Pixmap> = None;
     for e in n.effects.iter().filter(|e| e.visible) {
         let layer = match &e.kind {
-            EffectKind::BackgroundBlur { radius } if *radius > 0.0 => {
+            EffectKind::BackgroundBlur(blur) if blur.max_radius() > 0.0 => {
                 let mut b = back.clone();
-                fx::blur(&mut b, radius / 2.0 * scale);
+                crate::blur::apply(&mut b, blur, (n.width, n.height), Affine::translate((f64::from(pad), f64::from(pad))) * xf, scale);
                 let mut l = Pixmap::new(w, h)?;
                 let copy = PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() };
                 l.draw_pixmap(-pad_i, -pad_i, b.as_ref(), &copy, Transform::identity(), None);
@@ -152,4 +152,45 @@ pub fn render_beneath(doc: &Document, roots: &[NodeId], id: NodeId, view: &View)
     let mut pix = Pixmap::new(view.width.clamp(1, 16_384), view.height.clamp(1, 16_384))?;
     crate::render_nodes_into(&beneath, roots, view, &mut pix);
     Some(pix)
+}
+
+/// Where node `id`'s shape lies on its page (what its backdrop effects cover).
+pub fn shape_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
+    let shape = crate::node_outline(doc, doc.node(id)?)?;
+    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), figcraft_geom::Shape::bounding_box(&shape.0)))
+}
+
+/// Node `id`'s backdrop effects as `view`'s pixels (a view of its [`shape_bounds`]), drawn from a
+/// render of what lies under it when `roots` are drawn ([`render_beneath`]): how exports, which
+/// have no canvas to read, draw background blur and glass. Nothing lies outside `keep` (page
+/// coordinates), when given.
+pub fn effects_beneath(doc: &Document, roots: &[NodeId], id: NodeId, view: &View, keep: Option<Rect>) -> Option<Pixmap> {
+    let n = doc.node(id)?;
+    let shape = crate::node_outline(doc, n)?;
+    let pad = pad(n, view.scale);
+    let p = f64::from(pad) / view.scale.max(1e-9);
+    let around = View {
+        origin: (view.origin.0 - p, view.origin.1 - p),
+        scale: view.scale,
+        width: view.width.saturating_add(pad * 2),
+        height: view.height.saturating_add(pad * 2),
+    };
+    let mut back = render_beneath(doc, roots, id, &around)?;
+    if let Some(k) = keep {
+        let s = view.scale;
+        let (ox, oy) = around.origin;
+        keep_inside(&mut back, Rect::new((k.x0 - ox) * s, (k.y0 - oy) * s, (k.x1 - ox) * s, (k.y1 - oy) * s));
+    }
+    effects(n, &shape, &back, pad, view.width, view.height, view.transform() * doc.world_transform(id), view.scale)
+}
+
+/// Clear the pixels of `p` outside `r` (pixel coordinates).
+fn keep_inside(p: &mut Pixmap, r: Rect) {
+    let w = p.width() as usize;
+    for (i, px) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = ((i % w) as f64 + 0.5, (i / w) as f64 + 0.5);
+        if !(x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1) {
+            *px = [0; 4];
+        }
+    }
 }
