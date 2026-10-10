@@ -37,16 +37,23 @@ fn ids_of(p: &Value) -> Vec<NodeId> {
 impl Headless {
     /// A session with one new, empty document.
     pub fn new() -> Self {
-        Self { session: Session::new() }
+        Self::with_session(Session::new())
     }
 
-    /// Wrap an existing session.
-    pub fn with_session(session: Session) -> Self {
+    /// Wrap an existing session (it can host and join live sessions: an agent takes part with
+    /// its own cursor, `collab.cursor`).
+    pub fn with_session(mut session: Session) -> Self {
+        if !session.live.available() {
+            session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(|| {}))));
+        }
         Self { session }
     }
 
     fn execute(&mut self, cmd: &str, params: &Value) -> Result<Value, String> {
+        // What happened in a live session since the last call (latest presence only).
+        self.session.live_poll();
         let r = self.session.execute(cmd, params).map_err(|e| e.to_string());
+        self.session.live_sync();
         // No UI: dialogs and panels requested by commands are dropped.
         self.session.ui_requests.clear();
         r

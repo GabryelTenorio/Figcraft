@@ -332,14 +332,14 @@ pub fn begin(s: &mut Session, id: NodeId) -> Result<()> {
         ensure_vector(doc, id)?;
     }
     let ds = s.ds_mut()?;
-    if !std::sync::Arc::ptr_eq(&before, &ds.doc) {
-        let (selection, page) = (ds.selection.clone(), ds.page);
-        ds.record(Some("Edit vector"), before, selection, page);
-    }
+    let edited = (!std::sync::Arc::ptr_eq(&before, &ds.doc)).then(|| (ds.uid, ds.selection.clone(), ds.page));
     ds.vector_edit = Some(VectorEdit::new(id));
     ds.selection = vec![id];
     ds.text_edit = None;
     ds.revision += 1;
+    if let Some((uid, selection, page)) = edited {
+        s.record(uid, Some("Edit vector"), before, selection, page);
+    }
     Ok(())
 }
 

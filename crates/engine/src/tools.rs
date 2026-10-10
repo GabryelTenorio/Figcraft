@@ -1779,6 +1779,10 @@ impl Session {
     /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect (in the
     /// focus view, once the focused frame or nothing is selected, it ends the focus view).
     pub fn escape(&mut self) -> Result<()> {
+        // Following someone in a live session: Escape stops that first.
+        if self.live_unfollow() {
+            return Ok(());
+        }
         if self.tool.pen.is_some() {
             return self.pen_finish();
         }

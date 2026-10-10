@@ -1,0 +1,25 @@
+[package]
+name = "figcraft-collab-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "FigCraft live sessions over the network: the WebSocket transport, the session host the app embeds, invite links and presence relay (carries figcraft-collab's messages)"
+
+[lints]
+workspace = true
+
+[dependencies]
+figcraft-engine = { workspace = true }
+figcraft-collab = { workspace = true }
+figcraft-doc = { workspace = true }
+log = { workspace = true }
+
+# The transport is native-only for now: the browser client (web-sys WebSocket) is a later step.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+getrandom = "0.4"
+base64 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+serde_json = { workspace = true }

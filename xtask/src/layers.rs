@@ -21,7 +21,12 @@ const TABLE: &[(&str, u8)] = &[
     ("engine", 5),
     ("ui-egui", 6),
     ("mcp", 6),
+    // Live sessions over the network (WebSockets): above the engine, beside the UI.
+    ("collab-net", 6),
 ];
+
+/// Networking crates: only L6 (`collab-net`) may use them.
+const NETWORK: &[&str] = &["tungstenite", "tokio", "tokio-tungstenite", "mio", "socket2"];
 
 pub fn check(root: &std::path::Path) -> bool {
     let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -44,6 +49,10 @@ pub fn check(root: &std::path::Path) -> bool {
                 eprintln!("layers: {name} (L{l}) depends on UI crate {dn}");
                 ok = false;
             }
+            if l < 6 && NETWORK.contains(&dn) {
+                eprintln!("layers: {name} (L{l}) depends on networking crate {dn}");
+                ok = false;
+            }
             if let Some(&dl) = layer.get(dn)
                 && dl >= l
                 && !(dl == l && same_layer_ok(&name, dn))
@@ -60,6 +69,7 @@ pub fn check(root: &std::path::Path) -> bool {
 }
 
 fn same_layer_ok(from: &str, to: &str) -> bool {
-    // Within L0: color uses geom types; within L2: text/layout/pathops/collab are independent.
-    matches!((from, to), ("figcraft-color", "figcraft-geom") | ("figcraft-render", "figcraft-format"))
+    // Within L0: color uses geom types; within L2: text/layout/pathops/collab are independent;
+    // within L6 the MCP server joins live sessions through collab-net.
+    matches!((from, to), ("figcraft-color", "figcraft-geom") | ("figcraft-render", "figcraft-format") | ("figcraft-mcp", "figcraft-collab-net"))
 }

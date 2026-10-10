@@ -401,7 +401,12 @@ impl Client {
     /// send.
     pub fn reconnect(&mut self, hello: Hello) -> ClientMsg {
         self.online = false;
-        ClientMsg::Hello(Hello { resume: Some(Resume { session: self.session, client_id: self.id, seq: self.seq }), ..hello })
+        ClientMsg::Hello(Hello { resume: Some(self.resume()), ..hello })
+    }
+
+    /// What a reconnect resumes with: this client's session, id and last sequence number.
+    pub fn resume(&self) -> Resume {
+        Resume { session: self.session, client_id: self.id, seq: self.seq }
     }
 
     /// Handle a message from the server. Returns messages to send: batches that were waiting for

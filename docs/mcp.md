@@ -486,6 +486,35 @@ save)}` returns `{changes, count, bytes}`: the change batch a live session would
 is per user (`edit.undo` / `edit.redo` take back only your own steps, see
 `docs/collab-protocol.md`), only `saved` applies.
 
+### Live sessions
+
+People (and agents) edit one file together and see each other's cursors, selections and
+viewports. Both the headless session and the attached app can host and join; each call takes in
+what happened since the last one and sends your edits (a joined file opens as a new document).
+
+- `collab.host {port?, bind?}` starts hosting the active document: `bind` is `"local"` (this
+  machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
+  or any free one when it's taken (`port` picks one, 0 any). Returns the session as
+  `collab.peers` does, with `link` (`figcraft://join?host=…&file=…&token=…`) and `url`
+  (`ws://…/?file=…&token=…`): both carry the session's secret, so share them only with people you
+  invite. `collab.stop {}` ends it.
+- `collab.join {link}` (either form) returns at once with `status: "connecting"`; poll
+  `collab.peers` until `status` is `"live"`, or `"failed"` with a `reason` (a wrong token, a full
+  session, an unreachable host). `collab.leave {}` leaves.
+- `collab.peers {}` → `{available, status (off|connecting|live|reconnecting|failed), reason?,
+  attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
+  follow, syncing (the document arrived), document (the index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection: [ids], viewport:
+  [page, x, y, w, h], editing_text: {node, caret, selection?}}}]}`.
+- `collab.cursor {x, y}` puts your cursor at a page position (omit both to hide it): an agent's
+  pointer. Your selection, page and view go out by themselves when they change.
+- `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
+  pan or zoom of your own, or Escape).
+- On the session's document every command (or `batch`, or gesture) is one step of your own undo
+  history: `edit.undo` / `edit.redo` take back only your steps and leave what others changed since.
+  An edit the host refuses (someone deleted the layer) is rolled back and the reason is the
+  session's message. While the connection is reconnecting, editing goes on; the edits go out when
+  it is back (the same client, catching up with what it missed).
+
 ### Plugins
 
 Sandboxed WebAssembly plugins act through the same commands (see [`plugins.md`](plugins.md) for the

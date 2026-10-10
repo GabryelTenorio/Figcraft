@@ -115,12 +115,19 @@ fn batches_are_ordered_echoed_and_rebroadcast() {
     assert!(matches!(s.receive(999, ClientMsg::Ping).as_slice(), [Outgoing::To(999, ServerMsg::Refused { .. })]));
 }
 
+/// A new batch id (the server ignores a batch id it already processed).
+fn next_batch() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 fn rejected(s: &mut Server, from: u32, changes: Vec<Change>) -> (String, Vec<Change>) {
+    let batch = next_batch();
     let before = s.replica().clone();
-    let out = s.receive(from, ClientMsg::Changes { base_seq: s.seq(), batch_id: 1, changes });
+    let out = s.receive(from, ClientMsg::Changes { base_seq: s.seq(), batch_id: batch, changes });
     assert_eq!(s.replica(), &before, "nothing applied");
     match out.as_slice() {
-        [Outgoing::To(to, ServerMsg::Reject { batch_id: 1, reason, fixes })] if *to == from => (reason.clone(), fixes.clone()),
+        [Outgoing::To(to, ServerMsg::Reject { batch_id, reason, fixes })] if *to == from && *batch_id == batch => (reason.clone(), fixes.clone()),
         other => panic!("not rejected: {other:?}"),
     }
 }
@@ -149,7 +156,7 @@ fn invalid_batches_are_rejected_whole() {
     rejected(&mut s, a.id(), vec![create((me << 32) | 1, frame), set(frame, Prop::Parent, serde_json::json!((me << 32) | 1))]);
     // Too many changes; based on the future.
     rejected(&mut s, a.id(), vec![set(frame, Prop::Name, "a".into()); 4]);
-    let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 5, batch_id: 1, changes: vec![] });
+    let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 5, batch_id: next_batch(), changes: vec![] });
     assert!(matches!(out.as_slice(), [Outgoing::To(_, ServerMsg::Reject { .. })]));
     // Deleting the last page.
     rejected(&mut s, a.id(), vec![Change::Delete { id: page }]);
@@ -265,7 +272,7 @@ fn junk_batches_never_panic_and_never_corrupt_the_document() {
         serde_json::json!([1.0, 0.0, 0.0, 1.0, 5.0, 5.0]),
         serde_json::json!(true),
     ];
-    for _ in 0..3000 {
+    for round in 0..3000u64 {
         let ids: Vec<NodeId> = s.document().ids().collect();
         let id = |rng: &mut Rng| match rng.below(3) {
             0 => NodeId((me << 32) | rng.below(50) as u64),
@@ -296,7 +303,7 @@ fn junk_batches_never_panic_and_never_corrupt_the_document() {
                 _ => Change::Put { entry: Entry::Comment(rng.below(3) as u64), value: v(&mut rng) },
             });
         }
-        let _ = s.receive(a.id(), ClientMsg::Changes { base_seq: s.seq(), batch_id: 1, changes });
+        let _ = s.receive(a.id(), ClientMsg::Changes { base_seq: s.seq(), batch_id: round + 1, changes });
         assert!(s.document().validate().is_empty(), "{:?}", s.document().validate());
     }
 }

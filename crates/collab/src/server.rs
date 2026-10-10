@@ -218,6 +218,9 @@ impl Server {
         }
         match msg {
             ClientMsg::Hello(_) => vec![Outgoing::To(from, ServerMsg::Refused { reason: "already joined".into() })],
+            // A batch already processed (a copy sent again around a reconnect) is ignored: the
+            // client learned what happened to it from the catch-up.
+            ClientMsg::Changes { batch_id, .. } if self.issued.get(&from).is_some_and(|p| batch_id <= p.last_batch) => Vec::new(),
             ClientMsg::Changes { base_seq, batch_id, changes } => {
                 let result = self.accept(from, base_seq, &changes);
                 if let Some(p) = self.issued.get_mut(&from) {

@@ -29,6 +29,7 @@ replaced.
 | L5 | `figcraft-engine` | ~39.3k | Sessions, undo history (`Arc` snapshots), the command registry (`cmd/*`, `spec!`), pointer tools and vector edit mode, snapping and measuring, components sync, libraries, prototype runtime, Dev Mode code generation, the menu catalog (`catalog.rs`) and the keymap (`keymap.rs`), a panic guard |
 | L6 | `figcraft-ui-egui` | ~31.9k | The UI3-style frontend: canvas (render worker), toolbar, layers, Design/Prototype/Inspect panels, colour picker, menus, dialogs, presenter, comments, accessibility (AccessKit), the control channel server |
 | L6 | `figcraft-mcp` | ~2.4k | MCP server (JSON-RPC over stdio), headless or bridged to a running app |
+| L6 | `figcraft-collab-net` | ~2.4k | Live sessions over the network: the WebSocket transport (tungstenite, a reader and a writer thread per connection), the session host the app embeds (runs the collaboration core's server), invite links, presence relay and limits; the only crate allowed networking dependencies |
 | apps | `figcraft`, `figcraft-cli`, `figcraft-web` | ~1.9k | Desktop app (eframe + wgpu), command line, browser build (WASM, WebGPU/WebGL2) |
 | plugins | `plugins/` (own workspace) | | Rust plugin SDK and two example plugins, built for wasm32 by `cargo xtask plugins` ([`plugins.md`](plugins.md)) |
 | tools | `xtask` | | `ci`, `layers`, `assets`, `parity`, `version`, `icon`, `wasm`, `plugins`, `bench` |

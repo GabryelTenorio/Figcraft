@@ -126,6 +126,8 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.services.clipboard_set_text(&format!("figcraft://node/{}", ids.first().map(|i| i.0).unwrap_or(0)));
         }
         "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
+        // From a menu the link is pasted into the Join dialog (`collab.join {link}` joins directly).
+        "collab.join" => app.ui.live.join = Some(String::new()),
         "edit.copy" | "edit.cut" => {
             let ids = app.session.selection();
             // SVG for other apps, taken before a cut removes the layers.

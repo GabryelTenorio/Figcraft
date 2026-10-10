@@ -171,6 +171,27 @@ fn after_a_snapshot_undo_leaves_what_others_changed_meanwhile() {
 }
 
 #[test]
+fn a_copy_sent_again_is_ignored_and_a_stale_connection_is_taken_over() {
+    let mut s = Server::new(base(), "tok", Limits::default());
+    let mut a = join(&mut s);
+    let page = s.document().first_page().unwrap();
+    let m = edit(&mut a, |d| d.node_mut(page).unwrap().name = "Once".into()).unwrap();
+    let out = s.receive(a.id(), m.clone());
+    assert_eq!(s.seq(), 1);
+    // The same batch again (a copy sent around a reconnect): nothing happens.
+    assert!(s.receive(a.id(), m).is_empty());
+    assert_eq!(s.seq(), 1);
+    deliver(&mut a, &out);
+    // a comes back before the server noticed its old connection is gone: same id, no "full".
+    let mut tight = Server::new(base(), "tok", Limits { max_peers: 1, ..Limits::default() });
+    let mut b = join(&mut tight);
+    let resend = come_back(&mut tight, &mut b);
+    assert!(resend.is_empty());
+    assert_eq!(tight.peers().count(), 1);
+    assert_eq!(b.view(), tight.replica());
+}
+
+#[test]
 fn an_unknown_client_joins_as_new_and_its_queue_is_dropped() {
     let mut s = Server::new(base(), "tok", Limits::default());
     let mut a = join(&mut s);

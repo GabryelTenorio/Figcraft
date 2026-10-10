@@ -59,14 +59,15 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   audio, share links and permissions. Comments and versions are local to the file.
 - **Evidence:** the core landed in #103 (`crates/collab`: client-scoped ids, change sets, server
   ordering and validation, client reconciliation, binary messages, randomized convergence tests over
-  real commands), and on top of it per-user undo and redo, rejection handling with a toast, and an
-  offline queue with reconnect (missed batches or a snapshot), tested in the in-memory simulation;
-  but there is no networking yet, so nobody can co-edit (`docs/collab-protocol.md`).
+  real commands), and live sessions run over the network (`crates/collab-net`: hosting from the
+  app, invite links, document sync between apps, live cursors, selections, avatars and follow)
+  with per-person undo, refused edits rolled back with a reason, and reconnects that resume and
+  send what was made offline; but the browser can't join, and there are no share links or
+  permissions (`docs/collab-protocol.md`).
 - **Impact:** Figma's defining feature; most teams use it every day. Solo designers can work
   without it.
-- **Estimate:** 45–90 h: WebSocket transport and a session server hosted from the app (per the
-  protocol), presence, then sharing and permissions; the browser build needs the
-  same client.
+- **Estimate:** 45–90 h: sharing and permissions and a standalone server; the browser build
+  needs its own WebSocket client.
 
 ### 3. Nothing checked against real Figma files
 - **Missing:** a corpus of real documents (design systems, app screens, prototypes) imported and

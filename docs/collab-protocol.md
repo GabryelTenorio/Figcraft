@@ -2,10 +2,13 @@
 
 Status: milestone M9. **Step 1 (the core, no networking) is implemented** in `crates/collab`:
 identifiers, the object/property model, change sets, ordering and validation, client
-reconciliation, derived data and the message encoding. **Step 3's transport-independent parts are
-implemented** on top: per-user undo and redo, rejection handling and offline queueing with
-reconnect (`crates/collab`, and documents in a live session in the engine). The rest is the plan
-the next implementation PRs follow and update; sections say what is built.
+reconciliation, derived data and the message encoding. **Step 2 is implemented** in
+`crates/collab-net` and the engine: the WebSocket transport, the session host the desktop app
+embeds, invite links, document sync end to end (several apps edit one file), live cursors,
+selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
+handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
+session and the transport). The rest is the plan the next implementation PRs follow and update;
+sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -278,13 +281,30 @@ after an edit waiting for it, and a refused edit's toast.
 
 ## Presence
 
+*Built* (`figcraft_engine::live`, `crates/collab-net`, `crates/ui-egui/src/live.rs`).
+
 - Cursor position in page coordinates plus the page id; selection ids; viewport rectangle; whether
   the user is typing in a text layer, with their caret and selection inside it
-  (`editing_text {node, caret, selection}`, in characters; the message carries it, step 2's UI
-  shows it).
-- Shown as named, coloured cursors on the canvas, selection outlines in the user's colour, avatars
-  in the title bar; click an avatar to **follow** that user's viewport (Escape or any pan stops).
-- Never stored; dropped when a client disconnects; the server rate-limits and coalesces.
+  (`editing_text {node, caret, selection}`, in characters). The message is the core's `Presence`; the engine builds yours from the active document (page, selection, view,
+  edited text) and the pointer over the canvas, and sends it only when it changed.
+- Shown as named, coloured cursors on the canvas (a pointer drawn in code with a name tag in the
+  person's colour, gliding to each reported position; reduced motion makes it jump), selection
+  outlines in the person's colour, and avatars (initials) at the top of the right panel beside
+  Share; click an avatar to **follow** that person's viewport (`collab.follow {client}`), click
+  again, press Escape or pan/zoom yourself to stop. The chevron lists everyone.
+- Never stored; dropped when a client disconnects. Throttled to about 30 updates a second on both
+  ends, latest wins (a value offered too soon waits and is replaced by newer ones, so the last
+  position always arrives). A newcomer gets everyone's latest presence after its welcome.
+- Presence lines up with your canvas while the session's document is in front
+  (`Session::live_shared`): cursors on your page, selections outlined, following switches pages.
+  With another document in front (or before the welcome arrives), cursors show in page
+  coordinates on whatever page you look at and nothing is outlined.
+- Colours and names: the host hands out the first free colour of an eight-colour palette and
+  "Guest N" to people without a name (Preferences: your name, `pref.userName`; also in the Share
+  popover). After a newcomer's `Welcome` the host sends it its own `PeerJoined`, which is how it
+  learns its name and colour.
+- Idle cost is zero: network threads block, wake the window (`request_repaint`) only when a
+  message arrives, and cursors only ask for frames while they glide.
 
 ## Hosting and joining
 
@@ -300,10 +320,55 @@ after an edit waiting for it, and a refused edit's toast.
 - **Auth**: an unguessable per-session token in the invite link (first step); accounts and per-file
   permissions (view, edit) come with the standalone server.
 
+*Built* (hosting from the app and joining):
+
+- "Share" in the right panel opens a popover: your name, **Share on the local network** (off:
+  127.0.0.1 only), **Start live session**; while hosting, the invite link and the `ws://` URL with
+  Copy buttons, how many joined, and **Stop session**; while joined, **Leave session**. "File ▸
+  Join live session…" (and "Join a session…" in the popover) asks for the link. Commands:
+  `collab.host {port?, bind?: "local" | "lan" | <ip>}`, `collab.stop`, `collab.join {link}`,
+  `collab.leave`, `collab.peers`, `collab.follow {client?}`, `collab.cursor {x?, y?}` (an agent's
+  pointer).
+- The host listens on port 47900 (any free port when it's taken, or `port`), on 127.0.0.1 unless
+  the user chooses the local network (`lan`: the address of the interface the default route uses)
+  or names an interface (`bind: "<ip>"`, e.g. a VPN's). It runs the core's `Server` as the
+  authority and takes part itself without a socket.
+- Links: `figcraft://join?host=<ip:port>&file=<id>&token=<secret>` or
+  `ws://<ip:port>/?file=<id>&token=<secret>` (either works for joining). The client connects to
+  `ws://<ip:port>/` and sends the token only inside its `Hello`. No `figcraft://` handler is
+  registered with the operating system yet: links are pasted into the Join dialog.
+- Reconnect: a connection that drops after it was live reconnects with growing pauses (0.5 s,
+  doubling up to 10 s, 12 attempts); a refusal (wrong token, full) or the host ending the session
+  is final; a first join that can't reach the host fails at once. A reconnect resumes as the same
+  client: the guest's connection keeps the session id, client id and last sequence number from
+  the messages it read and sends them in its next `Hello` (see Offline and reconnect).
+- The browser build has the commands but says live sessions need the desktop app (its WebSocket
+  client is step 4).
+
+*Built* (document sync between apps):
+
+- The host's session runs the core's `Server`, seeded with the document it shared; the host's
+  window is a `Client` of it like everyone else (it joins through the hub, without a socket), so
+  its own edits go through the same ordering. A guest's welcome carries the whole document
+  (pages, layers, styles, variables, images): it opens as a new tab, the guest's own files stay
+  open, and leaving keeps it as a local copy.
+- The engine syncs one open document per session (`Live::doc_uid`). Every command, group of
+  commands or gesture on it is diffed against the client's view into one batch
+  (`ClientMsg::Changes`) that is one step of the user's undo history (`Session::record`); a gesture
+  (a drag, a resize) is sent once, when it ends, and nothing is sent while a version or a live
+  text preview shows (anything changed outside a command goes out at the next frame, not
+  undoable). Batches the server orders (`Changes`, `Reject`) go through
+  `Client::receive` with the engine's recompute hook, and the resulting document is installed with
+  `Session::apply_remote`, which keeps your selection, page and view and never adds an undo step.
+  Batches that arrive during a gesture wait for it to end. New layers take ids in the client's
+  space (`client_id << 32 | counter`). Closing the session's document leaves the session.
+- Each applied batch wakes the window (the inbox calls `request_repaint`); nothing runs while
+  nobody edits or moves.
+
 ## Offline and reconnect
 
-*Built* (`Client::{disconnect, reconnect}`, the server's log; in the engine,
-`Session::{collab_disconnected, collab_reconnect}`). On a dropped connection the client keeps
+*Built* (`Client::{disconnect, reconnect}`, the server's log, the guest's connection in
+`crates/collab-net`, the engine's live session). On a dropped connection the client keeps
 editing locally, queues batches, and on reconnect sends `Hello` with its last confirmed `seq`; the
 server replies with the missed changes, then the queued batches are sent (they may be partly
 rejected if their objects were deleted meanwhile).
@@ -329,6 +394,13 @@ Decisions, as built:
   keeps a value only if it is still the one the step wrote (someone else setting exactly the same
   value can't be told apart). An undo or redo lost in flight is made again from the caught-up
   state, treating what others wrote meanwhile as later than the step.
+- **Over the network.** The guest's connection keeps what it needs to resume from the messages it
+  reads (the welcome's session and client id, the last sequence number) and sends it in the next
+  `Hello`; the engine takes the connection's "reconnecting" status as the client going offline and
+  the next welcome as its catch-up, in order with the batches before it. What the engine sent for
+  a dropped connection is not carried over (the client sends again what the server didn't get),
+  the server ignores a batch id it already processed (a copy sent twice around a reconnect), and
+  the host's hub hands a resumed client id from its stale connection to the new one.
 - **Session state.** `Server::state` returns what a server needs to carry on after a restart
   (`SessionState`: snapshot, sequence number, session id, client-id counter, the clients that can
   reconnect and what was done with their batches, deleted ids, the log), as one serde value; the
@@ -345,12 +417,44 @@ Everything stays a command: `collab.host`, `collab.join`, `collab.leave`, `colla
 `collab.follow` are ordinary commands, so the CLI, the control channel and MCP can host and join
 sessions; an agent can be a participant with its own cursor.
 
+*Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
+mcp`) both have the network link installed; `collab.join` returns at once with status
+`"connecting"` and `collab.peers` tells when it is live (or why it failed). An agent's pointer is
+`collab.cursor {x, y}`. The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
+live sessions aren't available.
+
 ## Security
 
 The server validates every change (types, ranges, the same caps the engine applies to commands,
 tree rules, message size limits) and never trusts client-computed data. The server and client
 parsers are fuzzed like the file importers. Sessions bind to all interfaces only when the user
 chooses to share on the network; the default is the invite link with a random token.
+
+*Built* (transport and host), and the threat model it assumes:
+
+- **Who can connect.** By default the host listens on 127.0.0.1: only programs on the same
+  machine can reach it. With "Share on the local network" it listens on the LAN interface's address
+  (not on all interfaces), and anyone who can reach that address and port can open a connection;
+  joining then needs the token. Untrusted networks (public Wi-Fi) are where not to turn it on; the
+  popover says who can join.
+- **The token.** 128 bits from the operating system's random number generator, URL-safe base64,
+  new for every session (stopping and starting again invalidates old links). It is compared in
+  constant time (the core's `Server`). It is in the invite link by design, so whoever holds the link
+  can join until the session stops: share it like a password. It never travels in the WebSocket
+  request (the path is `/`), so proxies don't log it; FigCraft never logs it (logs name addresses
+  and ports only), and errors about links never echo the link. Traffic is not encrypted (`ws://`):
+  on a shared network, others on the path could read presence and the token. TLS (`wss://`) comes
+  with the standalone server behind a reverse proxy; until then, use a trusted LAN or a VPN.
+- **Limits.** At most 64 open sockets (joined or not) and the core's 256 people; a connection must
+  finish the WebSocket handshake and say hello within 10 s, and one silent for 45 s is dropped
+  (clients ping every 15 s); client messages are at most 16 MiB (what the host sends keeps the
+  core's 64 MiB cap: a welcome carries the whole document); a client sending more than 100
+  messages a second on average (bursts of 400) is disconnected, and so is one whose 1,024-message
+  outgoing queue fills (it can't keep up); names are cut to 64 characters without control
+  characters; presence numbers must be finite and selections are cut to 10,000 ids.
+- **Malformed input.** Anything that isn't a binary message of the current wire version that
+  decodes in full is answered with `Refused` and a close; the first message must be `Hello`, for
+  this file. The invite parser and the host's reader are fuzzed (`crates/collab-net`).
 
 ## Implementation plan
 
@@ -362,9 +466,11 @@ chooses to share on the network; the default is the invite link with a random to
    **Done.**
 2. **Transport + embedded host:** WebSocket server/client (native), the binary encoding, the
    `collab.*` commands, Share / Join UI, live cursors, selections, avatars and follow.
+   **Done** (`crates/collab-net`, layer 6 beside the UI: blocking `tungstenite` with a reader and
+   a writer thread per connection, no async runtime; the engine holds the live state and the sync
+   client and reaches the network only through the `LiveLink` the app installs).
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
-   editing. **Done** for everything that doesn't need the transport (the client, the server and
-   the engine's live documents, exercised through the in-memory simulation); the transport wires
-   the engine calls up with step 2.
+   editing. **Done** (the core's client and server, the engine's live session, the guest's
+   resuming connection).
 4. **Browser client** (WebSocket through `web-sys`).
 5. **Standalone `figcraft-server`** with persistence, compaction and accounts.

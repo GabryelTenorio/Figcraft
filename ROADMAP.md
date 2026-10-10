@@ -59,7 +59,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Features (depth) | 57% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
-| Collaboration | 12% (core in, no networking) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
+| Collaboration | 12% (core in; live sessions with document sync and cursors, preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 50% | 15–30 | [hardware-parity](docs/hardware-parity.md) |
@@ -123,7 +123,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Localization layer, then ja, ko, es, pt-BR, fr, de: 35–55 h.
-5. Multiplayer networking on the landed core (M9): 45–90 h.
+5. Multiplayer (M9): per-user undo, reconnect with offline edits, the browser client and sharing on top of the live sessions (transport, hosting, invite links, document sync and presence landed): 45–90 h.
 
 ## Progress log
 
