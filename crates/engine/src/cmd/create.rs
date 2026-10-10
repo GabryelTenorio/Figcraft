@@ -1,6 +1,6 @@
 //! Creating nodes.
 
-use figcraft_color::{Color, ImageScaleMode, Paint};
+use figcraft_color::{ImageScaleMode, Paint};
 use figcraft_doc::*;
 use figcraft_geom::Point;
 use serde_json::{Value, json};
@@ -232,16 +232,10 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
     let doc = ds.doc_mut();
     let nid = doc.alloc_id();
-    let mut node = Node::new(nid, kind, name, w, h);
+    let mut node = if base == "Section" { Node::new_section(nid, name, w, h) } else { Node::new(nid, kind, name, w, h) };
     node.transform = figcraft_geom::Affine::translate((x + offset.0, y + offset.1));
     if base == "Arrow" {
         node.stroke.cap_end = StrokeCap::LineArrow;
-    }
-    if base == "Section" {
-        node.fills = vec![Paint::solid(Color::WHITE)];
-        node.strokes = vec![Paint::solid(Color::from_rgb8_const(0xE6, 0xE6, 0xE6))];
-        node.corners.radii = [2.0; 4];
-        node.clip = false;
     }
     if let NodeKind::Text(_) = node.kind
         && let Some((tw, th)) = figcraft_text::auto_size(&node)

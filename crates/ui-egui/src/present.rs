@@ -266,6 +266,8 @@ pub struct Presenter {
     fling: Option<Fling>,
     /// The wheel's last target and its speed (units/s), while it turns.
     wheel: Option<(Scroller, (f64, f64))>,
+    /// The frame shown last in each section (navigating to a section returns there).
+    sections: HashMap<NodeId, NodeId>,
     /// The frame shown last, where it was placed and what it could draw into (comment pins go there).
     shown: Option<(NodeId, Place, Rect)>,
 }
@@ -318,6 +320,7 @@ impl Presenter {
             zoom: 1.0,
             fling: None,
             wheel: None,
+            sections: HashMap::new(),
             shown: None,
         }
     }
@@ -554,6 +557,9 @@ impl Presenter {
     }
 
     fn arrive(&mut self, now: f64) {
+        if let Some(doc) = self.doc.as_ref() {
+            figcraft_engine::proto_run::remember_sections(doc, self.current, &mut self.sections);
+        }
         self.arrived = now;
         self.delays_fired.clear();
         self.hovered.clear();
@@ -589,6 +595,7 @@ impl Presenter {
     pub fn restart(&mut self, start: NodeId, now: f64) {
         self.start = start;
         self.current = start;
+        self.sections.clear();
         self.history.clear();
         self.overlays.clear();
         self.scroll.clear();
@@ -646,7 +653,7 @@ impl Presenter {
         let Some(doc) = self.doc.clone() else { return false };
         match a {
             Action::Navigate { dest, preserve_scroll } => {
-                let top = doc.top_level_frame(*dest).unwrap_or(*dest);
+                let Some(top) = figcraft_engine::proto_run::navigate_target(&doc, *dest, &self.sections) else { return false };
                 if !doc.contains(top) || (top == self.current && self.overlays.is_empty()) {
                     return false;
                 }

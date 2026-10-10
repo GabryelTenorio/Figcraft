@@ -129,7 +129,7 @@ Or in a project's `.mcp.json`:
 | `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
-| `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`), text…); returns the updated layers. |
+| `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
@@ -141,6 +141,23 @@ Or in a project's `.mcp.json`:
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (menu shortcuts, tool keys, Escape, Delete, arrows; text editing keys while editing text). |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
+
+### Sections, handoff and arrow keys
+
+`run_command` with `object.wrapInSection {ids?, name?}` (Wrap in new section: layers on the page or
+in a section, with some room around them), `section.toggleContents {ids?, hidden?}` (a section
+hiding its contents shows only its name and outline; its layers aren't drawn or hit, and the layers
+panel dims them), `object.resizeToFit`. A frame or section marked `devStatus: readyForDev` turns
+"Changed" (`devChanged: true` in `get_node`) when a layer in it is edited, added or removed;
+`dev.resolveChange {ids?, reason?}` returns it to Ready for dev and keeps the reason (`devNote`).
+Frames in sections are top-level frames (flows can start there; `proto.flow.add`); a "Navigate to"
+whose destination is a section shows the frame of it shown last in the presentation, else its
+first.
+
+`transform.nudge {dx, dy}` (arrow keys) moves auto layout children one place instead of nudging:
+along the flow, to the previous/next row of a wrapping layout, to the neighbouring grid cell, and,
+at the end of a flow or across a row's axis, into the neighbouring nested auto layout frame when the
+frame around flows that way (a list of rows: Down moves an item into the row below).
 
 ### Editing vectors
 

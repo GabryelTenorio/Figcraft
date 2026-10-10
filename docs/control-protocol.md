@@ -90,7 +90,7 @@ A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `d
 ### `ui.key {key, shift?, alt?, cmd?, ctrl?}`
 
 A key as if typed on the canvas (in vector edit mode the edit keys come first: `V` `P` `Q` `X` `Shift+B` `Shift+E` `Shift+W` tools, arrows nudge points, `Delete`/`Shift+Delete`, `Cmd+A`, `Cmd+J`; with the shape builder, `Enter` finishes): a menu shortcut (`{"key":"G","cmd":true}` groups), a tool key,
-`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). With the Comment
+`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place instead: along the flow, between wrapped rows, to the next grid cell, or into the neighbouring nested auto layout frame; with `cmd` they resize the selection). With the Comment
 tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel's list instead
 (returns `{"comment": id}`). While text is being edited, keys go to the text editor. Returns
 `{"command": id}` for shortcuts.

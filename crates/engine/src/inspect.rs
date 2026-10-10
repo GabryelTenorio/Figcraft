@@ -108,6 +108,15 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if !n.dev_status.is_none() {
             o.insert("devStatus".into(), json!(n.dev_status.id()));
         }
+        if n.dev_changed {
+            o.insert("devChanged".into(), json!(true));
+        }
+        if !n.dev_note.is_empty() {
+            o.insert("devNote".into(), json!(n.dev_note));
+        }
+        if let NodeKind::Section { contents_hidden } = n.kind {
+            o.insert("sectionContentsHidden".into(), json!(contents_hidden));
+        }
         if n.is_mask {
             o.insert("isMask".into(), json!(true));
             o.insert("maskType".into(), json!(n.mask_type.id()));

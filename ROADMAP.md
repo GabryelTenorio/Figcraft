@@ -18,7 +18,7 @@ _Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and sel
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
 | Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~76%** |
+| Feature depth (weighted rubric below) | **~77%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
 | Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
 | Time to **full parity** (feature parity + fidelity pass + hardening) | **~115–195 h** one agent · **~32–55 h** with 4–6 agents |
@@ -73,15 +73,28 @@ dimension measured side by side.
    dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
    paragraph's font, renames start with the name selected and centred, Max lines shows while
    truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
-3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
-   column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
-   wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
-   alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI, wrap-aware
-   drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one pass
-   (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
+3. **Auto layout and sections depth**: *landed:* on-canvas padding/gap handles (also wrapped-row
+   and grid column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed,
+   hugging text wraps at its max), ignore auto layout (absolute position) with constraints, text
+   baseline alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI,
+   wrap-aware drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one
+   pass (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
    Fill/Hug rules, drag across nested auto layout frames (deepest one wins, insertion line, out to
-   the canvas or a plain frame). *Left:* visual QA of nested edge cases, arrow-key moves across
-   nested frames. 2–4 h.
+   the canvas or a plain frame). Arrow keys move auto layout children one place (along the flow
+   past hidden and absolute siblings, Up/Down between wrapped rows, to the neighbouring grid cell
+   (automatically placed children swap, anchored ones take or swap cells), and at the end of a
+   flow or across a row's axis into the neighbouring nested auto layout frame when the frame
+   around flows that way; one undo step, none when nothing can move). Visual QA of nested
+   hug/fill/fixed/min/max/wrap/grid samples against the documented rules (Fill turns a hugging
+   parent Fixed, min/max redistribution, wrap inside fill, absolute children following
+   constraints as hug frames grow). Sections: hide contents (name, outline and "Contents hidden"
+   on the canvas; contents skipped by rendering, hit testing and labels; dimmed in the layers
+   panel; Design panel checkbox and context menu), Wrap in new section, frames in sections get
+   canvas labels and are top-level frames (flows start there, navigation, Export frames to PDF),
+   "Navigate to" a section shows its frame shown last, else its first; ready for dev turns
+   "Changed" when the contents are edited, resolved with a reason. *Left:* whether `fr` rows of a
+   fixed-height grid should make room for fixed-size children (now `minmax(0, 1fr)`-like),
+   section-level comparisons of changes. 1–2 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -181,7 +194,8 @@ dimension measured side by side.
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
   inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
-  text details (right-to-left list markers).
+  text details (right-to-left list markers) and auto layout details (grid `fr` rows around
+  fixed-size children).
 - **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
   history are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
@@ -249,8 +263,8 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
 | Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
-| Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
-| Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
+| Frames, groups, sections, masks | 5 | 80% | comparing what changed in ready-for-dev frames and sections, visual QA | 1–2 |
+| Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
 | Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
@@ -259,7 +273,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
-Weighted feature depth ≈ **76%** (self-graded, from the table).
+Weighted feature depth ≈ **77%** (self-graded, from the table).
 
 ## Milestones
 
@@ -268,7 +282,7 @@ Weighted feature depth ≈ **76%** (self-graded, from the table).
 | M0 Foundation: workspace, model, renderer, engine, UI shell, app, control channel | done (2026-10-09) |
 | M0.9 CLI + MCP, web build, release packaging, PDF export | CLI, MCP, web build and PDF export done; release packaging in progress |
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~70% |
-| M2 Layout depth | ~72% |
+| M2 Layout depth | ~76% |
 | M3 Components & styles depth | ~70% |
 | M4 Vector & text depth | ~66% |
 | M5 Prototype & present | ~82% |

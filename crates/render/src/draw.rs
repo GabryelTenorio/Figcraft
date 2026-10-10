@@ -271,7 +271,7 @@ fn local_paint_bounds(doc: &Document, n: &Node, depth: usize, greek_scale: Optio
     let reach = n.paint_reach();
     let mut r = n.local_rect().inflate(reach, reach);
     let clips = n.clip && n.kind.is_frame_like();
-    if (!clips || n.kind.bounds_follow_children()) && depth < 64 {
+    if (!clips || n.kind.bounds_follow_children()) && depth < 64 && !n.hides_contents() {
         for c in n.children.iter().filter_map(|c| doc.node(*c)) {
             if !c.visible {
                 continue;
@@ -447,7 +447,7 @@ fn draw_outline(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize)
         let stroke = tiny_skia::Stroke { width: 1.0 / ctx.scale.max(1e-6) as f32, ..Default::default() };
         pix.stroke_path(&tp, &paint, &stroke, ts_transform(xf), None);
     }
-    if !matches!(n.kind, NodeKind::BooleanOp { .. }) {
+    if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.hides_contents() {
         for c in &n.children {
             draw_node(ctx, pix, *c, xf, depth + 1);
         }
@@ -507,7 +507,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize)
             {
                 fill_with(pix, &tp, &n.fills, w, h, xf, *rule, doc, None);
             }
-            if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.children.is_empty() {
+            if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.children.is_empty() && !n.hides_contents() {
                 if clips {
                     draw_children_clipped(ctx, pix, n, xf, depth, outline.as_ref().map(|(p, _)| p));
                 } else {

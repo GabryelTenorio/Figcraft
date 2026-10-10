@@ -1272,15 +1272,9 @@ impl Session {
                 _ => base.to_string(),
             };
             let nid = doc.alloc_id();
-            let mut n = Node::new(nid, kind, name, 0.0, 0.0);
+            let mut n = if tool == ToolId::Section { Node::new_section(nid, name, 0.0, 0.0) } else { Node::new(nid, kind, name, 0.0, 0.0) };
             if tool == ToolId::Arrow {
                 n.stroke.cap_end = StrokeCap::LineArrow;
-            }
-            if tool == ToolId::Section {
-                n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)];
-                n.strokes = vec![figcraft_color::Paint::solid(figcraft_color::Color::from_rgb8_const(0xE6, 0xE6, 0xE6))];
-                n.corners.radii = [2.0; 4];
-                n.clip = false;
             }
             if matches!(tool, ToolId::Line | ToolId::Arrow) {
                 let mut v = b - a;

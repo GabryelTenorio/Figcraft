@@ -1,9 +1,11 @@
-//! Prototype actions on variables, run by the prototype player on its own copy of the document:
-//! set variable (a value or an expression), set variable mode, and choosing the branch of a
-//! conditional action.
+//! Prototype actions run by the prototype player on its own copy of the document: set variable (a
+//! value or an expression), set variable mode, choosing the branch of a conditional action, and
+//! where navigating to a section goes.
+
+use std::collections::HashMap;
 
 use figcraft_doc::proto::{Action, ConditionalBlock, Expr};
-use figcraft_doc::{Document, NodeId, VariableType, VariableValue};
+use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue};
 use serde_json::Value;
 
 use crate::cmd::styles::apply_bindings;
@@ -84,4 +86,24 @@ pub fn set_mode(doc: &mut Document, frame: NodeId, collection: &str, mode: &str)
 /// modes of `node`.
 pub fn branch(doc: &Document, node: NodeId, blocks: &[ConditionalBlock]) -> Vec<Action> {
     ConditionalBlock::choose(blocks, &doc.variables, &doc.modes_for(node)).map(<[Action]>::to_vec).unwrap_or_default()
+}
+
+/// The frame "Navigate to" `dest` shows: the top-level frame holding it; for a section, the frame
+/// in it shown last (`visited`: section → frame, see [`remember_sections`]), else its first frame
+/// in reading order. `None` when there's nothing to show.
+pub fn navigate_target(doc: &Document, dest: NodeId, visited: &HashMap<NodeId, NodeId>) -> Option<NodeId> {
+    let n = doc.node(dest)?;
+    if !matches!(n.kind, NodeKind::Section { .. }) {
+        return Some(doc.top_level_frame(dest).unwrap_or(dest));
+    }
+    visited.get(&dest).copied().filter(|f| doc.contains(*f) && doc.is_ancestor(dest, *f)).or_else(|| doc.frames_in(dest).first().copied())
+}
+
+/// Record `frame` as the frame shown last in each section around it.
+pub fn remember_sections(doc: &Document, frame: NodeId, visited: &mut HashMap<NodeId, NodeId>) {
+    for a in doc.ancestors(frame) {
+        if doc.node(a).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. })) {
+            visited.insert(a, frame);
+        }
+    }
 }

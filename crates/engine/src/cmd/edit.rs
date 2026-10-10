@@ -127,7 +127,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "transform.nudge",
             "Nudge",
-            "{dx, dy, big? (use the big nudge amount)} (auto layout children move one place along the flow instead)",
+            "{dx, dy, big? (use the big nudge amount)} (auto layout children move one place instead: along the flow, between wrapped rows, to the next grid cell, or into the neighbouring nested auto layout frame)",
             true,
             nudge
         ),
@@ -762,68 +762,36 @@ fn nudge(s: &mut Session, p: &Value) -> Result<Value> {
     let (ux, uy) = (num_or(p, "dx", 0.0), num_or(p, "dy", 0.0));
     let (dx, dy) = (ux * k, uy * k);
     let ids = req_targets("transform.nudge", s, p)?;
-    let doc = s.doc_mut()?;
+    // Edit a copy and keep it only if something moved, so an arrow that can't move anything adds
+    // no undo step.
+    let mut work = s.doc()?.clone();
+    let doc = &mut work;
     let ids = roots(doc, &ids);
-    // Children in an auto layout flow move one place instead (Left/Up earlier, Right/Down later).
-    let flowing = |doc: &Document, i: NodeId| {
-        let n = doc.node(i)?;
-        let parent = n.parent?;
-        let l = doc.node(parent)?.layout.clone()?;
-        (!n.child_layout.absolute).then_some((parent, l))
-    };
-    let mut parents: BTreeMap<NodeId, AutoLayout> = BTreeMap::new();
+    let mut changed = false;
+    // Children in an auto layout flow move one place instead (see `al_keys`).
     for i in &ids {
-        match flowing(doc, *i) {
-            Some((parent, l)) => {
-                parents.insert(parent, l);
-            }
-            None => {
-                let n = doc.get_mut(*i)?;
-                n.transform = Affine::translate((dx, dy)) * n.transform;
-            }
+        if crate::al_keys::flowing_parent(doc, *i).is_none() && (dx, dy) != (0.0, 0.0) {
+            let n = doc.get_mut(*i)?;
+            n.transform = Affine::translate((dx, dy)) * n.transform;
+            changed = true;
         }
     }
-    for (parent, l) in parents {
-        // (`f64::signum` is 1 for 0.0, so compare explicitly.)
-        let sign = |v: f64| -> isize {
-            if v > 0.0 {
-                1
-            } else if v < 0.0 {
-                -1
-            } else {
-                0
+    for dir in crate::al_keys::Dir::from_units(ux, uy) {
+        // Grouped per arrow: a move into a neighbouring frame changes the parent.
+        let mut groups: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+        for i in &ids {
+            if let Some(parent) = crate::al_keys::flowing_parent(doc, *i) {
+                groups.entry(parent).or_default().push(*i);
             }
-        };
-        let step: isize = match l.mode {
-            LayoutMode::Vertical => sign(uy),
-            LayoutMode::Grid => sign(ux) + sign(uy) * l.grid_columns.clamp(1, 1000) as isize,
-            _ => sign(ux),
-        };
-        reorder_in_flow(doc, parent, &ids, step)?;
+        }
+        for (parent, block) in groups {
+            changed |= crate::al_keys::arrow_move(doc, parent, &block, dir)?;
+        }
+    }
+    if changed {
+        s.ds_mut()?.doc = std::sync::Arc::new(work);
     }
     ok()
-}
-
-/// Move the selected children of `parent` `step` places along its child order (selected
-/// neighbours move together; the block stops at either end).
-fn reorder_in_flow(doc: &mut Document, parent: NodeId, selected: &[NodeId], step: isize) -> Result<()> {
-    if step == 0 {
-        return Ok(());
-    }
-    let mut kids = doc.get(parent)?.children.clone();
-    for _ in 0..step.unsigned_abs().min(kids.len()) {
-        let forward = step > 0;
-        let order: Vec<usize> = if forward { (0..kids.len()).rev().collect() } else { (0..kids.len()).collect() };
-        for i in order {
-            let j = if forward { i + 1 } else { i.wrapping_sub(1) };
-            let (Some(a), Some(b)) = (kids.get(i).copied(), kids.get(j).copied()) else { continue };
-            if selected.contains(&a) && !selected.contains(&b) {
-                kids.swap(i, j);
-            }
-        }
-    }
-    doc.get_mut(parent)?.children = kids;
-    Ok(())
 }
 
 fn nudge_size(s: &mut Session, p: &Value) -> Result<Value> {

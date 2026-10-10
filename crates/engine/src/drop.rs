@@ -53,17 +53,23 @@ pub fn line_before(b: figcraft_geom::Rect, vertical: bool, off: f64) -> [f64; 4]
     if vertical { [b.x0, b.y0 - off, b.x1, b.y0 - off] } else { [b.x0 - off, b.y0, b.x0 - off, b.y1] }
 }
 
-/// The slot in a wrapping row layout: the visual row under the pointer (children wrap in flow
-/// order, so a new row starts where a child sits left of the one before), then the position in it.
-fn wrap_slot(doc: &Document, kids: &[NodeId], p: Point) -> (usize, Option<[f64; 4]>) {
-    let bounds: Vec<(usize, figcraft_geom::Rect)> = kids.iter().enumerate().filter_map(|(i, c)| doc.world_bounds(*c).map(|b| (i, b))).collect();
+/// The visual rows of a wrapping row layout's placed children `kids`, each child as (its index in
+/// `kids`, its page bounds). Children wrap in flow order, so a new row starts where a child sits
+/// left of the one before.
+pub fn wrap_rows(doc: &Document, kids: &[NodeId]) -> Vec<Vec<(usize, figcraft_geom::Rect)>> {
     let mut rows: Vec<Vec<(usize, figcraft_geom::Rect)>> = Vec::new();
-    for (i, b) in bounds {
+    for (i, b) in kids.iter().enumerate().filter_map(|(i, c)| doc.world_bounds(*c).map(|b| (i, b))) {
         match rows.last_mut() {
             Some(row) if row.last().is_some_and(|(_, prev)| b.x0 >= prev.x0 - 0.5) => row.push((i, b)),
             _ => rows.push(vec![(i, b)]),
         }
     }
+    rows
+}
+
+/// The slot in a wrapping row layout: the visual row under the pointer, then the position in it.
+fn wrap_slot(doc: &Document, kids: &[NodeId], p: Point) -> (usize, Option<[f64; 4]>) {
+    let rows = wrap_rows(doc, kids);
     let span =
         |row: &[(usize, figcraft_geom::Rect)]| row.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (_, b)| (lo.min(b.y0), hi.max(b.y1)));
     // The row containing the pointer, else the nearest one.
