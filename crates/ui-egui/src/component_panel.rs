@@ -64,8 +64,24 @@ fn description_ui(app: &mut FigApp, ui: &mut Ui, id: NodeId, description: &str) 
     ui.add_space(8.0);
 }
 
-/// Local components (and component sets, not their variants), for swap menus: (id, label).
-fn local_components(doc: &Document) -> Vec<(NodeId, String)> {
+/// Local components (and component sets, not their variants), for swap menus: (id, label), page
+/// by page. Listed once per document revision (a file with thousands of layers isn't walked every
+/// frame).
+fn local_components(app: &FigApp, ui: &Ui, doc: &Document) -> std::sync::Arc<Vec<(NodeId, String)>> {
+    type Cached = ((u64, u64), std::sync::Arc<Vec<(NodeId, String)>>);
+    let key = app.session.ds().map(|d| (d.uid, d.revision)).unwrap_or_default();
+    let id = Id::new("component_panel_local_components");
+    if let Some((k, list)) = ui.data(|d| d.get_temp::<Cached>(id))
+        && k == key
+    {
+        return list;
+    }
+    let list = std::sync::Arc::new(list_components(doc));
+    ui.data_mut(|d| d.insert_temp::<Cached>(id, (key, list.clone())));
+    list
+}
+
+fn list_components(doc: &Document) -> Vec<(NodeId, String)> {
     let mut out: Vec<(NodeId, String)> = Vec::new();
     for page in &doc.pages {
         for d in doc.subtree(*page) {
@@ -112,7 +128,7 @@ fn type_icon(d: &PropDef) -> Icon {
 /// A selected slot inside an instance: its fill menu.
 fn slot_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, name: &str, preferred: &[NodeId]) {
     let t = Tokens::get(ui.ctx());
-    let comps = local_components(doc);
+    let comps = local_components(app, ui, doc);
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
         ui.label(egui::RichText::new("Slot").font(semibold(11.0)).color(t.text));
@@ -189,7 +205,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
     };
     let defs = first.map(|c| prop_defs(doc, c)).unwrap_or_default();
     let variants = if is_set { variant_options(doc, owner) } else { Vec::new() };
-    let comps = local_components(doc);
+    let comps = local_components(app, ui, doc);
     widgets::separator(ui);
     let existing: Vec<String> = defs.keys().cloned().chain(variants.iter().map(|(k, _)| k.clone())).collect();
     let fresh = (1..).map(|k| format!("Property {k}")).find(|n| !existing.contains(n)).unwrap_or_else(|| "Property".into());
@@ -282,11 +298,11 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                         app.run("component.editProperty", json!({"id": owner, "name": k, "default": v}));
                     }
                 }
-                PropDef::InstanceSwap { default } => {
+                PropDef::InstanceSwap { default, .. } => {
                     let label = doc.node(*default).map(|n| n.name.clone()).unwrap_or_else(|| "Missing".into());
                     let resp = widgets::dropdown(ui, &label, 84.0, None);
                     menu_popup(&resp).show(|ui| {
-                        for (c, name) in &comps {
+                        for (c, name) in comps.iter() {
                             if menu_item(ui, name, "") {
                                 app.run("component.editProperty", json!({"id": owner, "name": k, "default": c.0}));
                                 ui.close();
@@ -302,8 +318,13 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 }
             });
         });
-        // A slot's preferred components, on a row of their own.
-        if let PropDef::Slot { preferred } = d {
+        // An instance swap or slot property's preferred components, on a row of their own.
+        if let PropDef::Slot { preferred } | PropDef::InstanceSwap { preferred, .. } = d {
+            let tip = if matches!(d, PropDef::Slot { .. }) {
+                "Offered first when filling the slot (any content is allowed)"
+            } else {
+                "Offered first when swapping the instance (any component is allowed)"
+            };
             row(ui, 30.0, |ui| {
                 ui.add_space(22.0);
                 let label = match preferred.len() {
@@ -312,7 +333,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                     k => format!("{k} preferred components"),
                 };
                 let w = (ui.available_width() - 8.0).max(60.0);
-                let resp = widgets::dropdown(ui, &label, w, None).on_hover_text("Offered first when filling the slot (any content is allowed)");
+                let resp = widgets::dropdown(ui, &label, w, None).on_hover_text(tip);
                 menu_popup(&resp).width(w.max(200.0)).show(|ui| {
                     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (c, name) in comps.iter().filter(|(c, _)| *c != owner && first != Some(*c)) {
@@ -475,7 +496,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     let missing = !doc.contains(*component);
     let set = variant_set(doc, *component);
     let comp_name = set.or(Some(*component)).and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| "Main component deleted".into());
-    let comps = local_components(doc);
+    let comps = local_components(app, ui, doc);
     let nested = inside_instance(doc, id);
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
@@ -519,7 +540,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
         menu_popup(&resp).width(w.max(200.0)).show(|ui| {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 let mut page = None;
-                for (c, name) in &comps {
+                for (c, name) in comps.iter() {
                     let pg = doc.page_of(*c);
                     if pg != page {
                         page = pg;
@@ -639,17 +660,33 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                         }
                     });
                 }
-                PropDef::InstanceSwap { .. } => {
+                PropDef::InstanceSwap { preferred, .. } => {
                     let cur = figcraft_engine::params::id_of(&v);
                     let label = cur.and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| "None".into());
                     let resp = widgets::dropdown(ui, &label, w, Some(Icon::Instance));
                     menu_popup(&resp).width(200.0).show(|ui| {
+                        let t = Tokens::get(ui.ctx());
+                        let heading = |ui: &mut Ui, text: &str| ui.label(egui::RichText::new(text).font(semibold(11.0)).color(t.text_secondary));
+                        let mut pick = |ui: &mut Ui, c: NodeId, name: &str| {
+                            let current = cur == Some(c);
+                            if menu_item(ui, &format!("{}{name}", if current { "✓ " } else { "" }), "") {
+                                if !current {
+                                    app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): c.0}}));
+                                }
+                                ui.close();
+                            }
+                        };
+                        let preferred: Vec<(NodeId, String)> = preferred.iter().filter_map(|c| doc.node(*c).map(|n| (*c, n.name.clone()))).collect();
+                        if !preferred.is_empty() {
+                            heading(ui, "Preferred");
+                            for (c, name) in &preferred {
+                                pick(ui, *c, name);
+                            }
+                            heading(ui, "All components");
+                        }
                         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                             for (c, name) in comps {
-                                if menu_item(ui, name, "") {
-                                    app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): c.0}}));
-                                    ui.close();
-                                }
+                                pick(ui, *c, name);
                             }
                         });
                     });

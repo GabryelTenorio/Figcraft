@@ -123,7 +123,21 @@ dimension measured side by side.
    collection in). Instance boolean and text properties bound to boolean and string variables
    (following modes, renames, reset and detach); layout grid settings in the Design panel whose
    count, size, margin/offset and gutter bind to number variables; fills, strokes, effects and
-   layout grids reordered by dragging their rows, their variable bindings following. *Left:* QA with larger real-world libraries. 1 h.
+   layout grids reordered by dragging their rows, their variable bindings following. Components at
+   scale, QA'd with a synthetic design system (about 300 components: buttons, inputs, cards, navs
+   and badges as sets of size × state × type × theme variants, boolean/text/instance swap/slot
+   properties, instances nested four deep, text and paint styles, light/dark variables bound across
+   it) used 2,000 times with overrides at every level: main edits keep every override and match a
+   full rebuild exactly; values from variables (a theme switch, a bound corner radius) are no longer
+   recorded as overrides; detaching a variable on an instance layer is an override that survives main
+   edits; exposed nested instances stay exposed and swapped nested instances keep their layer names
+   through main edits; layers a swapped nested instance's main adds keep their ids and overrides.
+   Instance swap properties have preferred values (offered first). Alt-drop from the Assets panel
+   onto an instance swaps it (same-set instance preferred, highlighted while dragging); instances
+   pasted into other files follow their mains (library copies shared, published components used
+   from their library, other mains left behind as a restorable missing main). The Assets panel lays
+   out only the tiles in view and renders thumbnails as they show (cached, re-rendered only for
+   changed components). *Left:* QA with real-world (not synthetic) libraries. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -212,7 +226,16 @@ dimension measured side by side.
    renders in ~8 ms instead of ~50 ms. `.figcraft` at 50k layers saves in ~0.09 s instead of ~1 s
    and loads in ~0.16 s instead of ~0.86 s (JSON streamed to and from the document without a
    value tree, layer fields at their defaults left out: 63 → 22 MB of JSON, old files still
-   open). *Left:* a real-world file corpus, Windows/Linux/browser QA, accessibility. 30–50 h.
+   open). Components at scale (`cargo xtask bench`, synthetic design system of about 300
+   components used by 2,000 instances): edits of mains reach their copies directly instead of
+   rebuilding every instance (value, size and layer added/removed edits; other edits rebuild each
+   affected instance once, inner mains first), bound variables no longer touch unchanged layers on
+   every edit, auto layout re-flows only where sizes or places changed: recolouring or resizing a
+   main's layer used ~900 times 188/226 → 4/18 ms, adding a layer to it 430 → 21 ms, a label style
+   in all 72 button variants (1,800 copies) 450 → 57 ms, switching a variant, reset, detach, push
+   and paste ~450 → under 3 ms, accepting a library update 460 → 64 ms; the Assets panel with 2,000
+   assets 3.4 → 1.3 ms a frame. *Left:* a real-world file corpus, Windows/Linux/browser QA,
+   accessibility. 30–50 h.
 
 ### Where we're going
 
@@ -294,7 +317,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Frames, groups, sections, masks | 5 | 80% | comparing what changed in ready-for-dev frames and sections, visual QA | 1–2 |
 | Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
 | Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
-| Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
+| Components & variants | 9 | 79% | QA with real-world (not synthetic) libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |

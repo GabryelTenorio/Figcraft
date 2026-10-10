@@ -292,7 +292,9 @@ read library files return an error).
 - **Use**: `library.place {library, component, x?, y?}` (a component, set or variant by id or name;
   page point, default the view's centre) copies the component, with the components and styles it
   uses, into the file as a read-only main component and places an instance; `library.import
-  {library, component}` only copies it (then `instance.create`, `instance.swap`…).
+  {library, component}` only copies it (then `instance.create`, `instance.swap`…);
+  `library.swapAt {library, component, x, y}` copies it and swaps the instance at that page point to
+  it (as `instance.swapAt`, below).
   `library.applyStyle {library, style, ids?, target?}` copies a style in (linked, read-only) and
   applies it. Instances of library components behave like any instance: overrides, properties,
   variants, swap, reset, detach. Library components keep their variable bindings and explicit modes
@@ -310,6 +312,24 @@ name and sets them this way);
 - **Update**: `library.updates` lists the components, styles, variable collections and variables
   with a newer published version; `library.acceptUpdates {ids? (library ids)}` pulls them in,
   keeping instance overrides; bound layers, aliases and explicit modes follow the updated values.
+- **Paste between files**: instances copied from another open file (`edit.copy` there, `edit.paste`
+  here) follow their mains: library components join (or bring along) this file's copies of the
+  same library, components the other file publishes as a library are used from it (and that
+  library is enabled when the other file is saved), and other mains stay behind: the instance shows
+  a missing main (`component.restoreMain` makes it a main here).
+
+### Swapping instances
+
+- `instance.swap {ids?, component}` shows another component in the instances (overrides on layers
+  with matching names stay; property values with the same names too). Nested instances can be
+  swapped on their own (an override of the instance they're in).
+- `instance.swapAt {component, x, y}` swaps the instance at a page point: of the instances under
+  it (innermost first), the first showing a variant of the same component set, else the innermost
+  (never one inside the dropped component). The Assets panel does this when a component is dropped
+  onto an instance with Alt (Option) held, highlighting that instance while dragging.
+- Instance swap properties offer **preferred values**: `component.addProperty {type:
+  "instanceSwap", default, preferred? [component or set ids]}` and `component.editProperty {name,
+  preferred}`; `component.properties` lists them, and the Design panel's swap menus show them first.
 
 ### Slots
 

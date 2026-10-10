@@ -162,6 +162,13 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         spec!("instance.swap", "Swap instance", "{ids?, component}", true, swap),
         spec!(
+            "instance.swapAt",
+            "Swap instance at point",
+            "{component (component or set: its default variant), x, y (page point)}  swaps the instance there (preferring one showing the same component set; Alt-drop from the Assets panel); overrides on layers with matching names stay",
+            true,
+            swap_at
+        ),
+        spec!(
             "instance.setProperties",
             "Set instance properties",
             "{ids?, properties {name: value}} (variant properties switch variants)",
@@ -171,14 +178,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.addProperty",
             "Add component property",
-            "{id? (component, set, or a layer inside a component: it gets bound), name, type: boolean|text|instanceSwap|variant|slot, default?, layer? (node bound to it; a frame for slots), preferred? (slots: component ids)}",
+            "{id? (component, set, or a layer inside a component: it gets bound), name, type: boolean|text|instanceSwap|variant|slot, default?, layer? (node bound to it; a frame for slots), preferred? (instance swap and slot properties: component or set ids offered first)}",
             true,
             add_prop
         ),
         spec!(
             "component.editProperty",
             "Edit component property",
-            "{id? (component or set), name, newName?, default?, value? + newValue? (rename a variant value), preferred? (slots: component ids)}",
+            "{id? (component or set), name, newName?, default?, value? + newValue? (rename a variant value), preferred? (instance swap and slot properties: component or set ids offered first)}",
             true,
             edit_prop
         ),
@@ -745,7 +752,7 @@ fn restore_main(s: &mut Session, p: &Value) -> Result<Value> {
                     Value::Bool(b) => PropDef::Boolean { default: *b },
                     Value::String(t) => PropDef::Text { default: t.clone() },
                     other => match id_of(other) {
-                        Some(c) if doc.contains(c) => PropDef::InstanceSwap { default: c },
+                        Some(c) if doc.contains(c) => PropDef::InstanceSwap { default: c, preferred: Vec::new() },
                         _ => continue,
                     },
                 };
@@ -801,6 +808,22 @@ fn swap(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     ok()
+}
+
+/// Swap the instance under a page point to a component (`instance.swapAt`).
+pub(crate) fn swap_at(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "instance.swapAt";
+    let c = req_id(cmd, p, "component")?;
+    let pt = figcraft_geom::Point::new(req_num(cmd, p, "x")?, req_num(cmd, p, "y")?);
+    let page = s.page()?;
+    let doc = s.doc()?;
+    let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
+    let family = crate::drop::swap_family(doc, c);
+    let target = crate::drop::swap_target(doc, page, pt, family.as_deref(), Some(c))
+        .ok_or_else(|| EngineError::Disabled(cmd.into(), "there is no instance at that point to swap".into()))?;
+    swap(s, &json!({"ids": [target], "component": c}))?;
+    s.set_selection(vec![target]);
+    Ok(json!({"id": target, "component": c}))
 }
 
 /// Whether instance `id` has a component property `name` that a `kind` variable can drive (a
@@ -1018,7 +1041,7 @@ fn add_prop(s: &mut Session, p: &Value) -> Result<Value> {
                 })
                 .and_then(|c| main_of(doc, c))
                 .ok_or_else(|| bad(cmd, "default: a component id"))?;
-            PropDef::InstanceSwap { default: d }
+            PropDef::InstanceSwap { default: d, preferred: preferred_arg(cmd, doc, p)? }
         }
         "variant" => {
             let dv = string(p, "default")
@@ -1219,21 +1242,28 @@ fn edit_prop(s: &mut Session, p: &Value) -> Result<Value> {
         return ok();
     }
     let def = comps.iter().find_map(|c| prop_defs(doc, *c).get(&name).cloned()).ok_or_else(|| bad(cmd, format!("no property named `{name}`")))?;
-    let new_def = match (&def, get(p, "preferred")) {
-        (PropDef::Slot { .. }, Some(_)) => PropDef::Slot { preferred: preferred_arg(cmd, doc, p)? },
-        (_, Some(_)) => return Err(bad(cmd, "`preferred` is for slot properties")),
-        (_, None) => match get(p, "default") {
-            Some(v) => match coerce(cmd, doc, &name, &def, v)? {
-                Value::Bool(b) => PropDef::Boolean { default: b },
-                Value::String(t) if matches!(def, PropDef::Text { .. }) => PropDef::Text { default: t },
-                other => match (&def, id_of(&other)) {
-                    (PropDef::InstanceSwap { .. }, Some(c)) => PropDef::InstanceSwap { default: c },
-                    _ => def.clone(),
-                },
-            },
-            None => def.clone(),
-        },
+    let preferred = if get(p, "preferred").is_some() {
+        if !matches!(def, PropDef::Slot { .. } | PropDef::InstanceSwap { .. }) {
+            return Err(bad(cmd, "`preferred` is for instance swap and slot properties"));
+        }
+        Some(preferred_arg(cmd, doc, p)?)
+    } else {
+        None
     };
+    let mut new_def = match get(p, "default") {
+        Some(v) => match coerce(cmd, doc, &name, &def, v)? {
+            Value::Bool(b) => PropDef::Boolean { default: b },
+            Value::String(t) if matches!(def, PropDef::Text { .. }) => PropDef::Text { default: t },
+            other => match (&def, id_of(&other)) {
+                (PropDef::InstanceSwap { preferred, .. }, Some(c)) => PropDef::InstanceSwap { default: c, preferred: preferred.clone() },
+                _ => def.clone(),
+            },
+        },
+        None => def.clone(),
+    };
+    if let (Some(list), PropDef::Slot { preferred } | PropDef::InstanceSwap { preferred, .. }) = (preferred, &mut new_def) {
+        *preferred = list;
+    }
     for c in &comps {
         let had = prop_defs(doc, *c).contains_key(&name);
         if !had {
@@ -1292,7 +1322,7 @@ fn def_json(name: &str, d: &PropDef) -> Value {
     match d {
         PropDef::Boolean { default } => json!({"name": name, "type": "boolean", "default": default}),
         PropDef::Text { default } => json!({"name": name, "type": "text", "default": default}),
-        PropDef::InstanceSwap { default } => json!({"name": name, "type": "instanceSwap", "default": default}),
+        PropDef::InstanceSwap { default, preferred } => json!({"name": name, "type": "instanceSwap", "default": default, "preferred": preferred}),
         PropDef::Variant { options, default } => json!({"name": name, "type": "variant", "default": default, "options": options}),
         PropDef::Slot { preferred } => json!({"name": name, "type": "slot", "preferred": preferred}),
     }
