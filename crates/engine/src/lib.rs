@@ -9,6 +9,7 @@
 
 pub mod al_keys;
 pub mod annotations;
+pub mod arc_handles;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -945,6 +946,8 @@ mod al_keys_tests;
 mod al_nesting_tests;
 #[cfg(test)]
 mod annotations_tests;
+#[cfg(test)]
+mod arc_handles_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]

@@ -52,8 +52,10 @@ dimension measured side by side.
    to move; the Design panel's X/Y/W/H and flip/rotate act on the points), point snapping while
    dragging points or handles and with both pens (to the points and segment midpoints of this and
    other vectors, the usual layer targets and the pixel grid, with guides and a marker on the point
-   landed on; Ctrl/Cmd turns it off). *Left:* arc handles on the canvas, live boolean editing,
-   one-sided widths. 4–8 h.
+   landed on; Ctrl/Cmd turns it off), arc handles on the canvas (sweep, start and ratio with a
+   live readout, Shift snapping, closing at the start, the other part from the gap; rotated and
+   flipped ellipses, any zoom). *Left:* live boolean editing, one-sided widths, Design panel arc
+   fields. 4–8 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -262,7 +264,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 86% | Tab to rename the next layer, visual QA of long lists | 1 |
-| Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
+| Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
 | Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
