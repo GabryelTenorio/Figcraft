@@ -34,18 +34,23 @@ page 1 "Screens": 380 nodes, 4 top-level
 - `--node` takes a layer id (`12` or `0:12`) or a layer name.
 - The format comes from `--format`, else `<out>`'s extension, else png. `--scale` (default 1, max 64)
   applies to raster formats.
+- A `.pdf` `<out>` without `--node` holds the page's top-level frames, one PDF page each in reading
+  order, each the frame's size in points (a page without frames goes on one page). Shapes, text
+  and gradients stay vector, text is real (selectable, with subset fonts) and its links clickable;
+  shadows and blurs are images.
 
 ```sh
 figcraft-cli export app.figcraft -o exports/ --scale 2
 figcraft-cli export app.figcraft -o hero.svg --node "Hero"
+figcraft-cli export app.figcraft -o screens.pdf --page "Screens"
 ```
 
 ### `convert <in> <out>`
 
 By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.svg` (becomes vectors), `.png/.jpg/.webp/.gif/.bmp`
 (an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
-`.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (when PDF export is
-available).
+`.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (the current page's
+frames, one page each).
 
 ### `render <file> -o <out.png> [--scale N] [--page NAME]`
 

@@ -219,12 +219,9 @@ fn alias_closure(vars: &Variables, seeds: impl IntoIterator<Item = VariableId>) 
     out
 }
 
-/// The variables a layer's prototype actions set.
-fn set_variables(n: &Node) -> impl Iterator<Item = &VariableId> {
-    n.interactions.iter().flat_map(|it| &it.actions).filter_map(|a| match a {
-        Action::SetVariable { variable, .. } => Some(variable),
-        _ => None,
-    })
+/// The variables a layer's prototype actions set or read (in expressions and conditions).
+fn action_variables(n: &Node) -> impl Iterator<Item = &str> {
+    n.interactions.iter().flat_map(|it| &it.actions).flat_map(Action::variables)
 }
 
 /// Variables the layers under `roots` bind, and the collections they choose modes of.
@@ -716,7 +713,11 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
     }
     n.plugin_data.remove("figcraft.thumbnail");
     for it in &mut n.interactions {
-        it.actions.retain(|a| !matches!(a, Action::SetVariable { .. }) && a.dest().is_none_or(|d| map.contains_key(&d)));
+        // Variable actions stay with the library's file.
+        figcraft_doc::proto::retain_deep(&mut it.actions, &mut |a| {
+            !matches!(a, Action::SetVariable { .. } | Action::SetVariableMode { .. } | Action::Conditional { .. })
+                && a.dest().is_none_or(|d| map.contains_key(&d))
+        });
     }
     n.interactions.retain(|it| !it.actions.is_empty());
 }
@@ -898,8 +899,8 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
     // Variables layers bind or set, and local variables alias (with what those alias).
     let seeds = doc
         .nodes()
-        .flat_map(|n| n.bound.values().chain(set_variables(n)))
-        .cloned()
+        .flat_map(|n| n.bound.values().map(String::as_str).chain(action_variables(n)))
+        .map(str::to_string)
         .chain(doc.variables.variables.iter().filter(|v| !is_remote_variable(doc, &v.id)).flat_map(|v| v.values.values()).filter_map(|x| match x {
             VariableValue::Alias(a) => Some(a.clone()),
             _ => None,
@@ -912,9 +913,21 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
         doc.variables.variables.retain(|v| !unused.contains(&v.id));
         doc.libraries_mut().variables.retain(|r| !unused.contains(&r.local));
     }
-    // Collections the remaining variables are in, or layers choose a mode of.
-    let used: BTreeSet<String> =
-        doc.variables.variables.iter().map(|v| v.collection.clone()).chain(doc.nodes().flat_map(|n| n.var_modes.keys()).cloned()).collect();
+    // Collections the remaining variables are in, or layers (and their prototype actions) choose a
+    // mode of.
+    let action_modes = doc.nodes().flat_map(|n| &n.interactions).flat_map(|it| figcraft_doc::proto::walk(&it.actions)).filter_map(|a| match a {
+        Action::SetVariableMode { collection, .. } => Some(collection),
+        _ => None,
+    });
+    let used: BTreeSet<String> = doc
+        .variables
+        .variables
+        .iter()
+        .map(|v| &v.collection)
+        .chain(doc.nodes().flat_map(|n| n.var_modes.keys()))
+        .chain(action_modes)
+        .cloned()
+        .collect();
     let unused: BTreeSet<String> =
         doc.libraries.collections.iter().filter(|r| r.library == library && !used.contains(&r.local)).map(|r| r.local.clone()).collect();
     if !unused.is_empty() {

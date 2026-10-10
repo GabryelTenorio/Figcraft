@@ -18,6 +18,8 @@
 //! main component's (`source`) and deriving overrides is left to the caller (the engine does it
 //! after loading), since that needs the component model.
 
+#[cfg(test)]
+mod conditional_tests;
 mod props;
 mod proto;
 #[cfg(test)]

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use figcraft_color::{Color, Paint, PaintKind};
 use figcraft_doc::proto::{Action, Device, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger};
-use figcraft_doc::{Document, HConstraint, Node, NodeId, NodeKind, VConstraint, VariableValue};
+use figcraft_doc::{Document, HConstraint, Node, NodeId, NodeKind, VConstraint};
 use figcraft_geom::{Affine, Point};
 use serde_json::{Value, json};
 
@@ -383,6 +383,12 @@ impl Presenter {
     }
 
     fn perform(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64) -> bool {
+        self.perform_at(a, node, tr, dur, easing, rect, now, 0)
+    }
+
+    /// One action; `depth` counts the conditional actions it is inside.
+    #[allow(clippy::too_many_arguments)]
+    fn perform_at(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64, depth: usize) -> bool {
         let Some(doc) = self.doc.clone() else { return false };
         match a {
             Action::Navigate { dest, preserve_scroll } => {
@@ -491,18 +497,28 @@ impl Presenter {
                 self.rev += 1;
                 true
             }
-            Action::SetVariable { variable, value } => {
+            Action::SetVariable { variable, value, expr } => {
                 let Some(d) = self.doc.as_mut() else { return false };
-                let Some(var) = d.variables.get(variable).cloned() else { return false };
-                let Some(v) = variable_value(&var.values, value) else { return false };
-                if let Some(slot) = d.variables.variables.iter_mut().find(|x| x.id == var.id) {
-                    for val in slot.values.values_mut() {
-                        *val = v.clone();
-                    }
+                let set = figcraft_engine::proto_run::set_variable(d, node, variable, value, expr.as_ref());
+                self.rev += u64::from(set);
+                set
+            }
+            Action::SetVariableMode { collection, mode } => {
+                let Some(d) = self.doc.as_mut() else { return false };
+                let set = figcraft_engine::proto_run::set_mode(d, self.current, collection, mode);
+                self.rev += u64::from(set);
+                set
+            }
+            Action::Conditional { blocks } => {
+                if depth >= figcraft_doc::proto::MAX_ACTION_DEPTH {
+                    return false;
                 }
-                figcraft_engine::cmd::styles::apply_bindings(d);
-                self.rev += 1;
-                true
+                // Evaluated now: earlier actions of the interaction may have changed variables.
+                let mut did = false;
+                for inner in figcraft_engine::proto_run::branch(&doc, node, blocks) {
+                    did |= self.perform_at(&inner, node, tr, dur, easing, rect, now, depth + 1);
+                }
+                did
             }
         }
     }
@@ -913,24 +929,6 @@ pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option
         OverlayPosition::Manual => anchor.map(|a| (a.min.x, a.max.y)).unwrap_or((cx, cy)),
     };
     Rect::from_min_size(pos2(x, y), size)
-}
-
-fn variable_value(values: &BTreeMap<String, VariableValue>, v: &serde_json::Value) -> Option<VariableValue> {
-    let sample = values.values().next();
-    Some(match (sample, v) {
-        (Some(VariableValue::Color(_)), _) => VariableValue::Color(figcraft_engine::params::color_of(v)?),
-        (Some(VariableValue::Number(_)), _) => VariableValue::Number(figcraft_engine::params::f64_of(v)?),
-        (Some(VariableValue::Boolean(_)), _) => VariableValue::Boolean(match v {
-            serde_json::Value::Bool(b) => *b,
-            serde_json::Value::String(s) => s == "true",
-            serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
-            _ => return None,
-        }),
-        (_, serde_json::Value::String(s)) => VariableValue::String(s.clone()),
-        (_, serde_json::Value::Bool(b)) => VariableValue::Boolean(*b),
-        (_, serde_json::Value::Number(n)) => VariableValue::Number(n.as_f64()?),
-        _ => return None,
-    })
 }
 
 /// Layers with interactions under `root`, with their screen rects (clipped by frames that clip
@@ -1765,6 +1763,10 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
 }
 
 #[cfg(test)]
+#[path = "present_variables_tests.rs"]
+mod variables_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use figcraft_doc::NodeKind;
@@ -2061,16 +2063,6 @@ mod tests {
         assert_eq!(overlay_rect(OverlayPosition::TopRight, base, size, None).min, pos2(200.0, 0.0));
         let anchor = Rect::from_min_size(pos2(30.0, 40.0), vec2(50.0, 20.0));
         assert_eq!(overlay_rect(OverlayPosition::Manual, base, size, Some(anchor)).min, pos2(30.0, 60.0));
-    }
-
-    #[test]
-    fn variables_parse_by_type() {
-        let mut m = BTreeMap::new();
-        m.insert("m1".to_string(), VariableValue::Number(1.0));
-        assert_eq!(variable_value(&m, &serde_json::json!("4")), Some(VariableValue::Number(4.0)));
-        m.insert("m1".to_string(), VariableValue::Boolean(false));
-        assert_eq!(variable_value(&m, &serde_json::json!(true)), Some(VariableValue::Boolean(true)));
-        assert_eq!(variable_value(&m, &serde_json::json!({})), None);
     }
 
     /// Smart animate renders a temporary document per animation frame; keep that cheap.

@@ -56,10 +56,12 @@ impl Node {
             NodeKind::Text(t) => t.for_each_color_mut(f),
             _ => {}
         }
-        for a in self.interactions.iter_mut().flat_map(|i| i.actions.iter_mut()) {
-            if let Action::OpenOverlay { background: Some(c), .. } = a {
-                f(c);
-            }
+        for it in &mut self.interactions {
+            crate::proto::walk_mut(&mut it.actions, &mut |a| {
+                if let Action::OpenOverlay { background: Some(c), .. } = a {
+                    f(c);
+                }
+            });
         }
     }
 }

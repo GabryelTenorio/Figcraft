@@ -574,9 +574,7 @@ impl Document {
             c.children = n.children.iter().filter_map(|k| map.get(k).copied()).collect();
             c.parent = if n.id == root { Some(parent) } else { n.parent.and_then(|p| map.get(&p).copied()) };
             for it in &mut c.interactions {
-                for a in &mut it.actions {
-                    remap_action(a, map);
-                }
+                proto::walk_mut(&mut it.actions, &mut |a| remap_action(a, map));
             }
             if let NodeKind::Instance { component, .. } = &mut c.kind
                 && let Some(m) = map.get(component)
@@ -779,5 +777,7 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 mod colors_tests;
 #[cfg(test)]
 mod diff_tests;
+#[cfg(test)]
+mod proto_expr_tests;
 #[cfg(test)]
 mod tests;

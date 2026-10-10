@@ -100,13 +100,20 @@ dimension measured side by side.
    paths, auto layout, constraints, grids, components, sets, instances with overrides, component
    properties, styles; image fills from an `images` folder or placeholders; warnings for the rest),
    now with prototyping (interactions with their triggers, actions, transitions and easing, flows,
-   scrolling, the prototype device) and variables (the local variables JSON passed along, next to
-   the file or embedded: collections, modes, aliases, scopes, layer bindings and explicit modes).
+   scrolling, the prototype device; conditional actions (if / else if / else over expressions),
+   set variable with variable references and expressions, set variable mode, all run by the
+   presenter) and variables (the local variables JSON passed along, next to the file or embedded:
+   collections, modes, aliases, scopes, layer bindings and explicit modes).
    Export panel: a row per export setting (typed or preset sizes like `2x` / `512w` / `512h`, PNG,
    JPG, WebP, SVG and PDF, suffix), a preview, and "Export N layers" (`file.exportLayers`) in the
    panel and the Export dialog. Paste from other apps: images, SVG and text (the newest clipboard
-   content wins over our own copy). *Left:* .fig import (best effort), PDF export (in progress),
-   REST import of conditional and variable-mode prototype actions. 14–26 h.
+   content wins over our own copy). PDF export: one page per frame in points (Export frames to
+   PDF, the Export panel, `figcraft-cli export -o x.pdf`), vectors, gradients and strokes as
+   vectors, real selectable text in subset fonts with clickable hyperlinks, images embedded once,
+   opacity and blend modes, clip content, alpha/luminance/vector masks, shadows and layer and
+   background blurs as images; checked by rendering the PDFs back against PNG exports.
+   *Left:* .fig import (best effort), variable mode lookups in prototype expressions, PDF print
+   options (bleed, CMYK). 10–20 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
@@ -127,7 +134,7 @@ dimension measured side by side.
 
 - **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
   a real-file corpus); variable width strokes (in progress).
-- **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
+- **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far

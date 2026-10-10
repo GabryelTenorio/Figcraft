@@ -166,7 +166,7 @@ fn open_player(s: &mut Session, p: &Value, cmd: &str, ui: &str) -> Result<Value>
 /// Every node an action points at must exist.
 fn check_dests(cmd: &str, s: &Session, it: &Interaction) -> Result<()> {
     let doc = s.doc()?;
-    for a in &it.actions {
+    for a in figcraft_doc::proto::walk(&it.actions) {
         if let Some(d) = a.dest()
             && !doc.contains(d)
         {
@@ -174,6 +174,27 @@ fn check_dests(cmd: &str, s: &Session, it: &Interaction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Variables, collections and modes that actions name by name, stored by id.
+fn canonical_ids(doc: &Document, it: &mut Interaction) {
+    let vars = &doc.variables;
+    walk_mut(&mut it.actions, &mut |a| match a {
+        Action::SetVariable { variable, .. } => {
+            if let Some(v) = vars.get(variable) {
+                *variable = v.id.clone();
+            }
+        }
+        Action::SetVariableMode { collection, mode } => {
+            if let Some(c) = vars.collection(collection) {
+                if let Some(m) = c.modes.iter().find(|m| m.id == *mode).or_else(|| c.modes.iter().find(|m| m.name == *mode)) {
+                    *mode = m.id.clone();
+                }
+                *collection = c.id.clone();
+            }
+        }
+        _ => {}
+    });
 }
 
 fn duration(p: &Value) -> Option<u32> {
@@ -202,6 +223,8 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let easing: Easing = parse(cmd, p, "easing")?.unwrap_or_default();
         Interaction { trigger, actions, transition, duration_ms: duration(p).unwrap_or(300), easing }
     };
+    let mut it = it;
+    canonical_ids(s.doc()?, &mut it);
     check_dests(cmd, s, &it)?;
     let mut index = 0;
     for i in req_targets(cmd, s, p)? {
@@ -254,6 +277,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         if it.actions.is_empty() {
             return Err(bad(cmd, "an interaction needs an action"));
         }
+        canonical_ids(s.doc()?, &mut it);
         check_dests(cmd, s, &it)?;
         if let Some(slot) = s.doc_mut()?.get_mut(i)?.interactions.get_mut(k) {
             *slot = it;

@@ -40,6 +40,9 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
     if !affine_ok(gxf) {
         return;
     }
+    if ex.masking == 0 {
+        record_links(ex, &layout, gxf);
+    }
     let (w, h) = (n.width, n.height);
     let chars: Vec<char> = t.characters.chars().collect();
     let styles: BTreeSet<usize> = layout.glyphs.iter().map(|g| g.style).chain(layout.decorations.iter().map(|d| d.style)).collect();
@@ -77,6 +80,39 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
             for p in &n.strokes {
                 ex.fill(s, &area, FillRule::NonZero, p, w, h, gxf);
             }
+        }
+    }
+}
+
+/// Most hyperlink areas on one page.
+const MAX_LINKS: usize = 10_000;
+
+/// Note the hyperlinked text of a layout (`gxf`: layout → PDF page): one area per line and run of
+/// glyphs linking to the same URL.
+fn record_links(ex: &mut Exporter, layout: &TextLayout, gxf: Affine) {
+    for line in &layout.lines {
+        let mut run: Option<(&str, f64, f64)> = None;
+        let glyphs = layout.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
+        for g in glyphs.iter().map(Some).chain([None]) {
+            let link = g.and_then(|g| {
+                let url = layout.styles.get(g.style)?.link.as_deref().filter(|u| !u.trim().is_empty())?;
+                let (a, b) = (g.x, g.x + g.advance);
+                (a.is_finite() && b.is_finite()).then(|| (url, a.min(b), a.max(b)))
+            });
+            if let (Some(r), Some((url, a, b))) = (run.as_mut(), link)
+                && r.0 == url
+            {
+                r.1 = r.1.min(a);
+                r.2 = r.2.max(b);
+                continue;
+            }
+            if let Some((url, x0, x1)) = run.take()
+                && ex.links.len() < MAX_LINKS
+            {
+                let area = gxf.transform_rect_bbox(figcraft_geom::Rect::new(x0, line.top, x1, line.top + line.height));
+                ex.links.push((area, url.to_string()));
+            }
+            run = link;
         }
     }
 }

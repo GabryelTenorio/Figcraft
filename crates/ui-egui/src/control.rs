@@ -263,6 +263,16 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if p.get("collapseLayers").and_then(Value::as_bool) == Some(true) {
                 app.ui.expanded.clear();
             }
+            // The interaction editor popover in the Prototype panel: [layer id, index]; null closes it.
+            match p.get("protoEditor") {
+                Some(Value::Null) => crate::proto_panel::open_editor(ctx, None),
+                Some(Value::Array(a)) => {
+                    let id = a.first().and_then(Value::as_u64).ok_or("protoEditor: [layer id, interaction index]")?;
+                    let k = a.get(1).and_then(Value::as_u64).unwrap_or(0) as usize;
+                    crate::proto_panel::open_editor(ctx, Some((figcraft_doc::NodeId(id), k)));
+                }
+                _ => {}
+            }
             // The prototype preview pane: true / a frame id opens it, false or null closes it.
             match p.get("preview") {
                 Some(Value::Bool(false) | Value::Null) => app.ui.preview = None,

@@ -18,6 +18,7 @@ pub mod inspect;
 pub mod library;
 pub mod measure;
 pub mod params;
+pub mod proto_run;
 pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
@@ -894,6 +895,8 @@ mod nested_override_tests;
 mod paint_tests;
 #[cfg(test)]
 mod proto_multi_tests;
+#[cfg(test)]
+mod proto_run_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]

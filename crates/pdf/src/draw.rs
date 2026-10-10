@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use figcraft_color::{BlendMode, Color, Gradient, GradientKind, ImagePaint, ImageScaleMode, Paint, PaintKind};
-use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind, StrokeAlign};
+use figcraft_doc::{Document, EffectKind, MaskType as DocMaskType, Node, NodeId, NodeKind, StrokeAlign};
 use figcraft_geom::{Affine, BezPath, Rect, Shape};
 use krilla::color::rgb;
 use krilla::geom::{Path, PathBuilder, Size, Transform};
@@ -27,6 +27,12 @@ pub(crate) struct Exporter<'a> {
     pub page_origin: Affine,
     /// The page's area in document page coordinates.
     pub page_rect: Rect,
+    /// The layers drawn on the current page (z-order): what background blurs see behind them.
+    pub page_ids: Vec<NodeId>,
+    /// Text hyperlinks on the current page: their areas (PDF page coordinates) and URLs.
+    pub links: Vec<(Rect, String)>,
+    /// Above zero while drawing into a soft mask (nothing there is visible or clickable).
+    pub(crate) masking: usize,
     pub(crate) fonts: HashMap<u32, Option<krilla::text::Font>>,
     images: HashMap<String, Option<(Image, u32, u32)>>,
 }
@@ -201,7 +207,17 @@ fn sniff(b: &[u8]) -> Sniffed {
 
 impl<'a> Exporter<'a> {
     pub(crate) fn new(doc: &'a Document, opts: &'a PdfOptions) -> Self {
-        Self { doc, opts, page_origin: Affine::IDENTITY, page_rect: Rect::ZERO, fonts: HashMap::new(), images: HashMap::new() }
+        Self {
+            doc,
+            opts,
+            page_origin: Affine::IDENTITY,
+            page_rect: Rect::ZERO,
+            page_ids: Vec::new(),
+            links: Vec::new(),
+            masking: 0,
+            fonts: HashMap::new(),
+            images: HashMap::new(),
+        }
     }
 
     /// Draw node `id`; `parent_xf` maps its parent's space to PDF page space. `as_mask` draws a
@@ -233,6 +249,8 @@ impl<'a> Exporter<'a> {
                 self.place_raster(s, r, op, *b);
             }
         }
+        // Background blur: the blurred backdrop clipped to the shape, under the node's content.
+        let backdrop = if fx.iter().any(|k| matches!(k, EffectKind::BackgroundBlur { .. })) && self.masking == 0 { self.backdrop(id) } else { None };
         let nb = blend(n.blend);
         if let Some(b) = nb {
             s.push_blend_mode(b);
@@ -240,6 +258,9 @@ impl<'a> Exporter<'a> {
         }
         if op < 1.0 {
             s.push_opacity(norm(op));
+        }
+        if let Some(r) = &backdrop {
+            self.place_raster(s, r, 1.0, BlendMode::Normal);
         }
         self.content(s, n, xf, depth);
         if let Some(sh) = &shadows {
@@ -325,23 +346,47 @@ impl<'a> Exporter<'a> {
         }
     }
 
-    /// `content` drawn through the alpha of `mask_id` (an alpha soft mask).
+    /// `content` drawn through mask layer `mask_id`: its alpha or luminance (a soft mask drawn from
+    /// the mask layer, so vector, gradient and image masks all work), or its outline (a clip path).
     fn masked(&mut self, s: &mut Surface, mask_id: NodeId, content: &[NodeId], xf: Affine, depth: usize) {
-        if content.is_empty() {
-            return;
-        }
+        let Some(m) = self.doc.node(mask_id).filter(|_| !content.is_empty()) else { return };
+        let kind = match m.mask_type {
+            DocMaskType::Vector => {
+                // The outline, fully opaque; nothing shows through a mask without one.
+                let mut plain = m.clone();
+                plain.is_mask = false;
+                let clip = figcraft_render::subtree_outline(self.doc, &plain, depth + 1).and_then(|(mut p, r)| {
+                    p.apply_affine(xf * m.transform);
+                    Some((to_path(&p)?, rule(r)))
+                });
+                if let Some((cp, r)) = clip {
+                    s.push_clip_path(&cp, &r);
+                    self.draw_all(s, content, xf, depth);
+                    s.pop();
+                }
+                return;
+            }
+            DocMaskType::Luminance => MaskType::Luminosity,
+            DocMaskType::Alpha => MaskType::Alpha,
+        };
         let stream = {
             let mut sb = s.stream_builder();
             let mut ms = sb.surface();
+            self.masking += 1;
             self.node(&mut ms, mask_id, xf, depth + 1, true);
+            self.masking -= 1;
             ms.finish();
             sb.finish()
         };
-        s.push_mask(Mask::new(stream, MaskType::Alpha));
-        for c in content {
+        s.push_mask(Mask::new(stream, kind));
+        self.draw_all(s, content, xf, depth);
+        s.pop();
+    }
+
+    fn draw_all(&mut self, s: &mut Surface, ids: &[NodeId], xf: Affine, depth: usize) {
+        for c in ids {
             self.node(s, *c, xf, depth + 1, false);
         }
-        s.pop();
     }
 
     /// Fill `path` (local space, mapped to the page by `xf`) with one paint on a w×h box.
