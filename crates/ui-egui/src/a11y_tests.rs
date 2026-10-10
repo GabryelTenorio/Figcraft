@@ -338,3 +338,53 @@ fn a_tool_flyout_opened_from_the_keyboard_picks_a_tool() {
     assert_eq!(u.app.ui.tool_flyout, None);
     assert_eq!((region(&u), name(&u)), (Region::Toolbar, "Shape tools".to_string()));
 }
+
+/// Every keyboard and naming path with the screen reader tree on: the node writers and the shared
+/// state run under egui's context lock, and a nested context call there would deadlock (debug
+/// builds turn it into a panic after 10 s, so this test fails instead of hanging).
+#[test]
+fn every_accessibility_path_runs_with_the_tree_on_without_nested_context_locks() {
+    let (mut u, ..) = setup();
+    u.ctx.enable_accesskit();
+    u.app.run("pref.reduceMotion", json!({"on": true}));
+    for _ in 0..5 {
+        f6(&mut u, false);
+        let out = u.frame_output(vec![]);
+        assert!(out.platform_output.accesskit_update.is_some());
+    }
+    // Properties: Tab, a field edit, the zoom menu from the keyboard and back.
+    while region(&u) != Region::Properties {
+        f6(&mut u, false);
+    }
+    for _ in 0..100 {
+        if name(&u) == "Zoom" {
+            break;
+        }
+        press(&mut u, Key::Tab, Modifiers::NONE);
+    }
+    press(&mut u, Key::Enter, Modifiers::NONE);
+    u.frame(vec![]);
+    u.frame(vec![]);
+    assert_eq!(name(&u), "Zoom in");
+    press(&mut u, Key::ArrowDown, Modifiers::NONE);
+    press(&mut u, Key::Escape, Modifiers::NONE);
+    u.frame(vec![]);
+    // Toolbar: a flyout; layers: the arrows; the canvas; a pointer press.
+    while region(&u) != Region::Toolbar {
+        f6(&mut u, false);
+    }
+    press(&mut u, Key::End, Modifiers::NONE);
+    press(&mut u, Key::Home, Modifiers::NONE);
+    while region(&u) != Region::Layers {
+        f6(&mut u, false);
+    }
+    press(&mut u, Key::ArrowUp, Modifiers::NONE);
+    u.frame(vec![]);
+    press(&mut u, Key::Escape, Modifiers::NONE);
+    assert_eq!(region(&u), Region::Canvas);
+    let p = u.app.canvas.rect.center();
+    u.button(p, true);
+    u.button(p, false);
+    let out = u.frame_output(vec![]);
+    assert!(out.platform_output.accesskit_update.is_some());
+}

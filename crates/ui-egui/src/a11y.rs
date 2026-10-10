@@ -12,6 +12,11 @@
 //! The regions' controls come from what the last frame drew (egui keeps every widget's rectangle
 //! and sense), so panels don't register their controls. Widget names are only built while a screen
 //! reader asks for the tree (egui runs the node writers only then).
+//!
+//! Locking: egui runs the node writers (`accesskit_node_builder`) and the `ctx.data`, `ctx.input`,
+//! `ctx.memory` and `ctx.viewport` closures with its context locked. Nothing in them may call the
+//! context again (a nested call deadlocks; debug builds panic after 10 s): read what they need
+//! first, as everything here does (`a11y_tests` runs every path with the tree on).
 
 use egui::accesskit::{self, Role, Toggled};
 use egui::{Context, CornerRadius, Event, FocusDirection, Id, Key, LayerId, Modifiers, Order, Pos2, Rect, Response, Stroke, StrokeKind, Ui};
