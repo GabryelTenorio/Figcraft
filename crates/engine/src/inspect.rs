@@ -52,6 +52,10 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if !n.stroke.dashes.is_empty() {
                 o.insert("dashes".into(), json!(n.stroke.dashes));
             }
+            if let Some(p) = n.stroke.profile() {
+                let points: Vec<[f64; 2]> = p.points.iter().map(|q| [q.t, q.scale]).collect();
+                o.insert("widthProfile".into(), json!({"preset": p.preset().map(|x| x.id()), "points": points}));
+            }
         }
         if !n.effects.is_empty() {
             o.insert("effects".into(), camel(serde_json::to_value(&n.effects).unwrap_or(Value::Null)));

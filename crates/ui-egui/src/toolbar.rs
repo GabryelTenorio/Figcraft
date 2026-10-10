@@ -185,6 +185,7 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
             VTool::Lasso => Icon::Lasso,
             VTool::Cut => Icon::Cut,
             VTool::Eraser => Icon::Eraser,
+            VTool::Width => Icon::VariableWidth,
         };
         if tool_cell(ui, &t, r, ("vtool", tool.id()), icon, active).on_hover_text(tip).clicked() {
             app.run("vector.edit.tool", json!({"tool": tool.id()}));

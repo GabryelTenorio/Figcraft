@@ -533,13 +533,14 @@ impl Node {
     /// Maximum distance (in local units) painting can reach outside the node box.
     pub fn paint_reach(&self) -> f64 {
         let stroke = if self.has_visible_stroke() {
-            let w = self.stroke.sides.map(|s| s.iter().copied().fold(0.0, f64::max)).unwrap_or(self.stroke.weight);
+            let w = self.stroke.sides.map(|s| s.iter().copied().fold(0.0, f64::max)).unwrap_or_else(|| self.stroke.max_weight());
             let base = match self.stroke.align {
                 StrokeAlign::Inside => 0.0,
                 StrokeAlign::Center => w / 2.0,
                 StrokeAlign::Outside => w,
             };
-            let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w * 3.0 } else { w };
+            // Arrowheads are sized by the weight, whatever a width profile does.
+            let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w.max(self.stroke.weight) * 3.0 } else { w };
             base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * self.stroke.miter_limit.clamp(1.0, 4.0)
         } else {
             0.0

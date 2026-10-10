@@ -460,41 +460,77 @@ pub struct Flow {
     pub description: String,
 }
 
+/// How the prototype device is held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DeviceRotation {
+    #[default]
+    Portrait,
+    /// Turned a quarter turn counter-clockwise: the screen is wider than it is tall.
+    Landscape,
+}
+
+impl DeviceRotation {
+    /// From a command or file value: `portrait` / `landscape`, or the angle in degrees (0, 90).
+    pub fn parse(v: &str) -> Option<Self> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "portrait" | "0" | "none" => Some(Self::Portrait),
+            "landscape" | "90" | "ccw_90" => Some(Self::Landscape),
+            _ => None,
+        }
+    }
+}
+
 /// Prototype device settings on a page.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PrototypeSettings {
     pub device: String,
     pub background: figcraft_color::Color,
+    /// Applies to devices that turn (phones and tablets).
+    pub rotation: DeviceRotation,
 }
 
 impl Default for PrototypeSettings {
     fn default() -> Self {
-        Self { device: "None".into(), background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E) }
+        Self { device: "None".into(), background: figcraft_color::Color::from_rgb8_const(0x1E, 0x1E, 0x1E), rotation: DeviceRotation::Portrait }
     }
 }
 
-/// A device prototypes are presented on: its name and screen size in points.
+/// A device prototypes are presented on: its name and screen size in points (held upright).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Device {
     pub name: &'static str,
     pub width: f64,
     pub height: f64,
+    /// It can be turned to landscape (phones and tablets; laptops and desktops can't).
+    pub rotates: bool,
 }
 
 impl PrototypeSettings {
     /// The devices to pick from ("None" presents the frame at its own size).
     pub const DEVICES: [Device; 6] = [
-        Device { name: "iPhone 16", width: 393.0, height: 852.0 },
-        Device { name: "iPhone 16 Pro Max", width: 440.0, height: 956.0 },
-        Device { name: "Android Compact", width: 412.0, height: 917.0 },
-        Device { name: "iPad mini", width: 744.0, height: 1133.0 },
-        Device { name: "MacBook Air", width: 1280.0, height: 832.0 },
-        Device { name: "Desktop", width: 1440.0, height: 1024.0 },
+        Device { name: "iPhone 16", width: 393.0, height: 852.0, rotates: true },
+        Device { name: "iPhone 16 Pro Max", width: 440.0, height: 956.0, rotates: true },
+        Device { name: "Android Compact", width: 412.0, height: 917.0, rotates: true },
+        Device { name: "iPad mini", width: 744.0, height: 1133.0, rotates: true },
+        Device { name: "MacBook Air", width: 1280.0, height: 832.0, rotates: false },
+        Device { name: "Desktop", width: 1440.0, height: 1024.0, rotates: false },
     ];
 
-    /// The chosen device (None for "None" or a name we don't know).
-    pub fn device(&self) -> Option<Device> {
+    /// The chosen device model, held upright (None for "None" or a name we don't know).
+    pub fn model(&self) -> Option<Device> {
         Self::DEVICES.iter().find(|d| d.name == self.device).copied()
+    }
+
+    /// The device turned to landscape (only devices that turn do).
+    pub fn landscape(&self) -> bool {
+        self.rotation == DeviceRotation::Landscape && self.model().is_some_and(|d| d.rotates)
+    }
+
+    /// The chosen device as presented: its screen is wider than tall when turned to landscape.
+    pub fn device(&self) -> Option<Device> {
+        let d = self.model()?;
+        Some(if self.landscape() { Device { width: d.height, height: d.width, ..d } } else { d })
     }
 }

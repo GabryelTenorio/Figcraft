@@ -1,5 +1,6 @@
 //! Design panel in vector edit mode: the selected points' position, corner radius and handle
-//! mirroring (in place of the layer's position section).
+//! mirroring, or the selected width point with the Variable width tool (in place of the layer's
+//! position section).
 
 use egui::{Id, Ui};
 use figcraft_doc::{Document, HandleMirroring};
@@ -28,7 +29,38 @@ fn point_field(app: &mut FigApp, cmd: &str, edit: Option<FieldEdit>, params: imp
     }
 }
 
+/// The Variable width tool's selected width point: where it is along the path and its width.
+fn width_point(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
+    widgets::section_header(ui, "Width point", &[], false);
+    let stroke = doc.node(ve.id).map(|n| &n.stroke);
+    let sel = ve.width_point.and_then(|i| Some((i, *stroke?.profile()?.points.get(i)?)));
+    let Some((i, p)) = sel else {
+        let t = crate::theme::Tokens::get(ui.ctx());
+        ui.horizontal(|ui| {
+            ui.add_space(PAD);
+            widgets::label(ui, "Drag the stroke to add a width point", t.text_secondary);
+        });
+        ui.add_space(8.0);
+        return;
+    };
+    let weight = stroke.map_or(1.0, |s| s.weight);
+    let col = widgets::col_width(ui.available_width());
+    let round = |v: f64| (v * 100.0).round() / 100.0;
+    widgets::sublabels(ui, "Position", Some("Width"));
+    row(ui, 32.0, |ui| {
+        let e = widgets::number_field(ui, Id::new("wpt_t"), Lead::None, Some(round(p.t * 100.0)), "%", col, 1.0);
+        point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "t": v / 100.0}));
+        let e = widgets::number_field(ui, Id::new("wpt_w"), Lead::Icon(Icon::StrokeIcon), Some(round(p.scale * weight)), "", col, 1.0);
+        point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "width": v.max(0.0)}));
+    });
+    ui.add_space(8.0);
+}
+
 pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
+    if ve.tool == vectoredit::VTool::Width {
+        width_point(app, ui, doc, ve);
+        return;
+    }
     let Some(net) = vectoredit::network(doc, ve.id) else { return };
     let pts = vectoredit::selected_points(net, ve);
     widgets::section_header(ui, if pts.len() > 1 { "Points" } else { "Point" }, &[], false);

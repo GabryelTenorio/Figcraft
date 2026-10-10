@@ -40,31 +40,6 @@ const FEATURES: [(&str, &str, bool); 12] = [
 
 const MIXED: &str = "Mixed";
 
-/// Horizontal space a dropdown takes besides its label (padding and chevron).
-const DROPDOWN_CHROME: f32 = 30.0;
-
-/// A dropdown whose label stays on one line: long names (variable font styles like "SemiBold
-/// SemiCondensed") end with an ellipsis and show in full on hover.
-fn elided_dropdown(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
-    let shown = elide(ui, label, width - DROPDOWN_CHROME);
-    let resp = widgets::dropdown(ui, &shown, width, None);
-    if shown != label { resp.on_hover_text(label) } else { resp }
-}
-
-/// `s` shortened with an ellipsis to fit `max_w` on one line.
-fn elide(ui: &Ui, s: &str, max_w: f32) -> String {
-    let fits = |s: &str| ui.painter().layout_no_wrap(s.to_string(), regular(11.0), Color32::WHITE).size().x <= max_w;
-    if fits(s) {
-        return s.to_string();
-    }
-    let chars: Vec<char> = s.chars().collect();
-    (1..chars.len())
-        .rev()
-        .map(|n| format!("{}…", chars.iter().take(n).collect::<String>().trim_end()))
-        .find(|c| fits(c))
-        .unwrap_or_else(|| "…".into())
-}
-
 /// The value shared by every style, or None when they differ.
 fn uniform<T: PartialEq + Clone>(styles: &[TextStyle], f: impl Fn(&TextStyle) -> T) -> Option<T> {
     let mut it = styles.iter();
@@ -132,7 +107,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     let fstyle = uniform(&styles, |s| s.font_style.clone());
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
-        let resp = elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
+        let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
         egui::Popup::menu(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
                 remember_family(ui.ctx(), &f);
@@ -145,7 +120,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     // Style + size.
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     row(ui, 32.0, |ui| {
-        let resp = elided_dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half);
+        let resp = widgets::elided_dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half);
         let fam = family.clone();
         egui::Popup::menu(&resp).width(200.0).show(|ui| match &fam {
             Some(fam) => {

@@ -48,6 +48,8 @@ mod perf_tests;
 #[cfg(test)]
 mod present_tests;
 #[cfg(test)]
+mod present_view_tests;
+#[cfg(test)]
 mod titlebar_tests;
 
 use std::collections::BTreeSet;
@@ -146,6 +148,9 @@ pub struct UiState {
     pub icon_gallery: bool,
     pub toast: Option<(String, f64)>,
     pub present: Option<present::Presenter>,
+    /// The full-window presenter's options (how it sizes the prototype), kept between
+    /// presentations.
+    pub present_view: present::PresentView,
     /// The prototype preview pane floating over the canvas, when open.
     pub preview: Option<present::Pane>,
     pub picker: Option<colorpicker::PickerTarget>,
@@ -214,6 +219,7 @@ impl Default for UiState {
             icon_gallery: false,
             toast: None,
             present: None,
+            present_view: present::PresentView::default(),
             preview: None,
             picker: None,
             context_menu: None,
@@ -322,7 +328,22 @@ impl FigApp {
                 "dialog.colorProfile" => self.ui.color_profile = self.session.doc().ok().map(|d| d.color_profile),
                 "present" => {
                     if let Some(start) = r.data.get("start").and_then(figcraft_engine::params::id_of) {
-                        self.ui.present = Some(present::Presenter::new(start));
+                        let mut p = present::Presenter::new(start);
+                        p.view = self.ui.present_view;
+                        self.ui.present = Some(p);
+                    }
+                }
+                "present.options" => {
+                    let v = &mut self.ui.present_view;
+                    if let Some(s) = r.data.get("scale").and_then(|s| s.as_str()).and_then(present::PresentScale::parse) {
+                        v.scale = s;
+                    }
+                    if let Some(f) = r.data.get("deviceFrame").and_then(|f| f.as_bool()) {
+                        v.device_frame = f;
+                    }
+                    if let Some(p) = self.ui.present.as_mut() {
+                        p.view.device_frame = v.device_frame;
+                        p.set_scale(v.scale);
                     }
                 }
                 "preview" => {
@@ -539,6 +560,7 @@ impl FigApp {
             "dark": self.ui.dark,
             "presenting": self.ui.present.is_some(),
             "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
+            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame},
             "preview": self.ui.preview.as_ref().map(|p| p.player.inspect()),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),

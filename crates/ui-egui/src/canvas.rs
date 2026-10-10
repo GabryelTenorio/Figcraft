@@ -639,7 +639,12 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     if let Some(ve) = ds.vector_edit.clone()
         && let Some(o) = figcraft_engine::vectoredit::overlay(&doc, &ve)
     {
-        vector_overlay(app, painter, &o);
+        // The Variable width tool shows width points in place of the path's points.
+        let width_tool = ve.tool == figcraft_engine::vectoredit::VTool::Width;
+        vector_overlay(app, painter, &o, !width_tool);
+        if width_tool {
+            width_overlay(app, painter, &doc, &ve, zoom);
+        }
     }
     // Selection.
     let editing = ds.text_edit.clone();
@@ -805,9 +810,42 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
     }
 }
 
-/// Vector edit mode: the network's segments, handles and points, the hovered part, the closed
-/// area under the paint bucket and the pen's rubber band.
-fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::vectoredit::EditOverlay) {
+/// Variable width tool: each width point on the path with a bar across the stroke to its two
+/// width handles (the selected point filled), and a faint preview where a drag would add one.
+fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &figcraft_engine::vectoredit::VectorEdit, zoom: f64) {
+    use figcraft_engine::vectoredit::{WHit, width_handles, width_preview};
+    let hover = app.session.tool.overlay.width_hover;
+    let sp = |p: &[f64; 2]| app.to_screen(p[0], p[1]);
+    let draw = |h: &figcraft_engine::vectoredit::WidthHandle, ghost: bool| {
+        let (c, a, b) = (sp(&h.at), sp(&h.sides[0]), sp(&h.sides[1]));
+        let col = if ghost { ACCENT.gamma_multiply(0.5) } else { ACCENT };
+        painter.line_segment([a, b], stroke(Color32::from_white_alpha(160), 3.0));
+        painter.line_segment([a, b], stroke(col, 1.0));
+        let grab = !ghost && hover == Some(WHit::Handle { index: h.index });
+        for e in [a, b] {
+            let r = if grab { 4.5 } else { 3.5 };
+            painter.circle_filled(e, r, Color32::WHITE);
+            painter.circle_stroke(e, r, stroke(col, 1.0));
+        }
+        let on = !ghost && ve.width_point == Some(h.index);
+        let hovered = !ghost && hover == Some(WHit::Point { index: h.index });
+        let r = if hovered { 5.0 } else { 4.0 };
+        painter.circle_filled(c, r, if on { ACCENT } else { Color32::WHITE });
+        painter.circle_stroke(c, r, stroke(col, 1.0));
+    };
+    for h in width_handles(doc, ve, zoom) {
+        draw(&h, false);
+    }
+    if let Some(WHit::Path { t }) = hover {
+        for h in width_preview(doc, ve, t, zoom) {
+            draw(&h, true);
+        }
+    }
+}
+
+/// Vector edit mode: the network's segments, handles and points (`points`), the hovered part, the
+/// closed area under the paint bucket and the pen's rubber band.
+fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::vectoredit::EditOverlay, points: bool) {
     use figcraft_engine::vectoredit::VHit;
     let ov = &app.session.tool.overlay;
     let sp = |p: &[f64; 2]| app.to_screen(p[0], p[1]);
@@ -830,6 +868,9 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
             1.5
         };
         painter.add(egui::epaint::CubicBezierShape::from_points_stroke([a, b, c, d], false, Color32::TRANSPARENT, stroke(ACCENT, w)));
+    }
+    if !points {
+        return;
     }
     for h in &o.handles {
         let (v, e) = (sp(&h.vertex), sp(&h.handle));

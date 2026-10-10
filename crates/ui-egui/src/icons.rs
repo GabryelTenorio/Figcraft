@@ -139,6 +139,8 @@ icons! {
     Variable,
     Clock,
     Eraser,
+    /// Variable width: a stroke swelling in the middle with a width handle above and below.
+    VariableWidth,
     /// Shape builder: merge regions (and the tool).
     ShapeBuilder,
     /// Shape builder: remove regions.
@@ -875,6 +877,19 @@ fn draw(p: &P, icon: Icon) {
             p.poly(&[(2.5, 10.0), (9.5, 3.0), (13.5, 7.0), (7.0, 13.5), (6.0, 13.5)], true);
             p.line(5.5, 7.0, 9.5, 11.0);
             p.line(7.0, 13.5, 14.0, 13.5);
+        }
+        VariableWidth => {
+            // A lens-shaped stroke, thin at both ends, and a width handle on either side of its
+            // widest point.
+            let edge = |i: i32, side: f32| {
+                let f = i as f32 / 12.0;
+                (2.0 + 11.0 * f, 7.5 + side * 3.0 * (PI * f).sin())
+            };
+            let lens: Vec<(f32, f32)> = (0..=12).map(|i| edge(i, -1.0)).chain((0..=12).rev().map(|i| edge(i, 1.0))).collect();
+            p.fill(&lens);
+            p.line(7.5, 2.0, 7.5, 13.0);
+            p.dot(7.5, 2.0, 1.5);
+            p.dot(7.5, 13.0, 1.5);
         }
         Variable => {
             // A hexagon with a dot: an original mark for "bind a value".

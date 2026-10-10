@@ -92,7 +92,7 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
         return Arc::new(figcraft_pathops::rect_side_strokes(n.width, n.height, sides, props.align));
     }
     // Rect/ellipse inside/outside strokes without booleans: an even-odd ring of two outlines.
-    if props.dashes.is_empty() && closed && props.align != StrokeAlign::Center {
+    if props.dashes.is_empty() && props.profile().is_none() && closed && props.align != StrokeAlign::Center {
         let w = props.weight;
         let ring = |inset: f64| -> Option<BezPath> {
             let (x0, y0, ww, hh) = (inset, inset, n.width - 2.0 * inset, n.height - 2.0 * inset);
@@ -136,6 +136,10 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
         .hash(&mut h);
     for d in &props.dashes {
         d.to_bits().hash(&mut h);
+    }
+    props.dashes.len().hash(&mut h);
+    for p in props.profile().map(|p| p.points.as_slice()).unwrap_or_default() {
+        (p.t.to_bits(), p.scale.to_bits()).hash(&mut h);
     }
     let key = h.finish();
     if let Some(p) = stroke_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
