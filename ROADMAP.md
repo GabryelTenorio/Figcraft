@@ -224,7 +224,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
-| Styles & variables | 5 | 84% | bindings that follow effects when they are reordered, grid and component property bindings | 1–2 |
+| Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
 | Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |

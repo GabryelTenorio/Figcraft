@@ -881,6 +881,8 @@ mod al_nesting_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
+mod binding_lists_tests;
+#[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
 mod effects_tests;
