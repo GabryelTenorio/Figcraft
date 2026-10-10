@@ -12,7 +12,7 @@
 use egui::{Id, Sense, Ui, vec2};
 use figcraft_doc::*;
 use figcraft_engine::components::{
-    inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
+    PROP_BINDING, inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
 };
 use serde_json::{Value, json};
 
@@ -56,44 +56,10 @@ pub fn instance_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
 
 /// A component's description: a multi-line field, saved when it loses focus.
 fn description_ui(app: &mut FigApp, ui: &mut Ui, id: NodeId, description: &str) {
-    let t = Tokens::get(ui.ctx());
     widgets::separator(ui);
     widgets::sublabels(ui, "Description", None);
-    let buf_id = Id::new(("comp_desc", id));
-    // The draft lives only while the field has focus; otherwise it shows the stored text.
-    let focused = ui.memory(|m| m.has_focus(buf_id.with("te")));
-    let mut text: String = if focused { ui.data(|d| d.get_temp(buf_id)).unwrap_or_else(|| description.to_string()) } else { description.to_string() };
-    let mut done = None;
-    ui.horizontal(|ui| {
-        ui.add_space(crate::widgets::PAD);
-        let w = ui.available_width() - crate::widgets::PAD;
-        let r = egui::Frame::NONE.fill(t.field).corner_radius(egui::CornerRadius::same(5)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut text)
-                    .id(buf_id.with("te"))
-                    .frame(egui::Frame::NONE)
-                    .font(crate::theme::regular(11.0))
-                    .hint_text("Describe how and when to use this component")
-                    .desired_rows(3)
-                    .desired_width(w - 12.0),
-            )
-        });
-        if r.inner.lost_focus() {
-            done = Some(text.clone());
-        }
-    });
-    match done {
-        Some(new) => {
-            ui.data_mut(|d| d.remove::<String>(buf_id));
-            if new != description {
-                app.run("node.set", json!({"id": id, "props": {"description": new.chars().take(10_000).collect::<String>()}}));
-            }
-        }
-        None => {
-            if ui.memory(|m| m.has_focus(buf_id.with("te"))) {
-                ui.data_mut(|d| d.insert_temp(buf_id, text));
-            }
-        }
+    if let Some(new) = widgets::multiline_field(ui, Id::new(("comp_desc", id)), description, "Describe how and when to use this component", 3) {
+        app.run("node.set", json!({"id": id, "props": {"description": new.chars().take(10_000).collect::<String>()}}));
     }
     ui.add_space(8.0);
 }
@@ -652,20 +618,26 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
         row(ui, 32.0, |ui| {
             prop_label(ui, &k, type_icon(&d));
             let w = ui.available_width().max(60.0);
+            // Boolean and text values can come from a boolean or string variable.
+            let bind_field = format!("{PROP_BINDING}{k}");
             match d {
                 PropDef::Boolean { .. } => {
-                    let on = v.as_bool().unwrap_or(false);
-                    if widgets::checkbox(ui, on, "") {
-                        app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): !on}}));
-                    }
+                    crate::variable_ui::bindable(app, ui, &[id], &bind_field, VariableType::Boolean, w, |app, ui| {
+                        let on = v.as_bool().unwrap_or(false);
+                        if widgets::checkbox(ui, on, "") {
+                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): !on}}));
+                        }
+                    });
                 }
                 PropDef::Text { .. } => {
-                    let cur = v.as_str().unwrap_or_default().to_string();
-                    if let Some(ns) = widgets::text_field(ui, Id::new(("iprop", id, k.as_str())), &cur, w, "")
-                        && ns != cur
-                    {
-                        app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): ns}}));
-                    }
+                    crate::variable_ui::bindable(app, ui, &[id], &bind_field, VariableType::String, w, |app, ui| {
+                        let cur = v.as_str().unwrap_or_default().to_string();
+                        if let Some(ns) = widgets::text_field(ui, Id::new(("iprop", id, k.as_str())), &cur, w, "")
+                            && ns != cur
+                        {
+                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): ns}}));
+                        }
+                    });
                 }
                 PropDef::InstanceSwap { .. } => {
                     let cur = figcraft_engine::params::id_of(&v);

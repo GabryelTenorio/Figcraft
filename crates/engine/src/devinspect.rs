@@ -63,8 +63,67 @@ pub fn assets(doc: &Document, ids: &[NodeId]) -> Vec<Asset> {
     out
 }
 
+/// A frame or section with a handoff status, for Dev Mode's list of what's ready.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DevItem {
+    pub id: NodeId,
+    pub name: String,
+    pub page: NodeId,
+    pub status: DevStatus,
+}
+
+/// Most items listed.
+const MAX_DEV_ITEMS: usize = 500;
+
+/// The layers with handoff status `status` (`None`: any status) on `page` (`None`: every page),
+/// in page and layer order (bounded).
+pub fn dev_items(doc: &Document, status: Option<DevStatus>, page: Option<NodeId>) -> Vec<DevItem> {
+    let mut out = Vec::new();
+    let mut visited = 0usize;
+    for pg in doc.pages.iter().copied().filter(|pg| page.is_none_or(|p| p == *pg)) {
+        let mut stack = vec![pg];
+        while let Some(id) = stack.pop() {
+            visited += 1;
+            if out.len() >= MAX_DEV_ITEMS || visited > 200_000 {
+                return out;
+            }
+            let Some(n) = doc.node(id) else { continue };
+            if !n.dev_status.is_none() && status.is_none_or(|s| s == n.dev_status) {
+                out.push(DevItem { id, name: n.name.clone(), page: pg, status: n.dev_status });
+            }
+            stack.extend(n.children.iter().rev().copied());
+        }
+    }
+    out
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        spec!(
+            "inspect.readyForDev",
+            "Ready for dev",
+            "{status?: readyForDev|completed|any (default readyForDev), page? (page id; default every page)} → {items: [{id, name, page, status}]}  frames and sections by handoff status (set it with `node.set {devStatus}`)",
+            false,
+            |s, p| {
+                let cmd = "inspect.readyForDev";
+                let status = match string(p, "status").as_deref() {
+                    None => Some(DevStatus::ReadyForDev),
+                    Some(v) if v.eq_ignore_ascii_case("any") || v.eq_ignore_ascii_case("all") => None,
+                    Some(v) => Some(
+                        DevStatus::ALL
+                            .into_iter()
+                            .find(|d| !d.is_none() && d.id().eq_ignore_ascii_case(v))
+                            .ok_or_else(|| crate::bad(cmd, "status: readyForDev|completed|any"))?,
+                    ),
+                };
+                let doc = s.doc()?;
+                let page = match get(p, "page") {
+                    Some(v) => Some(id_of(v).filter(|pg| doc.pages.contains(pg)).ok_or_else(|| crate::bad(cmd, "page: a page id"))?),
+                    None => None,
+                };
+                Ok(json!({"items": serde_json::to_value(dev_items(doc, status, page)).unwrap_or(Value::Null)}))
+            }
+        ),
         spec!(
             "inspect.assets",
             "Inspect assets",
@@ -123,9 +182,21 @@ impl Prop {
     }
 }
 
+/// The variable bound to property `field` of `n` ("fill" and "stroke" also find bindings stored
+/// under their list forms, like "fills/0/color").
+pub fn bound_variable<'d>(doc: &'d Document, n: &Node, field: &str) -> Option<&'d Variable> {
+    let forms: &[&str] = match field {
+        "fill" => &["fill", "fills", "fills/0", "fills/0/color"],
+        "stroke" => &["stroke", "strokes/0/color"],
+        _ => &[],
+    };
+    let found = if forms.is_empty() { n.bound.get(field) } else { forms.iter().find_map(|k| n.bound.get(*k)) };
+    found.and_then(|v| doc.variables.get(v))
+}
+
 /// The variable bound to `field` on `n`, by name.
 fn variable(doc: &Document, n: &Node, field: &str) -> Option<String> {
-    n.bound.get(field).and_then(|v| doc.variables.get(v)).map(|v| v.name.clone())
+    bound_variable(doc, n, field).map(|v| v.name.clone())
 }
 
 fn style_name(doc: &Document, id: Option<&StyleId>) -> Option<String> {
@@ -142,42 +213,29 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
     if let Some(t) = n.kind.text() {
         out.push(typography(doc, n, t));
     }
-    let paint_rows = |paints: &[figcraft_color::Paint]| -> Vec<Prop> {
-        paints
+    // Each paint's row names the variable bound to its colour; a style names the first row.
+    let paint_rows = |fills: bool, style: Option<&StyleId>| -> Vec<Prop> {
+        let paints = if fills { &n.fills } else { &n.strokes };
+        let rows: Vec<Prop> = paints
             .iter()
-            .filter(|p| p.visible)
-            .map(|p| match &p.kind {
-                PaintKind::Solid { color } => {
-                    let c = color.with_alpha(color.a * p.opacity);
-                    prop("Solid", color_text(c)).color(c)
-                }
-                PaintKind::Gradient(g) => {
-                    let kind = match g.kind {
-                        GradientKind::Linear => "Linear",
-                        GradientKind::Radial => "Radial",
-                        GradientKind::Angular => "Angular",
-                        GradientKind::Diamond => "Diamond",
-                    };
-                    let stops: Vec<String> = g.stops.iter().map(|s| format!("#{} {}%", s.color.to_hex(), (s.position * 100.0).round())).collect();
-                    let r = prop(kind, stops.join(", "));
-                    match g.stops.first() {
-                        Some(s) => r.color(s.color),
-                        None => r,
-                    }
-                }
-                PaintKind::Image(_) => prop("Image", format!("{}%", (p.opacity * 100.0).round())),
+            .enumerate()
+            .filter(|(_, p)| p.visible)
+            .map(|(i, p)| {
+                let token = crate::cmd::lists::paint_binding_key(n, fills, i).and_then(|k| variable(doc, n, k));
+                paint_row(p).token(token)
             })
-            .collect()
+            .collect();
+        match style_name(doc, style) {
+            Some(name) => tag_first(rows, Some(name)),
+            None => rows,
+        }
     };
-    let fills = paint_rows(&n.fills);
+    let fills = paint_rows(true, n.styles.fill.as_ref());
     if !fills.is_empty() {
-        let token = style_name(doc, n.styles.fill.as_ref()).or_else(|| variable(doc, n, "fill"));
-        out.push(Section { title: "Fills", rows: tag_first(fills, token) });
+        out.push(Section { title: "Fills", rows: fills });
     }
-    let mut strokes = paint_rows(&n.strokes);
+    let mut strokes = paint_rows(false, n.styles.stroke.as_ref());
     if !strokes.is_empty() {
-        let token = style_name(doc, n.styles.stroke.as_ref()).or_else(|| variable(doc, n, "stroke"));
-        strokes = tag_first(strokes, token);
         let align = match n.stroke.align {
             StrokeAlign::Inside => "inside",
             StrokeAlign::Center => "center",
@@ -235,6 +293,31 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
 }
 
 /// A style or variable applies to the whole list: show it on the first row.
+/// One paint's row: its kind and colour (or stops, or opacity for images).
+fn paint_row(p: &figcraft_color::Paint) -> Prop {
+    match &p.kind {
+        PaintKind::Solid { color } => {
+            let c = color.with_alpha(color.a * p.opacity);
+            prop("Solid", color_text(c)).color(c)
+        }
+        PaintKind::Gradient(g) => {
+            let kind = match g.kind {
+                GradientKind::Linear => "Linear",
+                GradientKind::Radial => "Radial",
+                GradientKind::Angular => "Angular",
+                GradientKind::Diamond => "Diamond",
+            };
+            let stops: Vec<String> = g.stops.iter().map(|s| format!("#{} {}%", s.color.to_hex(), (s.position * 100.0).round())).collect();
+            let r = prop(kind, stops.join(", "));
+            match g.stops.first() {
+                Some(s) => r.color(s.color),
+                None => r,
+            }
+        }
+        PaintKind::Image(_) => prop("Image", format!("{}%", (p.opacity * 100.0).round())),
+    }
+}
+
 fn tag_first(mut rows: Vec<Prop>, token: Option<String>) -> Vec<Prop> {
     if let Some(first) = rows.first_mut() {
         first.token = token;

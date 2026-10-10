@@ -9,6 +9,7 @@ pub mod file;
 pub mod image;
 pub mod layout;
 pub mod library;
+pub mod lists;
 pub mod page;
 pub mod props;
 pub mod proto;
@@ -68,6 +69,7 @@ fn registry() -> &'static Registry {
         let mut list = Vec::new();
         list.extend(create::specs());
         list.extend(edit::specs());
+        list.extend(lists::specs());
         list.extend(arrange::specs());
         list.extend(structure::specs());
         list.extend(section::specs());
@@ -88,6 +90,8 @@ fn registry() -> &'static Registry {
         list.extend(crate::shapebuilder::specs());
         list.extend(crate::codegen::specs());
         list.extend(crate::devinspect::specs());
+        list.extend(crate::component_codegen::specs());
+        list.extend(crate::annotations::specs());
         list.extend(crate::distance::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {

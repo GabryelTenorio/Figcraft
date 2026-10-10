@@ -8,9 +8,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod al_keys;
+pub mod annotations;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
+pub mod component_codegen;
 pub mod components;
 pub mod devinspect;
 pub mod distance;
@@ -942,11 +944,15 @@ mod al_keys_tests;
 #[cfg(test)]
 mod al_nesting_tests;
 #[cfg(test)]
+mod annotations_tests;
+#[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
 mod comments_polish_tests;
+#[cfg(test)]
+mod component_codegen_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
@@ -967,6 +973,8 @@ mod mask_tests;
 mod measure_tests;
 #[cfg(test)]
 mod nested_override_tests;
+#[cfg(test)]
+mod paint_reorder_tests;
 #[cfg(test)]
 mod paint_tests;
 #[cfg(test)]

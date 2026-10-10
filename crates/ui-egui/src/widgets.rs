@@ -304,6 +304,40 @@ pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &st
     text_field_in(ui, id, value, rect, placeholder)
 }
 
+/// A multi-line text field across the panel (descriptions, notes) that commits when it loses
+/// focus: returns the new text then, when it changed. The draft lives only while it has focus.
+pub fn multiline_field(ui: &mut Ui, id: Id, value: &str, hint: &str, rows: usize) -> Option<String> {
+    let t = Tokens::get(ui.ctx());
+    let te = id.with("te");
+    let focused = ui.memory(|m| m.has_focus(te));
+    let mut text: String = if focused { ui.data(|d| d.get_temp(id)).unwrap_or_else(|| value.to_string()) } else { value.to_string() };
+    let mut done = false;
+    ui.horizontal(|ui| {
+        ui.add_space(PAD);
+        let w = ui.available_width() - PAD;
+        let r = egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(5)).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .id(te)
+                    .frame(egui::Frame::NONE)
+                    .font(regular(11.0))
+                    .hint_text(hint)
+                    .desired_rows(rows)
+                    .desired_width(w - 12.0),
+            )
+        });
+        done = r.inner.lost_focus();
+    });
+    if done {
+        ui.data_mut(|d| d.remove::<String>(id));
+        return (text != value).then_some(text);
+    }
+    if ui.memory(|m| m.has_focus(te)) {
+        ui.data_mut(|d| d.insert_temp(id, text));
+    }
+    None
+}
+
 /// An editable field with a menu of `options` behind the chevron at its right (export sizes…).
 /// Returns the typed text (on Enter / focus loss) or the option picked.
 pub fn combo_field(ui: &mut Ui, id: Id, value: &str, width: f32, options: &[String]) -> Option<String> {
@@ -487,6 +521,23 @@ pub fn section_header(ui: &mut Ui, title: &str, buttons: &[(Icon, &str)], dim: b
         x -= 24.0;
     }
     out
+}
+
+/// Where a dragged row will land: an accent line across `x0..x1` at `y`.
+pub fn insertion_line(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
+    painter.line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(2.0, crate::theme::ACCENT));
+}
+
+/// What a drag carries, following the pointer at `at`: `galley` in a small outlined box above
+/// everything else, with the grabbing hand.
+pub fn drag_ghost(ctx: &egui::Context, at: egui::Pos2, galley: std::sync::Arc<egui::Galley>) {
+    let t = Tokens::get(ctx);
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("drag_ghost")));
+    let r = Rect::from_min_size(at + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
+    painter.rect_filled(r, CornerRadius::same(5), t.panel);
+    painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
+    painter.galley(r.min + vec2(8.0, 4.0), galley, t.text);
 }
 
 pub fn separator(ui: &mut Ui) {

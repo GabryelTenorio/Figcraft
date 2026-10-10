@@ -215,37 +215,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("effect.remove", "Remove effect", "{ids?, index}", true, |s, p| {
             let i = req_index("effect.remove", p, "index")?;
             for id in req_targets("effect.remove", s, p)? {
-                let n = s.doc_mut()?.get_mut(id)?;
-                if i < n.effects.len() {
-                    n.effects.remove(i);
-                    // Its bindings go with it; later effects' move down one.
-                    super::styles::remap_effect_bindings(n, |k| match k.cmp(&i) {
-                        std::cmp::Ordering::Less => Some(k),
-                        std::cmp::Ordering::Equal => None,
-                        std::cmp::Ordering::Greater => Some(k - 1),
-                    });
-                }
-            }
-            ok()
-        }),
-        spec!("effect.move", "Move effect", "{ids?, from, to} (indices in the effect list, bottom first)", true, |s, p| {
-            let from = req_index("effect.move", p, "from")?;
-            let to = req_index("effect.move", p, "to")?;
-            for id in req_targets("effect.move", s, p)? {
-                let n = s.doc_mut()?.get_mut(id)?;
-                if from >= n.effects.len() || to >= n.effects.len() || from == to {
-                    continue;
-                }
-                let e = n.effects.remove(from);
-                n.effects.insert(to, e);
-                // Bindings follow their effects.
-                super::styles::remap_effect_bindings(n, |k| {
-                    if k == from {
-                        return Some(to);
-                    }
-                    let k = if k > from { k - 1 } else { k };
-                    Some(if k >= to { k + 1 } else { k })
-                });
+                // Its bindings go with it; later effects' move down one.
+                super::lists::remove_item(s.doc_mut()?.get_mut(id)?, super::lists::BoundList::Effects, i);
             }
             ok()
         }),
@@ -268,12 +239,9 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         spec!("grid.remove", "Remove layout grid", "{ids?, index}", true, |s, p| {
-            let i = req_num("grid.remove", p, "index")? as usize;
+            let i = req_index("grid.remove", p, "index")?;
             for id in req_targets("grid.remove", s, p)? {
-                let n = s.doc_mut()?.get_mut(id)?;
-                if i < n.grids.len() {
-                    n.grids.remove(i);
-                }
+                super::lists::remove_item(s.doc_mut()?.get_mut(id)?, super::lists::BoundList::Grids, i);
             }
             ok()
         }),
@@ -980,6 +948,7 @@ fn reparent(s: &mut Session, p: &Value) -> Result<Value> {
 fn paint_list(s: &mut Session, p: &Value, fills: bool, add: bool) -> Result<Value> {
     let cmd = if fills { "fill" } else { "stroke" };
     let ids = req_targets(cmd, s, p)?;
+    let index = if add || get(p, "index").is_none() { None } else { Some(req_index(cmd, p, "index")?) };
     let doc = s.doc_mut()?;
     for i in ids {
         let n = doc.get_mut(i)?;
@@ -994,17 +963,9 @@ fn paint_list(s: &mut Session, p: &Value, fills: bool, add: bool) -> Result<Valu
             };
             list.push(paint);
         } else {
-            let idx = num(p, "index").map(|x| x as usize).unwrap_or(list.len().saturating_sub(1));
-            if idx < list.len() {
-                list.remove(idx);
-                // A binding on the first paint's colour belongs to the paint just removed.
-                if idx == 0 {
-                    let keys: &[&str] = if fills { &["fill", "fills", "fills/0", "fills/0/color"] } else { &["stroke", "strokes/0/color"] };
-                    for k in keys {
-                        n.bound.remove(*k);
-                    }
-                }
-            }
+            let idx = index.unwrap_or(list.len().saturating_sub(1));
+            // The paint's colour binding goes with it; later paints' move down one.
+            super::lists::remove_item(n, if fills { super::lists::BoundList::Fills } else { super::lists::BoundList::Strokes }, idx);
         }
     }
     ok()

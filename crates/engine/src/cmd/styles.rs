@@ -147,7 +147,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…), variable (null unbinds)}",
+            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|effects/<i>/<offsetX|offsetY|radius|spread|color>|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
             true,
             bind
         ),
@@ -513,6 +513,12 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(doc.variables.get(v).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such variable"))?),
         None => None,
     };
+    // An instance's component property takes a variable of its type.
+    if let (Some(name), Some(v)) = (field.strip_prefix(crate::components::PROP_BINDING), vid.as_ref().and_then(|v| doc.variables.get(v))) {
+        for i in &ids {
+            super::component::check_prop_binding(doc, *i, name, v.kind).map_err(|e| bad(cmd, e))?;
+        }
+    }
     for i in ids {
         let n = doc.get_mut(i)?;
         match &vid {
@@ -645,6 +651,7 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Write bound variable values into nodes (called during normalisation).
 pub fn apply_bindings(doc: &mut Document) {
+    use super::lists::{BoundList, list_binding};
     if doc.variables.variables.is_empty() {
         return;
     }
@@ -655,24 +662,26 @@ pub fn apply_bindings(doc: &mut Document) {
         let binds = n.bound.clone();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
-        let mut paint_sets: Vec<(bool, Color)> = Vec::new();
+        let mut paint_sets: Vec<(bool, usize, Color)> = Vec::new();
+        let mut grid_sets: Vec<(usize, String, f64)> = Vec::new();
+        let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
         for (field, var) in binds {
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
-            // The first fill's or stroke's colour (the rest of the list stays).
-            let paint = match field.as_str() {
-                "fill" | "fills" | "fills/0" | "fills/0/color" => Some(true),
-                "stroke" | "strokes/0/color" => Some(false),
-                _ => None,
-            };
-            if let (Some(fills), VariableValue::Color(c)) = (paint, &val) {
-                paint_sets.push((fills, *c));
+            // One list item's value: a paint's colour, an effect's or a layout grid's field.
+            if let Some((list, i, prop)) = list_binding(&field) {
+                match (list, &val) {
+                    (BoundList::Fills | BoundList::Strokes, VariableValue::Color(c)) if prop == "color" => {
+                        paint_sets.push((list == BoundList::Fills, i, *c));
+                    }
+                    (BoundList::Effects, _) => effect_sets.push((i, prop.to_string(), val)),
+                    (BoundList::Grids, VariableValue::Number(x)) => grid_sets.push((i, prop.to_string(), *x)),
+                    _ => {}
+                }
                 continue;
             }
-            // `effects/<index>/<offsetX|offsetY|radius|spread|color>`: one effect's value.
-            if let Some((i, prop)) = field.strip_prefix("effects/").and_then(|r| r.split_once('/'))
-                && let Ok(i) = i.parse::<usize>()
-            {
-                effect_sets.push((i, prop.to_string(), val));
+            // `componentProperties/<name>`: an instance's boolean or text property value.
+            if let Some(name) = field.strip_prefix(crate::components::PROP_BINDING) {
+                prop_sets.push((name.to_string(), val));
                 continue;
             }
             let jv = match &val {
@@ -684,34 +693,38 @@ pub fn apply_bindings(doc: &mut Document) {
                 VariableValue::Boolean(b) => json!(b),
                 VariableValue::Alias(_) => continue,
             };
-            let key = match field.as_str() {
-                "fill" | "fills" | "fills/0" | "fills/0/color" => "fill",
-                "stroke" | "strokes/0/color" => "stroke",
-                other => other,
-            };
-            sets.insert(key.to_string(), jv);
+            sets.insert(field, jv);
         }
-        let _ = super::props::apply("variables", doc, id, &sets);
+        if !sets.is_empty() {
+            let _ = super::props::apply("variables", doc, id, &sets);
+        }
         if !paint_sets.is_empty() {
             apply_paint_bindings(doc, id, &paint_sets);
         }
         if !effect_sets.is_empty() {
             apply_effect_bindings(doc, id, &effect_sets);
         }
+        if !grid_sets.is_empty() {
+            super::lists::apply_grid_bindings(doc, id, &grid_sets);
+        }
+        if !prop_sets.is_empty() {
+            super::component::apply_prop_bindings(doc, id, &prop_sets);
+        }
     }
 }
 
-/// Write bound colours into a node's first fill (`true`) or stroke, keeping the rest of the list and
-/// the paint's opacity, visibility and blend mode (only what changed, so unchanged layers stay
-/// shared).
-fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, Color)]) {
+/// Write bound colours into a node's fills (`true`) or strokes by index, keeping the rest of the
+/// list and each paint's opacity, visibility and blend mode (only what changed, so unchanged layers
+/// stay shared). A first-paint binding on an empty list adds the paint.
+fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Color)]) {
     let Some(n) = doc.node(id) else { return };
     let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
-    for (is_fill, c) in sets {
+    for (is_fill, i, c) in sets {
         let list = if *is_fill { &mut fills } else { &mut strokes };
-        match list.first_mut() {
+        match list.get_mut(*i) {
             Some(p) => p.kind = PaintKind::Solid { color: *c },
-            None => list.push(Paint::solid(*c)),
+            None if *i == 0 => list.push(Paint::solid(*c)),
+            None => {}
         }
     }
     if doc.node(id).is_some_and(|n| n.fills != fills || n.strokes != strokes)
@@ -720,29 +733,6 @@ fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, Color)]) 
         n.fills = fills;
         n.strokes = strokes;
     }
-}
-
-/// Keep a node's bindings on its effects' fields (`effects/<index>/<field>`) with their effects
-/// when the list changes: `map` gives an effect's new index, or None when it was removed.
-pub(crate) fn remap_effect_bindings(n: &mut Node, map: impl Fn(usize) -> Option<usize>) {
-    let moved: Vec<(String, Option<String>)> = n
-        .bound
-        .keys()
-        .filter_map(|k| {
-            let (i, field) = k.strip_prefix("effects/")?.split_once('/')?;
-            let i = i.parse::<usize>().ok()?;
-            Some((k.clone(), map(i).map(|j| format!("effects/{j}/{field}"))))
-        })
-        .collect();
-    let mut kept = Vec::new();
-    for (old, new) in moved {
-        if let Some(var) = n.bound.remove(&old)
-            && let Some(new) = new
-        {
-            kept.push((new, var));
-        }
-    }
-    n.bound.extend(kept);
 }
 
 /// Write bound values into a node's effects (only what changed, so unchanged layers stay shared).

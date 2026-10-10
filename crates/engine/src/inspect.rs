@@ -127,6 +127,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if !n.exports.is_empty() {
             o.insert("exports".into(), serde_json::to_value(&n.exports).unwrap_or(Value::Null));
         }
+        if !n.annotations.is_empty() {
+            o.insert("annotations".into(), serde_json::to_value(&n.annotations).unwrap_or(Value::Null));
+        }
         if !n.interactions.is_empty() {
             o.insert("interactions".into(), serde_json::to_value(&n.interactions).unwrap_or(Value::Null));
         }

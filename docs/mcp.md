@@ -126,7 +126,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, SwiftUI or Jetpack Compose for a layer), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
@@ -405,6 +405,70 @@ closing or saving a version ends the preview first, and `version.list` marks the
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
+
+### Dev Mode
+
+- **Component code:** `inspect.code {id, language: react|swiftui|compose}` on a component, a
+  component set or a variant writes the component as a reusable unit: React (TSX) with a props
+  interface, SwiftUI with a `View` struct, Compose with a `@Composable` function. Its component
+  properties are the parameters, with their defaults: variant properties become string unions
+  (React) or enums, booleans become flags around the layers they show, text properties strings,
+  instance swaps views (`React.ReactNode`, `AnyView`, a composable lambda) and slots optional
+  content. Every variant of a set shares one definition; in React the other variants' differences
+  become CSS rules on `data-*` attributes. On an instance (or a layer tree containing instances)
+  each instance is a call passing only the values it changes, e.g. `<Button state="Hover"
+  label="Buy" />`, `Button(state: .hover, label: "Buy")`, `Button(state = ButtonState.Hover, label =
+  "Buy")`. Names are escaped and unique (keywords get a suffix, `default` → `defaultValue`; names
+  that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
+  {id?, language?}` returns the parts: `{component, name, set, properties: [{name, param, type,
+  default, value? (instances)}], definition, usage? (instances)}`.
+- **Annotations:** notes for developers on any layer, each with optional pinned properties that
+  Dev Mode shows with their current values (and the style or variable behind them).
+  `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,
+  index}`), `annotation.edit {id?, index, label?, properties?}` (`properties` replaces the list),
+  `annotation.remove {id?, index?}` (no index: all of the layer's), all undoable, and
+  `annotation.list {ids? | id? | page? ("all")}` → `{annotations: [{id, name, index, label,
+  properties: [{property, label, value, token?, color?}]}]}` (`value` is null when the layer doesn't
+  have that property). Pinnable ids: `width`, `height`, `top`, `left`, `rotation`, `opacity`,
+  `cornerRadius`, `direction`, `gap`, `padding`, `alignment`, `fontFamily`, `fontStyle`,
+  `fontSize`, `lineHeight`, `letterSpacing`, `textAlign`, `fill`, `stroke`, `strokeWeight`,
+  `effects`. A layer holds at most 64 annotations; notes are capped at 5,000 characters. They are
+  saved with the file (`get_node` lists them as `annotations`); instances don't inherit their
+  main's annotations and keep their own across main edits. In the app the Inspect tab draws them
+  as callouts beside their layers and edits them in its Annotations section.
+- **Ready for dev:** frames at the top of a page or section, and sections, carry a handoff status
+  (`node.set {devStatus: none|readyForDev|completed}`). `inspect.readyForDev {status?:
+  readyForDev|completed|any, page?}` lists them across pages (or on one page) in page and layer
+  order: `{items: [{id, name, page, status}]}`. The Inspect tab sets the status of the selected
+  frames and, with nothing selected, lists them with a status filter (click one to go to it).
+
+### Paint, effect and layout grid lists
+
+A layer's fills, strokes, effects and layout grids are lists kept **bottom first**: index 0 paints
+first, the last one is on top (the Design panel lists them the other way round, topmost first).
+
+- **Reorder:** `fill.move`, `stroke.move`, `effect.move` and `grid.move {ids?, from, to}` move one
+  item (one undo step for every layer given; out-of-range or equal indices change nothing, negative
+  or fractional ones are refused). The item keeps everything (an image fill its image, scale mode
+  and adjustments, a gradient its stops and handles), and a paint, effect or grid style linked to
+  the list is unlinked (the list no longer matches it). In the app, drag a row by its grip (the
+  empty strip left of its fields); a line shows where it lands.
+- **Variable bindings follow their items** when a list is reordered or an item removed
+  (`fill.remove`, `stroke.remove`, `effect.remove`, `grid.remove`); a removed item's bindings go
+  with it. Binding fields (`variable.bind {field}`): `fill` / `stroke` (the first paint's colour) or
+  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|spread|color>`,
+  `layoutGrids/<i>/<size|count|gutter|offset>` (number variables; count is kept to 1–1000, size and
+  gutter are never negative). Moving a bound paint rewrites its key (`fill` becomes `fills/2/color`).
+- **Instance properties:** `variable.bind {ids: [instance], field: "componentProperties/<name>",
+  variable}` drives a boolean property from a boolean variable and a text property from a string
+  variable (other types are refused); the value follows the variable's modes like any binding, the
+  binding follows renames of the property, and deleting the property, resetting the instance or
+  detaching it drops it. The instance's properties panel offers the same with its variable button.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"fill.move","params":{"ids":[2],"from":0,"to":2}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"variable.bind","params":{"ids":[5],"field":"layoutGrids/0/gutter","variable":"gutter"}}}}
+```
 
 ### Ruler guides
 
