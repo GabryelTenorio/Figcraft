@@ -72,6 +72,8 @@ was resized to (`responsive`: `[w, h]`, else `null`), the size option (`scale`:
 `fit|fitWidth|fill|actual`, `deviceFrame`), the `zoom` it shows at, how
 far the view is panned (`pan`, `panRange`) and whether a scroll is still coasting (`flinging`)
 (`null` when nothing plays). `presentOptions` holds the options the next presentation starts with.
+`textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
+instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 
@@ -87,19 +89,37 @@ A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `d
 ### `ui.key {key, shift?, alt?, cmd?, ctrl?}`
 
 A key as if typed on the canvas (in vector edit mode the edit keys come first: `V` `P` `Q` `X` `Shift+B` `Shift+E` `Shift+W` tools, arrows nudge points, `Delete`/`Shift+Delete`, `Cmd+A`, `Cmd+J`; with the shape builder, `Enter` finishes): a menu shortcut (`{"key":"G","cmd":true}` groups), a tool key,
-`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). While text is being
-edited, keys go to the text editor. Returns `{"command": id}` for shortcuts.
+`Escape`, `Delete`/`Backspace`, `Enter`, arrows (nudge; shift = big nudge; auto layout children move one place along the flow; with `cmd` they resize the selection). With the Comment
+tool, `ArrowUp`/`ArrowDown` open the previous/next thread of the Comments panel's list instead
+(returns `{"comment": id}`). While text is being edited, keys go to the text editor. Returns
+`{"command": id}` for shortcuts.
 
 ### `ui.type {text}`
 
 Type into the text being edited (start editing with a double-click, `text.edit.begin {id}`, or the
 text tool).
 
+### `ui.input {events}`
+
+Raw window input for the next frame, as if from the mouse and keyboard: it reaches the panels,
+popovers and fields (`ui.pointer` and `ui.key` drive the canvas tools and shortcuts instead).
+`events` is a list of `{move: [x, y]}`, `{down: [x, y], button?: "secondary"}`,
+`{up: [x, y], button?}`, `{key, shift?, alt?, cmd?}` (pressed and released; egui key names such as
+`ArrowLeft`, `Escape`, `A`), `{text}` (typed text) and `{leave: true}` (the pointer left the
+window); positions are window points. Events of one call arrive in the same frame, so send a press
+and its release (or a double-click's two clicks) as separate calls. Returns `{queued}`.
+
+```json
+{"id":6,"method":"ui.input","params":{"events":[{"move":[1000,315]}]}}
+{"id":7,"method":"ui.input","params":{"events":[{"down":[1000,315]}]}}
+{"id":8,"method":"ui.input","params":{"events":[{"up":[1000,315]}]}}
+```
+
 ### `ui.menu.invoke {id}`
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -112,14 +132,22 @@ layers tree), `exportPreview` (bool: the Design panel Export section's preview),
 frame id: open the prototype preview pane like `proto.preview`; false or `null` closes it),
 `presentScroll` (`[x, y]`: scroll the presented screen, the full window's else the pane's, clamped
 to what it can scroll), `colorProfileDialog` (`srgb|displayP3`: open File ▸ Color profile with that
-profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid`: open the style picker
-for the selection; `null` closes it) with `stylePickerEdit` (a style id or name: open its editor),
-`stylePickerView` (`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that
-interaction's editor in the Prototype panel; `null` closes it), `contextMenu` (`[sx, sy]`: right-click
-the canvas at that screen point, selecting what is under it (with `cmd: true`, the nested layer) and
-opening the context menu; `null` closes it), `contextSelectLayer` (bool: open the context menu's
-Select layer submenu, which lists every layer under the click). Returns `ui.inspect` (which reports
-`stylePicker` and `stylePickerView`).
+profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid|text`: open the style
+picker for the selection, `text` being the text style browser of the Typography section; `null`
+closes it) with `stylePickerEdit` (a style id or name: open its editor), `stylePickerView`
+(`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that interaction's editor in the
+Prototype panel; `null` closes it), `contextMenu` (`[sx, sy]`: right-click the canvas at that screen
+point, selecting what is under it (with `cmd: true`, the nested layer) and opening the context menu;
+`null` closes it), `contextSelectLayer` (bool: open the context menu's Select layer submenu, which
+lists every layer under the click). Comments: `commentOpen` (a thread id opens its popover, `null`
+closes it), `commentDraft` (`{x, y}`: start a new comment there), `commentFilter`
+(`open|resolved|mine|unread|all`: what the Comments panel and the pins show), `commentSort`
+(`date|page`), `commentSearch` (the panel's search text), `commentReply` (the open thread's reply
+text, focused with the cursor at its end: an `@` there shows the mention picker), `commentEdit` (a
+message index of the open thread to edit, 0 for the first; `null` stops), `presentComments` (bool:
+the presenter shows the presented frame's comments, also Shift+C there). Returns `ui.inspect`
+(which reports `stylePicker`, `stylePickerView`, and `comments`: `open`, `draft`, `filter`, `sort`,
+`search`, `editing` and the `mentions` the picker offers).
 
 ### `ui.screenshot {path}`
 

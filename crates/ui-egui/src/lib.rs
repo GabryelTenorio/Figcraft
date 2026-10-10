@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod assets_panel;
+pub mod bidi;
 pub mod canvas;
 pub mod colorpicker;
 pub mod comments;
@@ -14,6 +15,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod export_panel;
+pub mod font_preview;
 pub mod frame_presets;
 pub mod guides;
 pub mod handles;
@@ -43,7 +45,11 @@ pub mod versions;
 pub mod widgets;
 
 #[cfg(test)]
+mod comments_tests;
+#[cfg(test)]
 mod layers_drag_tests;
+#[cfg(test)]
+mod layers_keys_tests;
 #[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
@@ -163,6 +169,9 @@ pub struct UiState {
     pub layer_search: bool,
     pub layer_filter: String,
     pub layer_anchor: Option<NodeId>,
+    /// The layers panel has the keyboard: arrow keys move through its rows instead of nudging
+    /// (set by a click on a row, cleared by a press on the canvas).
+    pub layers_focus: bool,
     pub layers_seen_sel: Vec<NodeId>,
     pub dark: bool,
     pub follow_system: bool,
@@ -182,6 +191,11 @@ pub struct UiState {
     pub style_grid: bool,
     /// Style folders closed in the style picker.
     pub style_folds: BTreeSet<String>,
+    /// The live text preview the panels show (`text.preview`'s command and params) and the
+    /// document revision it was shown at: it ends the first frame nothing asks for it.
+    pub text_preview: Option<(String, Value, u64)>,
+    /// A panel asked for the preview this frame.
+    pub text_preview_wanted: bool,
     /// The Design panel's Export section shows its preview.
     pub export_thumb: bool,
     pub zoom_menu: bool,
@@ -229,6 +243,7 @@ impl Default for UiState {
             layer_search: false,
             layer_filter: String::new(),
             layer_anchor: None,
+            layers_focus: false,
             layers_seen_sel: Vec::new(),
             dark: false,
             follow_system: false,
@@ -243,6 +258,8 @@ impl Default for UiState {
             style_picker: None,
             style_grid: false,
             style_folds: BTreeSet::new(),
+            text_preview: None,
+            text_preview_wanted: false,
             export_thumb: false,
             zoom_menu: false,
             find: None,
@@ -265,8 +282,12 @@ pub struct FigApp {
     pub services: Box<dyn Services>,
     worker: Option<render_worker::Worker>,
     fonts_installed: bool,
+    /// System faces for scripts the built-in fonts lack were added (after the font scan).
+    script_fonts: bool,
     /// Control-channel requests waiting for the next frame.
     pub control_queue: Vec<ControlRequest>,
+    /// Input events from the control channel (`ui.input`) for the next frame's raw input.
+    pub control_input: Vec<egui::Event>,
 }
 
 impl FigApp {
@@ -278,7 +299,9 @@ impl FigApp {
             services,
             worker: None,
             fonts_installed: false,
+            script_fonts: false,
             control_queue: Vec::new(),
+            control_input: Vec::new(),
         }
     }
 
@@ -297,6 +320,41 @@ impl FigApp {
                 self.ui.last_error = Some(msg);
                 None
             }
+        }
+    }
+
+    /// Show what `command params` would do on the canvas as a live preview (`text.preview`) while
+    /// a text style, a named instance or an axis slider is hovered or dragged. Call it every frame
+    /// the preview should stay: it ends on the first frame nothing asks for it.
+    pub fn preview_text(&mut self, ctx: &egui::Context, command: &str, params: Value) {
+        self.ui.text_preview_wanted = true;
+        let revision = self.session.ds().map_or(0, |d| d.revision);
+        if let Some((c, p, rev)) = &self.ui.text_preview
+            && c == command
+            && *p == params
+            && (*rev == revision || figcraft_engine::textpreview::active(&self.session))
+        {
+            return;
+        }
+        let shown = self.session.execute("text.preview", &json!({"command": command, "params": params})).is_ok();
+        let revision = self.session.ds().map_or(0, |d| d.revision);
+        self.ui.text_preview = shown.then(|| (command.to_string(), params, revision));
+        // The canvas drew before the panels: show the preview next frame.
+        ctx.request_repaint();
+    }
+
+    /// End the live text preview the panels show (Escape, or nothing hovered any more).
+    pub fn end_text_preview(&mut self, ctx: &egui::Context) {
+        if self.ui.text_preview.take().is_some() {
+            let _ = self.session.execute("text.endPreview", &json!({}));
+            ctx.request_repaint();
+        }
+    }
+
+    /// Once a frame, after the panels: a preview nothing asked for this frame ends.
+    fn end_unwanted_text_preview(&mut self, ctx: &egui::Context) {
+        if !std::mem::take(&mut self.ui.text_preview_wanted) {
+            self.end_text_preview(ctx);
         }
     }
 
@@ -357,6 +415,11 @@ impl FigApp {
                 "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
+                "comment.open" => {
+                    if let Some(id) = r.data.get("id").and_then(Value::as_u64) {
+                        self.ui.comments.show(id);
+                    }
+                }
                 "comment.new" => {
                     let x = r.data.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let y = r.data.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -413,8 +476,12 @@ impl FigApp {
     /// Per-frame logic that doesn't draw (control requests, theme).
     pub fn logic(&mut self, ctx: &egui::Context) {
         if !self.fonts_installed {
-            theme::install_fonts(ctx);
+            theme::install_fonts(ctx, false);
             self.fonts_installed = true;
+        } else if !self.script_fonts && figcraft_text::system_fonts_scanned() {
+            // Once the system fonts are indexed: faces for names in scripts the UI fonts lack.
+            self.script_fonts = true;
+            theme::install_fonts(ctx, true);
         }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,
@@ -514,12 +581,15 @@ impl FigApp {
                 toolbar::show(self, ui);
             }
         });
-        // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor.
+        // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor, and
+        // the arrows step through comment threads with the Comment tool.
         present::show_pane(self, &ctx);
+        comments::keys(self, &ctx);
         shortcuts::handle(self, &ctx);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
         style_picker::show(self, &ctx);
+        self.end_unwanted_text_preview(&ctx);
         dialogs::show(self, &ctx);
         self.toast_ui(&ctx);
         #[cfg(not(target_arch = "wasm32"))]
@@ -563,7 +633,7 @@ impl FigApp {
             "dark": self.ui.dark,
             "presenting": self.ui.present.is_some(),
             "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
-            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame},
+            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame, "comments": self.ui.present_view.comments},
             "preview": self.ui.preview.as_ref().map(|p| p.player.inspect()),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
@@ -572,7 +642,16 @@ impl FigApp {
             "colorProfileDialog": self.ui.color_profile.map(|p| p.id()),
             "stylePicker": self.ui.style_picker.as_ref().map(|p| p.slot().key()),
             "stylePickerView": if self.ui.style_grid { "grid" } else { "list" },
-            "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
+            "textPreview": figcraft_engine::textpreview::active(&self.session),
+            "comments": {
+                "open": self.ui.comments.open,
+                "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]),
+                "filter": self.ui.comments.filter.id(),
+                "sort": self.ui.comments.sort.id(),
+                "search": self.ui.comments.search,
+                "editing": self.ui.comments.editing.as_ref().map(|e| [e.0, e.1 as u64]),
+                "mentions": self.ui.comments.mention.names(),
+            },
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,
             "canvas": {

@@ -42,6 +42,11 @@ impl eframe::App for App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Pointer and key events sent over the control channel (`ui.input`).
+        raw_input.events.append(&mut self.fig.control_input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Last-resort guard: a panic in the UI frame becomes a message, not a lost document.
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fig.ui(ui)));

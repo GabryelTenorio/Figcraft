@@ -61,8 +61,18 @@ dimension measured side by side.
    font, named instances as styles, Type settings ▸ Variable sliders, per-range axis values applied
    to shaping, outlines and PDF), range-aware Typography panel with "Mixed". Range fills in the Fill
    section. Right-to-left and mixed-direction text (Unicode bidi: Arabic shaping, mirrored brackets,
-   caret, clicks and selection follow the runs; arrow keys move visually). *Left:* axis hover
-   preview, right-to-left layer names in the panels, visual QA. 5–8 h.
+   caret, clicks and selection follow the runs; arrow keys move visually). Right-to-left and
+   mixed-direction names in the panels (layers, pages, Assets, tabs, the file header, canvas frame
+   titles: visual order, joined Arabic, the ellipsis at a right-to-left name's left end; rename fields
+   whose caret, clicks, drags and arrow keys follow the shown text; system fonts for scripts the UI
+   fonts lack). The text style browser in the Typography section (list and grid views in each
+   style's own font, search, folders, this file's and enabled libraries' styles, apply, detach, edit
+   the typography, create from the selected chars, hover to preview on the canvas, "Mixed" when the
+   chars use several styles); text styles link chars, not just layers (editing what a style sets
+   unlinks the chars edited). Live previews of a hovered named instance or font style and of a
+   dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
+   paragraph's font, renames start with the name selected and centred, Max lines shows while
+   truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
@@ -139,7 +149,16 @@ dimension measured side by side.
    options (bleed, CMYK). 10–20 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
-8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
+8. **Collaboration (local):** comments landed: pins pinned to frames and layers that move with them
+   (to other pages too) and stay where they were when the layer is deleted, your pins dragged onto
+   another frame, crowded pins clustered when zoomed out (a click zooms them apart), Shift+C to show
+   or hide them; threads where you edit and delete your own messages, emoji reactions, @mentions
+   with a picker of the names used in the file (your name from Preferences), read and unread state,
+   resolve, and "Copy link" (`figcraft://comment/<id>`: pasting or `comment.open` goes to the page,
+   zooms to the frame and opens the thread); the Comments panel with search (text, names, frame),
+   filters (open, resolved, yours, unread), sorting by date or page, each thread's frame and page,
+   and Up/Down to step through threads; comments on the presented frame (Comments button or
+   Shift+C: read and reply). All of it through `comment.*` commands. Version history
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
    minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
@@ -161,8 +180,10 @@ dimension measured side by side.
 ### Where we're going
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
-  inner shadows under strokes (render order), progressive blur, glass tuned side by side.
-- **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
+  inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
+  text details (right-to-left list markers).
+- **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
+  history are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
@@ -221,7 +242,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 |---|---|---|---|---|
 | Canvas & navigation | 6 | 75% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
-| Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
+| Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 80% | stroke styles, arrowhead previews in the menus | 2–3 |
@@ -230,7 +251,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
-| Styles & variables | 5 | 84% | bindings that follow effects when they are reordered, grid and component property bindings | 1–2 |
+| Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
 | Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |

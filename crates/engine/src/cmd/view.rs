@@ -189,6 +189,12 @@ pub fn specs() -> Vec<CommandSpec> {
             s.prefs.nudge_big = num(p, "big").unwrap_or(s.prefs.nudge_big).clamp(0.01, 10000.0);
             Ok(json!({"small": s.prefs.nudge_small, "big": s.prefs.nudge_big}))
         }),
+        spec!("pref.userName", "Your name in comments", "{name (blank: the default, \"You\")}", false, |s, p| {
+            let name = req_string("pref.userName", p, "name")?;
+            let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
+            s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
+            Ok(json!({"name": s.prefs.user_name}))
+        }),
         spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
         spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),
         spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),

@@ -85,7 +85,7 @@ pub(crate) fn sizing(v: &Value) -> Option<Sizing> {
     }
 }
 
-fn line_height(v: &Value) -> Option<LineHeight> {
+pub(crate) fn line_height(v: &Value) -> Option<LineHeight> {
     match v {
         Value::String(s) if s.eq_ignore_ascii_case("auto") => Some(LineHeight::Auto),
         Value::String(s) if s.trim().ends_with('%') => s.trim().trim_end_matches('%').trim().parse().ok().map(LineHeight::Percent),
@@ -94,7 +94,7 @@ fn line_height(v: &Value) -> Option<LineHeight> {
     }
 }
 
-fn letter_spacing(v: &Value) -> Option<LetterSpacing> {
+pub(crate) fn letter_spacing(v: &Value) -> Option<LetterSpacing> {
     match v {
         Value::String(s) if s.trim().ends_with('%') => s.trim().trim_end_matches('%').trim().parse().ok().map(LetterSpacing::Percent),
         Value::Object(_) => serde_json::from_value(v.clone()).ok(),

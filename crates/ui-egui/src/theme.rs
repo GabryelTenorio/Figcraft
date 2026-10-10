@@ -122,13 +122,38 @@ impl Tokens {
     }
 
     pub fn get(ctx: &Context) -> Tokens {
-        ctx.data(|d| d.get_temp::<Tokens>(egui::Id::new("figcraft_tokens"))).unwrap_or_else(Tokens::light)
+        ctx.data(|d| d.get_temp::<Tokens>(tokens_id())).unwrap_or_else(Tokens::light)
     }
+}
+
+fn tokens_id() -> egui::Id {
+    egui::Id::new("figcraft_tokens")
 }
 
 /// Install tokens and egui visuals.
 pub fn apply(ctx: &Context, t: Tokens) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("figcraft_tokens"), t));
+    ctx.data_mut(|d| d.insert_temp(tokens_id(), t));
+    ctx.set_visuals(visuals(t));
+    ctx.global_style_mut(|s| {
+        s.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        s.spacing.button_padding = egui::vec2(8.0, 4.0);
+        s.spacing.interact_size = egui::vec2(24.0, 24.0);
+        s.spacing.menu_margin = egui::Margin::same(8);
+        s.spacing.window_margin = egui::Margin::same(12);
+        s.text_styles = [
+            (TextStyle::Small, FontId::new(10.0, FontFamily::Proportional)),
+            (TextStyle::Body, FontId::new(11.0, FontFamily::Proportional)),
+            (TextStyle::Button, FontId::new(11.0, FontFamily::Proportional)),
+            (TextStyle::Heading, FontId::new(13.0, FontFamily::Name("semibold".into()))),
+            (TextStyle::Monospace, FontId::new(11.0, FontFamily::Monospace)),
+        ]
+        .into();
+        s.interaction.tooltip_delay = 0.4;
+    });
+}
+
+/// egui visuals for tokens `t`.
+fn visuals(t: Tokens) -> Visuals {
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.panel;
     v.window_fill = t.panel;
@@ -159,27 +184,29 @@ pub fn apply(ctx: &Context, t: Tokens) {
     v.popup_shadow = egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow };
     v.window_shadow = egui::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t.shadow };
     v.text_cursor.stroke = Stroke::new(1.0, t.accent);
-    ctx.set_visuals(v);
-    ctx.global_style_mut(|s| {
-        s.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        s.spacing.button_padding = egui::vec2(8.0, 4.0);
-        s.spacing.interact_size = egui::vec2(24.0, 24.0);
-        s.spacing.menu_margin = egui::Margin::same(8);
-        s.spacing.window_margin = egui::Margin::same(12);
-        s.text_styles = [
-            (TextStyle::Small, FontId::new(10.0, FontFamily::Proportional)),
-            (TextStyle::Body, FontId::new(11.0, FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(11.0, FontFamily::Proportional)),
-            (TextStyle::Heading, FontId::new(13.0, FontFamily::Name("semibold".into()))),
-            (TextStyle::Monospace, FontId::new(11.0, FontFamily::Monospace)),
-        ]
-        .into();
-        s.interaction.tooltip_delay = 0.4;
-    });
+    v
 }
 
-/// UI fonts: Inter (from the craft-fonts build input) when present, else egui's defaults.
-pub fn install_fonts(ctx: &Context) {
+/// Draw `f` with the dark tokens and visuals: controls on the dark popovers (the style browser's
+/// style editor), whichever theme the app shows.
+pub fn on_dark<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let ctx = ui.ctx().clone();
+    let saved = Tokens::get(&ctx);
+    let dark = Tokens::dark();
+    ctx.data_mut(|d| d.insert_temp(tokens_id(), dark));
+    let r = ui
+        .scope(|ui| {
+            *ui.visuals_mut() = visuals(dark);
+            f(ui)
+        })
+        .inner;
+    ctx.data_mut(|d| d.insert_temp(tokens_id(), saved));
+    r
+}
+
+/// UI fonts: Inter (from the craft-fonts build input) when present, else egui's defaults; with
+/// `system`, also system faces for scripts those lack (Hebrew, joined Arabic) so names in them show.
+pub fn install_fonts(ctx: &Context, system: bool) {
     let mut fonts = FontDefinitions::default();
     let find = |family: &str, style: &str| figcraft_text::CRAFT_FONTS.iter().find(|f| f.family == family && f.style == style).map(|f| f.bytes);
     let regular = find("Inter", "Regular");
@@ -207,6 +234,25 @@ pub fn install_fonts(ctx: &Context) {
         if matches!(f.family, "BIZ UDPGothic" | "Noto Sans Arabic") {
             let key = format!("craft-{}", f.family);
             fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(f.bytes)));
+            for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
+                if let Some(list) = fonts.families.get_mut(&fam) {
+                    list.push(key.clone());
+                }
+            }
+        }
+    }
+    if system {
+        // What the built-in faces above already draw.
+        let embedded = |c: char| {
+            ["Inter", "BIZ UDPGothic", "Noto Sans Arabic"]
+                .into_iter()
+                .filter(|f| figcraft_text::CRAFT_FONTS.iter().any(|cf| cf.family == *f))
+                .filter_map(|f| figcraft_text::find_face(f, "Regular"))
+                .any(|x| x.has_char(c))
+        };
+        let extra = crate::bidi::script_fallbacks(&embedded);
+        for (key, data) in extra {
+            fonts.font_data.insert(key.clone(), Arc::new(data));
             for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
                 if let Some(list) = fonts.families.get_mut(&fam) {
                     list.push(key.clone());

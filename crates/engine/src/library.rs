@@ -706,6 +706,9 @@ fn localize(n: &mut Node, src: &Document, map: &BTreeMap<NodeId, NodeId>, styles
         for r in [&mut n.styles.fill, &mut n.styles.stroke, &mut n.styles.effect, &mut n.styles.grid, &mut n.styles.text] {
             *r = r.take().and_then(|s| styles.get(&s).cloned());
         }
+        if let NodeKind::Text(t) = &mut n.kind {
+            t.map_text_styles(|s| styles.get(s).cloned());
+        }
     }
     if let Some(vars) = vars {
         n.bound = std::mem::take(&mut n.bound).into_iter().filter_map(|(f, v)| vars.variables.get(&v).map(|l| (f, l.clone()))).collect();
