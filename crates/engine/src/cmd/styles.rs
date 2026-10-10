@@ -147,7 +147,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|effects/<i>/<offsetX|offsetY|radius|spread|color>|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
+            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color>|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
             true,
             bind
         ),
@@ -750,7 +750,8 @@ fn apply_effect_bindings(doc: &mut Document, id: NodeId, sets: &[(usize, String,
             (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "radius", Some(x), _) => s.radius = x.max(0.0),
             (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "spread", Some(x), _) => s.spread = x,
             (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "color", _, VariableValue::Color(c)) => s.color = *c,
-            (EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius }, "radius", Some(x), _) => *radius = x.max(0.0),
+            (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "radius", Some(x), _) => b.radius = x.max(0.0),
+            (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "startRadius", Some(x), _) => b.start_radius = x.max(0.0),
             _ => {}
         }
     }

@@ -199,9 +199,8 @@ fn start_rename(ui: &Ui, st: &mut Editor, target: Rename) {
 /// The inline editor of a rename in progress: the new name once committed. The rename ends when
 /// the editor closes.
 fn rename_field(ui: &mut Ui, st: &mut Editor, target: &Rename, value: &str, rect: Rect, font: egui::FontId) -> Option<String> {
-    let id = rename_id(target);
-    let out = widgets::text_field_inline(ui, id, value, rect, font);
-    if out.is_some() || !ui.memory(|m| m.has_focus(id.with("te"))) {
+    let (out, open) = widgets::rename_field(ui, rename_id(target), value, rect, font, false);
+    if !open {
         st.rename = None;
     }
     out

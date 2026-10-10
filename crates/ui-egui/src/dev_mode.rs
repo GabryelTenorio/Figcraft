@@ -270,7 +270,7 @@ pub fn ready_list(app: &mut FigApp, ui: &mut Ui) {
         });
     });
     if app.ui.dev.ready.is_empty() {
-        row(ui, 28.0, |ui| widgets::label(ui, "Nothing here yet. Set a frame's status to list it.", t.text_secondary));
+        widgets::note(ui, "Nothing here yet. Set a frame's status to list it.", t.text_secondary);
         return;
     }
     let mut go = None;

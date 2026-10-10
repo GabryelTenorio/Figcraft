@@ -19,6 +19,8 @@
 //! after loading), since that needs the component model.
 
 #[cfg(test)]
+mod blur_tests;
+#[cfg(test)]
 mod conditional_tests;
 #[cfg(test)]
 mod effects_tests;

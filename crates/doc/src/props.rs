@@ -491,18 +491,106 @@ impl Glass {
     }
 }
 
+/// How a blur's radius varies across the layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum BlurType {
+    /// The same radius everywhere.
+    #[default]
+    #[serde(alias = "normal", alias = "NORMAL", alias = "UNIFORM")]
+    Uniform,
+    /// The radius ramps from `start_radius` at `start` to `radius` at `end`.
+    #[serde(alias = "PROGRESSIVE")]
+    Progressive,
+}
+
+impl BlurType {
+    pub const ALL: [BlurType; 2] = [BlurType::Uniform, BlurType::Progressive];
+    pub fn label(self) -> &'static str {
+        match self {
+            BlurType::Uniform => "Uniform",
+            BlurType::Progressive => "Progressive",
+        }
+    }
+}
+
+/// The largest blur radius drawn (document units); larger ones look the same anyway.
+pub const MAX_BLUR_RADIUS: f64 = 10_000.0;
+
+/// A layer or background blur: uniform, or progressive (the radius ramps linearly along a line
+/// between two points in the layer's unit box, like a linear gradient's handles).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Blur {
+    /// The blur radius (progressive: at `end` and past it).
+    pub radius: f64,
+    #[serde(alias = "blurType")]
+    pub blur_type: BlurType,
+    /// Progressive: the radius at `start` and before it.
+    #[serde(alias = "startRadius")]
+    pub start_radius: f64,
+    /// Progressive: where the ramp starts, in the layer's unit box (0..1 across and down).
+    #[serde(alias = "startOffset")]
+    pub start: (f64, f64),
+    /// Progressive: where the ramp ends, in the layer's unit box.
+    #[serde(alias = "endOffset")]
+    pub end: (f64, f64),
+}
+
+impl Default for Blur {
+    fn default() -> Self {
+        Self { radius: 4.0, blur_type: BlurType::Uniform, start_radius: 0.0, start: (0.5, 0.0), end: (0.5, 1.0) }
+    }
+}
+
+impl Blur {
+    /// A uniform blur of `radius`.
+    pub fn uniform(radius: f64) -> Self {
+        Self { radius, ..Self::default() }
+    }
+
+    pub fn is_progressive(&self) -> bool {
+        self.blur_type == BlurType::Progressive
+    }
+
+    /// The values made safe to draw: radii finite in 0..[`MAX_BLUR_RADIUS`], points finite
+    /// (non-finite ones at their defaults) within a thousand boxes of the layer.
+    pub fn sanitized(&self) -> Blur {
+        let d = Blur::default();
+        let radius = |v: f64| if v.is_finite() { v.clamp(0.0, MAX_BLUR_RADIUS) } else { 0.0 };
+        let point = |p: (f64, f64), def: (f64, f64)| {
+            let ok = |v: f64, dv: f64| if v.is_finite() { v.clamp(-1000.0, 1000.0) } else { dv };
+            (ok(p.0, def.0), ok(p.1, def.1))
+        };
+        Blur {
+            radius: radius(self.radius),
+            blur_type: self.blur_type,
+            start_radius: radius(self.start_radius),
+            start: point(self.start, d.start),
+            end: point(self.end, d.end),
+        }
+    }
+
+    /// The largest radius anywhere on the layer (sanitised).
+    pub fn max_radius(&self) -> f64 {
+        let b = self.sanitized();
+        if b.is_progressive() { b.radius.max(b.start_radius) } else { b.radius }
+    }
+
+    /// The same blur scaled by `k` (radii; the unit-box points stay).
+    pub fn scaled(&self, k: f64) -> Blur {
+        Blur { radius: self.radius * k, start_radius: self.start_radius * k, ..self.clone() }
+    }
+}
+
 /// One effect in a node's effect list.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum EffectKind {
     DropShadow(Shadow),
     InnerShadow(Shadow),
-    LayerBlur {
-        radius: f64,
-    },
-    BackgroundBlur {
-        radius: f64,
-    },
+    LayerBlur(Blur),
+    BackgroundBlur(Blur),
     /// Grain over the layer.
     Noise(Noise),
     /// Roughened edges.
@@ -545,10 +633,10 @@ impl Effect {
         Self::of(EffectKind::InnerShadow(Shadow { offset: (0.0, 4.0), ..Shadow::default() }))
     }
     pub fn layer_blur() -> Self {
-        Self::of(EffectKind::LayerBlur { radius: 4.0 })
+        Self::of(EffectKind::LayerBlur(Blur::default()))
     }
     pub fn background_blur() -> Self {
-        Self::of(EffectKind::BackgroundBlur { radius: 4.0 })
+        Self::of(EffectKind::BackgroundBlur(Blur::default()))
     }
     pub fn noise() -> Self {
         Self::of(EffectKind::Noise(Noise::default()))
@@ -579,8 +667,8 @@ impl Effect {
         match self.kind {
             EffectKind::DropShadow(_) => "Drop shadow",
             EffectKind::InnerShadow(_) => "Inner shadow",
-            EffectKind::LayerBlur { .. } => "Layer blur",
-            EffectKind::BackgroundBlur { .. } => "Background blur",
+            EffectKind::LayerBlur(_) => "Layer blur",
+            EffectKind::BackgroundBlur(_) => "Background blur",
             EffectKind::Noise(_) => "Noise",
             EffectKind::Texture(_) => "Texture",
             EffectKind::Glass(_) => "Glass",
@@ -594,9 +682,23 @@ impl Effect {
         }
         match &self.kind {
             EffectKind::DropShadow(s) => s.radius.abs() * 1.5 + s.spread.max(0.0) + s.offset.0.abs().max(s.offset.1.abs()),
-            EffectKind::LayerBlur { radius } => radius.abs() * 1.5,
+            EffectKind::LayerBlur(b) => b.max_radius() * 1.5,
             EffectKind::Texture(t) if !t.clip_to_shape => t.radius.abs(),
             _ => 0.0,
+        }
+    }
+    /// A layer or background blur's settings.
+    pub fn blur(&self) -> Option<&Blur> {
+        match &self.kind {
+            EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => Some(b),
+            _ => None,
+        }
+    }
+    /// Mutable access to [`Effect::blur`].
+    pub fn blur_mut(&mut self) -> Option<&mut Blur> {
+        match &mut self.kind {
+            EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b) => Some(b),
+            _ => None,
         }
     }
     /// The effect's colour (`secondary`: a duo noise's second colour), if it has one.
@@ -624,7 +726,7 @@ impl Effect {
             return 0.0;
         }
         let r = match &self.kind {
-            EffectKind::BackgroundBlur { radius } => radius.abs(),
+            EffectKind::BackgroundBlur(b) => b.max_radius(),
             // The frost blur plus the furthest bend, in blur radii (a blur reads 1.5 radii).
             EffectKind::Glass(g) => g.sanitized().frost + g.max_bend() / 1.5,
             _ => 0.0,

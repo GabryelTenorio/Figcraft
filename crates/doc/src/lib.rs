@@ -841,6 +841,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 }
 
 #[cfg(test)]
+mod blur_tests;
+#[cfg(test)]
 mod colors_tests;
 #[cfg(test)]
 mod diff_tests;

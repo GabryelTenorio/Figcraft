@@ -125,7 +125,7 @@ fn sample_doc() -> (Document, Vec<NodeId>) {
         n.opacity = 0.7;
     }
     let blur = d.create(f2, NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 }, "Blurred", 120.0, 160.0, 60.0, 60.0).unwrap();
-    d.get_mut(blur).unwrap().effects = vec![Effect { kind: EffectKind::LayerBlur { radius: 6.0 }, visible: true }];
+    d.get_mut(blur).unwrap().effects = vec![Effect { kind: EffectKind::LayerBlur(figcraft_doc::Blur::uniform(6.0)), visible: true }];
     let frames = d.top_frames(p);
     (d, frames)
 }

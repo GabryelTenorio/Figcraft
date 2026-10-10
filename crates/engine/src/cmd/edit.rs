@@ -138,9 +138,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             nudge_size
         ),
-        spec!("object.rename", "Rename", "{id?, name}", true, |s, p| {
-            let name = req_string("object.rename", p, "name")?;
+        spec!("object.rename", "Rename", "{ids?, name?} (without a name: rename the layer inline in the layers panel)", true, |s, p| {
             let ids = req_targets("object.rename", s, p)?;
+            if p.get("name").is_none() {
+                s.request_ui("layers.rename", json!({"ids": ids}));
+                return ok();
+            }
+            let name = req_string("object.rename", p, "name")?;
             let doc = s.doc_mut()?;
             for i in ids {
                 doc.get_mut(i)?.name = name.clone();
