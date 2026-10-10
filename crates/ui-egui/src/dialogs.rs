@@ -118,10 +118,14 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
                 ("Rename duplicated layers", prefs.rename_duplicates, "pref.renameDuplicates"),
                 ("Show dimensions on objects", prefs.show_dimensions, "pref.showDimensions"),
                 ("Use number keys for opacity", prefs.number_keys_opacity, "pref.numberKeysOpacity"),
+                ("Reduce motion", prefs.reduce_motion, "pref.reduceMotion"),
             ] {
                 if crate::widgets::checkbox(ui, val, label) {
                     toggles.push(cmd);
                 }
+            }
+            if app.services.reduce_motion() {
+                crate::widgets::label(ui, "Your system asks for reduced motion: animations stay off.", t.text_secondary);
             }
             for c in toggles {
                 app.run(c, json!({}));
@@ -191,6 +195,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         app.ui.find = if open { Some((find, replace)) } else { None };
     }
     crate::variables_panel::show(app, ctx);
+    crate::dev_compare::show(app, ctx);
     if app.ui.export_preview {
         export_dialog(app, ctx);
     }

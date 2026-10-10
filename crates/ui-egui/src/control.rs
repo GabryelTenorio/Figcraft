@@ -14,7 +14,7 @@
 //!   window (panels, popovers); `hold` keeps modifier keys down for the frames that follow (all
 //!   false: released)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
-//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, preview?, presentScroll?, …}`
+//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
 //! - `app.quit {}`
@@ -142,7 +142,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
             app.session.doc().map(|d| figcraft_engine::inspect::node_json(d, id, depth)).map_err(|e| e.to_string())
         }
-        "ui.inspect" => Ok(app.inspect()),
+        "ui.inspect" => {
+            let mut v = app.inspect();
+            // The name of the control with the keyboard (what a screen reader announces).
+            if let Some(f) = v.get_mut("focus") {
+                f["control"] = json!(crate::a11y::focused_name(ctx));
+            }
+            Ok(v)
+        }
         "ui.pointer" => pointer(app, p),
         "ui.key" => {
             let key = p.get("key").and_then(Value::as_str).ok_or("`key` required")?;
@@ -289,6 +296,10 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("mainMenu").and_then(Value::as_bool) {
                 app.ui.main_menu = h;
             }
+            // Give a region the keyboard as F6 would: toolbar, layers, canvas or properties.
+            if let Some(r) = p.get("focusRegion").and_then(Value::as_str) {
+                app.ui.nav.go(crate::a11y::Region::parse(r).ok_or_else(|| format!("unknown region `{r}`"))?);
+            }
             // A right-click on the canvas at screen [sx, sy] (null closes the menu);
             // `contextSelectLayer` opens its Select layer submenu.
             match p.get("contextMenu") {
@@ -431,6 +442,27 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
                 app.ui.export_thumb = v;
+            }
+            // Dev Mode's compare view: a ready-for-dev frame or section opens it, null closes it;
+            // `devCompareMode` is sideBySide or overlay, `devCompareSplit` the overlay slider (0–1).
+            if let Some(v) = p.get("devCompare") {
+                app.ui.dev.compare = figcraft_engine::params::id_of(v).map(crate::dev_compare::CompareView::new);
+            }
+            if let Some(c) = app.ui.dev.compare.as_mut() {
+                match p.get("devCompareMode").and_then(Value::as_str) {
+                    Some("overlay") => c.mode = crate::dev_compare::Mode::Overlay,
+                    Some("sideBySide") => c.mode = crate::dev_compare::Mode::SideBySide,
+                    Some(_) => return Err("devCompareMode: sideBySide|overlay".into()),
+                    None => {}
+                }
+                if let Some(x) = p.get("devCompareSplit").and_then(Value::as_f64).filter(|x| x.is_finite()) {
+                    c.split = x.clamp(0.0, 1.0) as f32;
+                }
+            }
+            // Which annotations the canvas shows: all, none (uncategorised) or a category.
+            if let Some(v) = p.get("annotationFilter").and_then(Value::as_str) {
+                let doc = app.session.doc().map_err(|e| e.to_string())?;
+                app.ui.dev.categories = crate::dev_mode::CategoryFilter::parse(doc, v).ok_or("annotationFilter: all|none|a category id or name")?;
             }
             if b(p, "resetFrameStats") {
                 app.frame_stats.reset();

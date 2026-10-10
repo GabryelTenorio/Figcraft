@@ -11,6 +11,7 @@ use figcraft_engine::cmd::proto_actions::{action_at, start_value};
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::list_drag::ListDrag;
 use crate::proto_panel::{action_fields, action_of, action_summary, targets_for, value_json};
@@ -228,7 +229,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
     let header = row_rect(ui, 32.0, |ui| {
         if !single {
             let (r, resp) = ui.allocate_exact_size(vec2(12.0, FIELD_H), Sense::click());
-            let resp = resp.on_hover_text(if open { "Close" } else { "Open" });
+            let resp = resp.tip(if open { "Close" } else { "Open" });
             icons::paint(
                 ui.painter(),
                 Rect::from_center_size(r.center(), vec2(12.0, 12.0)),

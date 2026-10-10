@@ -95,6 +95,7 @@ struct JobKey {
     size: (u32, u32),
     outline: bool,
     skip: Vec<NodeId>,
+    solo: Option<NodeId>,
     /// Text lays out anew when fonts arrive (system fonts load in the background).
     fonts: u64,
 }
@@ -125,6 +126,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
+    crate::a11y::canvas(&mut app.ui.nav, &resp, || describe(&app.session));
     if let Ok(ds) = app.session.ds_mut()
         && ((ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5)
     {
@@ -191,6 +193,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::comments::draw(app, &painter);
     crate::comments::popovers(app, &ctx);
     crate::versions::preview_banner(app, &ctx, rect);
+    crate::dev_mode::focus_bar(app, &ctx, rect);
     // Cursor.
     if resp.hovered() {
         let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {
@@ -225,6 +228,25 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     }
 }
 
+/// What the canvas says to screen readers: the selected layer ("Rectangle 1, Rectangle, 120 by 80,
+/// selected"), how many are selected, or the page with nothing selected.
+pub fn describe(s: &figcraft_engine::Session) -> String {
+    let Ok(ds) = s.ds() else { return String::new() };
+    match ds.selection.as_slice() {
+        [] => format!("{}, nothing selected", ds.doc.node(ds.page).map(|p| p.name.as_str()).unwrap_or("Page")),
+        [id] => match ds.doc.node(*id) {
+            Some(n) => {
+                let kind = n.kind.label();
+                let name = if n.name.is_empty() { kind } else { n.name.as_str() };
+                let (w, h) = (crate::widgets::fmt_num(n.width), crate::widgets::fmt_num(n.height));
+                format!("{name}, {kind}, {w} by {h}, selected")
+            }
+            None => String::new(),
+        },
+        many => format!("{} layers selected", many.len()),
+    }
+}
+
 /// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past it.
 fn pixel_preview(ds: &figcraft_engine::DocState) -> Option<f64> {
     let k = f64::from(ds.view.pixel_scale.clamp(1, 2));
@@ -254,6 +276,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         size: (w, h),
         outline: ds.view.outlines,
         skip: vec![],
+        solo: ds.focused(),
         fonts: figcraft_text::layout_generation(),
     };
     if app.canvas.submitted.as_ref() == Some(&key) {
@@ -265,6 +288,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
         outline: ds.view.outlines,
         skip: vec![],
+        solo: key.solo,
     };
     worker.submit(job);
     app.canvas.submitted = Some(key);
@@ -303,7 +327,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     let (mods, scroll, zoom_delta, hover_pos, space) =
         ctx.input(|i| (i.modifiers, i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space)));
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
-    let typing_elsewhere = ctx.memory(|m| m.focused().is_some());
+    let typing_elsewhere = crate::a11y::field_focused(&ctx);
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
     // Dropped files import onto the canvas.
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
@@ -428,7 +452,7 @@ pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
     let p = app.to_page(pos);
     if let Ok(ds) = app.session.ds() {
         let (doc, page, sel, zoom) = (ds.doc.clone(), ds.page, ds.selection.clone(), ds.view.zoom.max(1e-6));
-        if let Some(leaf) = doc.hit_test(page, p, 2.0 / zoom) {
+        if let Some(leaf) = app.session.hit(&doc, page, p, 2.0 / zoom) {
             let target = figcraft_doc::geometry::select_target(&doc, leaf, &sel, deep);
             if !sel.contains(&target) {
                 app.session.set_selection(vec![target]);
@@ -609,8 +633,10 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             y += 1.0;
         }
     }
-    // Layout grids and frame labels for top-level frames (also those in sections).
-    for c in &boards(&doc, page) {
+    // Layout grids and frame labels for top-level frames (also those in sections); the focus view
+    // labels only its frame.
+    let focus = ds.focused();
+    for c in boards(&doc, page).iter().filter(|c| focus.is_none_or(|f| f == **c)) {
         let Some(n) = doc.node(*c) else { continue };
         let Some(b) = doc.world_bounds(*c) else { continue };
         // Off-screen frames draw neither grids nor a label (labels sit just outside the frame).
@@ -634,7 +660,8 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
                 }
             }
         }
-        let labelled = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. });
+        // The focus view's bar names its frame.
+        let labelled = focus.is_none() && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }));
         if labelled && let Some(q) = crate::frame_labels::draw(app, painter, t, &doc, *c, sel.contains(c), ds.hover == Some(*c)) {
             labels.push((*c, q.map(|p| app.to_page(p))));
         }
@@ -1074,19 +1101,25 @@ fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
     out
 }
 
-/// A frame's or section's handoff status as a small pill left-centred on `at` ("Changed" once a
-/// ready-for-dev layer was edited).
-pub(crate) fn status_badge(painter: &egui::Painter, n: &figcraft_doc::Node, at: Pos2) {
-    let (label, fill) = match n.dev_status {
-        figcraft_doc::DevStatus::None => return,
-        figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => ("Changed", crate::theme::DEV_CHANGED),
-        figcraft_doc::DevStatus::ReadyForDev => ("Ready for dev", crate::theme::DEV_READY),
-        figcraft_doc::DevStatus::Completed => ("Completed", crate::theme::DEV_COMPLETED),
-    };
+/// A frame's or section's handoff status as its badge says it, with the badge colour ("Changed"
+/// once a ready-for-dev layer was edited; `None` without a status).
+pub(crate) fn status_label(n: &figcraft_doc::Node) -> Option<(&'static str, Color32)> {
+    match n.dev_status {
+        figcraft_doc::DevStatus::None => None,
+        figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => Some(("Changed", crate::theme::DEV_CHANGED)),
+        figcraft_doc::DevStatus::ReadyForDev => Some(("Ready for dev", crate::theme::DEV_READY)),
+        figcraft_doc::DevStatus::Completed => Some(("Completed", crate::theme::DEV_COMPLETED)),
+    }
+}
+
+/// A frame's or section's handoff status as a small pill left-centred on `at`; the pill's area.
+pub(crate) fn status_badge(painter: &egui::Painter, n: &figcraft_doc::Node, at: Pos2) -> Option<Rect> {
+    let (label, fill) = status_label(n)?;
     let galley = painter.layout_no_wrap(label.to_string(), semibold(10.0), Color32::WHITE);
     let r = Rect::from_min_size(pos2(at.x, at.y - galley.size().y / 2.0 - 2.0), galley.size() + vec2(10.0, 4.0));
     painter.rect_filled(r, CornerRadius::same(4), fill);
     painter.galley(r.min + vec2(5.0, 2.0), galley, Color32::WHITE);
+    Some(r)
 }
 
 fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel: &[NodeId]) {

@@ -11,6 +11,7 @@
 pub mod colors;
 pub mod comments;
 pub mod geometry;
+pub mod handoff;
 pub mod library;
 pub mod node;
 pub mod props;
@@ -24,6 +25,7 @@ pub use colors::*;
 pub use comments::*;
 pub use figcraft_color as color;
 pub use figcraft_geom as geom;
+pub use handoff::*;
 pub use library::*;
 pub use node::*;
 pub use props::*;
@@ -130,6 +132,13 @@ pub struct Document {
     /// Image adjustment presets saved in this file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub image_presets: Vec<ImagePreset>,
+    /// Annotation categories (`None`: [`AnnotationCategory::defaults`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotation_categories: Option<Vec<AnnotationCategory>>,
+    /// What ready-for-dev frames and sections looked like before they changed (by layer; see
+    /// [`handoff`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dev_snapshots: BTreeMap<NodeId, Arc<DevSnapshot>>,
 }
 
 impl Default for Document {
@@ -157,6 +166,8 @@ impl Document {
             published: None,
             color_profile: ColorProfile::Srgb,
             image_presets: Vec::new(),
+            annotation_categories: None,
+            dev_snapshots: BTreeMap::new(),
         };
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);
@@ -776,6 +787,12 @@ impl Document {
                 self.nodes.remove(&d);
             }
         }
+        // Snapshots of layers that are gone or no longer changed since marked ready for dev, or that
+        // don't start with their layer, are dropped.
+        self.dev_snapshots.retain(|k, snap| {
+            self.nodes.get(k).is_some_and(|n| n.dev_status == DevStatus::ReadyForDev && n.dev_changed)
+                && snap.nodes.first().is_some_and(|n| n.id == *k)
+        });
         let store = self.libraries.store.filter(|s| self.nodes.get(s).is_some_and(|n| n.is_page()));
         if store != self.libraries.store {
             Arc::make_mut(&mut self.libraries).store = store;
@@ -863,6 +880,8 @@ mod colors_tests;
 mod diff_tests;
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod handoff_tests;
 #[cfg(test)]
 mod print_tests;
 #[cfg(test)]

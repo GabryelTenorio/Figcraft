@@ -25,11 +25,18 @@ impl Ui {
     }
 
     pub(crate) fn frame(&mut self, events: Vec<Event>) {
+        self.frame_output(events);
+    }
+
+    /// [`Self::frame`], returning what egui output (the AccessKit tree when it's enabled).
+    pub(crate) fn frame_output(&mut self, events: Vec<Event>) -> egui::FullOutput {
         self.time += 1.0 / 60.0;
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
         let app = &mut self.app;
-        self.ctx.run_ui(input, |ui| app.ui(ui)).textures_delta.clear();
+        let mut out = self.ctx.run_ui(input, |ui| app.ui(ui));
+        out.textures_delta.clear();
+        out
     }
 
     /// The middle of `id`'s row in the layers panel (found by hovering down the panel).

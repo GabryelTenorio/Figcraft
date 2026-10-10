@@ -26,15 +26,7 @@ fn is_section(doc: &Document, id: NodeId) -> bool {
     doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }))
 }
 
-/// Whether `id` can carry a handoff status: a section, or a frame at the top of a page or section.
-pub fn has_status(doc: &Document, id: NodeId) -> bool {
-    is_section(doc, id)
-        || doc.node(id).is_some_and(|n| {
-            n.kind.is_frame_like()
-                && !matches!(n.kind, NodeKind::Instance { .. })
-                && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
-        })
-}
+pub use figcraft_engine::devinspect::has_status;
 
 /// The handoff status of `ids` as a dropdown `width` wide ("Changed" when edited since marked ready,
 /// "Mixed" when they differ).
@@ -75,6 +67,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 let on = current.as_ref().and_then(|c| c.as_ref()).is_some_and(|h| h.eq_ignore_ascii_case(hex.trim_start_matches('#')));
                 let stroke = if on { Stroke::new(2.0, crate::theme::ACCENT) } else { Stroke::new(1.0, t.border) };
                 ui.painter().rect_stroke(r, CornerRadius::same(9), stroke, egui::StrokeKind::Inside);
+                crate::a11y::radio(&resp, name, on);
                 if resp.on_hover_text(name).clicked() {
                     app.set_props(&ids, json!({"fills": [hex]}));
                 }

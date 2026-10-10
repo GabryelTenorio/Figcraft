@@ -204,6 +204,8 @@ pub static KEYS: &[Binding] = &[
     k(View, "view.designPrototype", &["Shift+E"]),
     k(View, "view.devMode", &["Shift+D"]).label("Dev Mode on/off"),
     k(View, "view.leftSidebar", &["Shift+Cmd+\\"]),
+    k(View, "view.nextRegion", &["F6"]).label("Focus the next region (toolbar, layers, canvas, properties)").both(),
+    k(View, "view.previousRegion", &["Shift+F6"]).label("Focus the previous region").both(),
     k(View, "layers.collapseAll", &["Alt+L"]),
     k(View, "doc.nextTab", &["Ctrl+Tab"]),
     k(View, "doc.previousTab", &["Ctrl+Shift+Tab"]),
@@ -324,6 +326,8 @@ pub static GESTURES: &[(Group, &str, &str, &str)] = &[
     (Transform, "Resize by the nudge amount", "⌘ arrows", "Ctrl+arrows"),
     (Transform, "Opacity 10%…90%, 0: 100%", "1…9, 0", "1…9, 0"),
     (Transform, "Exact opacity (4 then 5: 45%)", "Two digits", "Two digits"),
+    (View, "Next or previous control in the focused region", "⇥ / ⇧⇥", "Tab / Shift+Tab"),
+    (View, "Back to the canvas from a focused region", "Esc", "Esc"),
 ];
 
 /// Modifier keys held (as pressed: on Windows and Linux Ctrl may come as `cmd`, `ctrl` or both).

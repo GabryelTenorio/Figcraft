@@ -1,6 +1,8 @@
 //! Desktop services: native file dialogs, clipboard, URLs, persisted preferences and recents.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use figcraft_engine::{Prefs, Session};
 use figcraft_ui_egui::{FigApp, Services};
@@ -10,6 +12,8 @@ pub struct Desktop {
     clipboard: Option<arboard::Clipboard>,
     recents: Vec<String>,
     pub prefs: Option<Prefs>,
+    /// The system's reduce-motion setting (read in the background at startup).
+    reduce_motion: Arc<AtomicBool>,
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -34,8 +38,49 @@ impl Desktop {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
         let prefs = state.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok());
-        Self { clipboard: arboard::Clipboard::new().ok(), recents, prefs }
+        let reduce_motion = Arc::new(AtomicBool::new(false));
+        let flag = reduce_motion.clone();
+        std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
+        Self { clipboard: arboard::Clipboard::new().ok(), recents, prefs, reduce_motion }
     }
+}
+
+/// Whether the system's accessibility settings ask for reduced motion: Windows' animation
+/// effects (`UISettings.AnimationsEnabled`), macOS's Reduce motion, GNOME's animations.
+fn system_reduce_motion() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        match windows::UI::ViewManagement::UISettings::new().and_then(|s| s.AnimationsEnabled()) {
+            Ok(on) => !on,
+            Err(e) => {
+                log::info!("reduce motion: can't read the animation setting: {e}");
+                false
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        command_says("defaults", &["read", "com.apple.universalaccess", "reduceMotion"], "1")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        command_says("gsettings", &["get", "org.gnome.desktop.interface", "enable-animations"], "false")
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        false
+    }
+}
+
+/// Whether `program args` runs and prints `want` (trimmed).
+#[cfg(unix)]
+fn command_says(program: &str, args: &[&str], want: &str) -> bool {
+    std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == want)
 }
 
 pub fn save_state(app: &FigApp) {
@@ -109,6 +154,9 @@ impl Services for Desktop {
         self.recents.retain(|p| p != path);
         self.recents.insert(0, path.to_string());
         self.recents.truncate(20);
+    }
+    fn reduce_motion(&self) -> bool {
+        self.reduce_motion.load(Ordering::Relaxed)
     }
 }
 

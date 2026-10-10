@@ -50,7 +50,7 @@ fn width_point(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
     row(ui, 32.0, |ui| {
         let e = widgets::number_field(ui, Id::new("wpt_t"), Lead::None, Some(round(p.t * 100.0)), "%", col, 1.0);
         point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "t": v / 100.0}));
-        let e = widgets::number_field(ui, Id::new("wpt_w"), Lead::Icon(Icon::StrokeIcon), Some(round(p.scale * weight)), "", col, 1.0);
+        let e = widgets::number_field(ui, Id::new("wpt_w"), Lead::Icon(Icon::StrokeIcon, "Width"), Some(round(p.scale * weight)), "", col, 1.0);
         point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "width": v.max(0.0)}));
     });
     ui.add_space(8.0);
@@ -105,7 +105,7 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
     };
     widgets::sublabels(ui, "Corner radius", None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("vpt_radius"), Lead::Icon(Icon::CornerRadius), radius.map(round), "", col, 1.0);
+        let e = widgets::number_field(ui, Id::new("vpt_radius"), Lead::Icon(Icon::CornerRadius, "Corner radius"), radius.map(round), "", col, 1.0);
         point_field(app, "vector.edit.cornerRadius", e, |v| json!({"radius": v.max(0.0)}));
     });
     widgets::sublabels(ui, "Mirroring", None);

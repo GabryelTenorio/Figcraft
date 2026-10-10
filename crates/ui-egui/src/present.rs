@@ -32,6 +32,7 @@ use figcraft_geom::{Affine, Point};
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::a11y::Tip;
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
@@ -1627,7 +1628,7 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
     let canvas = app.canvas.rect;
     let style = ctx.global_style();
-    let typing = ds.text_edit.is_some() || ctx.memory(|m| m.focused().is_some());
+    let typing = ds.text_edit.is_some() || crate::a11y::field_focused(ctx);
     let chrome = Chrome { pane: true, bar_h: 36.0, pad: 12.0, round: style.visuals.window_corner_radius.nw, keys: !typing };
     let mut action = None;
     egui::Window::new("Prototype preview")
@@ -1908,7 +1909,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         x = br.min.x - if chrome.pane { 2.0 } else { 4.0 };
         let mut resp = ui.interact(br, ui.id().with(("pbar", *label)), Sense::click());
         if chrome.pane {
-            resp = resp.on_hover_text(*label);
+            resp = resp.tip(*label);
         }
         let on = (*act == BarAction::Comments && p.view.comments) || (*act == BarAction::Inspect && p.view.inspect);
         if on {
@@ -1917,10 +1918,10 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             ui.painter().rect_filled(br, CornerRadius::same(5), hover);
         }
         if *act == BarAction::Comments {
-            resp = resp.on_hover_text("Show comments (Shift+C)");
+            resp = resp.tip("Show comments (Shift+C)");
         }
         if *act == BarAction::Inspect {
-            resp = resp.on_hover_text("Inspect the layer under the pointer: size, colours, typography");
+            resp = resp.tip("Inspect the layer under the pointer: size, colours, typography");
         }
         if chrome.pane {
             icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);
@@ -1945,7 +1946,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         let tip = playing.map(|f| f.description.trim()).filter(|d| !d.is_empty()).unwrap_or("Flows").to_string();
         let galley = left.layout_no_wrap(label, semibold(11.5), text);
         let fr = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
-        let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).on_hover_text(tip);
+        let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).tip(tip);
         if resp.hovered() {
             left.rect_filled(fr, CornerRadius::same(5), hover);
         }

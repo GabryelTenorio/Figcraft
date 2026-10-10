@@ -57,7 +57,8 @@ layout (including grid `columnTracks` / `rowTracks`), sizing, `minWidth` / `maxW
 `minHeight` / `maxHeight`, `absolute`, constraints (children of plain frames and absolute
 children), `gridCell` (a grid auto layout child's column, row and spans), clip, text properties,
 component/instance links, overrides, `slot` (a slot layer's property name), boundVariables, interactions, exports,
-`devStatus` (handoff status), `annotations` (Dev Mode notes: `[{label, properties}]`). The auto layout props
+`devStatus` (handoff status), `devChanged` (changed since it was marked ready for dev),
+`annotations` (Dev Mode notes: `[{label, properties, category?}]`). The auto layout props
 that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-know).
 
 ### `ui.inspect {}`
@@ -83,6 +84,11 @@ whether a click where nothing reacts flashes them (`hotspotHints`) and they are 
 starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`).
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
+`focus` is keyboard navigation's state: the `region` with the keyboard (`toolbar`, `layers`,
+`canvas` or `properties`), whether `keyboard` mode is on (F6 or Tab moved the focus since the last
+pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
+screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
+the system's accessibility setting turns the interface's animations off.
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 
@@ -136,10 +142,12 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, resetFrameStats?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
-`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
+`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `focusRegion`
+(`toolbar|layers|canvas|properties`: give that region the keyboard as F6 would, on the next frame),
+`iconGallery` (bool:
 every UI icon at 12, 16, 24 and 32 px over the window, for reviewing the icon set), `colorPicker`
 (`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
 or a collection id or name to show, or `{library, collection?}` for an enabled library's collection: the
@@ -162,10 +170,15 @@ closes it), `commentDraft` (`{x, y}`: start a new comment there), `commentFilter
 (`date|page`), `commentSearch` (the panel's search text), `commentReply` (the open thread's reply
 text, focused with the cursor at its end: an `@` there shows the mention picker), `commentEdit` (a
 message index of the open thread to edit, 0 for the first; `null` stops), `presentComments` (bool:
-the presenter shows the presented frame's comments, also Shift+C there), `resetFrameStats` (true:
-start `framesDrawn` and `repaintCauses` over). Returns `ui.inspect`
-(which reports `stylePicker`, `stylePickerView`, and `comments`: `open`, `draft`, `filter`, `sort`,
-`search`, `editing` and the `mentions` the picker offers).
+the presenter shows the presented frame's comments, also Shift+C there). Dev Mode: `devCompare` (a
+ready-for-dev frame or section id opens the Compare changes view, like `dev.compare {id, show:
+true}`; `null` closes it) with `devCompareMode` (`sideBySide|overlay`) and `devCompareSplit` (the
+overlay slider, 0–1), `annotationFilter` (`all`, `none` for uncategorised, or a category id or name:
+the annotations the canvas shows). `resetFrameStats` (true: start `framesDrawn` and
+`repaintCauses` over). Returns `ui.inspect` (which reports `stylePicker`,
+`stylePickerView`, `comments`: `open`, `draft`, `filter`, `sort`, `search`, `editing` and the
+`mentions` the picker offers, `devCompare` (`{id, mode, split}` or `null`), `devFocus` (the frame the
+focus view shows, or `null`) and `annotationFilter`).
 
 ### `ui.screenshot {path}`
 

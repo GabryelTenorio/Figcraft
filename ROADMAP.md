@@ -96,9 +96,10 @@ dimension measured side by side.
    panel; Design panel checkbox and context menu), Wrap in new section, frames in sections get
    canvas labels and are top-level frames (flows start there, navigation, Export frames to PDF),
    "Navigate to" a section shows its frame shown last, else its first; ready for dev turns
-   "Changed" when the contents are edited, resolved with a reason. *Left:* whether `fr` rows of a
-   fixed-height grid should make room for fixed-size children (now `minmax(0, 1fr)`-like),
-   section-level comparisons of changes. 1–2 h.
+   "Changed" when the contents are edited, resolved with a reason; Compare changes shows what a
+   changed frame or section looked like when it was marked next to how it is now, with the
+   changed layers and their property changes. *Left:* whether `fr` rows of a fixed-height grid
+   should make room for fixed-size children (now `minmax(0, 1fr)`-like). 1–2 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -259,14 +260,26 @@ dimension measured side by side.
    main's layer used ~900 times 188/226 → 4/18 ms, adding a layer to it 430 → 21 ms, a label style
    in all 72 button variants (1,800 copies) 450 → 57 ms, switching a variant, reset, detach, push
    and paste ~450 → under 3 ms, accepting a library update 460 → 64 ms; the Assets panel with 2,000
-   assets 3.4 → 1.3 ms a frame. An idle window draws no frames: it redrew ~240 times a second
+   assets 3.4 → 1.3 ms a frame. Accessibility: the custom-painted
+   controls name themselves for screen readers (AccessKit on desktop: role, name, value and state
+   for tools, layer rows with their type, level, selection and hidden/locked state, fields,
+   dropdowns, tabs, menu items, and the canvas, which describes the selection); keyboard navigation:
+   F6 / Shift+F6 move between the toolbar, layers, canvas and properties, Tab / Shift+Tab move
+   within a region with a focus ring, Enter or Space activate, the arrows go along the toolbar and
+   through the layer rows, menus and tool flyouts opened from the keyboard take it and give it back,
+   Escape returns to the canvas (where Tab selects the next layer again instead of wandering into
+   the tab strip); reduced motion follows the system's setting or a preference; secondary and
+   accent text meet WCAG AA in both themes.
+   An idle window draws no frames: it redrew ~240 times a second
    (the window title was re-sent every frame, and each viewport command asks for another), ~33% of
    a core in a debug build, and now sits at 0 frames and ~0% CPU; the toast, the autosave
    checkpoint and the presenter's "after delay" timers wake it at their deadline, the interaction
    editor's curve preview plays when it shows, changes or is hovered, and a screenshot keeps frames
    coming only until it arrives (`ui.inspect` `framesDrawn` and `repaintCauses` show what asked for
-   frames; headless tests hold it). *Left:* a real-world file corpus, Windows/Linux/browser QA,
-   accessibility. 30–50 h.
+   frames; headless tests hold it). *Left:* a real-world file corpus, Windows/Linux/browser
+   QA, runs with real screen readers (NVDA, Narrator, VoiceOver, Orca), the AccessKit tree in the
+   browser (eframe's web backend doesn't send it yet), keyboard box selection, keyboard rename and
+   context menus in the layers panel. 28–46 h.
 
 ### Where we're going
 
@@ -322,11 +335,14 @@ dimension measured side by side.
   resizing; macOS window buttons inset into it), icon rail, file header, pages and
   layers tree (rename, visibility/lock, drag to reorder/reparent), Assets panel, floating bottom
   toolbar with flyouts and mode switcher, Design / Prototype / Inspect panels (Dev Mode: properties with their styles and variables, annotations
-  with pinned properties drawn as callouts on the canvas, a ready-for-dev list, CSS/HTML/React/SwiftUI/Compose
+  with pinned properties and categories drawn as coloured callouts on the canvas (filtered by category),
+  a ready-for-dev list, a focus view on one frame with previous / next, Compare changes since a frame
+  was marked ready (before / after side by side or overlaid, property-level diffs), CSS/HTML/React/SwiftUI/Compose
   code where components take their properties as parameters and instances are calls), colour picker
   (HSB square, hue/alpha, hex, gradient stops, image fills), main menu generated from the catalog,
   context menu, Actions palette (⌘K), keyboard shortcuts from one keymap per platform (a tabbed,
-  searchable Keyboard shortcuts panel), presentation player with
+  searchable Keyboard shortcuts panel), keyboard navigation (F6 between regions, Tab within them, a
+  focus ring) and screen-reader names for the custom controls (AccessKit), presentation player with
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).
@@ -345,14 +361,14 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
 | Effects | 4 | 84% | glass and progressive blur tuned side by side; SVG draws noise, texture, progressive and background blur as embedded images | 2–4 |
-| Frames, groups, sections, masks | 5 | 80% | comparing what changed in ready-for-dev frames and sections, visual QA | 1–2 |
+| Frames, groups, sections, masks | 5 | 82% | visual QA | 0.5–1 |
 | Auto layout & constraints | 9 | 76% | grid `fr` rows around fixed-size children, QA with real-world files | 1–2 |
 | Text | 8 | 79% | visual QA | 0.5–1 |
 | Components & variants | 9 | 79% | QA with real-world (not synthetic) libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |
 | Import/export | 6 | 71% | .fig import (best effort), SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
-| Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
+| Dev mode / inspect | 2 | 91% | visual QA of the compare and focus views, comparing against an older named version (not only the snapshot taken when a frame first changes) | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
 Weighted feature depth ≈ **79%** (self-graded, from the table).
