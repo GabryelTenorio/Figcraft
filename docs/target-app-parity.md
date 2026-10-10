@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the mainstream practitioner number; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the essentials user and mainstream practitioner numbers; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -18,6 +18,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 | Menu/command breadth | **97.5%** (197 / 202 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, re-checked from source on 2026-10-10) |
 | Feature breadth (does each Figma Design feature exist, weighted) | **~76%** (core editor areas 1–16: ~90%) | estimated from the area table below |
 | Ready for real work | **~46%** | estimated (dimension table below: written weights × written per-dimension scores) |
+| Essentials user | **~53%** | estimated ([below](#essentials-user): core features 77.8% × discounts 0.92 × 0.92 × 0.8) |
 | Mainstream practitioner | **~43%** | estimated ([below](#mainstream-practitioner): weekly areas 66.5% × discounts 0.9 × 0.9 × 0.8) |
 | Remaining to beta | **~210–380 h** one Opus 5.5 agent (~45–85 h wall-clock with 5 parallel agents) | estimated |
 | Remaining to full parity | **~420–790 h** one agent (~100–180 h wall-clock with 5 parallel agents) | estimated |
@@ -118,6 +119,42 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 Dimension hours add up to the full-parity total without double counting: the feature-area rows
 for import/export (14), multiplayer and team libraries (17, 19), plugins (18) and AI (21) are
 counted under their dimensions.
+
+## Essentials user
+
+Someone who uses only the core of Figma: a casual or beginner user making a few screens, a social
+graphic or a simple mockup. Same method, with the core features a casual user touches.
+
+**1. Core features, weights and depth** (depth from the area table and checklists above):
+
+| Feature | Weight | Depth | Notes |
+|---|---|---|---|
+| Create, open, save and reopen a file; pages | 10 | 85% | home screen, `.figcraft` round trips; Open recent missing |
+| Pan and zoom | 10 | 80% | wheel, pinch, Space-drag, zoom shortcuts |
+| Select, move, resize, rotate, align, group, duplicate | 15 | 75% | not yet compared tool by tool |
+| Frames with device presets | 8 | 80% | |
+| Rectangle, ellipse, line, arrow, corner radius | 8 | 80% | |
+| Text: type, font, size, weight, colour, alignment | 12 | 70% | no spell check |
+| Colour picker, fills and strokes; place and crop images | 10 | 72% | no HEIC images |
+| Layers panel: rename, hide, lock, reorder | 7 | 80% | |
+| Basic auto layout (add, gap, padding) | 6 | 70% | |
+| Undo / redo | 5 | 90% | unlimited, one step per gesture |
+| Export PNG, JPG, SVG, PDF | 6 | 85% | |
+| Copy and paste, incl. images from other apps | 3 | 75% | |
+| **Weighted** | 100 | **77.8%** | |
+
+Left out: components and variables beyond using one, prototyping, Dev Mode, advanced vector and
+type, and everything the mainstream number leaves out.
+
+**2. Discounts a casual user actually hits:**
+
+| Discount | Factor | Evidence |
+|---|---|---|
+| Launch and stability | ×0.92 | signed and notarized macOS build, installers for every platform (v0.2.0), never-crash rules and recovery copies; no field record yet |
+| Discoverability and UI clarity | ×0.92 | the UI3 layout Figma users know, Actions palette, keyboard shortcuts panel; no onboarding, templates or Community files to start from |
+| Opening files people send them | ×0.80 | what people send a Figma user is a Figma link or a `.fig`; neither opens. Images and SVG do |
+
+77.8% × 0.92 × 0.92 × 0.80 = **~53%** (estimated). User evidence: none yet (see above).
 
 ## Mainstream practitioner
 
@@ -490,6 +527,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Added the essentials user number (~53%: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send) |
 | 2026-10-10 | minor | Added the mainstream practitioner number (~43%: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange) and user-evidence count (none). Checked that ready for real work (~46%) is built from the written dimension weights and scores; unchanged |
 | 2026-10-10 | minor | Stage checked against the alpha gate: stays alpha |
 | 2026-10-10 | major | Created from the ROADMAP's parity rubric, honest assessment and area narrative. Full re-measure against Figma desktop 126.10.7: added multiplayer, plugins, team libraries, Figma Draw extras and AI as weighted areas; split breadth from ready-for-real-work; core depth re-graded ~79% → ~67%; hours calibrated from git history; full parity 115–195 h → 420–790 h |
