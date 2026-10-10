@@ -241,9 +241,20 @@ dimension measured side by side.
    and a client that shows its own edits at once and replays them over others'; derived data
    (auto layout, instances, bindings) is repaired by the author after concurrent edits; binary
    messages (a moved layer is 43 bytes, a cursor 23) with a JSON form; a randomized multi-client
-   test over real commands converges. *Left:* the WebSocket transport, hosting and joining from
-   the app, live cursors, per-user undo, reconnect, the browser client and a standalone server;
-   plugins. 20–50 h.
+   test over real commands converges.
+   Plugins landed: sandboxed WebAssembly plugins (a metered wasmi
+   interpreter with a memory cap and no WASI, also in the browser) whose API is the command
+   registry; each run is one undo step and is rolled back when it fails (error, trap, endless loop,
+   memory); a `figcraft-plugin.json` manifest declares menu commands with parameters and read or
+   write access with an optional command allowlist, and files, other documents, the undo history,
+   dialogs and other plugins are always off limits. Plugins ▸ Development ▸ Import plugin from
+   manifest… (kept in the preferences, the module re-read on every run), the installed plugins in
+   the Plugins menu with a parameters form drawn from the manifest, Run last plugin (⌥⌘P), Manage
+   plugins, and `plugin.*` commands for scripts, the CLI and MCP; a Rust SDK and two example
+   plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
+   plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
+   distribution; for collaboration, the WebSocket transport, hosting and joining from the app,
+   live cursors, per-user undo, reconnect, the browser client and a standalone server. 18–45 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -280,7 +291,14 @@ dimension measured side by side.
    through the layer rows, menus and tool flyouts opened from the keyboard take it and give it back,
    Escape returns to the canvas (where Tab selects the next layer again instead of wandering into
    the tab strip); reduced motion follows the system's setting or a preference; secondary and
-   accent text meet WCAG AA in both themes. *Left:* a real-world file corpus, Windows/Linux/browser
+   accent text meet WCAG AA in both themes.
+   An idle window draws no frames: it redrew ~240 times a second
+   (the window title was re-sent every frame, and each viewport command asks for another), ~33% of
+   a core in a debug build, and now sits at 0 frames and ~0% CPU; the toast, the autosave
+   checkpoint and the presenter's "after delay" timers wake it at their deadline, the interaction
+   editor's curve preview plays when it shows, changes or is hovered, and a screenshot keeps frames
+   coming only until it arrives (`ui.inspect` `framesDrawn` and `repaintCauses` show what asked for
+   frames; headless tests hold it). *Left:* a real-world file corpus, Windows/Linux/browser
    QA, runs with real screen readers (NVDA, Narrator, VoiceOver, Orca), the AccessKit tree in the
    browser (eframe's web backend doesn't send it yet), keyboard box selection, keyboard rename and
    context menus in the layers panel. 28–46 h.
@@ -291,14 +309,14 @@ dimension measured side by side.
   glass and progressive blur tuned side by side; the last
   text details (right-to-left list markers) and auto layout details (grid `fr` rows around
   fixed-size children).
-- **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
-  history are in).
+- **Then:** interop depth (6: .fig best effort), multiplayer (8; comments, version history and
+  plugins are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
 
-- **Architecture:** 13 crates with enforced layering (`cargo xtask layers`): geom, color, doc,
-  layout, text, pathops, render, format, svg, engine, ui-egui (+ mcp, pdf). Every action
+- **Architecture:** 15 crates with enforced layering (`cargo xtask layers`): geom, color, doc,
+  layout, text, pathops, plugin, collab, render, format, svg, engine, ui-egui (+ mcp, pdf). Every action
   is a command (~330); undo is unlimited via structural sharing (`Arc` node snapshots); gestures are
   one undo step; `command.batch` runs several commands as one step.
 - **Document model:** pages, frames, groups, sections, rectangles, ellipses (arcs/rings), polygons,
@@ -373,7 +391,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Prototyping | 6 | 91% | QA against larger real-world prototypes | 1–2 |
 | Import/export | 6 | 71% | .fig import (best effort), SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
 | Dev mode / inspect | 2 | 91% | visual QA of the compare and focus views, comparing against an older named version (not only the snapshot taken when a frame first changes) | 1–2 |
-| Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
+| Comments, versions, misc | 3 | 62% | multiplayer; plugin-defined UI at run time, plugin settings storage | 6–11 |
 
 Weighted feature depth ≈ **79%** (self-graded, from the table).
 

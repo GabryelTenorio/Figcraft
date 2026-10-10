@@ -65,7 +65,10 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 UI state: panels and tabs, current tool (`tool`: its id, overlay hints and, for a selected
 ellipse, its arc handles `arcHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
-`renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
+`renderMs`), frames drawn since start or the last `ui.set {resetFrameStats: true}` (`framesDrawn`;
+an idle window draws none) with the most frequent repaint requests behind them (`repaintCauses`:
+`[{at: "file:line", count}]`, every request made in the frame before each one, delayed ones such as
+the autosave deadline included; egui's `context.rs` begin-pass line means input events) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
 the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
 `name`, `start`, `history`, open `overlays`, the screen's `scroll` offset and `scrollRange`, the
@@ -139,10 +142,13 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginForm?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
-`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `focusRegion`
+`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool, or a top-level menu such
+as `"Plugins"` to open the main menu with it open), `pluginsWindow` (bool: Plugins ▸ Manage
+plugins…), `pluginForm` (`{id, command?}`: start that plugin command like its menu item, opening
+its parameters form when it has parameters; `null` closes the form), `focusRegion`
 (`toolbar|layers|canvas|properties`: give that region the keyboard as F6 would, on the next frame),
 `iconGallery` (bool:
 every UI icon at 12, 16, 24 and 32 px over the window, for reviewing the icon set), `colorPicker`
@@ -171,14 +177,16 @@ the presenter shows the presented frame's comments, also Shift+C there). Dev Mod
 ready-for-dev frame or section id opens the Compare changes view, like `dev.compare {id, show:
 true}`; `null` closes it) with `devCompareMode` (`sideBySide|overlay`) and `devCompareSplit` (the
 overlay slider, 0–1), `annotationFilter` (`all`, `none` for uncategorised, or a category id or name:
-the annotations the canvas shows). Returns `ui.inspect` (which reports `stylePicker`,
+the annotations the canvas shows). `resetFrameStats` (true: start `framesDrawn` and
+`repaintCauses` over). Returns `ui.inspect` (which reports `stylePicker`,
 `stylePickerView`, `comments`: `open`, `draft`, `filter`, `sort`, `search`, `editing` and the
 `mentions` the picker offers, `devCompare` (`{id, mode, split}` or `null`), `devFocus` (the frame the
 focus view shows, or `null`) and `annotationFilter`).
 
 ### `ui.screenshot {path}`
 
-PNG of the whole window, UI included (needs a visible window). Returns `{path, width, height}`.
+PNG of the whole window, UI included (needs a visible window; an idle one draws the frame to
+capture). Returns `{path, width, height}`, or an error after 60 s when the window doesn't deliver.
 
 ### `ui.render {path, scale?, ids?}`
 

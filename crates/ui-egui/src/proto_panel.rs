@@ -953,15 +953,22 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
             }
         });
         custom_easing_fields(app, ui, node, k, it.easing);
-        // Curve preview, with a dot running along it.
+        // Curve preview, with a dot running along it: it plays when the preview shows, when the
+        // easing or duration changes and while the pointer is over it; otherwise the dot rests at
+        // the end (an idle window draws no frames).
         let w = ui.available_width();
-        let (r, _) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
+        let (r, resp) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
         let box_r = Rect::from_min_max(pos2(r.min.x + PAD, r.min.y + 4.0), pos2(r.max.x - PAD, r.max.y - 4.0));
         ui.painter().rect_filled(box_r, CornerRadius::same(5), t.field);
-        let period = (f64::from(it.duration_ms) / 1000.0).max(0.05) + 0.6;
-        let phase = ((ui.input(|i| i.time) % period) / (period - 0.6)).min(1.0);
+        let period = (f64::from(it.duration_ms) / 1000.0).max(0.05) + CURVE_HOLD;
+        let elapsed = curve_play(ui, Id::new(("proto_curve", node, k)), Id::new((format!("{:?}", it.easing), it.duration_ms)), resp.hovered());
+        let phase = if resp.hovered() || elapsed < period * CURVE_PLAYS {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+            ((elapsed % period) / (period - CURVE_HOLD)).min(1.0)
+        } else {
+            1.0
+        };
         curve(ui.painter(), box_r.shrink2(vec2(10.0, 12.0)), it.easing, ACCENT, Some(phase));
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
     }
 }
 
@@ -1021,6 +1028,24 @@ fn custom_easing_fields(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, e
 }
 
 /// Draw an easing curve in `r` (x = time, y = progress, up). `dot` marks a point in time.
+/// The curve preview's dot rests at the end this long each time round (seconds).
+const CURVE_HOLD: f64 = 0.6;
+/// How many times the curve preview plays when it shows or changes.
+const CURVE_PLAYS: f64 = 2.0;
+
+/// Seconds since the curve preview `id` started playing: it starts over when it shows (it wasn't
+/// drawn the pass before), when what it shows (`key`) changes and when the pointer comes over it.
+fn curve_play(ui: &Ui, id: Id, key: Id, hovered: bool) -> f64 {
+    let now = ui.input(|i| i.time);
+    let pass = ui.ctx().cumulative_pass_nr();
+    let since = match ui.data(|d| d.get_temp::<(Id, f64, bool, u64)>(id)) {
+        Some((k, since, was_hovered, drawn)) if k == key && (was_hovered || !hovered) && drawn + 1 >= pass => since,
+        _ => now,
+    };
+    ui.data_mut(|d| d.insert_temp(id, (key, since, hovered, pass)));
+    now - since
+}
+
 pub fn curve(p: &egui::Painter, r: Rect, e: Easing, col: Color32, dot: Option<f64>) {
     let n = 48;
     let at = |x: f64| {

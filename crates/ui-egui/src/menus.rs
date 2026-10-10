@@ -13,6 +13,7 @@ use crate::toolbar::pretty_shortcut;
 
 /// Commands the UI layer implements itself (dialogs and platform actions).
 pub const UI_COMMANDS: &[&str] = &[
+    "plugin.import",
     "file.open",
     "file.import",
     "file.placeImage",
@@ -74,6 +75,7 @@ fn clipboard_png(app: &mut FigApp) -> Option<(Vec<u8>, u32, u32)> {
 pub fn invoke(app: &mut FigApp, id: &str) {
     match id {
         "file.open" => app.open_dialog(),
+        "plugin.import" => crate::plugins_ui::import_dialog(app),
         "file.import" => app.import_dialog(false),
         "file.placeImage" => app.import_dialog(true),
         "file.save" => app.save(),
@@ -159,6 +161,10 @@ pub fn available(id: &str) -> bool {
 /// Draw one level of the main menu: `prefix` is the menu path ("File", "Edit/Copy as").
 fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
     let t = Tokens::get(ui.ctx());
+    // The installed plugins head the Plugins menu.
+    if prefix == "Plugins" && crate::plugins_ui::menu(app, ui, &t) {
+        return true;
+    }
     let mut clicked = None;
     let mut subs: Vec<String> = Vec::new();
     let mut last_sep = true;
@@ -182,22 +188,8 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                 subs.push(sub.clone());
                 last_sep = false;
                 let full = format!("{prefix}/{sub}");
-                let resp = submenu_item(ui, &sub, &t);
-                if resp.hovered() || resp.has_focus() {
-                    ui.data_mut(|d| d.insert_temp(Id::new(("submenu_open", prefix)), full.clone()));
-                }
-                let open: Option<String> = ui.data(|d| d.get_temp(Id::new(("submenu_open", prefix))));
-                if open.as_deref() == Some(full.as_str()) {
-                    let pos = pos2(resp.rect.max.x + 4.0, resp.rect.min.y - 8.0);
-                    let mut child_clicked = false;
-                    egui::Area::new(Id::new(("submenu", full.as_str()))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-                        menu_frame(ui, &t, |ui| {
-                            child_clicked = menu_level(app, ui, &full);
-                        });
-                    });
-                    if child_clicked {
-                        return true;
-                    }
+                if submenu(ui, prefix, &full, &sub, &t, |ui| menu_level(app, ui, &full).then_some(())).is_some() {
+                    return true;
                 }
             }
         }
@@ -209,15 +201,31 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
     false
 }
 
+/// A submenu row `label` in the menu at `prefix`; while it's open (hovered last), `add` draws its
+/// items beside it. `key` is unique among the menu's submenus. Returns what `add` returned.
+pub(crate) fn submenu<R>(ui: &mut Ui, prefix: &str, key: &str, label: &str, t: &Tokens, add: impl FnOnce(&mut Ui) -> Option<R>) -> Option<R> {
+    let resp = submenu_item(ui, label, t);
+    let slot = Id::new(("submenu_open", prefix));
+    if resp.hovered() || resp.has_focus() {
+        ui.data_mut(|d| d.insert_temp(slot, key.to_string()));
+    }
+    let open: Option<String> = ui.data(|d| d.get_temp(slot));
+    if open.as_deref() != Some(key) {
+        return None;
+    }
+    let pos = pos2(resp.rect.max.x + 4.0, resp.rect.min.y - 8.0);
+    egui::Area::new(Id::new(("submenu", key))).fixed_pos(pos).order(egui::Order::Foreground).show(ui.ctx(), |ui| menu_frame(ui, t, add)).inner
+}
+
 /// A thin line between groups of menu items.
-fn separator(ui: &mut Ui) {
+pub(crate) fn separator(ui: &mut Ui) {
     ui.add_space(4.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
     ui.add_space(4.0);
 }
 
-fn menu_frame(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui)) {
+fn menu_frame<R>(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::NONE
         .fill(t.menu)
         .corner_radius(CornerRadius::same(13))
@@ -226,11 +234,12 @@ fn menu_frame(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui)) {
         .show(ui, |ui| {
             ui.set_width(240.0);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            add(ui);
-        });
+            add(ui)
+        })
+        .inner
 }
 
-fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, t: &Tokens) -> bool {
+pub(crate) fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, t: &Tokens) -> bool {
     indented_item(ui, label, shortcut, enabled, checked, 0.0, t)
 }
 
@@ -277,6 +286,11 @@ fn submenu_item(ui: &mut Ui, label: &str, t: &Tokens) -> egui::Response {
     ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.menu_text);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(12.0, 12.0)), Icon::ChevronRight, t.menu_text);
     resp
+}
+
+/// Open the main menu at top-level menu `top` (control channel).
+pub fn open_main_menu(ctx: &egui::Context, top: &str) {
+    ctx.data_mut(|d| d.insert_temp(Id::new("main_open"), top.to_string()));
 }
 
 /// The main menu's area.

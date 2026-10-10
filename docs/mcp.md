@@ -484,6 +484,19 @@ save)}` returns `{changes, count, bytes}`: the change batch a live session would
 (per-property `create` / `set` / `delete` and document-level changes, see
 `docs/collab-protocol.md`) and its binary size. It changes nothing.
 
+### Plugins
+
+Sandboxed WebAssembly plugins act through the same commands (see [`plugins.md`](plugins.md) for the
+manifest, the ABI and the Rust SDK). Driven with `run_command`: `plugin.import {path}` (a
+`figcraft-plugin.json` or its folder) or `plugin.import {manifest, wasm}` (the manifest as an
+object or JSON text and the module as base64, for this session only), `plugin.list`,
+`plugin.remove {id}`, and `plugin.run {id, command?, params?, fuel?}`, which returns
+`{plugin, command, output, logs, calls, fuel}`. A run is one undo step and is rolled back when it
+fails; a plugin only reads the document unless its manifest asks for `write`, may be limited to
+some commands, and can never touch files, other documents, the undo history, dialogs or other
+plugins. A headless MCP session starts with no plugins: import them first. `plugins.runLast` runs
+the last plugin command again.
+
 ### Dev Mode
 
 - **Component code:** `inspect.code {id, language: react|swiftui|compose}` on a component, a

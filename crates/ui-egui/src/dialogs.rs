@@ -200,6 +200,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         export_dialog(app, ctx);
     }
     color_profile_dialog(app, ctx);
+    crate::plugins_ui::show(app, ctx);
 }
 
 /// File ▸ Color profile: pick sRGB or Display P3, then keep the colours' appearance (convert the
