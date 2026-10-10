@@ -18,7 +18,7 @@ _Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and sel
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
 | Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~77%** |
+| Feature depth (weighted rubric below) | **~78%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
 | Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
 | Time to **full parity** (feature parity + fidelity pass + hardening) | **~115–195 h** one agent · **~32–55 h** with 4–6 agents |
@@ -287,7 +287,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
-Weighted feature depth ≈ **77%** (self-graded, from the table).
+Weighted feature depth ≈ **78%** (self-graded, from the table).
 
 ## Milestones
 
