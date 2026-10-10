@@ -467,8 +467,16 @@ pub fn apply_bindings(doc: &mut Document) {
         let Some(n) = doc.node(id) else { continue };
         let binds = n.bound.clone();
         let mut sets = serde_json::Map::new();
+        let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         for (field, var) in binds {
             let Some(val) = doc.variables.resolve(&var, &modes) else { continue };
+            // `effects/<index>/<offsetX|offsetY|radius|spread|color>`: one effect's value.
+            if let Some((i, prop)) = field.strip_prefix("effects/").and_then(|r| r.split_once('/'))
+                && let Ok(i) = i.parse::<usize>()
+            {
+                effect_sets.push((i, prop.to_string(), val));
+                continue;
+            }
             let jv = match &val {
                 VariableValue::Color(c) => json!(c.to_css_hex()),
                 // Opacity variables hold percentages.
@@ -486,6 +494,35 @@ pub fn apply_bindings(doc: &mut Document) {
             sets.insert(key.to_string(), jv);
         }
         let _ = super::props::apply("variables", doc, id, &sets);
+        if !effect_sets.is_empty() {
+            apply_effect_bindings(doc, id, &effect_sets);
+        }
+    }
+}
+
+/// Write bound values into a node's effects (only what changed, so unchanged layers stay shared).
+fn apply_effect_bindings(doc: &mut Document, id: NodeId, sets: &[(usize, String, VariableValue)]) {
+    let Some(mut effects) = doc.node(id).map(|n| n.effects.clone()) else { return };
+    for (i, prop, val) in sets {
+        let Some(e) = effects.get_mut(*i) else { continue };
+        let num = match val {
+            VariableValue::Number(x) if x.is_finite() => Some(*x),
+            _ => None,
+        };
+        match (&mut e.kind, prop.as_str(), num, val) {
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetX", Some(x), _) => s.offset.0 = x,
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetY", Some(x), _) => s.offset.1 = x,
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "radius", Some(x), _) => s.radius = x.max(0.0),
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "spread", Some(x), _) => s.spread = x,
+            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "color", _, VariableValue::Color(c)) => s.color = *c,
+            (EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius }, "radius", Some(x), _) => *radius = x.max(0.0),
+            _ => {}
+        }
+    }
+    if doc.node(id).is_some_and(|n| n.effects != effects)
+        && let Ok(n) = doc.get_mut(id)
+    {
+        n.effects = effects;
     }
 }
 

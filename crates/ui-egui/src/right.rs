@@ -1045,6 +1045,11 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let _ = t;
 }
 
+/// A number field of effect `i` that can be bound to a variable (`effects/<i>/<prop>`).
+fn fx_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, prop: &str, lead: Lead, value: f64, width: f32) -> Option<FieldEdit> {
+    crate::variable_ui::number_field(app, ui, ids, &format!("effects/{i}/{prop}"), Id::new(("fx", prop, i)), lead, Some(value), "", width)
+}
+
 fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Effect) {
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     let set = |app: &mut FigApp, e2: Effect, scrub: Option<bool>| {
@@ -1072,18 +1077,27 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
             let inner = matches!(e.kind, EffectKind::InnerShadow(_));
             let mk = |s2: Shadow| Effect { kind: if inner { EffectKind::InnerShadow(s2) } else { EffectKind::DropShadow(s2) }, visible: e.visible };
             row(ui, 32.0, |ui| {
-                let ed = widgets::number_field(ui, Id::new(("fx_x", i)), Lead::Text("X"), Some(s.offset.0), "", half, 1.0);
+                let ed = fx_field(app, ui, ids, i, "offsetX", Lead::Text("X"), s.offset.0, half);
                 edit(app, ed, &|v| mk(Shadow { offset: (v, s.offset.1), ..s.clone() }));
-                let ed = widgets::number_field(ui, Id::new(("fx_y", i)), Lead::Text("Y"), Some(s.offset.1), "", half, 1.0);
+                let ed = fx_field(app, ui, ids, i, "offsetY", Lead::Text("Y"), s.offset.1, half);
                 edit(app, ed, &|v| mk(Shadow { offset: (s.offset.0, v), ..s.clone() }));
             });
             row(ui, 32.0, |ui| {
-                let ed = widgets::number_field(ui, Id::new(("fx_b", i)), Lead::Text("Blur"), Some(s.radius), "", half, 1.0);
+                let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), s.radius, half);
                 edit(app, ed, &|v| mk(Shadow { radius: v.max(0.0), ..s.clone() }));
-                let ed = widgets::number_field(ui, Id::new(("fx_s", i)), Lead::Text("Spread"), Some(s.spread), "", half, 1.0);
+                let ed = fx_field(app, ui, ids, i, "spread", Lead::Text("Spread"), s.spread, half);
                 edit(app, ed, &|v| mk(Shadow { spread: v, ..s.clone() }));
             });
+            // The colour: a bound variable's chip, else swatch, hex and alpha with a variable button.
+            let color_field = format!("effects/{i}/color");
+            let bound = app.session.doc().ok().and_then(|d| crate::variable_ui::bound_name(d, ids, &color_field)).is_some();
             row(ui, 32.0, |ui| {
+                let row_rect = Rect::from_min_size(ui.cursor().min, vec2(half * 2.0 + 8.0, FIELD_H));
+                if bound {
+                    let (r, _) = ui.allocate_exact_size(row_rect.size(), Sense::hover());
+                    crate::variable_ui::bound_chip(app, ui, ids, &color_field, VariableType::Color, r);
+                    return;
+                }
                 let p = Paint::solid(s.color);
                 if widgets::swatch(ui, &p, 16.0).clicked() {
                     app.ui.picker = Some(crate::colorpicker::PickerTarget::Effect { ids: ids.to_vec(), index: i });
@@ -1095,6 +1109,7 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
                 }
                 let ed = widgets::number_field(ui, Id::new(("fx_a", i)), Lead::None, Some((f64::from(s.color.a) * 100.0).round()), "%", 56.0, 1.0);
                 edit(app, ed, &|v| mk(Shadow { color: s.color.with_alpha((v / 100.0) as f32), ..s.clone() }));
+                crate::variable_ui::bind_button(ui, row_rect, ids, &color_field, VariableType::Color);
             });
             if !inner {
                 row(ui, 32.0, |ui| {
@@ -1107,7 +1122,7 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
         EffectKind::LayerBlur { radius } | EffectKind::BackgroundBlur { radius } => {
             let bg = matches!(e.kind, EffectKind::BackgroundBlur { .. });
             row(ui, 32.0, |ui| {
-                let ed = widgets::number_field(ui, Id::new(("fx_r", i)), Lead::Text("Blur"), Some(*radius), "", half * 2.0 + 8.0, 1.0);
+                let ed = fx_field(app, ui, ids, i, "radius", Lead::Text("Blur"), *radius, half * 2.0 + 8.0);
                 edit(app, ed, &|v| Effect {
                     kind: if bg { EffectKind::BackgroundBlur { radius: v.max(0.0) } } else { EffectKind::LayerBlur { radius: v.max(0.0) } },
                     visible: e.visible,

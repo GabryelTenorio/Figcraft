@@ -82,3 +82,38 @@ fn line_height_and_letter_spacing_follow_number_variables_in_pixels() {
     s.execute("variable.set", &json!({"variable": "leading", "value": 30})).unwrap();
     assert_eq!(style(&s).line_height, figcraft_doc::LineHeight::Pixels(30.0));
 }
+
+#[test]
+fn effects_follow_their_variables() {
+    let mut s = Session::new();
+    let r = id_of(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap()["id"]).unwrap();
+    s.execute("effect.add", &json!({"ids": [r], "type": "dropShadow"})).unwrap();
+    s.execute("effect.add", &json!({"ids": [r], "type": "layerBlur"})).unwrap();
+    s.execute("variable.createCollection", &json!({"name": "Fx"})).unwrap();
+    for (name, kind, value) in [("y", "number", json!(6)), ("blur", "number", json!(12)), ("shadow", "color", json!("#FF000080"))] {
+        s.execute("variable.create", &json!({"collection": "Fx", "name": name, "type": kind, "value": value})).unwrap();
+    }
+    let bind = |s: &mut Session, field: &str, var: &str| {
+        s.execute("variable.bind", &json!({"ids": [r], "field": field, "variable": var})).unwrap();
+    };
+    bind(&mut s, "effects/0/offsetY", "y");
+    bind(&mut s, "effects/0/color", "shadow");
+    bind(&mut s, "effects/1/radius", "blur");
+    bind(&mut s, "effects/9/radius", "blur");
+    let fx = |s: &Session| s.doc().unwrap().node(r).unwrap().effects.clone();
+    match &fx(&s)[0].kind {
+        figcraft_doc::EffectKind::DropShadow(sh) => {
+            assert_eq!(sh.offset.1, 6.0);
+            assert_eq!(sh.color.to_hex(), "FF0000");
+            assert!((sh.color.a - 0.5).abs() < 0.01);
+        }
+        k => panic!("{k:?}"),
+    }
+    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur { radius } if radius == 12.0));
+    s.execute("variable.set", &json!({"variable": "blur", "value": -3})).unwrap();
+    assert!(matches!(fx(&s)[1].kind, figcraft_doc::EffectKind::LayerBlur { radius } if radius == 0.0), "clamped");
+    // Pickers offer effect-scoped variables for these fields.
+    let doc = s.doc().unwrap();
+    assert_eq!(crate::cmd::variables::field_scope(doc, r, "effects/0/color"), Some("EFFECT_COLOR"));
+    assert_eq!(crate::cmd::variables::field_scope(doc, r, "effects/0/spread"), Some("EFFECT_FLOAT"));
+}
