@@ -883,6 +883,8 @@ mod autosave_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
+mod frame_guides_tests;
+#[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
 mod html_codegen_tests;

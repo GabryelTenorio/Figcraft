@@ -366,6 +366,9 @@ pub struct Node {
     pub mask_type: MaskType,
     #[serde(default, skip_serializing_if = "is_default")]
     pub grids: Vec<LayoutGrid>,
+    /// A frame's ruler guides, in its own coordinates (a page's are in [`NodeKind::Page`]).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub guides: Vec<Guide>,
     #[serde(default, skip_serializing_if = "is_default")]
     pub exports: Vec<ExportSetting>,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -495,6 +498,7 @@ impl Node {
             is_mask: false,
             mask_type: MaskType::Alpha,
             grids: Vec::new(),
+            guides: Vec::new(),
             exports: Vec::new(),
             interactions: Vec::new(),
             overflow: Default::default(),
@@ -523,6 +527,21 @@ impl Node {
 
     pub fn is_page(&self) -> bool {
         matches!(self.kind, NodeKind::Page { .. })
+    }
+
+    /// The ruler guides on this page or frame, in its own coordinates.
+    pub fn guides(&self) -> &[Guide] {
+        match &self.kind {
+            NodeKind::Page { guides, .. } => guides,
+            _ => &self.guides,
+        }
+    }
+
+    pub fn guides_mut(&mut self) -> &mut Vec<Guide> {
+        match &mut self.kind {
+            NodeKind::Page { guides, .. } => guides,
+            _ => &mut self.guides,
+        }
     }
 
     /// Whether painted strokes are present.
