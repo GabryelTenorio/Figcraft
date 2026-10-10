@@ -87,7 +87,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     if presp.clicked() {
         app.run("proto.present", json!({}));
     }
-    egui::Popup::menu(&mresp).width(200.0).show(|ui| {
+    menu_popup(&mresp).width(200.0).show(|ui| {
         if menu_item(ui, "Present", &present_keys) {
             app.run("proto.present", json!({}));
             ui.close();
@@ -125,7 +125,7 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     }
     ui.painter().text(pos2(zr.min.x + 6.0, zr.center().y), Align2::LEFT_CENTER, format!("{}%", (zoom * 100.0).round()), regular(11.0), t.text);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(zr.max.x - 9.0, zr.center().y), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
-    egui::Popup::menu(&zresp).width(200.0).show(|ui| {
+    menu_popup(&zresp).width(200.0).show(|ui| {
         for (label, cmd) in [
             ("Zoom in", "view.zoomIn"),
             ("Zoom out", "view.zoomOut"),
@@ -182,33 +182,67 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     });
 }
 
+/// The smallest width a popup menu is measured in (see [`menu_popup`]).
+const MENU_MIN_W: f32 = 48.0;
+/// A menu row's inset either side, and the gap between its label and its shortcut or art.
+const MENU_PAD: f32 = 8.0;
+const MENU_GAP: f32 = 24.0;
+
+/// The style of popup menus: egui's, with text kept on one line (a menu grows to its widest item).
+fn menu_style(s: &mut egui::Style) {
+    egui::containers::menu::menu_style(s);
+    s.wrap_mode = Some(egui::TextWrapMode::Extend);
+}
+
+/// The menu a dropdown or button opens: as wide as its widest row and at least as wide as
+/// `anchor`. egui measures a popup in a first, invisible pass as wide as the width it is given
+/// (else its 600 px default area width) and keeps the size measured; rows ([`menu_row`]) take the
+/// larger of that width and their content, so the menu fits its content. Chain `.width(w)` for a
+/// menu at least `w` wide.
+pub fn menu_popup(anchor: &egui::Response) -> egui::Popup<'static> {
+    egui::Popup::menu(anchor).width(anchor.rect.width().max(MENU_MIN_W)).style(menu_style)
+}
+
+/// A context menu (secondary click on `resp`) sized like [`menu_popup`].
+pub fn context_popup(resp: &egui::Response) -> egui::Popup<'static> {
+    egui::Popup::context_menu(resp).width(MENU_MIN_W).style(menu_style)
+}
+
 pub fn menu_item(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
-    menu_row(ui, label, shortcut, |_, _, _| {}).clicked()
+    menu_row(ui, label, shortcut, 0.0, |_, _, _| {}).clicked()
 }
 
-/// A menu row with art drawn into it after the label (`art(painter, row rect, text colour)`).
-pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
-    menu_row(ui, label, shortcut, art).clicked()
+/// A menu row with art drawn into it after the label (`art(painter, row rect, text colour)`),
+/// taking `art_w` from the row's right edge.
+pub fn menu_item_with(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> bool {
+    menu_row(ui, label, shortcut, art_w, art).clicked()
 }
 
-/// A menu row (see [`menu_item_with`]); its response tells hovering too.
-pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> egui::Response {
+/// The width a menu row needs for a label `label_w` wide and, at its right end, a shortcut or
+/// art `trail` wide (0 for neither).
+pub(crate) fn menu_row_width(label_w: f32, trail: f32) -> f32 {
+    MENU_PAD + label_w + if trail > 0.0 { MENU_GAP + trail } else { MENU_PAD }
+}
+
+/// A menu row (see [`menu_item_with`]); its response tells hovering too. It spans the menu and
+/// is at least as wide as its label, shortcut and art.
+pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl FnOnce(&egui::Painter, Rect, Color32)) -> egui::Response {
     let t = Tokens::get(ui.ctx());
-    let w = ui.available_width().max(180.0);
+    let text = ui.painter().layout_no_wrap(label.to_owned(), regular(11.5), Color32::PLACEHOLDER);
+    let keys =
+        (!shortcut.is_empty()).then(|| ui.painter().layout_no_wrap(crate::toolbar::pretty_shortcut(shortcut), regular(11.0), Color32::PLACEHOLDER));
+    let trail = keys.as_ref().map_or(0.0, |k| k.size().x + MENU_PAD).max(art_w);
+    let w = ui.available_width().max(menu_row_width(text.size().x, trail).ceil());
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
-    if resp.hovered() {
+    let hovered = resp.hovered();
+    if hovered {
         ui.painter().rect_filled(r, CornerRadius::same(5), ACCENT);
     }
-    let col = if resp.hovered() { Color32::WHITE } else { t.text };
-    ui.painter().text(pos2(r.min.x + 8.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.5), col);
-    if !shortcut.is_empty() {
-        ui.painter().text(
-            pos2(r.max.x - 8.0, r.center().y),
-            Align2::RIGHT_CENTER,
-            crate::toolbar::pretty_shortcut(shortcut),
-            regular(11.0),
-            if resp.hovered() { Color32::WHITE } else { t.text_secondary },
-        );
+    let col = if hovered { Color32::WHITE } else { t.text };
+    ui.painter().galley(pos2(r.min.x + MENU_PAD, r.center().y - text.size().y / 2.0), text, col);
+    if let Some(k) = keys {
+        let at = pos2(r.max.x - MENU_PAD - k.size().x, r.center().y - k.size().y / 2.0);
+        ui.painter().galley(at, k, if hovered { Color32::WHITE } else { t.text_secondary });
     }
     art(ui.painter(), r, col);
     resp
@@ -325,7 +359,7 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
     widgets::section_header(ui, "Color profile", &[], false);
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, doc.color_profile.label(), 140.0, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for p in figcraft_color::ColorProfile::ALL {
                 if menu_item(ui, p.label(), "") {
                     if p != doc.color_profile {
@@ -402,7 +436,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             app.run("frame.swapOrientation", json!({"ids": sel}));
         }
         let ids: Vec<NodeId> = sel.to_vec();
-        egui::Popup::menu(&resp).width(260.0).show(|ui| {
+        menu_popup(&resp).width(260.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                 let mut cat = "";
                 for (c, name, pw, ph) in figcraft_engine::cmd::create::FRAME_PRESETS {
@@ -433,7 +467,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
         icons::paint(ui.painter(), br.shrink(5.0), icon, t.icon);
         if cmd == "bool.union" {
-            egui::Popup::menu(&bresp).width(180.0).show(|ui| {
+            menu_popup(&bresp).width(180.0).show(|ui| {
                 for (l, c) in [
                     ("Union", "bool.union"),
                     ("Subtract", "bool.subtract"),
@@ -479,7 +513,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
         if sel.len() > 2 {
             let more = icons::button(ui, Icon::DistributeH, 24.0, false, "Distribute and tidy");
-            egui::Popup::menu(&more).show(|ui| {
+            menu_popup(&more).show(|ui| {
                 for (l, c) in [
                     ("Distribute horizontal spacing", "distribute.horizontal"),
                     ("Distribute vertical spacing", "distribute.vertical"),
@@ -535,7 +569,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         row(ui, 32.0, |ui| {
             let h = c.map(|c| format!("{:?}", c.horizontal)).unwrap_or_else(|| "Mixed".into());
             let resp = widgets::dropdown(ui, &pretty(&h), col, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, v) in [("Left", "left"), ("Right", "right"), ("Left & right", "leftRight"), ("Center", "center"), ("Scale", "scale")] {
                     if menu_item(ui, l, "") {
                         app.set_props(&ids, json!({"constraints": {"horizontal": v}}));
@@ -545,7 +579,7 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             });
             let v = c.map(|c| format!("{:?}", c.vertical)).unwrap_or_else(|| "Mixed".into());
             let resp = widgets::dropdown(ui, &pretty(&v), col, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, val) in [("Top", "top"), ("Bottom", "bottom"), ("Top & bottom", "topBottom"), ("Center", "center"), ("Scale", "scale")] {
                     if menu_item(ui, l, "") {
                         app.set_props(&ids, json!({"constraints": {"vertical": val}}));
@@ -596,7 +630,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         widgets::sublabels(ui, "Mask", None);
         row(ui, 32.0, |ui| {
             let resp = widgets::dropdown(ui, mt.map(MaskType::label).unwrap_or("Mixed"), col * 2.0 + 8.0, Some(Icon::Mask));
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for m in MaskType::ALL {
                     if menu_item(ui, m.label(), "") {
                         app.set_props(&ids, json!({"maskType": m.id()}));
@@ -683,7 +717,7 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         row(ui, 32.0, |ui| {
             let label = blend.map(|b| b.label()).unwrap_or("Mixed");
             let resp = widgets::dropdown(ui, label, col * 2.0 + 8.0, Some(Icon::Blend));
-            egui::Popup::menu(&resp).width(200.0).show(|ui| {
+            menu_popup(&resp).width(200.0).show(|ui| {
                 for b in BlendMode::ALL {
                     if menu_item(ui, b.label(), "") {
                         app.set_props(&ids, json!({"blend": b.css()}));
@@ -754,7 +788,7 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
                 ui.interact(rect, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&hover);
             }
             let resp = widgets::elided_dropdown(ui, &label, pick_w);
-            egui::Popup::menu(&resp).width(180.0).show(|ui| {
+            menu_popup(&resp).width(180.0).show(|ui| {
                 let mut pick = None;
                 if menu_check(ui, own == Some(None), &auto, "") {
                     pick = Some(Value::Null);
@@ -900,7 +934,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
                 half,
                 None,
             );
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, v) in [("Inside", "inside"), ("Center", "center"), ("Outside", "outside")] {
                     if menu_item(ui, l, "") {
                         app.set_props(&ids, json!({"strokeAlign": v}));
@@ -915,7 +949,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
             app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
             if sided {
                 let sides_btn = icons::button(ui, Icon::IndependentCorners, 24.0, false, "Individual strokes");
-                egui::Popup::menu(&sides_btn).show(|ui| {
+                menu_popup(&sides_btn).show(|ui| {
                     let w = weight.unwrap_or(1.0);
                     for (l, v) in [
                         ("All", Value::Null),
@@ -1008,14 +1042,14 @@ fn width_profile_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], profile: Opt
             let art = Rect::from_min_max(pos2(r.max.x - 22.0 - 56.0, r.center().y - 5.0), pos2(r.max.x - 22.0, r.center().y + 5.0));
             profile_art(ui.painter(), art, p.as_ref(), t.icon_secondary);
         }
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for preset in WidthPreset::ALL {
                 let prof = preset.profile();
                 let art = |pt: &egui::Painter, r: Rect, col: Color32| {
                     let a = Rect::from_min_max(pos2(r.max.x - 8.0 - 64.0, r.center().y - 5.0), pos2(r.max.x - 8.0, r.center().y + 5.0));
                     profile_art(pt, a, prof.as_ref(), col);
                 };
-                if menu_item_with(ui, preset.label(), "", art) {
+                if menu_item_with(ui, preset.label(), "", 8.0 + 64.0, art) {
                     app.run("stroke.widthProfile", json!({"ids": ids, "preset": preset.id()}));
                     ui.close();
                 }
@@ -1044,7 +1078,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     row(ui, 32.0, |ui| {
         let dashed = dashes.as_ref().is_some_and(|d| !d.is_empty());
         let resp = widgets::dropdown(ui, if dashed { "Dash" } else { "Solid" }, half, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             if menu_item(ui, "Solid", "") {
                 app.set_props(&ids, json!({"dashes": []}));
                 ui.close();
@@ -1076,7 +1110,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
             None => "Mixed",
         };
         let resp = widgets::dropdown(ui, label, half, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for (l, v) in [("Miter", "miter"), ("Bevel", "bevel"), ("Round", "round")] {
                 if menu_item(ui, l, "") {
                     app.set_props(&ids, json!({"strokeJoin": v}));
@@ -1097,9 +1131,9 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
         row(ui, 32.0, |ui| {
             for (key, cap) in [("startCap", st.as_ref().map(|s| s.cap_start)), ("endCap", st.as_ref().map(|s| s.cap_end))] {
                 let resp = widgets::dropdown(ui, cap.map(StrokeCap::label).unwrap_or("Mixed"), half, None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for c in StrokeCap::ALL {
-                        if menu_item_with(ui, c.label(), "", |p, r, col| cap_art(p, r, col, c, key == "startCap")) {
+                        if menu_item_with(ui, c.label(), "", CAP_ART_W, |p, r, col| cap_art(p, r, col, c, key == "startCap")) {
                             app.set_props(&ids, json!({key: format!("{c:?}")}));
                             ui.close();
                         }
@@ -1110,6 +1144,9 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     }
     ui.add_space(4.0);
 }
+
+/// The width [`cap_art`] takes at the right of a menu row (its arrows reach past the line's ends).
+const CAP_ART_W: f32 = 64.0;
 
 /// A short stroke ending in `cap` (on its left end for a start point), drawn at the right of a menu
 /// row.
@@ -1270,7 +1307,7 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, e.label(), w, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (l, ty) in Effect::TYPES {
                     if menu_item(ui, l, "")
                         && let Some(ne) = Effect::of_type(ty)
@@ -1389,7 +1426,7 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
             };
             row(ui, 32.0, |ui| {
                 let resp = widgets::dropdown(ui, nz.mode.label(), half * 2.0 + 8.0, None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for m in NoiseMode::ALL {
                         if menu_item(ui, m.label(), "") {
                             set(app, with(&|n| n.mode = m), None);
@@ -1538,7 +1575,7 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
             let w = ui.available_width() - 56.0;
             let resp = widgets::dropdown(ui, &grid_label(g), w, None);
-            egui::Popup::menu(&resp).width(220.0).show(|ui| {
+            menu_popup(&resp).width(220.0).show(|ui| {
                 for (l, kind) in [("Grid", GridKind::Grid), ("Columns", GridKind::Columns), ("Rows", GridKind::Rows)] {
                     if menu_item(ui, l, "") {
                         let fresh = match kind {
@@ -1614,7 +1651,7 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
             let aligns = [GridAlign::Stretch, GridAlign::Min, GridAlign::Center, GridAlign::Max];
             let cur = aligns.iter().position(|a| *a == g.align).unwrap_or(0);
             let resp = widgets::dropdown(ui, names.get(cur).copied().unwrap_or_default(), col, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for (k, (name, a)) in names.iter().zip(aligns).enumerate() {
                     if menu_check(ui, k == cur, name, "") {
                         // Fixed-size columns need a size of their own.
@@ -1792,7 +1829,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let copy = widgets::section_header(ui, "Code", &[(Icon::Export, "Copy")], false).is_some();
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, lang.label(), 120.0, Some(Icon::Code));
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for (i, l) in CodeLang::ALL.iter().enumerate() {
                 if menu_item(ui, l.label(), "") {
                     ui.data_mut(|d| d.insert_temp(lang_id, i));

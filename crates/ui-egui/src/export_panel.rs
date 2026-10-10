@@ -11,7 +11,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::right::{common, menu_item, row};
+use crate::right::{common, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular};
 use crate::widgets::{self, FIELD_H};
 
@@ -76,7 +76,7 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
             app.run("export.update", json!({"ids": ids, "index": i, "suffix": sfx}));
         }
         let resp = widgets::dropdown(ui, e.format.label(), format_w, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for f in ExportFormat::ALL {
                 if menu_item(ui, f.label(), "") {
                     app.run("export.update", json!({"ids": ids, "index": i, "format": f.ext()}));

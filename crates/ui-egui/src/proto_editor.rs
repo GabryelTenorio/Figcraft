@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::FigApp;
 use crate::icons::{self, Icon};
 use crate::proto_panel::{action_fields, action_of, action_summary, targets_for, value_json};
-use crate::right::{menu_check, menu_item, row};
+use crate::right::{menu_check, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, BindEvent, FIELD_H, FieldEdit, Lead, PAD};
 
@@ -177,7 +177,7 @@ fn link_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
 fn add_action_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, path: Vec<usize>) {
     row(ui, 28.0, |ui| {
         let resp = link_button(ui, Icon::Plus, "Add action");
-        egui::Popup::menu(&resp).width(200.0).show(|ui| {
+        menu_popup(&resp).width(200.0).show(|ui| {
             if let Some(l) = action_menu(ui) {
                 match action_of(l, cx.doc, cx.page, cx.node, None) {
                     Some(a) => {
@@ -220,7 +220,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
         let w = ui.available_width() - if single { 0.0 } else { 32.0 };
         if open {
             let resp = widgets::dropdown(ui, a.label(), w, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 if let Some(l) = action_menu(ui) {
                     match action_of(l, cx.doc, cx.page, cx.node, Some(a)) {
                         Some(new) => set_action(app, &slot, new),
@@ -244,7 +244,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
         }
         if !single {
             let resp = icons::button(ui, Icon::Dots, 24.0, false, "More");
-            egui::Popup::menu(&resp).width(180.0).show(|ui| {
+            menu_popup(&resp).width(180.0).show(|ui| {
                 let mut moved = None;
                 if i > 0 && menu_item(ui, "Move up", "") {
                     moved = Some(i - 1);
@@ -445,7 +445,7 @@ fn builder_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, b: usize, s:
             crate::variable_ui::open_proto(ui, VarSlot { slot: slot.clone(), part: VarPart::Lhs(b) }, None, resp.rect.left_bottom());
         }
         let resp = widgets::dropdown(ui, s.op.symbol(), op_w, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for op in ops_for(kind) {
                 if menu_check(ui, *op == s.op, op.symbol(), "") {
                     set_condition(app, slot, b, &with_op(s, *op, vars).expr());
@@ -492,7 +492,7 @@ fn literal_field(ui: &mut Ui, id: Id, cur: &VariableValue, w: f32) -> Option<Var
         VariableValue::Boolean(on) => {
             let resp = widgets::dropdown(ui, if *on { "true" } else { "false" }, w, None);
             let mut out = None;
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for v in [true, false] {
                     if menu_check(ui, v == *on, if v { "true" } else { "false" }, "") {
                         out = (v != *on).then_some(VariableValue::Boolean(v));

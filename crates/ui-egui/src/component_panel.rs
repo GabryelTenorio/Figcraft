@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::right::{menu_item, row};
+use crate::right::{menu_item, menu_popup, row};
 use crate::theme::{COMPONENT, Tokens, semibold};
 use crate::widgets;
 
@@ -136,7 +136,7 @@ fn slot_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, prefer
         (true, k) => format!("{k} layers"),
     };
     let resp = widgets::dropdown(ui, &label, w, Some(Icon::Slot)).on_hover_text("Add content to this slot");
-    egui::Popup::menu(&resp).width(w.max(200.0)).show(|ui| {
+    menu_popup(&resp).width(w.max(200.0)).show(|ui| {
         let insert = |app: &mut FigApp, c: NodeId| app.run("instance.slotInsert", json!({"id": slot, "component": c.0}));
         let heading = |ui: &mut Ui, text: &str| ui.label(egui::RichText::new(text).font(semibold(11.0)).color(t.text_secondary));
         if !preferred.is_empty() {
@@ -194,7 +194,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
     let existing: Vec<String> = defs.keys().cloned().chain(variants.iter().map(|(k, _)| k.clone())).collect();
     let fresh = (1..).map(|k| format!("Property {k}")).find(|n| !existing.contains(n)).unwrap_or_else(|| "Property".into());
     let plus = header_with_plus(ui, "Properties", "Create component property");
-    egui::Popup::menu(&plus).width(180.0).show(|ui| {
+    menu_popup(&plus).width(180.0).show(|ui| {
         let swap_default = comps.iter().map(|(c, _)| *c).find(|c| *c != owner && first != Some(*c));
         let items: [(&str, &str, Value); 4] = [
             ("Variant", "variant", json!("Default")),
@@ -226,7 +226,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
             }
             let def = vals.first().cloned().unwrap_or_default();
             let resp = widgets::dropdown(ui, &def, 70.0, None).on_hover_text("Default value (the first variant)");
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 for v in vals {
                     if menu_item(ui, v, "") {
                         app.run("component.editProperty", json!({"id": owner, "name": k, "default": v}));
@@ -285,7 +285,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 PropDef::InstanceSwap { default } => {
                     let label = doc.node(*default).map(|n| n.name.clone()).unwrap_or_else(|| "Missing".into());
                     let resp = widgets::dropdown(ui, &label, 84.0, None);
-                    egui::Popup::menu(&resp).show(|ui| {
+                    menu_popup(&resp).show(|ui| {
                         for (c, name) in &comps {
                             if menu_item(ui, name, "") {
                                 app.run("component.editProperty", json!({"id": owner, "name": k, "default": c.0}));
@@ -313,7 +313,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 };
                 let w = (ui.available_width() - 8.0).max(60.0);
                 let resp = widgets::dropdown(ui, &label, w, None).on_hover_text("Offered first when filling the slot (any content is allowed)");
-                egui::Popup::menu(&resp).width(w.max(200.0)).show(|ui| {
+                menu_popup(&resp).width(w.max(200.0)).show(|ui| {
                     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                         for (c, name) in comps.iter().filter(|(c, _)| *c != owner && first != Some(*c)) {
                             let on = preferred.contains(c);
@@ -382,7 +382,7 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             widgets::label(ui, label, t.text_secondary);
             let shown = bound.clone().unwrap_or_else(|| "Not bound".into());
             let resp = widgets::dropdown(ui, &shown, 120.0, None).on_hover_text("Apply a component property");
-            egui::Popup::menu(&resp).width(180.0).show(|ui| {
+            menu_popup(&resp).width(180.0).show(|ui| {
                 for k in &matching {
                     if menu_item(ui, k, "") {
                         app.run("component.bindProperty", json!({"layer": n.id, "property": k, "field": field}));
@@ -482,7 +482,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
         ui.label(egui::RichText::new(if nested { "Nested instance" } else { "Instance" }).font(semibold(11.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let more = icons::button(ui, Icon::Dots, 24.0, false, "More instance actions");
-            egui::Popup::menu(&more).width(220.0).show(|ui| {
+            menu_popup(&more).width(220.0).show(|ui| {
                 if !missing && menu_item(ui, "Go to main component", "") {
                     app.run("component.goToMain", json!({"id": id}));
                     ui.close();
@@ -516,7 +516,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     row(ui, 32.0, |ui| {
         let w = (ui.available_width() - 32.0).max(80.0);
         let resp = widgets::dropdown(ui, &comp_name, w, Some(Icon::Instance)).on_hover_text("Swap instance");
-        egui::Popup::menu(&resp).width(w.max(200.0)).show(|ui| {
+        menu_popup(&resp).width(w.max(200.0)).show(|ui| {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 let mut page = None;
                 for (c, name) in &comps {
@@ -601,7 +601,7 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                 prop_label(ui, &k, Icon::ComponentSet);
                 let w = ui.available_width().max(60.0);
                 let resp = widgets::dropdown(ui, &cur, w, None);
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for v in &vals {
                         if menu_item(ui, v, "") {
                             app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): v}}));
@@ -643,7 +643,7 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                     let cur = figcraft_engine::params::id_of(&v);
                     let label = cur.and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| "None".into());
                     let resp = widgets::dropdown(ui, &label, w, Some(Icon::Instance));
-                    egui::Popup::menu(&resp).width(200.0).show(|ui| {
+                    menu_popup(&resp).width(200.0).show(|ui| {
                         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                             for (c, name) in comps {
                                 if menu_item(ui, name, "") {

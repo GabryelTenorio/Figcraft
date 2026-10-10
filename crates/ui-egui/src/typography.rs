@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::right::{common, menu_item, row};
+use crate::right::{common, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
 
@@ -137,7 +137,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
         let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
-        egui::Popup::menu(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        menu_popup(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
                 remember_family(ui.ctx(), &f);
                 apply_style(app, "fontFamily", json!(f));
@@ -151,7 +151,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     row(ui, 32.0, |ui| {
         let resp = widgets::elided_dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half);
         let fam = family.clone();
-        egui::Popup::menu(&resp).width(200.0).show(|ui| match &fam {
+        menu_popup(&resp).width(200.0).show(|ui| match &fam {
             Some(fam) => {
                 let list = figcraft_text::family_styles(fam);
                 if list.is_empty() {
@@ -191,7 +191,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
             None => {}
         }
         let more = icons::button(ui, Icon::Chevron, 20.0, false, "Font size");
-        egui::Popup::menu(&more).width(90.0).show(|ui| {
+        menu_popup(&more).width(90.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 for v in SIZES {
                     let mark = if size == Some(v) { "✓ " } else { "   " };
@@ -300,7 +300,7 @@ fn paragraph_rows(
 
 /// A menu item that also reports the pointer being over it: (clicked, hovered).
 fn menu_item_hover(ui: &mut Ui, label: &str) -> (bool, bool) {
-    let r = crate::right::menu_row(ui, label, "", |_, _, _| {});
+    let r = crate::right::menu_row(ui, label, "", 0.0, |_, _, _| {});
     (r.clicked(), r.hovered())
 }
 

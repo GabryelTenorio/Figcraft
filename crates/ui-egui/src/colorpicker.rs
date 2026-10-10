@@ -185,7 +185,7 @@ fn model_fields(ui: &mut Ui, c: Color) -> Option<Color> {
         ui.add_space(16.0);
         ui.spacing_mut().item_spacing.x = 4.0;
         let resp = widgets::dropdown(ui, MODELS.get(model).copied().unwrap_or("Hex"), 52.0, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        crate::right::menu_popup(&resp).show(|ui| {
             for (i, m) in MODELS.iter().enumerate() {
                 if crate::right::menu_item(ui, m, "") {
                     ui.data_mut(|d| d.insert_temp(model_id, i));
@@ -542,7 +542,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
                     let resp = widgets::dropdown(ui, &format!("{:?}", img.scale_mode), 100.0, None);
-                    egui::Popup::menu(&resp).show(|ui| {
+                    crate::right::menu_popup(&resp).show(|ui| {
                         for (l, m) in [
                             ("Fill", ImageScaleMode::Fill),
                             ("Fit", ImageScaleMode::Fit),
@@ -759,7 +759,7 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         let resp = widgets::dropdown(ui, &current, 152.0, None).on_hover_text("Adjustment presets");
-        egui::Popup::menu(&resp).show(|ui| {
+        crate::right::menu_popup(&resp).show(|ui| {
             for (id, label, _) in built_in {
                 if crate::right::menu_item(ui, label, "") {
                     action = Some(PresetAction::Apply(id.to_string()));
