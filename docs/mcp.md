@@ -342,6 +342,14 @@ closing or saving a version ends the preview first, and `version.list` marks the
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
 
+### Ruler guides
+
+`guide.add {vertical, offset, frame? | page?}` (returns `{index}`), `guide.move {index, offset, …}`,
+`guide.remove {index, …}` and `guide.clear {…}` edit the guides of the current page, another
+`page`, or a `frame` (frames, components and instances). A frame's guides are in its own
+coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
+it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
+
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.
 

@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::{CommandSpec, ok};
 use crate::params::*;
-use crate::{bad, spec};
+use crate::{Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -107,50 +107,54 @@ pub fn specs() -> Vec<CommandSpec> {
                     .collect(),
             ))
         }),
-        spec!("guide.add", "Add guide", "{vertical (bool), offset, page?} → {index}", true, |s, p| {
-            let id = id(p, "page").unwrap_or(s.page()?);
+        spec!("guide.add", "Add guide", "{vertical (bool), offset, frame? | page?} → {index}", true, |s, p| {
+            let owner = guide_owner(s, "guide.add", p)?;
             let offset = req_num("guide.add", p, "offset")?.clamp(-1e7, 1e7);
             let g = Guide { vertical: boolean(p, "vertical").unwrap_or(true), offset };
-            match &mut s.doc_mut()?.get_mut(id)?.kind {
-                NodeKind::Page { guides, .. } if guides.len() < 10_000 => {
-                    guides.push(g);
-                    Ok(json!({"index": guides.len() - 1}))
-                }
-                NodeKind::Page { .. } => Err(bad("guide.add", "too many guides")),
-                _ => Err(bad("guide.add", "`page` must be a page")),
+            let guides = s.doc_mut()?.get_mut(owner)?.guides_mut();
+            if guides.len() >= 10_000 {
+                return Err(bad("guide.add", "too many guides"));
             }
+            guides.push(g);
+            Ok(json!({"index": guides.len() - 1}))
         }),
-        spec!("guide.move", "Move guide", "{index, offset, page?}", true, |s, p| {
-            let id = id(p, "page").unwrap_or(s.page()?);
+        spec!("guide.move", "Move guide", "{index, offset, frame? | page?}", true, |s, p| {
+            let owner = guide_owner(s, "guide.move", p)?;
             let k = guide_index("guide.move", p)?;
             let offset = req_num("guide.move", p, "offset")?.clamp(-1e7, 1e7);
-            match &mut s.doc_mut()?.get_mut(id)?.kind {
-                NodeKind::Page { guides, .. } => {
-                    guides.get_mut(k).ok_or_else(|| bad("guide.move", "no such guide"))?.offset = offset;
-                    ok()
-                }
-                _ => Err(bad("guide.move", "`page` must be a page")),
-            }
+            s.doc_mut()?.get_mut(owner)?.guides_mut().get_mut(k).ok_or_else(|| bad("guide.move", "no such guide"))?.offset = offset;
+            ok()
         }),
-        spec!("guide.remove", "Remove guide", "{index, page?}", true, |s, p| {
-            let id = id(p, "page").unwrap_or(s.page()?);
+        spec!("guide.remove", "Remove guide", "{index, frame? | page?}", true, |s, p| {
+            let owner = guide_owner(s, "guide.remove", p)?;
             let k = guide_index("guide.remove", p)?;
-            match &mut s.doc_mut()?.get_mut(id)?.kind {
-                NodeKind::Page { guides, .. } if k < guides.len() => {
-                    guides.remove(k);
-                    ok()
-                }
-                _ => Err(bad("guide.remove", "no such guide")),
+            let guides = s.doc_mut()?.get_mut(owner)?.guides_mut();
+            if k >= guides.len() {
+                return Err(bad("guide.remove", "no such guide"));
             }
+            guides.remove(k);
+            ok()
         }),
-        spec!("guide.clear", "Remove all guides", "{page?}", true, |s, p| {
-            let id = id(p, "page").unwrap_or(s.page()?);
-            if let NodeKind::Page { guides, .. } = &mut s.doc_mut()?.get_mut(id)?.kind {
-                guides.clear();
-            }
+        spec!("guide.clear", "Remove all guides", "{frame? | page?}", true, |s, p| {
+            let owner = guide_owner(s, "guide.clear", p)?;
+            s.doc_mut()?.get_mut(owner)?.guides_mut().clear();
             ok()
         }),
     ]
+}
+
+/// Whose guides a command edits: `frame` (in its own coordinates), else `page`, else the current
+/// page.
+fn guide_owner(s: &Session, cmd: &str, p: &Value) -> crate::Result<NodeId> {
+    let owner = match id(p, "frame") {
+        Some(f) => f,
+        None => id(p, "page").unwrap_or(s.page()?),
+    };
+    match s.doc()?.node(owner) {
+        Some(n) if n.is_page() || n.kind.is_frame_like() => Ok(owner),
+        Some(_) => Err(bad(cmd, "guides go on a page or a frame")),
+        None => Err(bad(cmd, "no such page or frame")),
+    }
 }
 
 /// A guide index from params (never negative).

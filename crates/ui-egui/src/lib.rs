@@ -46,6 +46,8 @@ pub mod widgets;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
+mod layers_keys_tests;
+#[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
 mod present_tests;
@@ -164,6 +166,9 @@ pub struct UiState {
     pub layer_search: bool,
     pub layer_filter: String,
     pub layer_anchor: Option<NodeId>,
+    /// The layers panel has the keyboard: arrow keys move through its rows instead of nudging
+    /// (set by a click on a row, cleared by a press on the canvas).
+    pub layers_focus: bool,
     pub layers_seen_sel: Vec<NodeId>,
     pub dark: bool,
     pub follow_system: bool,
@@ -235,6 +240,7 @@ impl Default for UiState {
             layer_search: false,
             layer_filter: String::new(),
             layer_anchor: None,
+            layers_focus: false,
             layers_seen_sel: Vec::new(),
             dark: false,
             follow_system: false,
