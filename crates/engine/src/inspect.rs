@@ -108,6 +108,15 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if !n.dev_status.is_none() {
             o.insert("devStatus".into(), json!(n.dev_status.id()));
         }
+        if n.dev_changed {
+            o.insert("devChanged".into(), json!(true));
+        }
+        if !n.dev_note.is_empty() {
+            o.insert("devNote".into(), json!(n.dev_note));
+        }
+        if let NodeKind::Section { contents_hidden } = n.kind {
+            o.insert("sectionContentsHidden".into(), json!(contents_hidden));
+        }
         if n.is_mask {
             o.insert("isMask".into(), json!(true));
             o.insert("maskType".into(), json!(n.mask_type.id()));
@@ -117,6 +126,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
         if !n.exports.is_empty() {
             o.insert("exports".into(), serde_json::to_value(&n.exports).unwrap_or(Value::Null));
+        }
+        if !n.annotations.is_empty() {
+            o.insert("annotations".into(), serde_json::to_value(&n.annotations).unwrap_or(Value::Null));
         }
         if !n.interactions.is_empty() {
             o.insert("interactions".into(), serde_json::to_value(&n.interactions).unwrap_or(Value::Null));

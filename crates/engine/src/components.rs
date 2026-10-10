@@ -263,6 +263,7 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.overrides.clear();
     root.transform = Affine::translate((x, y));
     root.prop_refs.clear();
+    root.annotations.clear();
     doc.insert(root, parent, index)?;
     sync_instance(doc, id);
     Ok(id)
@@ -573,6 +574,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
         n.source = Some(*s);
         n.overrides.clear();
         n.prop_refs.clear();
+        // Annotations belong to the layer they were added to, not to its copies.
+        n.annotations = olds.get(&nid).map(|o| o.annotations.clone()).unwrap_or_default();
         if let Some(old) = olds.get(&nid) {
             carry_overrides(old, &mut n, Carry::Values);
         }
@@ -638,6 +641,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize) {
     fresh.exports = root.exports.clone();
     fresh.prop_refs = root.prop_refs.clone();
     fresh.plugin_data = root.plugin_data.clone();
+    fresh.annotations = root.annotations.clone();
     fresh.locked = root.locked;
     fresh.visible = root.visible;
     fresh.var_modes = root.var_modes.clone();

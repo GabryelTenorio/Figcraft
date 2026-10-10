@@ -78,7 +78,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Layouts that build themselves</h3>
-      Auto layout in both directions, with wrap and grid (fixed, hug and `fr` tracks, cells that span), padding, gaps, alignment including text baselines, Hug / Fill / Fixed sizing, min and max sizes, absolute positioning, and drag handles for padding and spacing right on the canvas. Constraints and layout grids for everything else.
+      Auto layout in both directions, with wrap and grid (fixed, hug and `fr` tracks, cells that span), padding, gaps, alignment including text baselines, Hug / Fill / Fixed sizing, min and max sizes, absolute positioning, drag handles for padding and spacing right on the canvas, and arrow keys that move children through the flow, grid cells and nested frames. Constraints and layout grids for everything else.
     </td>
     <td width="50%" valign="top">
       <h3>Components that scale</h3>
@@ -102,7 +102,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>Prototype and hand off</h3>
-      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Inspect mode with measurements, CSS and SVG. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
+      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Alt to measure distances and padding on the canvas, Inspect mode with measurements, annotations, a ready-for-dev list and code (CSS, HTML, React, SwiftUI, Compose) where components take their properties as parameters, comment threads pinned to frames (replies, @mentions, reactions, read state) and named version history. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
     </td>
   </tr>
 </table>
@@ -111,7 +111,7 @@
 
 ## Built for agents
 
-Every menu item, tool and gesture runs a command from one registry of 270+ commands. The UI, the CLI, the JSON control channel and the MCP server all call the same commands, so anything you can click, a script or an AI agent can do too.
+Every menu item, tool and gesture runs a command from one registry of 400+ commands. The UI, the CLI, the JSON control channel and the MCP server all call the same commands, so anything you can click, a script or an AI agent can do too.
 
 ```sh
 # Headless: render and export

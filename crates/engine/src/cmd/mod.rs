@@ -13,6 +13,7 @@ pub mod lists;
 pub mod page;
 pub mod props;
 pub mod proto;
+pub mod section;
 pub mod structure;
 pub mod styles;
 pub mod text;
@@ -70,6 +71,7 @@ fn registry() -> &'static Registry {
         list.extend(lists::specs());
         list.extend(arrange::specs());
         list.extend(structure::specs());
+        list.extend(section::specs());
         list.extend(layout::specs());
         list.extend(file::specs());
         list.extend(page::specs());
@@ -86,6 +88,8 @@ fn registry() -> &'static Registry {
         list.extend(crate::shapebuilder::specs());
         list.extend(crate::codegen::specs());
         list.extend(crate::devinspect::specs());
+        list.extend(crate::component_codegen::specs());
+        list.extend(crate::annotations::specs());
         list.extend(crate::distance::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {

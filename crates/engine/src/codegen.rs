@@ -1,12 +1,16 @@
 //! Code for a layer, as shown by the Inspect panel and returned by `inspect.code`: CSS for the
-//! layer itself, and SwiftUI or Jetpack Compose for its subtree (stacks for auto layout, absolute
-//! offsets otherwise). The output is a starting point, not a pixel-exact translation.
+//! layer itself, HTML or React for its subtree, and SwiftUI or Jetpack Compose (stacks for auto
+//! layout, absolute offsets otherwise). Components become components whose properties are
+//! parameters and instances become calls passing their values (see [`crate::component_codegen`]);
+//! variables bound to a layer become CSS custom properties. The output is a starting point, not a
+//! pixel-exact translation.
 
 use figcraft_color::{Color, PaintKind};
 use figcraft_doc::*;
 use serde_json::json;
 
 use crate::cmd::CommandSpec;
+use crate::component_codegen::{Component, Param};
 use crate::params::*;
 use crate::{bad, spec};
 
@@ -14,12 +18,12 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "inspect.code",
         "Code for layer",
-        "{id?, language?: css|html|swiftui|compose (default css; html is the whole layer tree)} → {code}",
+        "{id?, language?: css|html|react|swiftui|compose (default css; html and react are the whole layer tree; components take their properties as parameters, instances pass their values)} → {code, language}",
         false,
         |s, p| {
             let id = targets(s, p).first().copied().ok_or_else(|| bad("inspect.code", "select a layer"))?;
             let lang = match string(p, "language") {
-                Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad("inspect.code", "language: css|swiftui|compose"))?,
+                Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad("inspect.code", "language: css|html|react|swiftui|compose"))?,
                 None => CodeLang::Css,
             };
             let doc = s.doc()?;
@@ -38,16 +42,19 @@ pub enum CodeLang {
     Css,
     /// The whole layer tree as nested HTML elements with a stylesheet.
     Html,
+    /// A React function component (TSX) with its stylesheet.
+    React,
     SwiftUi,
     Compose,
 }
 
 impl CodeLang {
-    pub const ALL: [CodeLang; 4] = [CodeLang::Css, CodeLang::Html, CodeLang::SwiftUi, CodeLang::Compose];
+    pub const ALL: [CodeLang; 5] = [CodeLang::Css, CodeLang::Html, CodeLang::React, CodeLang::SwiftUi, CodeLang::Compose];
     pub fn id(self) -> &'static str {
         match self {
             CodeLang::Css => "css",
             CodeLang::Html => "html",
+            CodeLang::React => "react",
             CodeLang::SwiftUi => "swiftui",
             CodeLang::Compose => "compose",
         }
@@ -56,11 +63,15 @@ impl CodeLang {
         match self {
             CodeLang::Css => "CSS",
             CodeLang::Html => "HTML + CSS",
+            CodeLang::React => "React",
             CodeLang::SwiftUi => "SwiftUI",
             CodeLang::Compose => "Compose",
         }
     }
     pub fn from_id(s: &str) -> Option<CodeLang> {
+        if s.eq_ignore_ascii_case("tsx") || s.eq_ignore_ascii_case("jsx") {
+            return Some(CodeLang::React);
+        }
         CodeLang::ALL.into_iter().find(|l| l.id().eq_ignore_ascii_case(s) || l.label().eq_ignore_ascii_case(s))
     }
 }
@@ -70,7 +81,7 @@ const MAX_DEPTH: usize = 12;
 const MAX_CHILDREN: usize = 200;
 
 /// `v` without trailing zeros (2 decimals).
-fn num(v: f64) -> String {
+pub(crate) fn num(v: f64) -> String {
     if !v.is_finite() {
         return "0".into();
     }
@@ -82,16 +93,53 @@ pub fn code_for(doc: &Document, id: NodeId, lang: CodeLang) -> String {
     match lang {
         CodeLang::Css => css(doc, id),
         CodeLang::Html => html(doc, id),
-        CodeLang::SwiftUi => {
-            let mut out = String::new();
-            swift(doc, id, 0, &mut out);
-            out
+        CodeLang::React | CodeLang::SwiftUi | CodeLang::Compose => crate::component_codegen::code(doc, id, lang),
+    }
+}
+
+/// What a tree walk generates for: the document, the layer the code is for (instances under it
+/// become calls), and the component whose properties are parameters.
+pub(crate) struct Ctx<'a> {
+    pub doc: &'a Document,
+    pub root: NodeId,
+    pub comp: Option<&'a Component>,
+    /// Indentation the walk starts at (the depth cap counts from it).
+    pub base: usize,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn new(doc: &'a Document, root: NodeId) -> Self {
+        Ctx { doc, root, comp: None, base: 0 }
+    }
+
+    /// The component parameter controlling `field` ("visible", "characters", "mainComponent",
+    /// "slot") of `n`.
+    pub fn param(&self, n: &Node, field: &str) -> Option<&'a Param> {
+        let name = n.prop_refs.get(field)?;
+        self.comp?.params.iter().find(|p| &p.prop == name)
+    }
+
+    /// Visible children in paint order (bottom first), capped; in component code, hidden layers a
+    /// boolean parameter shows are included.
+    pub fn kids(&self, n: &Node) -> Vec<NodeId> {
+        n.children
+            .iter()
+            .copied()
+            .filter(|c| self.doc.node(*c).is_some_and(|k| k.visible || self.param(k, "visible").is_some()))
+            .take(MAX_CHILDREN)
+            .collect()
+    }
+
+    fn too_deep(&self, depth: usize) -> bool {
+        depth > self.base + MAX_DEPTH
+    }
+
+    /// A call for an instance below the root (`None` for other layers, or a missing main).
+    fn call(&self, n: &Node, lang: CodeLang, depth: usize) -> Option<String> {
+        if n.id == self.root || !matches!(n.kind, NodeKind::Instance { .. }) {
+            return None;
         }
-        CodeLang::Compose => {
-            let mut out = String::new();
-            compose(doc, id, 0, &mut out);
-            out
-        }
+        crate::component_codegen::usage(self.doc, n.id, lang, depth)
     }
 }
 
@@ -122,7 +170,7 @@ fn radius(n: &Node) -> f64 {
 }
 
 /// Text content as a string literal (escaped for Swift; Kotlin also escapes `$`).
-fn literal(s: &str, kotlin: bool) -> String {
+pub(crate) fn literal(s: &str, kotlin: bool) -> String {
     let mut out = String::from("\"");
     for c in s.chars().take(10_000) {
         match c {
@@ -140,74 +188,138 @@ fn literal(s: &str, kotlin: bool) -> String {
     out
 }
 
-/// Visible children in paint order (bottom first), capped.
-fn kids(doc: &Document, n: &Node) -> Vec<NodeId> {
-    n.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|k| k.visible)).take(MAX_CHILDREN).collect()
-}
-
-fn indent(depth: usize) -> String {
+pub(crate) fn indent(depth: usize) -> String {
     "    ".repeat(depth)
 }
 
 // ------------------------------------------------------------------ CSS
 
-fn css(doc: &Document, id: NodeId) -> String {
-    let Some(n) = doc.node(id) else { return String::new() };
-    format!("/* {} */\n{}", n.name.replace("*/", "* /"), css_decls(n))
+/// The CSS custom properties generated code uses: name → fallback value, in first-use order.
+#[derive(Default)]
+pub(crate) struct Tokens(pub Vec<(String, String)>);
+
+impl Tokens {
+    /// `var(--name, value)`, remembering the variable.
+    fn var(&mut self, variable: &str, value: String) -> String {
+        let name = css_var_name(variable);
+        let out = format!("var({name}, {value})");
+        if !self.0.iter().any(|(n, _)| *n == name) {
+            self.0.push((name, value));
+        }
+        out
+    }
+
+    /// A `:root` rule declaring the variables (empty without any).
+    pub fn root_rule(&self) -> String {
+        if self.0.is_empty() {
+            return String::new();
+        }
+        let decls: String = self.0.iter().map(|(n, v)| format!("  {n}: {v};\n")).collect();
+        format!(":root {{\n{decls}}}\n")
+    }
 }
 
-/// The CSS declarations for `n`'s own look and size, one per line.
-fn css_decls(n: &Node) -> String {
-    let mut out = format!("width: {}px;\nheight: {}px;\n", num(n.width), num(n.height));
-    if let Some(l) = &n.layout {
-        out.push_str("display: flex;\n");
-        out.push_str(&format!("flex-direction: {};\n", if l.mode == LayoutMode::Vertical { "column" } else { "row" }));
-        if l.wrap {
-            out.push_str("flex-wrap: wrap;\n");
+/// A variable's CSS custom property name: "Colors/Brand 500" → `--colors-brand-500`.
+pub fn css_var_name(variable: &str) -> String {
+    let mut out = String::from("--");
+    for c in variable.chars().flat_map(char::to_lowercase).take(80) {
+        if c.is_alphanumeric() || c == '_' {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
         }
-        out.push_str(&format!("gap: {}px;\n", num(l.gap)));
-        let [pt, pr, pb, pl] = l.padding;
-        out.push_str(&format!("padding: {}px {}px {}px {}px;\n", num(pt), num(pr), num(pb), num(pl)));
-        out.push_str(&format!(
-            "justify-content: {};\nalign-items: {};\n",
-            match l.main_align {
-                MainAlign::Min => "flex-start",
-                MainAlign::Center => "center",
-                MainAlign::Max => "flex-end",
-                MainAlign::SpaceBetween => "space-between",
-            },
-            match l.cross_align {
-                CrossAlign::Min => "flex-start",
-                CrossAlign::Center => "center",
-                CrossAlign::Max => "flex-end",
-                CrossAlign::Baseline => "baseline",
-            }
-        ));
     }
-    if let Some(r) = n.corners.uniform().filter(|r| *r > 0.0) {
-        out.push_str(&format!("border-radius: {}px;\n", num(r)));
+    let trimmed = out.trim_end_matches('-');
+    if trimmed.len() <= 2 { "--variable".into() } else { trimmed.to_string() }
+}
+
+/// `value`, or a reference to the variable bound to the first of `fields` that has one.
+fn tok(doc: &Document, n: &Node, fields: &[&str], value: String, t: &mut Tokens) -> String {
+    match fields.iter().find_map(|f| crate::devinspect::bound_variable(doc, n, f)) {
+        Some(v) => t.var(&v.name, value),
+        None => value,
+    }
+}
+
+fn css(doc: &Document, id: NodeId) -> String {
+    let Some(n) = doc.node(id) else { return String::new() };
+    let mut t = Tokens::default();
+    let decls = css_decls(doc, n, &mut t, (false, false));
+    format!("/* {} */\n{decls}", n.name.replace("*/", "* /"))
+}
+
+/// The CSS declarations for `n`'s own look and size, one per line; `hug` leaves out the width
+/// and/or height (they follow the content). Bound variables become `var(--name, value)`.
+pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bool)) -> String {
+    let px = |v: f64| format!("{}px", num(v));
+    let mut out = String::new();
+    let mut put = |key: &str, value: String| out.push_str(&format!("{key}: {value};\n"));
+    if !hug.0 {
+        put("width", tok(doc, n, &["width"], px(n.width), t));
+    }
+    if !hug.1 {
+        put("height", tok(doc, n, &["height"], px(n.height), t));
+    }
+    if let Some(l) = &n.layout {
+        put("display", "flex".into());
+        put("flex-direction", if l.mode == LayoutMode::Vertical { "column" } else { "row" }.into());
+        if l.wrap {
+            put("flex-wrap", "wrap".into());
+        }
+        put("gap", tok(doc, n, &["gap"], px(l.gap), t));
+        let [pt, pr, pb, pl] = l.padding;
+        let sides = [
+            tok(doc, n, &["paddingTop", "paddingVertical", "padding"], px(pt), t),
+            tok(doc, n, &["paddingRight", "paddingHorizontal", "padding"], px(pr), t),
+            tok(doc, n, &["paddingBottom", "paddingVertical", "padding"], px(pb), t),
+            tok(doc, n, &["paddingLeft", "paddingHorizontal", "padding"], px(pl), t),
+        ];
+        put("padding", sides.join(" "));
+        let justify = match l.main_align {
+            MainAlign::Min => "flex-start",
+            MainAlign::Center => "center",
+            MainAlign::Max => "flex-end",
+            MainAlign::SpaceBetween => "space-between",
+        };
+        put("justify-content", justify.into());
+        let align = match l.cross_align {
+            CrossAlign::Min => "flex-start",
+            CrossAlign::Center => "center",
+            CrossAlign::Max => "flex-end",
+            CrossAlign::Baseline => "baseline",
+        };
+        put("align-items", align.into());
+    }
+    if matches!(n.kind, NodeKind::Ellipse { .. }) {
+        put("border-radius", "50%".into());
+    } else if let Some(r) = n.corners.uniform().filter(|r| *r > 0.0) {
+        put("border-radius", tok(doc, n, &["cornerRadius"], px(r), t));
     } else if n.corners.radii.iter().any(|r| *r > 0.0) {
-        let [a, b, c, d] = n.corners.radii;
-        out.push_str(&format!("border-radius: {}px {}px {}px {}px;\n", num(a), num(b), num(c), num(d)));
+        let fields = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"];
+        let corners: Vec<String> = n.corners.radii.iter().zip(fields).map(|(r, f)| tok(doc, n, &[f, "cornerRadius"], px(*r), t)).collect();
+        put("border-radius", corners.join(" "));
     }
     if n.opacity < 1.0 {
-        out.push_str(&format!("opacity: {};\n", num(f64::from(n.opacity))));
+        put("opacity", tok(doc, n, &["opacity"], num(f64::from(n.opacity)), t));
     }
-    for p in n.fills.iter().filter(|p| p.visible) {
+    for (i, p) in n.fills.iter().enumerate().filter(|(_, p)| p.visible) {
         match &p.kind {
             PaintKind::Solid { color } => {
                 let key = if matches!(n.kind, NodeKind::Text(_)) { "color" } else { "background" };
-                out.push_str(&format!("{key}: {};\n", color.with_alpha(color.a * p.opacity).to_css()));
+                let c = color.with_alpha(color.a * p.opacity).to_css();
+                // A variable binds the first paint's colour.
+                put(key, if i == 0 { tok(doc, n, &["fill"], c, t) } else { c });
             }
             PaintKind::Gradient(g) => {
                 let stops: Vec<String> = g.sorted_stops().iter().map(|s| format!("{} {}%", s.color.to_css(), (s.position * 100.0).round())).collect();
-                out.push_str(&format!("background: linear-gradient({});\n", stops.join(", ")));
+                put("background", format!("linear-gradient({})", stops.join(", ")));
             }
-            PaintKind::Image(_) => out.push_str("background: url(image.png) center / cover;\n"),
+            PaintKind::Image(_) => put("background", "url(image.png) center / cover".into()),
         }
     }
     if let Some(c) = stroke_color(n) {
-        out.push_str(&format!("border: {}px solid {};\n", num(n.stroke.weight), c.to_css()));
+        let weight = tok(doc, n, &["strokeWeight"], px(n.stroke.weight), t);
+        put("border", format!("{weight} solid {}", tok(doc, n, &["stroke"], c.to_css(), t)));
     }
     let shadows: Vec<String> = n
         .effects
@@ -224,45 +336,43 @@ fn css_decls(n: &Node) -> String {
         })
         .collect();
     if !shadows.is_empty() {
-        out.push_str(&format!("box-shadow: {};\n", shadows.join(", ")));
+        put("box-shadow", shadows.join(", "));
     }
     for e in n.effects.iter().filter(|e| e.visible) {
         match e.kind {
-            EffectKind::LayerBlur { radius } => out.push_str(&format!("filter: blur({}px);\n", num(radius / 2.0))),
-            EffectKind::BackgroundBlur { radius } => out.push_str(&format!("backdrop-filter: blur({}px);\n", num(radius / 2.0))),
+            EffectKind::LayerBlur { radius } => put("filter", format!("blur({}px)", num(radius / 2.0))),
+            EffectKind::BackgroundBlur { radius } => put("backdrop-filter", format!("blur({}px)", num(radius / 2.0))),
             // CSS has no refraction: the frost is the nearest.
-            EffectKind::Glass(ref g) => out.push_str(&format!("backdrop-filter: blur({}px);\n", num(g.sanitized().frost / 2.0))),
+            EffectKind::Glass(ref g) => put("backdrop-filter", format!("blur({}px)", num(g.sanitized().frost / 2.0))),
             _ => {}
         }
     }
-    if let NodeKind::Text(t) = &n.kind {
-        out.push_str(&format!(
-            "font-family: \"{}\";\nfont-size: {}px;\nfont-weight: {};\n",
-            t.style.font_family,
-            num(t.style.font_size),
-            t.style.weight()
-        ));
-        if t.style.italic() {
-            out.push_str("font-style: italic;\n");
+    if let NodeKind::Text(tx) = &n.kind {
+        let s = &tx.style;
+        put("font-family", tok(doc, n, &["fontFamily"], format!("\"{}\"", s.font_family.replace('"', "'")), t));
+        put("font-size", tok(doc, n, &["fontSize"], px(s.font_size), t));
+        put("font-weight", s.weight().to_string());
+        if s.italic() {
+            put("font-style", "italic".into());
         }
-        match t.style.line_height {
-            LineHeight::Pixels(v) => out.push_str(&format!("line-height: {}px;\n", num(v))),
-            LineHeight::Percent(p) => out.push_str(&format!("line-height: {}%;\n", num(p))),
+        match s.line_height {
+            LineHeight::Pixels(v) => put("line-height", tok(doc, n, &["lineHeight"], px(v), t)),
+            LineHeight::Percent(p) => put("line-height", format!("{}%", num(p))),
             LineHeight::Auto => {}
         }
-        match t.style.letter_spacing {
-            LetterSpacing::Pixels(v) if v != 0.0 => out.push_str(&format!("letter-spacing: {}px;\n", num(v))),
-            LetterSpacing::Percent(p) if p != 0.0 => out.push_str(&format!("letter-spacing: {}em;\n", num(p / 100.0))),
+        match s.letter_spacing {
+            LetterSpacing::Pixels(v) if v != 0.0 => put("letter-spacing", tok(doc, n, &["letterSpacing"], px(v), t)),
+            LetterSpacing::Percent(p) if p != 0.0 => put("letter-spacing", format!("{}em", num(p / 100.0))),
             _ => {}
         }
     }
     out
 }
 
-// ------------------------------------------------------------------ HTML
+// ------------------------------------------------------------------ HTML and React markup
 
 /// A CSS class name from a layer name ("Card / Title" → "card-title"), unique in `used`.
-fn class_name(name: &str, used: &mut Vec<String>) -> String {
+pub(crate) fn class_name(name: &str, used: &mut Vec<String>) -> String {
     let mut base = String::new();
     for c in name.chars().flat_map(char::to_lowercase) {
         if c.is_ascii_alphanumeric() {
@@ -282,30 +392,111 @@ fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('\n', "<br>")
 }
 
+/// Text as JSX children: HTML escapes, braces as expressions, line breaks as `<br />`.
+fn jsx_text(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars().take(10_000) {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '{' => out.push_str("{\"{\"}"),
+            '}' => out.push_str("{\"}\"}"),
+            '\n' => out.push_str("<br />"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// The whole tree under `id` as nested HTML with a stylesheet: auto layout frames become
 /// flexboxes, other children are placed absolutely in their parent, text becomes paragraphs.
 fn html(doc: &Document, id: NodeId) -> String {
-    let mut out = Html { used: Vec::new(), markup: String::new(), styles: String::new() };
-    out.node(doc, id, None, 0);
-    format!("{}\n<style>\n{}</style>\n", out.markup, out.styles)
+    let ctx = Ctx::new(doc, id);
+    let mut out = Markup::new(&ctx, false);
+    out.node(id, None, 0, "");
+    format!("{}\n<style>\n{}{}</style>\n", out.markup, out.tokens.root_rule(), out.styles)
 }
 
-/// HTML output being built: the class names taken, the markup and the stylesheet.
-struct Html {
+/// Markup being built for a layer tree: HTML (`class`) or React JSX (`className`, component
+/// parameters, instances as calls), with its stylesheet.
+pub(crate) struct Markup<'c, 'a> {
+    ctx: &'c Ctx<'a>,
+    jsx: bool,
     used: Vec<String>,
-    markup: String,
-    styles: String,
+    pub markup: String,
+    pub styles: String,
+    pub tokens: Tokens,
+    /// The root's class (default: from its name) and extra JSX attributes.
+    pub root_class: Option<String>,
+    pub root_attrs: String,
+    /// Each layer's path in the tree (names with sibling counts), class and declarations, so
+    /// variants can be compared layer by layer.
+    pub rules: Vec<(String, String, String)>,
 }
 
-impl Html {
-    fn node(&mut self, doc: &Document, id: NodeId, parent: Option<&Node>, depth: usize) {
-        let Some(n) = doc.node(id) else { return };
-        let class = class_name(&n.name, &mut self.used);
-        let pad = indent(depth);
+impl<'c, 'a> Markup<'c, 'a> {
+    pub fn new(ctx: &'c Ctx<'a>, jsx: bool) -> Self {
+        Markup {
+            ctx,
+            jsx,
+            used: Vec::new(),
+            markup: String::new(),
+            styles: String::new(),
+            tokens: Tokens::default(),
+            root_class: None,
+            root_attrs: String::new(),
+            rules: Vec::new(),
+        }
+    }
+
+    /// JSX indents by two spaces, HTML by four.
+    fn pad(&self, depth: usize) -> String {
+        if self.jsx { "  ".repeat(depth) } else { indent(depth) }
+    }
+
+    /// A layer, shown only while its boolean parameter is on (JSX).
+    pub fn node(&mut self, id: NodeId, parent: Option<&Node>, depth: usize, path: &str) {
+        let Some(n) = self.ctx.doc.node(id) else { return };
+        if self.jsx
+            && id != self.ctx.root
+            && let Some(p) = self.ctx.param(n, "visible")
+        {
+            let pad = self.pad(depth);
+            self.markup.push_str(&format!("{pad}{{{} && (\n", p.ident));
+            self.element(n, parent, depth + 1, path);
+            self.markup.push_str(&format!("{pad})}}\n"));
+            return;
+        }
+        self.element(n, parent, depth, path);
+    }
+
+    fn rule(&mut self, path: &str, class: &str, decls: String) {
+        self.styles.push_str(&format!(".{class} {{\n"));
+        for line in decls.lines() {
+            self.styles.push_str(&format!("  {line}\n"));
+        }
+        self.styles.push_str("}\n");
+        self.rules.push((path.to_string(), class.to_string(), decls));
+    }
+
+    fn element(&mut self, n: &Node, parent: Option<&Node>, depth: usize, path: &str) {
+        let doc = self.ctx.doc;
+        let root = n.id == self.ctx.root;
+        let class = match self.root_class.take().filter(|_| root) {
+            Some(c) => {
+                self.used.push(c.clone());
+                c
+            }
+            None => class_name(&n.name, &mut self.used),
+        };
+        let pad = self.pad(depth);
+        let attr = if self.jsx { "className" } else { "class" };
         // How it sits in its parent: in the flex flow, or placed at its position.
         let mut decls = String::new();
         let in_flow = parent.is_some_and(|p| p.layout.is_some()) && !n.child_layout.absolute;
-        if depth == 0 {
+        if root {
             decls.push_str("position: relative;\n");
         } else if in_flow {
             let vertical = parent.and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Vertical);
@@ -325,36 +516,71 @@ impl Html {
                 decls.push_str(&format!("transform: rotate({}deg);\ntransform-origin: 0 0;\n", num(-rot)));
             }
         }
-        let mut own = css_decls(n);
-        if n.layout.is_none() && !n.children.is_empty() && depth > 0 && in_flow {
+        // Nested instances are calls (JSX), in a wrapper that places them when needed.
+        if self.jsx && !root && matches!(n.kind, NodeKind::Instance { .. }) {
+            let at = depth + usize::from(!decls.is_empty());
+            let inner = match self.ctx.param(n, "mainComponent") {
+                Some(p) => Some(format!("{}{{{}}}\n", self.pad(at), p.ident)),
+                None => self.ctx.call(n, CodeLang::React, at),
+            };
+            if let Some(inner) = inner {
+                if decls.is_empty() {
+                    self.markup.push_str(&inner);
+                } else {
+                    self.markup.push_str(&format!("{pad}<div {attr}=\"{class}\">\n{inner}{pad}</div>\n"));
+                    self.rule(path, &class, decls);
+                }
+                return;
+            }
+        }
+        let hugs = n.layout.is_some() || matches!(n.kind, NodeKind::Text(_));
+        let hug = (hugs && n.child_layout.sizing_h == Sizing::Hug, hugs && n.child_layout.sizing_v == Sizing::Hug);
+        let mut own = css_decls(doc, n, &mut self.tokens, hug);
+        if n.layout.is_none() && !n.children.is_empty() && !root && in_flow {
             own.push_str("position: relative;\n");
         }
-        // Hugging sides take their content's size.
-        if n.layout.is_some() || matches!(n.kind, NodeKind::Text(_)) {
-            if n.child_layout.sizing_h == Sizing::Hug {
-                own = own.replace(&format!("width: {}px;\n", num(n.width)), "");
-            }
-            if n.child_layout.sizing_v == Sizing::Hug {
-                own = own.replace(&format!("height: {}px;\n", num(n.height)), "");
-            }
-        }
         decls.push_str(&own);
-        self.styles.push_str(&format!(".{class} {{\n"));
-        for line in decls.lines() {
-            self.styles.push_str(&format!("  {line}\n"));
-        }
-        self.styles.push_str("}\n");
+        self.rule(path, &class, decls);
+        let attrs = if root { self.root_attrs.clone() } else { String::new() };
+        let open = |tag: &str| format!("{pad}<{tag} {attr}=\"{class}\"{attrs}>");
         match &n.kind {
-            NodeKind::Text(t) => self.markup.push_str(&format!("{pad}<p class=\"{class}\">{}</p>\n", html_escape(&t.characters))),
+            NodeKind::Text(t) => {
+                let body = match self.ctx.param(n, "characters").filter(|_| self.jsx) {
+                    Some(p) => format!("{{{}}}", p.ident),
+                    None if self.jsx => jsx_text(&t.characters),
+                    None => html_escape(&t.characters),
+                };
+                self.markup.push_str(&format!("{}{body}</p>\n", open("p")));
+            }
             _ => {
-                let kids = kids(doc, n);
-                if kids.is_empty() || depth >= MAX_DEPTH {
-                    self.markup.push_str(&format!("{pad}<div class=\"{class}\"></div>\n"));
+                let kids = self.ctx.kids(n);
+                let slot = self.ctx.param(n, "slot").filter(|_| self.jsx);
+                let open = open("div");
+                if let Some(p) = slot.filter(|_| kids.is_empty()) {
+                    self.markup.push_str(&format!("{open}{{{}}}</div>\n", p.ident));
+                } else if kids.is_empty() || self.ctx.too_deep(depth) {
+                    self.markup.push_str(&format!("{open}</div>\n"));
                 } else {
-                    self.markup.push_str(&format!("{pad}<div class=\"{class}\">\n"));
+                    self.markup.push_str(&format!("{open}\n"));
+                    // A slot shows the instance's content, or else the main's.
+                    let (p1, p2) = (self.pad(depth + 1), self.pad(depth + 2));
+                    let inner = match slot {
+                        Some(p) => {
+                            self.markup.push_str(&format!("{p1}{{{} ?? (\n{p2}<>\n", p.ident));
+                            depth + 3
+                        }
+                        None => depth + 1,
+                    };
+                    let mut seen: Vec<&str> = Vec::new();
                     // Bottom layer first: later elements paint on top, like the layer order.
                     for k in kids {
-                        self.node(doc, k, Some(n), depth + 1);
+                        let Some(kn) = doc.node(k) else { continue };
+                        let count = seen.iter().filter(|s| **s == kn.name).count();
+                        seen.push(&kn.name);
+                        self.node(k, Some(n), inner, &format!("{path}/{}#{count}", kn.name));
+                    }
+                    if slot.is_some() {
+                        self.markup.push_str(&format!("{p2}</>\n{p1})}}\n"));
                     }
                     self.markup.push_str(&format!("{pad}</div>\n"));
                 }
@@ -383,17 +609,46 @@ fn swift_weight(w: u16) -> &'static str {
     }
 }
 
-fn swift(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
-    let Some(n) = doc.node(id) else { return };
+/// SwiftUI for a layer and its subtree at `depth`; `extra` modifiers go last (a free child's
+/// offset). A layer a boolean parameter shows sits in an `if`.
+pub(crate) fn swift(ctx: &Ctx, id: NodeId, depth: usize, out: &mut String, extra: &[String]) {
+    let Some(n) = ctx.doc.node(id) else { return };
+    if id != ctx.root
+        && let Some(p) = ctx.param(n, "visible")
+    {
+        let pad = indent(depth);
+        out.push_str(&format!("{pad}if {} {{\n", p.ident));
+        swift_layer(ctx, n, depth + 1, out, extra);
+        out.push_str(&format!("{pad}}}\n"));
+        return;
+    }
+    swift_layer(ctx, n, depth, out, extra);
+}
+
+fn swift_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String, extra: &[String]) {
+    let doc = ctx.doc;
     let pad = indent(depth);
-    if depth > MAX_DEPTH {
+    if ctx.too_deep(depth) {
         out.push_str(&format!("{pad}// {} …\n", n.name));
+        return;
+    }
+    // Nested instances are calls; an instance swap parameter is a view.
+    let call = match ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root) {
+        Some(p) => Some(format!("{pad}{}\n", p.ident)),
+        None => ctx.call(n, CodeLang::SwiftUi, depth),
+    };
+    if let Some(call) = call {
+        out.push_str(&call);
+        for m in extra {
+            out.push_str(&format!("{pad}    {m}\n"));
+        }
         return;
     }
     let mut mods: Vec<String> = Vec::new();
     match &n.kind {
         NodeKind::Text(t) => {
-            out.push_str(&format!("{pad}Text({})\n", literal(&t.characters, false)));
+            let text = ctx.param(n, "characters").map_or_else(|| literal(&t.characters, false), |p| p.ident.clone());
+            out.push_str(&format!("{pad}Text({text})\n"));
             mods.push(format!(
                 ".font(.custom({}, size: {}).weight({}))",
                 literal(&t.style.font_family, false),
@@ -419,24 +674,37 @@ fn swift(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
             mods.push(format!(".frame(width: {}, height: {})", num(n.width), num(n.height)));
         }
         k if k.is_frame_like() || matches!(k, NodeKind::Group) => {
-            let children = kids(doc, n);
-            let (open, close) = match n.layout.as_ref().map(|l| (l.mode, l)) {
-                Some((LayoutMode::Vertical, l)) => (format!("VStack(alignment: .leading, spacing: {}) {{", num(l.gap)), "}"),
-                Some((_, l)) => (format!("HStack(alignment: .center, spacing: {}) {{", num(l.gap)), "}"),
-                None => ("ZStack(alignment: .topLeading) {".to_string(), "}"),
+            let children = ctx.kids(n);
+            let open = match n.layout.as_ref().map(|l| (l.mode, l)) {
+                Some((LayoutMode::Vertical, l)) => format!("VStack(alignment: .leading, spacing: {}) {{", num(l.gap)),
+                Some((_, l)) => format!("HStack(alignment: .center, spacing: {}) {{", num(l.gap)),
+                None => "ZStack(alignment: .topLeading) {".to_string(),
             };
             out.push_str(&format!("{pad}{open}\n"));
-            for c in &children {
-                swift(doc, *c, depth + 1, out);
-                // Free children sit at their offset inside a ZStack.
-                if n.layout.is_none()
-                    && let Some(cn) = doc.node(*c)
-                {
-                    let [_, _, _, _, x, y] = cn.transform.as_coeffs();
-                    out.push_str(&format!("{}    .offset(x: {}, y: {})\n", indent(depth + 1), num(x), num(y)));
+            // A slot shows the instance's content, or else the main's.
+            let slot = ctx.param(n, "slot");
+            let inner = match slot {
+                Some(p) => {
+                    out.push_str(&format!("{pad}    if let {0} {{\n{pad}        {0}\n{pad}    }} else {{\n", p.ident));
+                    depth + 2
                 }
+                None => depth + 1,
+            };
+            for c in &children {
+                // Free children sit at their offset inside a ZStack.
+                let offset: Vec<String> = match doc.node(*c).filter(|_| n.layout.is_none()) {
+                    Some(cn) => {
+                        let [_, _, _, _, x, y] = cn.transform.as_coeffs();
+                        vec![format!(".offset(x: {}, y: {})", num(x), num(y))]
+                    }
+                    None => Vec::new(),
+                };
+                swift(ctx, *c, inner, out, &offset);
             }
-            out.push_str(&format!("{pad}{close}\n"));
+            if slot.is_some() {
+                out.push_str(&format!("{pad}    }}\n"));
+            }
+            out.push_str(&format!("{pad}}}\n"));
             if let Some(l) = &n.layout {
                 let [t, r, b, lft] = l.padding;
                 if [t, r, b, lft].iter().any(|v| *v > 0.0) {
@@ -477,6 +745,7 @@ fn swift(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
     if n.opacity < 1.0 {
         mods.push(format!(".opacity({})", num(f64::from(n.opacity))));
     }
+    mods.extend(extra.iter().cloned());
     for m in mods {
         out.push_str(&format!("{pad}    {m}\n"));
     }
@@ -513,20 +782,45 @@ fn modifier(n: &Node, shape: &str, padding: bool) -> String {
     m
 }
 
-fn compose(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
-    let Some(n) = doc.node(id) else { return };
+/// Jetpack Compose for a layer and its subtree at `depth`. A layer a boolean parameter shows sits
+/// in an `if`.
+pub(crate) fn compose(ctx: &Ctx, id: NodeId, depth: usize, out: &mut String) {
+    let Some(n) = ctx.doc.node(id) else { return };
+    if id != ctx.root
+        && let Some(p) = ctx.param(n, "visible")
+    {
+        let pad = indent(depth);
+        out.push_str(&format!("{pad}if ({}) {{\n", p.ident));
+        compose_layer(ctx, n, depth + 1, out);
+        out.push_str(&format!("{pad}}}\n"));
+        return;
+    }
+    compose_layer(ctx, n, depth, out);
+}
+
+fn compose_layer(ctx: &Ctx, n: &Node, depth: usize, out: &mut String) {
+    let doc = ctx.doc;
     let pad = indent(depth);
-    if depth > MAX_DEPTH {
+    if ctx.too_deep(depth) {
         out.push_str(&format!("{pad}// {} …\n", n.name));
+        return;
+    }
+    // Nested instances are calls; an instance swap parameter is a composable.
+    let call = match ctx.param(n, "mainComponent").filter(|_| n.id != ctx.root) {
+        Some(p) => Some(format!("{pad}{}()\n", p.ident)),
+        None => ctx.call(n, CodeLang::Compose, depth),
+    };
+    if let Some(call) = call {
+        out.push_str(&call);
         return;
     }
     let shape = if radius(n) > 0.0 { format!("RoundedCornerShape({}.dp)", num(radius(n))) } else { "RectangleShape".to_string() };
     match &n.kind {
         NodeKind::Text(t) => {
             let color = first_fill(n).map(kotlin_color).unwrap_or_else(|| "Color.Unspecified".into());
+            let text = ctx.param(n, "characters").map_or_else(|| literal(&t.characters, true), |p| p.ident.clone());
             out.push_str(&format!(
-                "{pad}Text(\n{pad}    text = {},\n{pad}    fontSize = {}.sp,\n{pad}    fontWeight = FontWeight.W{},\n{pad}    color = {color},\n{pad})\n",
-                literal(&t.characters, true),
+                "{pad}Text(\n{pad}    text = {text},\n{pad}    fontSize = {}.sp,\n{pad}    fontWeight = FontWeight.W{},\n{pad}    color = {color},\n{pad})\n",
                 num(t.style.font_size),
                 (t.style.weight().clamp(100, 900) / 100) * 100
             ));
@@ -534,9 +828,13 @@ fn compose(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
         NodeKind::Ellipse { .. } => out.push_str(&format!("{pad}Box(modifier = {})\n", modifier(n, "CircleShape", false))),
         NodeKind::Rectangle => out.push_str(&format!("{pad}Box(modifier = {})\n", modifier(n, &shape, false))),
         k if k.is_frame_like() || matches!(k, NodeKind::Group) => {
-            let children = kids(doc, n);
+            let children = ctx.kids(n);
             let open = match n.layout.as_ref().map(|l| (l.mode, l)) {
-                Some((LayoutMode::Vertical, l)) => format!("Column(\n{pad}    modifier = {},\n{pad}    verticalArrangement = Arrangement.spacedBy({}.dp),\n{pad}) {{", modifier(n, &shape, true), num(l.gap)),
+                Some((LayoutMode::Vertical, l)) => format!(
+                    "Column(\n{pad}    modifier = {},\n{pad}    verticalArrangement = Arrangement.spacedBy({}.dp),\n{pad}) {{",
+                    modifier(n, &shape, true),
+                    num(l.gap)
+                ),
                 Some((_, l)) => format!(
                     "Row(\n{pad}    modifier = {},\n{pad}    horizontalArrangement = Arrangement.spacedBy({}.dp),\n{pad}    verticalAlignment = Alignment.CenterVertically,\n{pad}) {{",
                     modifier(n, &shape, true),
@@ -545,17 +843,29 @@ fn compose(doc: &Document, id: NodeId, depth: usize, out: &mut String) {
                 None => format!("Box(modifier = {}) {{", modifier(n, &shape, false)),
             };
             out.push_str(&format!("{pad}{open}\n"));
+            // A slot shows the instance's content, or else the main's.
+            let slot = ctx.param(n, "slot");
+            let base = match slot {
+                Some(p) => {
+                    out.push_str(&format!("{pad}    if ({0} != null) {{\n{pad}        {0}()\n{pad}    }} else {{\n", p.ident));
+                    depth + 1
+                }
+                None => depth,
+            };
             for c in &children {
                 if n.layout.is_none()
                     && let Some(cn) = doc.node(*c)
                 {
                     let [_, _, _, _, x, y] = cn.transform.as_coeffs();
-                    out.push_str(&format!("{}Box(modifier = Modifier.offset({}.dp, {}.dp)) {{\n", indent(depth + 1), num(x), num(y)));
-                    compose(doc, *c, depth + 2, out);
-                    out.push_str(&format!("{}}}\n", indent(depth + 1)));
+                    out.push_str(&format!("{}Box(modifier = Modifier.offset({}.dp, {}.dp)) {{\n", indent(base + 1), num(x), num(y)));
+                    compose(ctx, *c, base + 2, out);
+                    out.push_str(&format!("{}}}\n", indent(base + 1)));
                 } else {
-                    compose(doc, *c, depth + 1, out);
+                    compose(ctx, *c, base + 1, out);
                 }
+            }
+            if slot.is_some() {
+                out.push_str(&format!("{pad}    }}\n"));
             }
             out.push_str(&format!("{pad}}}\n"));
         }

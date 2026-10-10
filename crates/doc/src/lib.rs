@@ -609,27 +609,59 @@ impl Document {
         self.ancestors(id).into_iter().find(|a| self.node(*a).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })))
     }
 
-    /// The top-level frame containing `id` (or `id` if it is one).
+    /// The top-level frame containing `id` (or `id` if it is one): the outermost frame, on the
+    /// page or in a section (sections nest and hold top-level frames).
     pub fn top_level_frame(&self, id: NodeId) -> Option<NodeId> {
         let mut chain = vec![id];
         chain.extend(self.ancestors(id));
-        // chain ends with the page; the element before it is the top-level node.
+        // chain ends with the page; below it, past any sections, is the top-level node.
         let page_pos = chain.iter().position(|c| self.node(*c).is_some_and(Node::is_page))?;
-        let top = *chain.get(page_pos.checked_sub(1)?)?;
+        let top = chain.iter().take(page_pos).rev().copied().find(|c| !self.node(*c).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. })))?;
         self.node(top).filter(|n| n.kind.is_frame_like()).map(|_| top)
     }
 
-    /// Top-level frames of a page in reading order (rows top to bottom, then left to right).
+    /// Top-level frames of a page (also those in sections) in reading order (rows top to bottom,
+    /// then left to right).
     pub fn top_frames(&self, page: NodeId) -> Vec<NodeId> {
-        let Some(p) = self.node(page) else { return vec![] };
-        let mut v: Vec<(NodeId, Rect)> = p
-            .children
-            .iter()
-            .filter(|c| self.node(**c).is_some_and(|n| n.kind.is_frame_like()))
-            .filter_map(|c| self.world_bounds(*c).map(|b| (*c, b)))
-            .collect();
+        self.frames_in(page)
+    }
+
+    /// The top-level frames inside page or section `container` (and its sections, at any depth), in
+    /// reading order.
+    pub fn frames_in(&self, container: NodeId) -> Vec<NodeId> {
+        fn walk(doc: &Document, id: NodeId, depth: usize, out: &mut Vec<(NodeId, Rect)>) {
+            let Some(n) = doc.node(id) else { return };
+            for c in &n.children {
+                let Some(cn) = doc.node(*c) else { continue };
+                if cn.kind.is_frame_like() {
+                    if let Some(b) = doc.world_bounds(*c) {
+                        out.push((*c, b));
+                    }
+                } else if matches!(cn.kind, NodeKind::Section { .. }) && depth < 64 {
+                    walk(doc, *c, depth + 1, out);
+                }
+            }
+        }
+        let mut v = Vec::new();
+        walk(self, container, 0, &mut v);
         v.sort_by(|a, b| a.1.y0.total_cmp(&b.1.y0).then(a.1.x0.total_cmp(&b.1.x0)));
         v.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// The sections on page `page` (nested ones after their section), in layer order.
+    pub fn sections_in(&self, page: NodeId) -> Vec<NodeId> {
+        fn walk(doc: &Document, id: NodeId, depth: usize, out: &mut Vec<NodeId>) {
+            let Some(n) = doc.node(id) else { return };
+            for c in &n.children {
+                if doc.node(*c).is_some_and(|cn| matches!(cn.kind, NodeKind::Section { .. })) && depth < 64 {
+                    out.push(*c);
+                    walk(doc, *c, depth + 1, out);
+                }
+            }
+        }
+        let mut v = Vec::new();
+        walk(self, page, 0, &mut v);
+        v
     }
 
     /// A unique name like "Frame 3" for a new node of a kind.

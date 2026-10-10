@@ -7,9 +7,12 @@
 //! edits and are journaled the same way.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod al_keys;
+pub mod annotations;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
+pub mod component_codegen;
 pub mod components;
 pub mod devinspect;
 pub mod distance;
@@ -898,21 +901,58 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     for f in frames {
         figcraft_layout::layout_frame(doc, f, &m);
     }
+    touched.extend(doc.take_dirty());
+    // 5. Ready-for-dev layers whose contents changed show "Changed".
+    mark_dev_changes(doc, before, &touched);
     doc.take_dirty();
     // 5. Comment pins follow their layers to other pages and stay put when the layers are deleted.
     cmd::comment::follow_anchors(doc, before);
 }
 
+/// Flag the frames and sections marked ready for dev (before this edit) that contain a layer whose
+/// design `touched` changed (added, removed or edited; the handoff status itself and hiding a
+/// section's contents don't count).
+fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<NodeId>) {
+    let ready = |d: &Document, id: NodeId| d.node(id).is_some_and(|n| n.dev_status == figcraft_doc::DevStatus::ReadyForDev);
+    let mut changed: BTreeSet<NodeId> = BTreeSet::new();
+    for &id in touched {
+        let differs = match (before.node(id), doc.node(id)) {
+            (Some(a), Some(b)) => !a.same_design(b),
+            (None, None) => false,
+            _ => true,
+        };
+        if !differs {
+            continue;
+        }
+        let mut chain = vec![id];
+        chain.extend(if doc.contains(id) { doc.ancestors(id) } else { before.ancestors(id) });
+        changed.extend(chain.into_iter().filter(|m| ready(before, *m) && ready(doc, *m)));
+    }
+    for m in changed {
+        if let Some(n) = doc.node_mut(m)
+            && !n.dev_changed
+        {
+            n.dev_changed = true;
+        }
+    }
+}
+
 #[cfg(test)]
 mod al_drag_tests;
 #[cfg(test)]
+mod al_keys_tests;
+#[cfg(test)]
 mod al_nesting_tests;
+#[cfg(test)]
+mod annotations_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
 mod comments_polish_tests;
+#[cfg(test)]
+mod component_codegen_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
@@ -951,6 +991,8 @@ mod proto_run_tests;
 mod rotated_select_tests;
 #[cfg(test)]
 mod scale_tool_tests;
+#[cfg(test)]
+mod section_contents_tests;
 #[cfg(test)]
 mod section_tests;
 #[cfg(test)]

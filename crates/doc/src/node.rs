@@ -193,6 +193,18 @@ impl DevStatus {
     }
 }
 
+/// A note for developers on a layer (a Dev Mode annotation): its text and the properties it pins,
+/// which Dev Mode shows with their current values.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Annotation {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// Pinned property ids ("width", "fill", "fontSize"…; `figcraft_engine::annotations` lists
+    /// them). Unknown ids are kept and ignored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<String>,
+}
+
 /// A ruler guide on a page or frame.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Guide {
@@ -398,6 +410,13 @@ pub struct Node {
     /// Handoff status of a frame or section (shown as a badge next to its name).
     #[serde(default, skip_serializing_if = "DevStatus::is_none")]
     pub dev_status: DevStatus,
+    /// Ready for dev, but its contents changed since it was marked (shown as "Changed" until the
+    /// change is resolved or the layer is marked again).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dev_changed: bool,
+    /// Why the last change to a ready-for-dev layer was made (entered when resolving it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dev_note: String,
     /// Inside an instance: property groups overridden locally ("fills", "characters", …; "slot":
     /// this slot holds the instance's own content).
     #[serde(default, skip_serializing_if = "is_default")]
@@ -410,6 +429,9 @@ pub struct Node {
     /// Free-form plugin / agent data.
     #[serde(default, skip_serializing_if = "is_default")]
     pub plugin_data: BTreeMap<String, String>,
+    /// Dev Mode annotations, in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<Annotation>,
 }
 
 fn yes() -> bool {
@@ -511,10 +533,23 @@ impl Node {
             exposed: false,
 
             dev_status: DevStatus::None,
+            dev_changed: false,
+            dev_note: String::new(),
             overrides: BTreeSet::new(),
             prop_refs: BTreeMap::new(),
             plugin_data: BTreeMap::new(),
+            annotations: Vec::new(),
         }
+    }
+
+    /// A new section with the look sections are created with (white, a light grey border, slightly
+    /// rounded, contents unclipped).
+    pub fn new_section(id: NodeId, name: impl Into<String>, width: f64, height: f64) -> Self {
+        let mut n = Self::new(id, NodeKind::Section { contents_hidden: false }, name, width, height);
+        n.strokes = vec![Paint::solid(Color::from_rgb8_const(0xE6, 0xE6, 0xE6))];
+        n.corners.radii = [2.0; 4];
+        n.clip = false;
+        n
     }
 
     pub fn size(&self) -> (f64, f64) {
@@ -527,6 +562,31 @@ impl Node {
 
     pub fn is_page(&self) -> bool {
         matches!(self.kind, NodeKind::Page { .. })
+    }
+
+    /// A section whose contents are hidden: only its name and outline show; its children are
+    /// skipped when rendering and hit testing.
+    pub fn hides_contents(&self) -> bool {
+        matches!(self.kind, NodeKind::Section { contents_hidden: true })
+    }
+
+    /// Whether `self` and `other` differ only in handoff status and whether a section's contents
+    /// are hidden (neither counts as a change to the design).
+    pub fn same_design(&self, other: &Node) -> bool {
+        if self == other {
+            return true;
+        }
+        let plain = |n: &Node| {
+            let mut n = n.clone();
+            n.dev_status = DevStatus::None;
+            n.dev_changed = false;
+            n.dev_note.clear();
+            if let NodeKind::Section { contents_hidden } = &mut n.kind {
+                *contents_hidden = false;
+            }
+            n
+        };
+        plain(self) == plain(other)
     }
 
     /// The ruler guides on this page or frame, in its own coordinates.

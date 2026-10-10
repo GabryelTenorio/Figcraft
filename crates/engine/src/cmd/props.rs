@@ -320,7 +320,10 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 } else {
                     v.as_str().and_then(|s| DevStatus::ALL.into_iter().find(|d| d.id().eq_ignore_ascii_case(s)))
                 };
-                doc.get_mut(id)?.dev_status = st.ok_or_else(|| bad(cmd, "devStatus: none|readyForDev|completed"))?;
+                let n = doc.get_mut(id)?;
+                n.dev_status = st.ok_or_else(|| bad(cmd, "devStatus: none|readyForDev|completed"))?;
+                // Marking a layer (again) starts from its current contents.
+                n.dev_changed = false;
             }
             "maskType" => {
                 let t = v.as_str().and_then(|s| MaskType::ALL.into_iter().find(|m| m.id().eq_ignore_ascii_case(s)));

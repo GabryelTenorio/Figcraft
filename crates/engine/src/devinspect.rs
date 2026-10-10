@@ -63,8 +63,67 @@ pub fn assets(doc: &Document, ids: &[NodeId]) -> Vec<Asset> {
     out
 }
 
+/// A frame or section with a handoff status, for Dev Mode's list of what's ready.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DevItem {
+    pub id: NodeId,
+    pub name: String,
+    pub page: NodeId,
+    pub status: DevStatus,
+}
+
+/// Most items listed.
+const MAX_DEV_ITEMS: usize = 500;
+
+/// The layers with handoff status `status` (`None`: any status) on `page` (`None`: every page),
+/// in page and layer order (bounded).
+pub fn dev_items(doc: &Document, status: Option<DevStatus>, page: Option<NodeId>) -> Vec<DevItem> {
+    let mut out = Vec::new();
+    let mut visited = 0usize;
+    for pg in doc.pages.iter().copied().filter(|pg| page.is_none_or(|p| p == *pg)) {
+        let mut stack = vec![pg];
+        while let Some(id) = stack.pop() {
+            visited += 1;
+            if out.len() >= MAX_DEV_ITEMS || visited > 200_000 {
+                return out;
+            }
+            let Some(n) = doc.node(id) else { continue };
+            if !n.dev_status.is_none() && status.is_none_or(|s| s == n.dev_status) {
+                out.push(DevItem { id, name: n.name.clone(), page: pg, status: n.dev_status });
+            }
+            stack.extend(n.children.iter().rev().copied());
+        }
+    }
+    out
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        spec!(
+            "inspect.readyForDev",
+            "Ready for dev",
+            "{status?: readyForDev|completed|any (default readyForDev), page? (page id; default every page)} → {items: [{id, name, page, status}]}  frames and sections by handoff status (set it with `node.set {devStatus}`)",
+            false,
+            |s, p| {
+                let cmd = "inspect.readyForDev";
+                let status = match string(p, "status").as_deref() {
+                    None => Some(DevStatus::ReadyForDev),
+                    Some(v) if v.eq_ignore_ascii_case("any") || v.eq_ignore_ascii_case("all") => None,
+                    Some(v) => Some(
+                        DevStatus::ALL
+                            .into_iter()
+                            .find(|d| !d.is_none() && d.id().eq_ignore_ascii_case(v))
+                            .ok_or_else(|| crate::bad(cmd, "status: readyForDev|completed|any"))?,
+                    ),
+                };
+                let doc = s.doc()?;
+                let page = match get(p, "page") {
+                    Some(v) => Some(id_of(v).filter(|pg| doc.pages.contains(pg)).ok_or_else(|| crate::bad(cmd, "page: a page id"))?),
+                    None => None,
+                };
+                Ok(json!({"items": serde_json::to_value(dev_items(doc, status, page)).unwrap_or(Value::Null)}))
+            }
+        ),
         spec!(
             "inspect.assets",
             "Inspect assets",
@@ -123,9 +182,21 @@ impl Prop {
     }
 }
 
+/// The variable bound to property `field` of `n` ("fill" and "stroke" also find bindings stored
+/// under their list forms, like "fills/0/color").
+pub fn bound_variable<'d>(doc: &'d Document, n: &Node, field: &str) -> Option<&'d Variable> {
+    let forms: &[&str] = match field {
+        "fill" => &["fill", "fills", "fills/0", "fills/0/color"],
+        "stroke" => &["stroke", "strokes/0/color"],
+        _ => &[],
+    };
+    let found = if forms.is_empty() { n.bound.get(field) } else { forms.iter().find_map(|k| n.bound.get(*k)) };
+    found.and_then(|v| doc.variables.get(v))
+}
+
 /// The variable bound to `field` on `n`, by name.
 fn variable(doc: &Document, n: &Node, field: &str) -> Option<String> {
-    n.bound.get(field).and_then(|v| doc.variables.get(v)).map(|v| v.name.clone())
+    bound_variable(doc, n, field).map(|v| v.name.clone())
 }
 
 fn style_name(doc: &Document, id: Option<&StyleId>) -> Option<String> {

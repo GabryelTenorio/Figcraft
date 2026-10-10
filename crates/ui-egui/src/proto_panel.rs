@@ -131,6 +131,14 @@ fn frames_for(doc: &Document, page: NodeId) -> Vec<NodeId> {
     doc.top_frames(page)
 }
 
+/// Destinations for "Navigate to": the top-level frames, then the sections (navigating to a
+/// section shows the frame of it shown last, else its first).
+fn nav_targets(doc: &Document, page: NodeId) -> Vec<NodeId> {
+    let mut v = frames_for(doc, page);
+    v.extend(doc.sections_in(page));
+    v
+}
+
 fn name_of(doc: &Document, id: NodeId) -> String {
     doc.node(id).map(|n| n.name.clone()).unwrap_or_else(|| "Missing layer".into())
 }
@@ -764,7 +772,17 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
     match &action {
         Action::Navigate { dest, preserve_scroll } => {
             let (dest, preserve_scroll) = (*dest, *preserve_scroll);
-            dest_dropdown(app, ui, doc, &frames, Some(dest), "Destination", |d| Action::Navigate { dest: d, preserve_scroll }, node, k);
+            dest_dropdown(
+                app,
+                ui,
+                doc,
+                &nav_targets(doc, page),
+                Some(dest),
+                "Destination",
+                |d| Action::Navigate { dest: d, preserve_scroll },
+                node,
+                k,
+            );
             row(ui, 28.0, |ui| {
                 if widgets::checkbox(ui, preserve_scroll, "Preserve scroll position") {
                     patch(app, node, k, json!({"action": Action::Navigate { dest, preserve_scroll: !preserve_scroll }}));

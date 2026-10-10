@@ -279,6 +279,8 @@ pub(crate) struct Row {
     pub(crate) id: NodeId,
     depth: usize,
     has_kids: bool,
+    /// Not shown on the canvas because of an ancestor (hidden, or a section hiding its contents).
+    dimmed: bool,
 }
 
 /// The layer rows of the last frame and what they were built from, so a frame where neither the
@@ -308,7 +310,7 @@ pub(crate) fn rows_for(ui: &Ui, doc: &Arc<Document>, page: NodeId, expanded: &BT
         if !fresh {
             let mut rows = Vec::new();
             if filter.is_empty() {
-                collect(doc, page, 0, expanded, &mut rows);
+                collect(doc, page, 0, false, expanded, &mut rows);
             } else {
                 matching(doc, page, filter, &mut rows);
             }
@@ -318,15 +320,21 @@ pub(crate) fn rows_for(ui: &Ui, doc: &Arc<Document>, page: NodeId, expanded: &BT
     })
 }
 
-fn collect(doc: &Document, id: NodeId, depth: usize, expanded: &BTreeSet<NodeId>, out: &mut Vec<Row>) {
+/// Whether the children of `n` don't show on the canvas (given whether `n` itself doesn't).
+fn hides_children(n: &figcraft_doc::Node, dimmed: bool) -> bool {
+    dimmed || !n.visible || n.hides_contents()
+}
+
+fn collect(doc: &Document, id: NodeId, depth: usize, dimmed: bool, expanded: &BTreeSet<NodeId>, out: &mut Vec<Row>) {
     let Some(n) = doc.node(id) else { return };
+    let dim_kids = !n.is_page() && hides_children(n, dimmed);
     // Layers panel lists top of the stack first.
     for c in n.children.iter().rev() {
         let Some(cn) = doc.node(*c) else { continue };
         let has_kids = !cn.children.is_empty() || matches!(cn.kind, NodeKind::BooleanOp { .. });
-        out.push(Row { id: *c, depth, has_kids });
+        out.push(Row { id: *c, depth, has_kids, dimmed: dim_kids });
         if expanded.contains(c) && depth < 64 {
-            collect(doc, *c, depth + 1, expanded, out);
+            collect(doc, *c, depth + 1, dim_kids, expanded, out);
         }
     }
 }
@@ -338,7 +346,8 @@ fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
         let Some(cn) = doc.node(*c) else { continue };
         let name = if cn.name.is_empty() { cn.kind.label() } else { cn.name.as_str() };
         if name.to_lowercase().contains(q) {
-            out.push(Row { id: *c, depth: 0, has_kids: false });
+            let dimmed = doc.ancestors(*c).iter().filter_map(|a| doc.node(*a)).any(|a| !a.is_page() && hides_children(a, false));
+            out.push(Row { id: *c, depth: 0, has_kids: false, dimmed });
         }
         if out.len() < 5000 {
             matching(doc, *c, q, out);
@@ -360,7 +369,7 @@ pub(crate) fn key_nav(app: &mut FigApp, key: egui::Key, shift: bool) -> bool {
     let filter = app.ui.layer_filter.trim().to_lowercase();
     let mut rows = Vec::new();
     if filter.is_empty() {
-        collect(&doc, page, 0, &app.ui.expanded, &mut rows);
+        collect(&doc, page, 0, false, &app.ui.expanded, &mut rows);
     } else {
         matching(&doc, page, &filter, &mut rows);
     }
@@ -597,9 +606,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 }
             }
             let icon = node_icon(&doc, row.id);
+            let shown = n.visible && !row.dimmed;
             let icon_col = if is_comp || icon == Icon::Slot {
-                COMPONENT
-            } else if n.visible {
+                COMPONENT.gamma_multiply(if shown { 1.0 } else { 0.5 })
+            } else if shown {
                 t.icon
             } else {
                 t.text_tertiary
@@ -618,8 +628,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 }
             } else {
                 let col = if is_comp {
-                    COMPONENT
-                } else if n.visible {
+                    COMPONENT.gamma_multiply(if shown { 1.0 } else { 0.5 })
+                } else if shown {
                     t.text
                 } else {
                     t.text_tertiary

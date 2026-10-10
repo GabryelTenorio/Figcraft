@@ -17,6 +17,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("object.frameSelection", "Frame selection", "{ids?, name?}", true, |s, p| wrap(s, p, Wrap::Frame)),
         spec!("object.removeFrame", "Remove frame", "{ids?}", true, ungroup),
         spec!(
+            "object.wrapInSection",
+            "Wrap in new section",
+            "{ids?, name?} (layers on the page or in a section; the section wraps them with some room)",
+            true,
+            |s, p| wrap(s, p, Wrap::Section)
+        ),
+        spec!(
             "object.resizeToFit",
             "Resize to fit",
             "{ids?} (frames, sections and components shrink or grow to their contents; the contents stay put)",
@@ -89,8 +96,12 @@ pub fn specs() -> Vec<CommandSpec> {
 enum Wrap {
     Group,
     Frame,
+    Section,
     Bool(BoolOp),
 }
+
+/// Room a section made around layers leaves on each side.
+const SECTION_PAD: f64 = 40.0;
 
 /// Wrap the selection in a new container at the topmost selected layer's place.
 fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
@@ -99,18 +110,32 @@ fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
     let ids = z_sorted(doc, &roots(doc, &ids));
     let top = *ids.last().ok_or_else(|| bad("object.group", "nothing selected"))?;
     let parent = doc.get(top)?.parent.ok_or_else(|| bad("object.group", "can't group a page"))?;
+    // Sections sit on the page or in sections, never in frames or groups.
+    let board = |doc: &Document, i: NodeId| {
+        doc.node(i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
+    };
+    if matches!(w, Wrap::Section) && !ids.iter().all(|i| board(doc, *i)) {
+        return Err(bad("object.wrapInSection", "only layers on the page or in a section can be wrapped in a section"));
+    }
     let index = doc.index_in_parent(top).map(|i| i + 1);
-    let bounds = doc.bounds_of(&ids).unwrap_or_default();
+    let mut bounds = doc.bounds_of(&ids).unwrap_or_default();
+    if matches!(w, Wrap::Section) {
+        bounds = bounds.inflate(SECTION_PAD, SECTION_PAD);
+    }
     let pw = doc.world_transform(parent);
     let local = figcraft_geom::transform_rect_bbox(pw.inverse(), bounds);
     let (kind, base) = match &w {
         Wrap::Group => (NodeKind::Group, "Group"),
         Wrap::Frame => (NodeKind::Frame, "Frame"),
+        Wrap::Section => (NodeKind::Section { contents_hidden: false }, "Section"),
         Wrap::Bool(op) => (NodeKind::BooleanOp { op: *op }, op.label()),
     };
     let name = string(p, "name").unwrap_or_else(|| if matches!(w, Wrap::Bool(_)) { base.to_string() } else { doc.next_name(base) });
     let gid = doc.alloc_id();
-    let mut g = Node::new(gid, kind, name, local.width(), local.height());
+    let mut g = match w {
+        Wrap::Section => Node::new_section(gid, name, local.width(), local.height()),
+        _ => Node::new(gid, kind, name, local.width(), local.height()),
+    };
     g.transform = Affine::translate((local.x0, local.y0));
     if let Wrap::Bool(_) = w {
         // A boolean group takes its look from the bottom-most shape.
@@ -130,7 +155,7 @@ fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
     for i in &ids {
         doc.reparent(*i, gid, None)?;
     }
-    if !matches!(w, Wrap::Frame) {
+    if !matches!(w, Wrap::Frame | Wrap::Section) {
         let _ = doc.fit_to_children(gid);
     }
     s.set_selection(vec![gid]);

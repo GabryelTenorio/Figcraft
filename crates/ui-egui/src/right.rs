@@ -1674,7 +1674,6 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
     });
 }
 
-/// The Inspect tab: size and position, and code for the selected layer.
 /// One group of inspected properties: label, value (with a swatch for colours) and the style or
 /// variable it comes from. Clicking a row copies its value.
 fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspect::Section) {
@@ -1683,41 +1682,48 @@ fn inspect_section(app: &mut FigApp, ui: &mut Ui, s: &figcraft_engine::devinspec
     let (hr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + PAD, hr.center().y), Align2::LEFT_CENTER, s.title, semibold(11.0), t.text);
     for p in &s.rows {
-        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-        let resp = resp.on_hover_text(format!("Copy {}", p.value));
-        if resp.hovered() {
-            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
-        }
-        let painter = ui.painter();
-        painter.text(pos2(r.min.x + PAD, r.center().y), Align2::LEFT_CENTER, &p.label, regular(11.0), t.text_secondary);
-        // The style or variable, right-aligned as a chip.
-        let mut right = r.max.x - PAD;
-        if let Some(token) = &p.token {
-            let galley = painter.layout_no_wrap(token.clone(), regular(10.0), t.text_secondary);
-            let chip =
-                Rect::from_min_max(pos2((right - galley.size().x - 12.0).max(r.min.x + 196.0), r.center().y - 9.0), pos2(right, r.center().y + 9.0));
-            painter.rect_filled(chip, CornerRadius::same(4), t.field);
-            painter.with_clip_rect(chip.shrink2(vec2(6.0, 0.0))).galley(
-                pos2(chip.min.x + 6.0, chip.center().y - galley.size().y / 2.0),
-                galley,
-                t.text_secondary,
-            );
-            right = chip.min.x - 6.0;
-        }
-        let mut x = r.min.x + 96.0;
-        if let Some(c) = p.color.as_deref().and_then(figcraft_color::Color::from_hex) {
-            let sw = Rect::from_min_size(pos2(x, r.center().y - 6.0), vec2(12.0, 12.0));
-            widgets::paint_swatch(painter, sw, &Paint::solid(c));
-            x += 18.0;
-        }
-        let value_r = Rect::from_min_max(pos2(x, r.min.y), pos2(right.max(x + 10.0), r.max.y));
-        painter.with_clip_rect(value_r).text(pos2(x, r.center().y), Align2::LEFT_CENTER, &p.value, regular(11.0), t.text);
-        if resp.clicked() {
-            app.services.clipboard_set_text(&p.value);
-            app.toast(format!("Copied {}", p.label.to_lowercase()));
-        }
+        prop_row(app, ui, p);
     }
     ui.add_space(4.0);
+}
+
+/// An inspected property row: label, value (with a swatch for colours) and the style or variable
+/// it comes from as a chip. Clicking it copies the value.
+pub(crate) fn prop_row(app: &mut FigApp, ui: &mut Ui, p: &figcraft_engine::devinspect::Prop) {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+    let resp = resp.on_hover_text(format!("Copy {}", p.value));
+    if resp.hovered() {
+        ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+    }
+    let painter = ui.painter();
+    painter.text(pos2(r.min.x + PAD, r.center().y), Align2::LEFT_CENTER, &p.label, regular(11.0), t.text_secondary);
+    // The style or variable, right-aligned as a chip.
+    let mut right = r.max.x - PAD;
+    if let Some(token) = &p.token {
+        let galley = painter.layout_no_wrap(token.clone(), regular(10.0), t.text_secondary);
+        let chip =
+            Rect::from_min_max(pos2((right - galley.size().x - 12.0).max(r.min.x + 196.0), r.center().y - 9.0), pos2(right, r.center().y + 9.0));
+        painter.rect_filled(chip, CornerRadius::same(4), t.field);
+        painter.with_clip_rect(chip.shrink2(vec2(6.0, 0.0))).galley(
+            pos2(chip.min.x + 6.0, chip.center().y - galley.size().y / 2.0),
+            galley,
+            t.text_secondary,
+        );
+        right = chip.min.x - 6.0;
+    }
+    let mut x = r.min.x + 96.0;
+    if let Some(c) = p.color.as_deref().and_then(figcraft_color::Color::from_hex) {
+        let sw = Rect::from_min_size(pos2(x, r.center().y - 6.0), vec2(12.0, 12.0));
+        widgets::paint_swatch(painter, sw, &Paint::solid(c));
+        x += 18.0;
+    }
+    let value_r = Rect::from_min_max(pos2(x, r.min.y), pos2(right.max(x + 10.0), r.max.y));
+    painter.with_clip_rect(value_r).text(pos2(x, r.center().y), Align2::LEFT_CENTER, &p.value, regular(11.0), t.text);
+    if resp.clicked() {
+        app.services.clipboard_set_text(&p.value);
+        app.toast(format!("Copied {}", p.label.to_lowercase()));
+    }
 }
 
 /// The selection's layers with export settings: click one to export it, or export them all.
@@ -1757,6 +1763,8 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devi
     ui.add_space(4.0);
 }
 
+/// The Inspect tab (Dev Mode): the handoff status, annotations, properties, assets and code of
+/// the selected layer, or the list of what's ready for dev.
 fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(ds) = app.session.ds() else { return };
@@ -1766,15 +1774,18 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
         widgets::section_header(ui, "Inspect", &[], false);
         row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its properties and code", t.text_secondary));
         row(ui, 32.0, |ui| widgets::label(ui, "Hover other layers to measure the distance", t.text_secondary));
+        crate::dev_mode::ready_list(app, ui);
         return;
     };
     let name = doc.node(first).map(|n| n.name.clone()).unwrap_or_default();
     widgets::section_header(ui, &name, &[], false);
+    crate::dev_mode::status(app, ui, &doc, &sel);
+    crate::dev_mode::annotations_section(app, ui, &doc, first);
     for s in figcraft_engine::devinspect::properties(&doc, first) {
         inspect_section(app, ui, &s);
     }
     inspect_assets(app, ui, &figcraft_engine::devinspect::assets(&doc, &sel));
-    use figcraft_engine::codegen::{CodeLang, code_for};
+    use figcraft_engine::codegen::CodeLang;
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
     widgets::separator(ui);
@@ -1790,7 +1801,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
             }
         });
     });
-    let code = code_for(&doc, first, lang);
+    let code = crate::dev_mode::code(app, first, lang);
     egui::Frame::NONE
         .fill(t.field)
         .corner_radius(CornerRadius::same(6))

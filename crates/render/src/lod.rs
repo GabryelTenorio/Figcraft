@@ -193,7 +193,7 @@ pub fn splat_subtree(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, clip: Op
             }
         }
     }
-    if !matches!(n.kind, NodeKind::BooleanOp { .. }) {
+    if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.hides_contents() {
         let clip = if n.clip && n.kind.is_frame_like() {
             let own = figcraft_geom::transform_rect_bbox(xf, local);
             Some(clip.map_or(own, |c| c.intersect(own)))
