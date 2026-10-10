@@ -132,6 +132,44 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Opt
     None
 }
 
+/// Every visible, unlocked layer under `pt` (page coordinates) with its depth below the page, in
+/// layer-tree order (each layer before what it contains, the front-most first): what
+/// "Select layer" in the context menu lists. Clip content is honoured; boolean groups and
+/// sections with hidden contents count as one layer.
+pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Vec<(NodeId, usize)> {
+    fn rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, out: &mut Vec<(NodeId, usize)>) {
+        let Some(n) = doc.node(id) else { return };
+        if !n.visible || n.locked || depth > 512 {
+            return;
+        }
+        let clips = n.clip && n.kind.is_frame_like();
+        if clips && !hits_node_itself(doc, id, n, pt, 0.0) {
+            return;
+        }
+        let at = out.len();
+        let whole = matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Section { contents_hidden: true });
+        if whole {
+            if hit_rec(doc, id, pt, tol, depth).is_some() {
+                out.push((id, depth));
+            }
+            return;
+        }
+        for c in n.children.iter().rev() {
+            rec(doc, *c, pt, tol, depth + 1, out);
+        }
+        if out.len() > at || hits_node_itself(doc, id, n, pt, tol) {
+            out.insert(at, (id, depth));
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(p) = doc.node(page) {
+        for c in p.children.iter().rev() {
+            rec(doc, *c, pt, tol, 0, &mut out);
+        }
+    }
+    out
+}
+
 /// Resolve a clicked leaf to what a plain click selects.
 ///
 /// Figma's rules: top-level frames behave like artboards, so a click selects their direct child;
@@ -183,17 +221,39 @@ pub fn select_target(doc: &Document, leaf: NodeId, context: &[NodeId], deep: boo
 /// children of top-level frames when the marquee starts inside a frame (`within`).
 pub fn marquee(doc: &Document, page: NodeId, rect: Rect, within: Option<NodeId>) -> Vec<NodeId> {
     let parent = within.unwrap_or(page);
-    let Some(p) = doc.node(parent) else { return vec![] };
+    doc.node(parent).map(|p| marquee_children(doc, p, rect)).unwrap_or_default()
+}
+
+/// Nodes on `page` a Cmd/Ctrl marquee selects: the innermost layers whose bounds touch `rect`
+/// (frames, groups and instances are looked into; a container none of whose children are touched
+/// counts itself; boolean groups count as one shape).
+pub fn marquee_deep(doc: &Document, page: NodeId, rect: Rect) -> Vec<NodeId> {
+    fn walk(doc: &Document, parent: NodeId, rect: Rect, depth: usize, out: &mut Vec<NodeId>) {
+        let Some(p) = doc.node(parent) else { return };
+        for c in marquee_children(doc, p, rect) {
+            let before = out.len();
+            let opens = doc.node(c).is_some_and(|n| !n.children.is_empty() && !matches!(n.kind, NodeKind::BooleanOp { .. }));
+            if opens && depth < 256 {
+                walk(doc, c, rect, depth + 1, out);
+            }
+            if out.len() == before {
+                out.push(c);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, page, rect, 0, &mut out);
+    out
+}
+
+/// The visible, unlocked children of `p` whose world bounds touch `rect` (on both axes: lines and
+/// other flat layers too).
+fn marquee_children(doc: &Document, p: &Node, rect: Rect) -> Vec<NodeId> {
     p.children
         .iter()
         .copied()
         .filter(|c| doc.node(*c).is_some_and(|n| n.visible && !n.locked))
-        .filter(|c| {
-            doc.world_bounds(*c).is_some_and(|b| {
-                let inter = b.intersect(rect);
-                inter.width() > 0.0 || inter.height() > 0.0 || (b.width() == 0.0 || b.height() == 0.0) && rect.contains(b.origin())
-            })
-        })
+        .filter(|c| doc.world_bounds(*c).is_some_and(|b| b.x0 <= rect.x1 && b.x1 >= rect.x0 && b.y0 <= rect.y1 && b.y1 >= rect.y0))
         .collect()
 }
 

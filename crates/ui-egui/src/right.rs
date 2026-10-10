@@ -1,6 +1,6 @@
 //! The right panel: Design, Prototype and Inspect tabs.
 
-use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -1080,7 +1080,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
                 let resp = widgets::dropdown(ui, cap.map(StrokeCap::label).unwrap_or("Mixed"), half, None);
                 egui::Popup::menu(&resp).show(|ui| {
                     for c in StrokeCap::ALL {
-                        if menu_item(ui, c.label(), "") {
+                        if menu_item_with(ui, c.label(), "", |p, r, col| cap_art(p, r, col, c, key == "startCap")) {
                             app.set_props(&ids, json!({key: format!("{c:?}")}));
                             ui.close();
                         }
@@ -1090,6 +1090,50 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
         });
     }
     ui.add_space(4.0);
+}
+
+/// A short stroke ending in `cap` (on its left end for a start point), drawn at the right of a menu
+/// row.
+fn cap_art(p: &egui::Painter, r: Rect, col: Color32, cap: StrokeCap, start: bool) {
+    let y = r.center().y;
+    let (left, right) = (r.max.x - 58.0, r.max.x - 14.0);
+    // The capped end, the plain end, and the direction from the stroke into its cap.
+    let (tip, tail, d) = if start { (left, right, -1.0) } else { (right, left, 1.0) };
+    let at = |back: f32, dy: f32| pos2(tip - d * back, y + dy);
+    let line = |to: Pos2, w: f32| {
+        p.line_segment([pos2(tail, y), to], Stroke::new(w, col));
+    };
+    let fill = |pts: Vec<Pos2>| {
+        p.add(egui::Shape::convex_polygon(pts, col, Stroke::NONE));
+    };
+    match cap {
+        StrokeCap::None => line(at(0.0, 0.0), 4.0),
+        StrokeCap::Round => {
+            line(at(2.0, 0.0), 4.0);
+            p.circle_filled(at(2.0, 0.0), 2.0, col);
+        }
+        StrokeCap::Square => line(at(-2.0, 0.0), 4.0),
+        StrokeCap::LineArrow => {
+            line(at(0.0, 0.0), 1.5);
+            p.add(egui::Shape::line(vec![at(5.5, -5.5), at(0.0, 0.0), at(5.5, 5.5)], Stroke::new(1.5, col)));
+        }
+        StrokeCap::TriangleArrow => {
+            line(at(7.0, 0.0), 1.5);
+            fill(vec![at(0.0, 0.0), at(8.0, -4.5), at(8.0, 4.5)]);
+        }
+        StrokeCap::ReversedTriangle => {
+            line(at(8.0, 0.0), 1.5);
+            fill(vec![at(8.0, 0.0), at(0.0, -4.5), at(0.0, 4.5)]);
+        }
+        StrokeCap::CircleFilled => {
+            line(at(4.0, 0.0), 1.5);
+            p.circle_filled(at(4.0, 0.0), 4.0, col);
+        }
+        StrokeCap::DiamondFilled => {
+            line(at(5.0, 0.0), 1.5);
+            fill(vec![at(0.0, 0.0), at(5.0, -5.0), at(10.0, 0.0), at(5.0, 5.0)]);
+        }
+    }
 }
 
 fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint, fills: bool) {

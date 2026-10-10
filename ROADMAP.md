@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (day 2, later: variable width strokes, a transform box and snapping for vector points, pixel-exact UI icons, the custom title bar, library variables, prototype rotation, scaling, scroll momentum and responsive presentation with device colours and custom sizes, conditional prototype actions, PDF export depth, 50k-layer renders and save/load)._
+_Last updated: 2026-10-10 (day 2, evening: measuring, scale tool handles and selection depth, effects fidelity (backdrop blur in clipping frames, exact shadow spread, glass, noise and texture), right-to-left names and the text style browser, comments polish, keyboard navigation in the layers panel, frame guides, 2x pixel preview, line-end previews)._
 
 ## Where we are
 
@@ -18,10 +18,10 @@ _Last updated: 2026-10-10 (day 2, later: variable width strokes, a transform box
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~72%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
 | Menu/command breadth (`docs/parity.md`) | **97.5%** (197/202) of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~73%** |
+| Feature depth (weighted rubric below) | **~76%** |
 | Parity including interaction fidelity and hardening | **~45–50%** |
-| Time to **feature parity** | **~55–100 h** one agent · **~15–30 h** with 4–6 agents |
-| Time to **full parity** (feature parity + fidelity pass + hardening) | **~125–210 h** one agent · **~35–60 h** with 4–6 agents |
+| Time to **feature parity** | **~45–85 h** one agent · **~12–25 h** with 4–6 agents |
+| Time to **full parity** (feature parity + fidelity pass + hardening) | **~115–195 h** one agent · **~32–55 h** with 4–6 agents |
 
 ## Honest assessment (2026-10-09)
 
@@ -149,7 +149,16 @@ dimension measured side by side.
    options (bleed, CMYK). 10–20 h.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
-8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
+8. **Collaboration (local):** comments landed: pins pinned to frames and layers that move with them
+   (to other pages too) and stay where they were when the layer is deleted, your pins dragged onto
+   another frame, crowded pins clustered when zoomed out (a click zooms them apart), Shift+C to show
+   or hide them; threads where you edit and delete your own messages, emoji reactions, @mentions
+   with a picker of the names used in the file (your name from Preferences), read and unread state,
+   resolve, and "Copy link" (`figcraft://comment/<id>`: pasting or `comment.open` goes to the page,
+   zooms to the frame and opens the thread); the Comments panel with search (text, names, frame),
+   filters (open, resolved, yours, unread), sorting by date or page, each thread's frame and page,
+   and Up/Down to step through threads; comments on the presented frame (Comments button or
+   Shift+C: read and reply). All of it through `comment.*` commands. Version history
    landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
    view a version on the canvas read-only before restoring it; autosave checkpoints every 30
    minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
@@ -173,7 +182,8 @@ dimension measured side by side.
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
   inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
   text details (right-to-left list markers).
-- **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
+- **Then:** interop depth (6: .fig best effort), plugins and multiplayer (8; comments and version
+  history are in).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
@@ -200,8 +210,14 @@ dimension measured side by side.
   skrifa outlines, font fallback), aligned strokes with caching.
 - **Engine:** pointer tools (move/marquee/deep select/resize/rotate/Alt-duplicate with smart-guide
   snapping, frame/section/slice/shapes/line/arrow with Shift/Alt, text, pen, pencil, hand,
-  eyedropper), text editing (caret, selection, words, lines), auto layout reorder by dragging,
-  drop into frames, align/distribute/tidy, z-order, flip/rotate, scale tool, booleans, flatten,
+  eyedropper), Cmd/Ctrl-click and Cmd/Ctrl-marquee into nested layers, Shift-marquee toggling,
+  Select layer (every layer under the click), measuring (Alt-hover distances from the selection to
+  layers, parents and ruler guides, Cmd+Alt for nested layers, extension lines, one box inside the
+  other, overlaps, live distances to the neighbours while Alt-dragging, Shift+Alt for auto layout
+  padding and gaps; labels that never overlap at any zoom), text editing (caret, selection, words,
+  lines), auto layout reorder by dragging, drop into frames, align/distribute/tidy, z-order,
+  flip/rotate, the scale tool (panel, and canvas handles that scale everything about its anchor
+  point or from the centre with Alt, with a live factor, one undo step per drag), booleans, flatten,
   outline stroke, components (create, instances, sync with overrides, reset, detach, push changes,
   variants, properties, slots), styles and variables, prototype commands, find/replace, batch rename,
   copy/paste (internal + SVG/text), file new/open/save/import/export (native `.figcraft`, SVG
@@ -226,24 +242,24 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 75% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
-| Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
-| Layers panel | 5 | 83% | Tab to rename the next layer, visual QA of long lists | 1 |
+| Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
+| Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
+| Layers panel | 5 | 86% | Tab to rename the next layer, visual QA of long lists | 1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
-| Strokes | 3 | 80% | stroke styles, arrowhead previews in the menus | 2–3 |
-| Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
+| Strokes | 3 | 82% | stroke styles | 1–2 |
+| Effects | 4 | 80% | inner shadows under strokes, progressive blur, noise and texture in SVG, glass tuned side by side | 3–5 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
-| Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
+| Text | 8 | 78% | list markers on the right of right-to-left paragraphs, visual QA | 1–2 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
 | Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
-| Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
+| Prototyping | 6 | 86% | building conditionals in the interaction editor, hotspot hints, inspect in the presenter | 3–5 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
-| Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
+| Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 
-Weighted feature depth ≈ **73%** (self-graded, from the table).
+Weighted feature depth ≈ **76%** (self-graded, from the table).
 
 ## Milestones
 

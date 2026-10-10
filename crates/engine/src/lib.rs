@@ -14,6 +14,7 @@ pub mod codegen;
 pub mod component_codegen;
 pub mod components;
 pub mod devinspect;
+pub mod distance;
 pub mod drop;
 pub mod guard;
 pub mod inspect;
@@ -417,6 +418,8 @@ pub struct Prefs {
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
     pub theme: String,
+    /// The name comments are signed with (and whose comments count as yours).
+    pub user_name: String,
 }
 
 impl Default for Prefs {
@@ -430,6 +433,7 @@ impl Default for Prefs {
             number_keys_opacity: true,
             show_dimensions: true,
             theme: "light".into(),
+            user_name: cmd::comment::DEFAULT_AUTHOR.into(),
         }
     }
 }
@@ -897,6 +901,8 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         figcraft_layout::layout_frame(doc, f, &m);
     }
     doc.take_dirty();
+    // 5. Comment pins follow their layers to other pages and stay put when the layers are deleted.
+    cmd::comment::follow_anchors(doc, before);
 }
 
 #[cfg(test)]
@@ -909,6 +915,8 @@ mod annotations_tests;
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
+#[cfg(test)]
+mod comments_polish_tests;
 #[cfg(test)]
 mod component_codegen_tests;
 #[cfg(test)]
@@ -928,6 +936,8 @@ mod library_variables_tests;
 #[cfg(test)]
 mod mask_tests;
 #[cfg(test)]
+mod measure_tests;
+#[cfg(test)]
 mod nested_override_tests;
 #[cfg(test)]
 mod paint_tests;
@@ -944,7 +954,11 @@ mod proto_run_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]
+mod scale_tool_tests;
+#[cfg(test)]
 mod section_tests;
+#[cfg(test)]
+mod selection_depth_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
 #[cfg(test)]

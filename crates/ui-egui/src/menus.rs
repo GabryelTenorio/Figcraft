@@ -45,7 +45,10 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
         }
         // Text from elsewhere when it's newer than our copy, or when we have nothing to paste.
         if let Some(text) = sys_text.filter(|_| app.ui.last_copy.is_some() || app.session.clipboard.nodes.is_empty()) {
-            if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
+            // A comment's link opens its thread.
+            if text.trim().starts_with("figcraft://comment/") {
+                app.run("comment.open", json!({"link": text.trim()}));
+            } else if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
                 app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
@@ -161,10 +164,7 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
         if m.menu == prefix {
             if m.label == SEP {
                 if !last_sep {
-                    ui.add_space(4.0);
-                    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
-                    ui.add_space(4.0);
+                    separator(ui);
                     last_sep = true;
                 }
                 continue;
@@ -207,6 +207,14 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
     false
 }
 
+/// A thin line between groups of menu items.
+fn separator(ui: &mut Ui) {
+    ui.add_space(4.0);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
+    ui.add_space(4.0);
+}
+
 fn menu_frame(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui)) {
     egui::Frame::NONE
         .fill(t.menu)
@@ -221,6 +229,11 @@ fn menu_frame(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui)) {
 }
 
 fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, t: &Tokens) -> bool {
+    indented_item(ui, label, shortcut, enabled, checked, 0.0, t)
+}
+
+/// A menu row whose label starts `indent` pixels further in (nested layers).
+fn indented_item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, indent: f32, t: &Tokens) -> bool {
     let w = ui.available_width();
     let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
     let hov = resp.hovered() && enabled;
@@ -231,7 +244,8 @@ fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, 
     if checked {
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, col);
     }
-    ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), col);
+    let text_rect = Rect::from_min_max(pos2(r.min.x + 28.0 + indent, r.min.y), pos2(r.max.x - 8.0, r.max.y));
+    ui.painter().with_clip_rect(text_rect).text(pos2(text_rect.min.x, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), col);
     if !shortcut.is_empty() {
         ui.painter().text(
             pos2(r.max.x - 10.0, r.center().y),
@@ -315,6 +329,9 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
         let mut close = false;
         let area = egui::Area::new(Id::new("ctx_menu")).fixed_pos(pos).order(egui::Order::Foreground).constrain(true).show(ctx, |ui| {
             menu_frame(ui, &t, |ui| {
+                if select_layer_menu(app, ui, pos, &t) {
+                    close = true;
+                }
                 let has_sel = !ids.is_empty();
                 let entries: &[(&str, &str)] = if has_sel {
                     &[
@@ -364,10 +381,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 };
                 for (label, id) in entries {
                     if *label == "-" {
-                        ui.add_space(4.0);
-                        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                        ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, Color32::from_white_alpha(30)));
-                        ui.add_space(4.0);
+                        separator(ui);
                         continue;
                     }
                     let sc = figcraft_engine::catalog::shortcut(id).unwrap_or("");
@@ -390,10 +404,67 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
         let clicked_outside = ctx.input(|i| i.pointer.any_pressed()) && !area.response.hovered() && !over_menu(ctx);
         if close || clicked_outside || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             app.ui.context_menu = None;
+            ctx.data_mut(|d| d.remove::<bool>(select_layer_id()));
         }
     }
     crate::colorpicker::show(app, ctx);
     palette(app, ctx);
+}
+
+fn select_layer_id() -> Id {
+    Id::new("ctx_select_layer_open")
+}
+
+/// Open (or close) the context menu's Select layer submenu.
+pub fn open_select_layer(ctx: &egui::Context, open: bool) {
+    ctx.data_mut(|d| d.insert_temp(select_layer_id(), open));
+}
+
+/// The context menu's "Select layer" submenu (right-click on the canvas): every layer under the
+/// click, nested ones indented, the selected ones checked. Returns whether one was picked.
+fn select_layer_menu(app: &mut FigApp, ui: &mut Ui, pos: egui::Pos2, t: &Tokens) -> bool {
+    if !app.canvas.rect.contains(pos) {
+        return false;
+    }
+    let p = app.to_page(pos);
+    let Ok(ds) = app.session.ds() else { return false };
+    let tol = 2.0 / ds.view.zoom.max(1e-6);
+    let layers: Vec<(figcraft_doc::NodeId, usize, String)> = figcraft_doc::geometry::layers_at(&ds.doc, ds.page, p, tol)
+        .into_iter()
+        .take(40)
+        .filter_map(|(id, depth)| {
+            ds.doc.node(id).map(|n| (id, depth, if n.name.is_empty() { n.kind.type_name().to_lowercase() } else { n.name.clone() }))
+        })
+        .collect();
+    if layers.is_empty() {
+        return false;
+    }
+    let sel = ds.selection.clone();
+    let resp = submenu_item(ui, "Select layer", t);
+    if resp.hovered() {
+        ui.data_mut(|d| d.insert_temp(select_layer_id(), true));
+    }
+    let mut picked = None;
+    if ui.data(|d| d.get_temp::<bool>(select_layer_id())).unwrap_or(false) {
+        let at = pos2(resp.rect.max.x + 4.0, resp.rect.min.y - 8.0);
+        egui::Area::new(Id::new("ctx_select_layer")).fixed_pos(at).order(egui::Order::Foreground).constrain(true).show(ui.ctx(), |ui| {
+            menu_frame(ui, t, |ui| {
+                for (id, depth, name) in &layers {
+                    if indented_item(ui, name, "", true, sel.contains(id), 12.0 * (*depth).min(8) as f32, t) {
+                        picked = Some(*id);
+                    }
+                }
+            });
+        });
+    }
+    separator(ui);
+    match picked {
+        Some(id) => {
+            app.run("select.set", json!({"ids": [id]}));
+            true
+        }
+        None => false,
+    }
 }
 
 /// The Actions palette: fuzzy search over every command.

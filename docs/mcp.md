@@ -324,6 +324,30 @@ visibility, text, font properties, single solid fills and strokes) and `explicit
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
 
+### Comments
+
+Comment threads live in the file, pinned to a page point or to a layer (`anchor`: a node id, or
+`true` for the innermost frame under the point) so they move with it; when the layer is deleted the
+pin stays where it was, on the nearest surviving parent. Driven with `run_command`:
+`comment.add {x, y, text, page?, anchor?}` (returns `{id, link}`), `comment.reply {id, text}`,
+`comment.edit {id, text, reply?}` and `comment.delete {id, reply?}` (a message is the thread's
+first one, or `reply`: an index into its replies; deleting the first message deletes the thread),
+`comment.react {id, emoji, reply?, on?}` (toggles your reaction), `comment.resolve {id, resolved?}`,
+`comment.move {id, x, y, anchor?}` (pins it to the frame under the new point unless `anchor: false`).
+Everyone acts as the name from Preferences (`pref.userName {name}`, default "You") unless `author`
+says otherwise; only a message's author can edit or delete it. `@Name` in a message mentions
+someone (`comment.people` lists the names used in the file).
+
+Read state is kept per name: a new message is unread for everyone but its author;
+`comment.markRead {id? | link?, read?}` marks one thread (or, without `id`, all of them) read or
+unread (not an undo step). `comment.list {page? | "all", filter? (all|open|resolved|mine|unread),
+sort? (date|page), query?, frame?}` returns the threads with their position, `frame`/`frameName`,
+`pageName`, `unread`, `link` and replies (with `edited` times and `reactions`). Links are
+`figcraft://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
+to its page, zooms to its frame (`fit`, the default; `center` keeps the zoom; `keep` doesn't move)
+and opens it in the app, and `comment.next {id?, dir?, …list params}` steps to the next or previous
+thread of a list the same way. `comment.zoom {ids}` zooms in on a group of pins.
+
 ### Version history
 
 Named snapshots of the document, kept in the `.figcraft` file (they persist once the file is saved;
@@ -385,6 +409,31 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
 `page`, or a `frame` (frames, components and instances). A frame's guides are in its own
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
 it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
+
+### Measuring, the Scale tool and selecting
+
+- **Measure** (what Alt/Option-hover shows): `measure.distances {ids? (default the selection), to?
+  (a layer; default the selection's parent)}` returns `{lines: [{x0, y0, x1, y1, label, dashed}]}`
+  in page coordinates, between bounding boxes (several layers by their union, rotated ones by
+  their bounds): one box inside the other measures to each edge, boxes apart measure the gaps
+  (`dashed` lines extend a gap line to a box it passes beside), overlapping boxes measure between
+  matching edges. `measure.padding {id? (an auto layout frame or a child)}` returns `{frame, lines}`:
+  the frame's padding and the gaps between neighbouring children (what Shift+Alt-hover shows).
+  With `pointer`, `alt: true` hovers measure (add `cmd` for nested layers, `shift` for padding) and
+  `alt` drags show live distances to the neighbours; `inspect_ui` reports them under
+  `tool.overlay` (`guides`, and `measure_box` for the box measured to).
+- **Scale tool** (`tool.scale`, K): dragging a selection handle with `pointer` scales everything by
+  one factor (sizes and positions whatever the constraints, strokes, effects, corner radii, auto
+  layout spacing, min/max sizes, layout grids, guides, tiled images, text), one undo step per drag,
+  about the anchor point `tool.scaleAnchor {anchor?: tl|t|tr|l|c|r|bl|b|br}` (or, when the anchor
+  lies on the side being dragged, the opposite handle; `alt: true` scales from the centre), with the
+  factor and pivot in `tool.overlay.scale` while dragging. Without
+  dragging, `transform.scale {ids?, factor, cx?, cy?}` does the same numerically.
+- **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
+  depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
+  / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`
+  clicks select the nested layer, `cmd` drags from empty canvas select the nested layers they touch,
+  and `shift` drags toggle what they touch.
 
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.

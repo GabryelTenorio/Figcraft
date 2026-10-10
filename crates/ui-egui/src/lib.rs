@@ -24,6 +24,7 @@ pub mod home;
 pub mod icons;
 pub mod layers;
 pub mod layout_panel;
+pub mod measure_overlay;
 pub mod menus;
 pub mod present;
 pub mod proto_canvas;
@@ -44,6 +45,8 @@ pub mod vector_panel;
 pub mod versions;
 pub mod widgets;
 
+#[cfg(test)]
+mod comments_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
@@ -416,6 +419,11 @@ impl FigApp {
                 "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
+                "comment.open" => {
+                    if let Some(id) = r.data.get("id").and_then(Value::as_u64) {
+                        self.ui.comments.show(id);
+                    }
+                }
                 "comment.new" => {
                     let x = r.data.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let y = r.data.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -577,8 +585,10 @@ impl FigApp {
                 toolbar::show(self, ui);
             }
         });
-        // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor.
+        // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor, and
+        // the arrows step through comment threads with the Comment tool.
         present::show_pane(self, &ctx);
+        comments::keys(self, &ctx);
         shortcuts::handle(self, &ctx);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);
@@ -627,7 +637,7 @@ impl FigApp {
             "dark": self.ui.dark,
             "presenting": self.ui.present.is_some(),
             "presenter": self.ui.present.as_ref().map(present::Presenter::inspect),
-            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame},
+            "presentOptions": {"scale": self.ui.present_view.scale.id(), "deviceFrame": self.ui.present_view.device_frame, "comments": self.ui.present_view.comments},
             "preview": self.ui.preview.as_ref().map(|p| p.player.inspect()),
             "mainMenu": self.ui.main_menu,
             "palette": self.ui.palette.is_some(),
@@ -637,7 +647,15 @@ impl FigApp {
             "stylePicker": self.ui.style_picker.as_ref().map(|p| p.slot().key()),
             "stylePickerView": if self.ui.style_grid { "grid" } else { "list" },
             "textPreview": figcraft_engine::textpreview::active(&self.session),
-            "comments": {"open": self.ui.comments.open, "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]), "showResolved": self.ui.comments.show_resolved},
+            "comments": {
+                "open": self.ui.comments.open,
+                "draft": self.ui.comments.draft.as_ref().map(|d| [d.0, d.1]),
+                "filter": self.ui.comments.filter.id(),
+                "sort": self.ui.comments.sort.id(),
+                "search": self.ui.comments.search,
+                "editing": self.ui.comments.editing.as_ref().map(|e| [e.0, e.1 as u64]),
+                "mentions": self.ui.comments.mention.names(),
+            },
             "frameMs": self.ui.frame_ms,
             "renderMs": self.ui.render_ms,
             "canvas": {
