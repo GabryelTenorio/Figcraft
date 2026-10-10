@@ -1844,7 +1844,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
         }
         if *act == BarAction::Options {
-            let menu = egui::Popup::menu(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
+            let menu = crate::right::menu_popup(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
             action = action.or(menu.and_then(|m| m.inner));
         } else if resp.clicked() {
             action = Some(*act);
@@ -1866,7 +1866,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             left.rect_filled(fr, CornerRadius::same(5), hover);
         }
         left.galley(pos2(fr.min.x + 8.0, fr.center().y - galley.size().y / 2.0), galley, text);
-        egui::Popup::menu(&resp).width(240.0).show(|ui| {
+        crate::right::menu_popup(&resp).width(240.0).show(|ui| {
             let t = Tokens::get(ui.ctx());
             for f in &flows {
                 if crate::right::menu_check(ui, f.start == p.start, &f.name, "") {

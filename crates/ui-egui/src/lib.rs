@@ -54,6 +54,8 @@ mod layers_keys_tests;
 #[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
+mod popup_width_tests;
+#[cfg(test)]
 mod present_tests;
 #[cfg(test)]
 mod present_view_tests;

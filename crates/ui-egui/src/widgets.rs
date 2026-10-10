@@ -349,7 +349,7 @@ pub fn combo_field(ui: &mut Ui, id: Id, value: &str, width: f32, options: &[Stri
         ui.painter().rect_filled(chev.shrink(2.0), CornerRadius::same(4), t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(chev.center(), vec2(12.0, 12.0)), Icon::Chevron, t.icon_secondary);
-    egui::Popup::menu(&resp).show(|ui| {
+    crate::right::menu_popup(&resp).show(|ui| {
         for o in options {
             if crate::right::menu_item(ui, o, "") {
                 out = Some(o.clone());
