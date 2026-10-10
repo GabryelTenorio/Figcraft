@@ -7,6 +7,7 @@
 //! edits and are journaled the same way.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod al_keys;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -894,11 +895,44 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     for f in frames {
         figcraft_layout::layout_frame(doc, f, &m);
     }
+    touched.extend(doc.take_dirty());
+    // 5. Ready-for-dev layers whose contents changed show "Changed".
+    mark_dev_changes(doc, before, &touched);
     doc.take_dirty();
+}
+
+/// Flag the frames and sections marked ready for dev (before this edit) that contain a layer whose
+/// design `touched` changed (added, removed or edited; the handoff status itself and hiding a
+/// section's contents don't count).
+fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<NodeId>) {
+    let ready = |d: &Document, id: NodeId| d.node(id).is_some_and(|n| n.dev_status == figcraft_doc::DevStatus::ReadyForDev);
+    let mut changed: BTreeSet<NodeId> = BTreeSet::new();
+    for &id in touched {
+        let differs = match (before.node(id), doc.node(id)) {
+            (Some(a), Some(b)) => !a.same_design(b),
+            (None, None) => false,
+            _ => true,
+        };
+        if !differs {
+            continue;
+        }
+        let mut chain = vec![id];
+        chain.extend(if doc.contains(id) { doc.ancestors(id) } else { before.ancestors(id) });
+        changed.extend(chain.into_iter().filter(|m| ready(before, *m) && ready(doc, *m)));
+    }
+    for m in changed {
+        if let Some(n) = doc.node_mut(m)
+            && !n.dev_changed
+        {
+            n.dev_changed = true;
+        }
+    }
 }
 
 #[cfg(test)]
 mod al_drag_tests;
+#[cfg(test)]
+mod al_keys_tests;
 #[cfg(test)]
 mod al_nesting_tests;
 #[cfg(test)]
@@ -935,6 +969,8 @@ mod proto_responsive_tests;
 mod proto_run_tests;
 #[cfg(test)]
 mod rotated_select_tests;
+#[cfg(test)]
+mod section_contents_tests;
 #[cfg(test)]
 mod section_tests;
 #[cfg(test)]

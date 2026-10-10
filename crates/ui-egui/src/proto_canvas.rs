@@ -123,10 +123,12 @@ fn handles(app: &FigApp, doc: &Document, sel: &[NodeId]) -> Vec<(NodeId, Pos2)> 
         .collect()
 }
 
-/// The top-level frame under a screen point (top-most first).
+/// The top-level frame under a screen point (top-most first), else the innermost section there
+/// (a connection to a section opens the frame of it shown last).
 fn frame_at(app: &FigApp, doc: &Document, page: NodeId, p: Pos2) -> Option<NodeId> {
     let pt = app.to_page(p);
-    doc.top_frames(page).into_iter().rev().find(|f| doc.world_bounds(*f).is_some_and(|b| b.contains(pt)))
+    let under = |i: &NodeId| doc.world_bounds(*i).is_some_and(|b| b.contains(pt));
+    doc.top_frames(page).into_iter().rev().find(under).or_else(|| doc.sections_in(page).into_iter().rev().find(under))
 }
 
 fn arrow(painter: &egui::Painter, pts: &[Pos2; 4], col: Color32) {

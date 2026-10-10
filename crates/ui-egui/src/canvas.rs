@@ -531,13 +531,9 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
             y += 1.0;
         }
     }
-    let Some(pg) = doc.node(page) else { return };
-    // Layout grids and frame labels for top-level frames.
-    for c in &pg.children {
+    // Layout grids and frame labels for top-level frames (also those in sections).
+    for c in &boards(&doc, page) {
         let Some(n) = doc.node(*c) else { continue };
-        if !n.visible {
-            continue;
-        }
         let Some(b) = doc.world_bounds(*c) else { continue };
         // Off-screen frames draw neither grids nor a label (labels sit just above the frame).
         let on_screen = Rect::from_two_pos(app.to_screen(b.x0, b.y0), app.to_screen(b.x1, b.y1)).expand2(vec2(0.0, 20.0));
@@ -574,12 +570,24 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 t.text_secondary
             };
             if matches!(n.kind, NodeKind::Section { .. }) {
-                // Section titles are pills inside the top-left.
-                let galley = crate::bidi::name_galley(painter, &n.name, semibold(11.0), t.text, 480.0);
-                let r = Rect::from_min_size(tl + vec2(0.0, 0.0), galley.size() + vec2(16.0, 8.0));
+                // Section titles are pills inside the top-left; a section hiding its contents shows
+                // an eye in its pill and says so in the middle.
+                let hidden = n.hides_contents();
+                let fg = if selected { Color32::WHITE } else { t.text };
+                let galley = crate::bidi::name_galley(painter, &n.name, semibold(11.0), fg, 480.0);
+                let eye = if hidden { 16.0 } else { 0.0 };
+                let r = Rect::from_min_size(tl, galley.size() + vec2(16.0 + eye, 8.0));
                 painter.rect_filled(r, CornerRadius::same(4), if selected { ACCENT } else { t.hover });
-                painter.galley(r.min + vec2(8.0, 4.0), galley, if selected { Color32::WHITE } else { t.text });
-                status_badge(painter, n.dev_status, pos2(r.max.x + 6.0, r.center().y));
+                if hidden {
+                    let ir = Rect::from_center_size(pos2(r.min.x + 14.0, r.center().y), vec2(12.0, 12.0));
+                    crate::icons::paint(painter, ir, crate::icons::Icon::EyeOff, fg);
+                }
+                painter.galley(r.min + vec2(8.0 + eye, 4.0), galley, fg);
+                status_badge(painter, n, pos2(r.max.x + 6.0, r.center().y));
+                let body = Rect::from_two_pos(tl, app.to_screen(b.x1, b.y1));
+                if hidden && body.width() > 120.0 && body.height() > 60.0 {
+                    painter.text(body.center(), Align2::CENTER_CENTER, "Contents hidden", regular(11.0), t.text_tertiary);
+                }
             } else {
                 let max_w = (b.width() * zoom) as f32;
                 let mut x = tl.x;
@@ -591,7 +599,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) {
                 let galley = crate::bidi::name_galley(painter, &n.name, regular(11.0), col, (max_w - (x - tl.x)).max(20.0));
                 let end = x + galley.size().x;
                 painter.galley(pos2(x, tl.y - 16.0), galley, col);
-                status_badge(painter, n.dev_status, pos2(end + 6.0, tl.y - 9.0));
+                status_badge(painter, n, pos2(end + 6.0, tl.y - 9.0));
             }
         }
     }
@@ -980,12 +988,35 @@ fn hatch(polys: &[Vec<Pos2>], gap: f32) -> Vec<[Pos2; 2]> {
     out
 }
 
-/// A frame's or section's handoff status as a small pill left-centred on `at`.
-fn status_badge(painter: &egui::Painter, status: figcraft_doc::DevStatus, at: Pos2) {
-    let (label, fill) = match status {
+/// The layers that get canvas labels and layout grids, in z-order: the page's visible top-level
+/// layers and, inside sections whose contents show, their visible children (sections nest).
+fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
+    fn walk(doc: &Document, id: NodeId, depth: usize, out: &mut Vec<NodeId>) {
+        let Some(n) = doc.node(id) else { return };
+        for c in &n.children {
+            let Some(cn) = doc.node(*c) else { continue };
+            if !cn.visible {
+                continue;
+            }
+            out.push(*c);
+            if matches!(cn.kind, NodeKind::Section { contents_hidden: false }) && depth < 32 {
+                walk(doc, *c, depth + 1, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(doc, page, 0, &mut out);
+    out
+}
+
+/// A frame's or section's handoff status as a small pill left-centred on `at` ("Changed" once a
+/// ready-for-dev layer was edited).
+fn status_badge(painter: &egui::Painter, n: &figcraft_doc::Node, at: Pos2) {
+    let (label, fill) = match n.dev_status {
         figcraft_doc::DevStatus::None => return,
-        figcraft_doc::DevStatus::ReadyForDev => ("Ready for dev", Color32::from_rgb(0x14, 0xAE, 0x5C)),
-        figcraft_doc::DevStatus::Completed => ("Completed", Color32::from_rgb(0x6E, 0x6E, 0x73)),
+        figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => ("Changed", crate::theme::DEV_CHANGED),
+        figcraft_doc::DevStatus::ReadyForDev => ("Ready for dev", crate::theme::DEV_READY),
+        figcraft_doc::DevStatus::Completed => ("Completed", crate::theme::DEV_COMPLETED),
     };
     let galley = painter.layout_no_wrap(label.to_string(), semibold(10.0), Color32::WHITE);
     let r = Rect::from_min_size(pos2(at.x, at.y - galley.size().y / 2.0 - 2.0), galley.size() + vec2(10.0, 4.0));

@@ -73,15 +73,28 @@ dimension measured side by side.
    dragged axis slider (one undo step on release, Escape cancels). Visual QA: list markers keep the
    paragraph's font, renames start with the name selected and centred, Max lines shows while
    truncating. *Left:* list markers on the right of right-to-left paragraphs. 1 h.
-3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
-   column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
-   wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
-   alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI, wrap-aware
-   drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one pass
-   (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
+3. **Auto layout and sections depth**: *landed:* on-canvas padding/gap handles (also wrapped-row
+   and grid column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed,
+   hugging text wraps at its max), ignore auto layout (absolute position) with constraints, text
+   baseline alignment, grid tracks (fixed/hug/`fr`), grid cells and spans, wrap row gap UI,
+   wrap-aware drag-reorder (by row) and dragging into a grid cell, nested hug/fill settling in one
+   pass (wrapping fill text, three levels deep, grid rows), min/max redistribution, coherent
    Fill/Hug rules, drag across nested auto layout frames (deepest one wins, insertion line, out to
-   the canvas or a plain frame). *Left:* visual QA of nested edge cases, arrow-key moves across
-   nested frames. 2–4 h.
+   the canvas or a plain frame). Arrow keys move auto layout children one place (along the flow
+   past hidden and absolute siblings, Up/Down between wrapped rows, to the neighbouring grid cell
+   (automatically placed children swap, anchored ones take or swap cells), and at the end of a
+   flow or across a row's axis into the neighbouring nested auto layout frame when the frame
+   around flows that way; one undo step, none when nothing can move). Visual QA of nested
+   hug/fill/fixed/min/max/wrap/grid samples against the documented rules (Fill turns a hugging
+   parent Fixed, min/max redistribution, wrap inside fill, absolute children following
+   constraints as hug frames grow). Sections: hide contents (name, outline and "Contents hidden"
+   on the canvas; contents skipped by rendering, hit testing and labels; dimmed in the layers
+   panel; Design panel checkbox and context menu), Wrap in new section, frames in sections get
+   canvas labels and are top-level frames (flows start there, navigation, Export frames to PDF),
+   "Navigate to" a section shows its frame shown last, else its first; ready for dev turns
+   "Changed" when the contents are edited, resolved with a reason. *Left:* whether `fr` rows of a
+   fixed-height grid should make room for fixed-size children (now `minmax(0, 1fr)`-like),
+   section-level comparisons of changes. 1–2 h.
 4. **Components depth**: *landed:* component properties (edit/delete/bind) with the properties
    panel, add variant, instance swap UI, per-layer overrides with reset, restore main, instance
    structure protection; Assets panel with live thumbnails, search and drag-to-canvas (drops into
@@ -172,7 +185,8 @@ dimension measured side by side.
 
 - **Next:** the fidelity pass (7) and hardening (9: a real-file corpus, platform QA); effects:
   inner shadows under strokes (render order), progressive blur, glass tuned side by side; the last
-  text details (right-to-left list markers).
+  text details (right-to-left list markers) and auto layout details (grid `fr` rows around
+  fixed-size children).
 - **Then:** interop depth (6: .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 

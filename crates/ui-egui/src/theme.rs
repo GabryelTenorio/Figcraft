@@ -43,6 +43,10 @@ pub struct Tokens {
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x0D, 0x99, 0xFF);
 pub const COMPONENT: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
+/// Handoff status badges (white text on these, in both themes).
+pub const DEV_READY: Color32 = Color32::from_rgb(0x14, 0xAE, 0x5C);
+pub const DEV_CHANGED: Color32 = Color32::from_rgb(0xD9, 0x7A, 0x06);
+pub const DEV_COMPLETED: Color32 = Color32::from_rgb(0x6E, 0x6E, 0x73);
 
 impl Tokens {
     pub fn light() -> Self {

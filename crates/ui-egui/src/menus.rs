@@ -316,8 +316,18 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
         let area = egui::Area::new(Id::new("ctx_menu")).fixed_pos(pos).order(egui::Order::Foreground).constrain(true).show(ctx, |ui| {
             menu_frame(ui, &t, |ui| {
                 let has_sel = !ids.is_empty();
-                let entries: &[(&str, &str)] = if has_sel {
-                    &[
+                // Sections in the selection add a contents toggle naming what it will do.
+                let section_toggle = app.session.doc().ok().and_then(|doc| {
+                    let secs: Vec<bool> = ids
+                        .iter()
+                        .filter_map(|i| doc.node(*i))
+                        .filter(|n| matches!(n.kind, figcraft_doc::NodeKind::Section { .. }))
+                        .map(|n| n.hides_contents())
+                        .collect();
+                    (!secs.is_empty()).then(|| if secs.iter().all(|h| *h) { "Show section contents" } else { "Hide section contents" })
+                });
+                let mut entries: Vec<(&str, &str)> = if has_sel {
+                    vec![
                         ("Copy", "edit.copy"),
                         ("Paste here", "edit.paste"),
                         ("Paste to replace", "edit.pasteReplace"),
@@ -329,6 +339,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         ("-", ""),
                         ("Group selection", "object.group"),
                         ("Frame selection", "object.frameSelection"),
+                        ("Wrap in new section", "object.wrapInSection"),
                         ("Ungroup", "object.ungroup"),
                         ("Flatten", "vector.flatten"),
                         ("Outline stroke", "vector.outlineStroke"),
@@ -351,7 +362,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         ("Delete", "edit.delete"),
                     ]
                 } else {
-                    &[
+                    vec![
                         ("Paste here", "edit.paste"),
                         ("-", ""),
                         ("Select all", "select.all"),
@@ -362,7 +373,12 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         ("Pixel grid", "view.pixelGrid"),
                     ]
                 };
-                for (label, id) in entries {
+                if let Some(label) = section_toggle
+                    && let Some(at) = entries.iter().position(|e| e.1 == "object.toggleLock")
+                {
+                    entries.insert(at + 1, (label, "section.toggleContents"));
+                }
+                for (label, id) in &entries {
                     if *label == "-" {
                         ui.add_space(4.0);
                         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());

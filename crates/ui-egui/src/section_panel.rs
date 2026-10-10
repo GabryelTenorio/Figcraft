@@ -1,5 +1,5 @@
-//! Design panel extras for frames and sections: section colours, handoff status and resize to
-//! fit.
+//! Design panel extras for frames and sections: section colours, hiding a section's contents,
+//! handoff status (with resolving a change to a ready-for-dev layer) and resize to fit.
 
 use egui::{CornerRadius, Sense, Stroke, Ui, vec2};
 use figcraft_doc::{DevStatus, Document, NodeId, NodeKind};
@@ -55,11 +55,23 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 }
             }
         });
+        row(ui, 28.0, |ui| {
+            let hidden = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.hides_contents()));
+            if widgets::checkbox(ui, hidden, "Hide contents") {
+                app.run("section.toggleContents", json!({"ids": ids, "hidden": !hidden}));
+            }
+        });
     }
     widgets::sublabels(ui, "Status", None);
+    let changed = sel.iter().any(|i| doc.node(*i).is_some_and(|n| n.dev_status == DevStatus::ReadyForDev && n.dev_changed));
     row(ui, 32.0, |ui| {
-        let st = common(doc, sel, |n| n.dev_status);
-        let resp = widgets::dropdown(ui, st.map(DevStatus::label).unwrap_or("Mixed"), col * 2.0 + 8.0, Some(Icon::Code));
+        let st = common(doc, sel, |n| (n.dev_status, n.dev_changed));
+        let label = match st {
+            Some((DevStatus::ReadyForDev, true)) => "Changed",
+            Some((d, _)) => d.label(),
+            None => "Mixed",
+        };
+        let resp = widgets::dropdown(ui, label, col * 2.0 + 8.0, Some(Icon::Code));
         egui::Popup::menu(&resp).show(|ui| {
             for d in DevStatus::ALL {
                 if menu_item(ui, d.label(), "") {
@@ -69,6 +81,26 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             }
         });
     });
+    if changed {
+        // Changed since marked ready: say why to resolve it (back to Ready for dev).
+        row(ui, 32.0, |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let id = egui::Id::new(("dev_reason", ids.first().copied()));
+            let committed = widgets::text_field(ui, id, "", col * 2.0 - 64.0, "Why it changed");
+            let button = widgets::button(ui, "Resolve", true, true).on_hover_text("Back to Ready for dev");
+            if let Some(reason) = committed.filter(|r| !r.trim().is_empty()) {
+                app.run("dev.resolveChange", json!({"ids": ids, "reason": reason}));
+            } else if button.clicked() {
+                app.run("dev.resolveChange", json!({"ids": ids}));
+            }
+        });
+    } else if let Some(note) = common(doc, sel, |n| n.dev_note.clone()).filter(|n| !n.is_empty()) {
+        row(ui, 24.0, |ui| {
+            let t = crate::theme::Tokens::get(ui.ctx());
+            let text = widgets::elide(ui, &format!("Last change: {note}"), col * 2.0 + 8.0);
+            widgets::label(ui, &text, t.text_secondary);
+        });
+    }
     row(ui, 32.0, |ui| {
         let fit = ui.add_sized(vec2(col * 2.0 + 8.0, widgets::FIELD_H), egui::Button::new("Resize to fit")).on_hover_text("Fit to contents  ⌥⇧⌘R");
         if fit.clicked() {
