@@ -2,12 +2,11 @@
 
 Status: milestone M9. **Step 1 (the core, no networking) is implemented** in `crates/collab`:
 identifiers, the object/property model, change sets, ordering and validation, client
-reconciliation, derived data and the message encoding. **Step 2's networking and presence half is
-implemented** in `crates/collab-net`: the WebSocket transport, the session host the desktop app
-embeds, invite links, live cursors, selections, avatars and follow. Documents don't sync between
-apps yet (wiring the core's `Client` into the engine's edits is the follow-up), so a live session
-is a cursors-and-presence preview for now. The rest is the plan the next implementation PRs follow
-and update; sections say what is built.
+reconciliation, derived data and the message encoding. **Step 2 is implemented** in
+`crates/collab-net` and the engine: the WebSocket transport, the session host the desktop app
+embeds, invite links, document sync end to end (several apps edit one file), live cursors,
+selections, avatars and follow. Undo is not per person yet (step 3). The rest is the plan the next
+implementation PRs follow and update; sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -241,10 +240,10 @@ never enter your undo history.
 - Never stored; dropped when a client disconnects. Throttled to about 30 updates a second on both
   ends, latest wins (a value offered too soon waits and is replaced by newer ones, so the last
   position always arrives). A newcomer gets everyone's latest presence after its welcome.
-- **Until documents sync**, each person has their own file open, so page and layer ids in others'
-  presence don't refer to your document: cursors show in page coordinates on whatever page you
-  look at, selections aren't outlined and following moves your view but doesn't switch pages.
-  Document sync sets `Live::shared_document`, which turns on page matching and outlines.
+- Presence lines up with your canvas while the session's document is in front
+  (`Session::live_shared`): cursors on your page, selections outlined, following switches pages.
+  With another document in front (or before the welcome arrives), cursors show in page
+  coordinates on whatever page you look at and nothing is outlined.
 - Colours and names: the host hands out the first free colour of an eight-colour palette and
   "Guest N" to people without a name (Preferences: your name, `pref.userName`; also in the Share
   popover). After a newcomer's `Welcome` the host sends it its own `PeerJoined`, which is how it
@@ -289,6 +288,28 @@ never enter your undo history.
   (resuming with the last confirmed `seq` is step 3).
 - The browser build has the commands but says live sessions need the desktop app (its WebSocket
   client is step 4).
+
+*Built* (document sync between apps):
+
+- The host's session runs the core's `Server`, seeded with the document it shared; the host's
+  window is a `Client` of it like everyone else (it joins through the hub, without a socket), so
+  its own edits go through the same ordering. A guest's welcome carries the whole document
+  (pages, layers, styles, variables, images): it opens as a new tab, the guest's own files stay
+  open, and leaving keeps it as a local copy.
+- The engine syncs one open document per session (`Live::doc_uid`). After every local action it
+  diffs that document against the client's view into one batch (`ClientMsg::Changes`); a gesture
+  (a drag, a resize) is sent once, when it ends, and nothing is sent while a version or a live
+  text preview shows. Batches the server orders (`Changes`, `Reject`) go through
+  `Client::receive` with the engine's recompute hook, and the resulting document is installed with
+  `Session::apply_remote`, which keeps your selection, page and view and never adds an undo step.
+  Batches that arrive during a gesture wait for it to end. New layers take ids in the client's
+  space (`client_id << 32 | counter`). Closing the session's document leaves the session.
+- Each applied batch wakes the window (the inbox calls `request_repaint`); nothing runs while
+  nobody edits or moves.
+- Limits of this step: undo restores whole earlier states, so it can also revert others' recent
+  edits until per-user undo (step 3), and the Share popover says so; a reconnect is a new client
+  whose welcome replaces the document, so edits made while disconnected are lost (resuming from
+  the last confirmed `seq` with queued batches is step 3).
 
 ## Offline and reconnect
 
@@ -351,11 +372,9 @@ chooses to share on the network; the default is the invite link with a random to
    **Done.**
 2. **Transport + embedded host:** WebSocket server/client (native), the binary encoding, the
    `collab.*` commands, Share / Join UI, live cursors, selections, avatars and follow.
-   **Networking and presence done** (`crates/collab-net`, layer 6 beside the UI: sync
-   `tungstenite` with a reader and a writer thread per connection, no async runtime; the engine
-   holds the live state and reaches the network only through the `LiveLink` the app installs).
-   Still to do: wire document sync end to end (each app's `collab::Client` applying remote batches
-   and sending its own edits), which also sets `Live::shared_document`.
+   **Done** (`crates/collab-net`, layer 6 beside the UI: blocking `tungstenite` with a reader and
+   a writer thread per connection, no async runtime; the engine holds the live state and the sync
+   client and reaches the network only through the `LiveLink` the app installs).
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
    editing.
 4. **Browser client** (WebSocket through `web-sys`).

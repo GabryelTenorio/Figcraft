@@ -1,5 +1,5 @@
-//! Live sessions (milestone M9, step 2 of `docs/collab-protocol.md`): people in the same file see
-//! each other's cursors, selections and viewports, and can follow one another.
+//! Live sessions (milestone M9, step 2 of `docs/collab-protocol.md`): people edit the same file
+//! together and see each other's cursors, selections and viewports, and can follow one another.
 //!
 //! The engine holds what everyone sees ([`Live`]: status, peers and their presence, who you
 //! follow) and the `collab.*` commands. The networking lives in a higher layer
@@ -7,16 +7,19 @@
 //! socket, so nothing below the UI layer depends on networking. Without a link (the CLI, tests)
 //! the commands say live sessions aren't available.
 //!
-//! Peers and presence are the wire types of the collaboration core
-//! ([`figcraft_collab::message`]). Documents don't sync yet: a guest keeps the file they have
-//! open, so page and layer ids in others' presence don't refer to your document. Until
-//! [`Live::shared_document`] is set (by document sync), cursors show in page coordinates on
-//! whatever page you look at, selections aren't outlined and following doesn't switch pages.
+//! Peers, presence and document changes are the wire types of the collaboration core
+//! ([`figcraft_collab::message`]). Each participant runs a core [`Client`]: the host's session
+//! document is the one it shared, a guest gets the host's file as a new tab from the welcome.
+//! After every local edit (once a gesture ends) the session document is diffed into a batch and
+//! sent; batches from the host's server are applied through the client and installed with
+//! [`Session::apply_remote`], which never touches the undo history.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
+use figcraft_collab::Client;
+use figcraft_collab::message::{ClientMsg, ServerMsg};
 use figcraft_doc::{Document, NodeId};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -24,8 +27,9 @@ use serde_json::{Value, json};
 pub use figcraft_collab::message::{Peer, Presence};
 
 use crate::cmd::CommandSpec;
+use crate::collab::EngineRecompute;
 use crate::params::{get, num, req_string, string};
-use crate::{EngineError, Result, Session, ViewState, bad, spec};
+use crate::{DocState, EngineError, Result, Session, ViewState, bad, spec};
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;
@@ -138,6 +142,9 @@ pub enum Event {
     PeerJoined(Peer),
     PeerLeft(u32),
     Presence(u32, Presence),
+    /// For the document sync client: the welcome (with the whole document), or a batch of
+    /// changes the server ordered, or the rejection of one of yours.
+    Sync(ServerMsg),
     /// The host ended the session.
     Ended {
         reason: String,
@@ -179,6 +186,8 @@ pub trait LiveLink: Send {
     fn leave(&mut self);
     /// Your latest presence (the link throttles and coalesces).
     fn presence(&mut self, p: &Presence);
+    /// A message for the server (document changes), sent in order.
+    fn send(&mut self, msg: ClientMsg);
     /// Events since the last call; never blocks.
     fn poll(&mut self) -> Vec<Event>;
 }
@@ -209,9 +218,14 @@ pub struct Live {
     pub cursor: Option<(f64, f64)>,
     /// The presence last handed to the link.
     sent: Option<Presence>,
-    /// Everyone looks at the same, synced document, so page and layer ids in presence refer to
-    /// yours. Document sync sets it; until then it stays false.
-    pub shared_document: bool,
+    /// The document sync client (from the welcome).
+    client: Option<Client>,
+    /// The open document the session syncs (its `DocState::uid`).
+    pub doc_uid: Option<u64>,
+    /// The session document as last sent or installed: a different one has local edits to send.
+    synced: Option<Arc<Document>>,
+    /// Server batches waiting for a gesture or preview on the session document to end.
+    deferred: Vec<ServerMsg>,
 }
 
 impl Live {
@@ -238,6 +252,15 @@ impl Live {
         self.follow = None;
         self.followed = None;
         self.sent = None;
+        self.client = None;
+        self.doc_uid = None;
+        self.synced = None;
+        self.deferred.clear();
+    }
+
+    /// Document changes are syncing (the welcome arrived).
+    pub fn syncing(&self) -> bool {
+        self.client.is_some()
     }
 }
 
@@ -284,11 +307,44 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
 }
 
+/// A gesture, version preview or live text preview shows a document that isn't the edit to
+/// sync yet.
+fn busy(ds: &DocState) -> bool {
+    ds.interaction.is_some() || ds.preview.is_some() || ds.text_preview.is_some()
+}
+
 impl Session {
-    /// Your presence now: the active document's page, selection, viewport and edited text, and
-    /// the pointer.
+    /// The active document is the session's synced document: page and layer ids in others'
+    /// presence refer to it.
+    pub fn live_shared(&self) -> bool {
+        self.live.client.is_some() && self.ds().is_ok_and(|ds| Some(ds.uid) == self.live.doc_uid)
+    }
+
+    /// Install a document that came from the session (others' edits): the selection, page and view
+    /// stay where they can, and the undo history isn't touched.
+    pub fn apply_remote(&mut self, uid: u64, doc: Arc<Document>) {
+        let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) else { return };
+        ds.doc = doc;
+        if !ds.doc.pages.contains(&ds.page) {
+            ds.page = ds.doc.first_page().unwrap_or(ds.page);
+        }
+        if ds.text_edit.as_ref().is_some_and(|t| !ds.doc.contains(t.id)) {
+            ds.text_edit = None;
+        }
+        if ds.vector_edit.as_ref().is_some_and(|v| !ds.doc.contains(v.id)) {
+            ds.vector_edit = None;
+        }
+        ds.clean_selection();
+        ds.revision += 1;
+    }
+
+    /// Your presence now: the session document's page, selection, viewport and edited text, and
+    /// the pointer (nothing while another document is in front).
     pub fn live_presence(&self) -> Presence {
         let Ok(ds) = self.ds() else { return Presence::default() };
+        if self.live.doc_uid.is_some_and(|u| u != ds.uid) {
+            return Presence::default();
+        }
         let (x0, y0) = ds.view.origin();
         let z = ds.view.zoom.max(1e-9);
         sanitize(Presence {
@@ -310,6 +366,7 @@ impl Session {
         for e in events {
             self.live_event(e);
         }
+        self.live_deferred();
         self.live_follow_apply();
         true
     }
@@ -334,12 +391,11 @@ impl Session {
                 }
                 live.status = st;
             }
-            Event::Welcome { info, peers } => {
-                if live.info.is_none() && info.role == Role::Guest {
-                    self.message = Some(match info.file_name.as_str() {
-                        "" => "Joined the live session".to_string(),
-                        f => format!("Joined {f}"),
-                    });
+            Event::Welcome { mut info, peers } => {
+                // The shared file's name and pages come with the document (the sync welcome).
+                if let Some(old) = live.info.as_ref().filter(|_| info.file_name.is_empty()) {
+                    info.file_name = old.file_name.clone();
+                    info.pages = old.pages.clone();
                 }
                 live.status = Status::Live;
                 live.info = Some(info);
@@ -371,11 +427,126 @@ impl Session {
                     live.presence.insert(id, p);
                 }
             }
+            Event::Sync(ServerMsg::Welcome { .. }) => {
+                if let Event::Sync(w) = e {
+                    self.live_welcome(w);
+                }
+            }
+            Event::Sync(msg) => {
+                live.deferred.push(msg);
+            }
             Event::Ended { reason } => {
                 self.message = Some(reason);
                 live.reset();
             }
         }
+    }
+
+    /// The welcome: start the sync client; the host keeps editing the document it shared, a guest
+    /// opens the host's file as a new tab (or gets it again in that tab after a reconnect).
+    fn live_welcome(&mut self, welcome: ServerMsg) {
+        let client = match Client::join(welcome) {
+            Ok(c) => c,
+            Err(e) => return self.live_fail(format!("Couldn't open the shared file: {e}")),
+        };
+        let role = self.live.role();
+        let existing = self.live.doc_uid.filter(|u| self.docs.iter().any(|d| d.uid == *u));
+        match (role, existing) {
+            (Some(Role::Host), Some(uid)) => {
+                if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
+                    let was_dirty = ds.is_dirty();
+                    ds.doc_mut().set_client_id(client.id());
+                    if !was_dirty {
+                        ds.mark_saved();
+                    }
+                }
+                // Edits made since hosting started go out with the first sync.
+                self.live.synced = None;
+            }
+            (Some(Role::Guest), Some(uid)) => {
+                let doc = Arc::new(client.document().clone());
+                self.apply_remote(uid, doc.clone());
+                self.live.synced = Some(doc);
+            }
+            (Some(Role::Guest), None) => {
+                let ds = DocState::new(client.document().clone(), None);
+                self.message = Some(format!("Joined {}", ds.doc.name));
+                self.live.doc_uid = Some(ds.uid);
+                self.live.synced = Some(ds.doc.clone());
+                self.docs.push(ds);
+                self.active = self.docs.len() - 1;
+            }
+            _ => return,
+        }
+        let doc = client.document();
+        if let Some(info) = self.live.info.as_mut() {
+            info.file_name = doc.name.clone();
+            info.pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
+        }
+        self.live.client = Some(client);
+        self.live.deferred.clear();
+    }
+
+    /// End the session with a message (sync broke).
+    fn live_fail(&mut self, reason: String) {
+        log::warn!("live session: {reason}");
+        if let Some(l) = self.live.link.as_mut() {
+            l.leave();
+        }
+        self.live.reset();
+        self.live.status = Status::Failed { reason: reason.clone() };
+        self.message = Some(reason);
+    }
+
+    /// Send the session document's local edits, unless a gesture or preview is still showing.
+    fn live_flush(&mut self) {
+        let Some(uid) = self.live.doc_uid else { return };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == uid) else { return };
+        if busy(ds) || self.live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
+            return;
+        }
+        let doc = ds.doc.clone();
+        let Some(client) = self.live.client.as_mut() else { return };
+        match client.edit(&doc) {
+            Ok(Some(msg)) => {
+                if let Some(l) = self.live.link.as_mut() {
+                    l.send(msg);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => return self.live_fail(format!("Couldn't sync an edit: {e}")),
+        }
+        self.live.synced = Some(doc);
+    }
+
+    /// Apply the server's batches that waited (none while a gesture or preview shows).
+    fn live_deferred(&mut self) {
+        if self.live.deferred.is_empty() || self.live.client.is_none() {
+            return;
+        }
+        let Some(uid) = self.live.doc_uid else { return };
+        if self.docs.iter().find(|d| d.uid == uid).is_none_or(busy) {
+            return;
+        }
+        // Your own edits first: the client replays them over what others did.
+        self.live_flush();
+        let msgs = std::mem::take(&mut self.live.deferred);
+        let mut out = Vec::new();
+        let Some(client) = self.live.client.as_mut() else { return };
+        for m in msgs {
+            match client.receive(m, &EngineRecompute) {
+                Ok(more) => out.extend(more),
+                Err(e) => return self.live_fail(format!("The live session got out of step ({e}); join again")),
+            }
+        }
+        let doc = Arc::new(client.document().clone());
+        if let Some(l) = self.live.link.as_mut() {
+            for m in out {
+                l.send(m);
+            }
+        }
+        self.apply_remote(uid, doc.clone());
+        self.live.synced = Some(doc);
     }
 
     /// Show the followed peer's viewport (and their page, in a shared document).
@@ -387,7 +558,7 @@ impl Session {
             return;
         }
         let Some((page, x, y, w, h)) = self.live.presence.get(&id).and_then(|p| p.viewport) else { return };
-        let shared = self.live.shared_document;
+        let shared = self.live_shared();
         let Ok(ds) = self.ds_mut() else { return };
         if shared && page != ds.page && ds.doc.pages.contains(&page) {
             ds.page = page;
@@ -410,6 +581,20 @@ impl Session {
     /// Send your presence when it changed (the UI calls it every frame it draws, after input;
     /// headless sessions after each call). A view you moved yourself stops following.
     pub fn live_sync(&mut self) {
+        if self.live.status != Status::Live {
+            return;
+        }
+        if self.live.doc_uid.is_some_and(|u| !self.docs.iter().any(|d| d.uid == u)) {
+            let reason = "The live session's file was closed, so you left the session".to_string();
+            if let Some(l) = self.live.link.as_mut() {
+                l.leave();
+            }
+            self.live.reset();
+            self.message = Some(reason);
+            return;
+        }
+        self.live_deferred();
+        self.live_flush();
         if self.live.status != Status::Live {
             return;
         }
@@ -471,6 +656,8 @@ impl Session {
             "address": info.map(|i| i.address.as_str()),
             "network": info.map(|i| i.network),
             "follow": l.follow,
+            "syncing": l.syncing(),
+            "document": l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u)),
             "peers": peers,
         })
     }
@@ -491,12 +678,14 @@ fn host(s: &mut Session, p: &Value) -> Result<Value> {
         Some("lan") => Bind::Lan,
         Some(other) => other.parse::<IpAddr>().map(Bind::Addr).map_err(|_| bad(CMD, "`bind` must be \"local\", \"lan\" or an IP address"))?,
     };
-    let opts = HostOptions { port, bind, name: display_name(&s.prefs), doc: s.ds()?.doc.clone() };
+    let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
+    let opts = HostOptions { port, bind, name: display_name(&s.prefs), doc };
     let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
     let info = link.host(opts).map_err(|e| EngineError::Other(format!("couldn't start the live session: {e}")))?;
     s.live.reset();
     s.live.status = Status::Live;
     s.live.info = Some(info);
+    s.live.doc_uid = Some(uid);
     Ok(s.live_summary())
 }
 
@@ -564,7 +753,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → {status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, peers: [{id, name, color, presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
+            "{} → {status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
             false,
             |s, _| Ok(s.live_summary())
         ),

@@ -23,6 +23,7 @@ impl LiveLink for NetLink {
     }
     fn leave(&mut self) {}
     fn presence(&mut self, _: &Presence) {}
+    fn send(&mut self, _: figcraft_collab::message::ClientMsg) {}
     fn poll(&mut self) -> Vec<Event> {
         Vec::new()
     }

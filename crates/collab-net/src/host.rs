@@ -87,6 +87,7 @@ enum HubIn {
         conn: u64,
     },
     Local(Presence),
+    LocalMsg(ClientMsg),
     /// Cut every connection without a word (tests: a network failure).
     #[cfg(test)]
     Cut,
@@ -124,7 +125,15 @@ impl Host {
             color: PEOPLE[0].to_string(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
         };
-        let (me, _) = server.join(hello).map_err(|r| io::Error::other(format!("{r:?}")))?;
+        let (me, outs) = server.join(hello).map_err(|r| io::Error::other(format!("{r:?}")))?;
+        // The host's window syncs through its own client too: its welcome carries the document.
+        for o in outs {
+            if let Outgoing::To(id, w @ ServerMsg::Welcome { .. }) = o
+                && id == me
+            {
+                inbox.push(Event::Sync(w));
+            }
+        }
         let me = server.peers().find(|p| p.client_id == me).cloned().ok_or_else(|| io::Error::other("the host didn't join its own session"))?;
         let (hub_tx, hub_rx) = channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -175,6 +184,11 @@ impl Host {
     /// The host's own presence.
     pub fn presence(&self, p: Presence) {
         let _ = self.hub.send(HubIn::Local(p));
+    }
+
+    /// A message from the host's own sync client (its edits).
+    pub fn send(&self, msg: ClientMsg) {
+        let _ = self.hub.send(HubIn::LocalMsg(msg));
     }
 
     /// Cut every connection as a network failure would (no close frame).
@@ -304,7 +318,7 @@ fn serve(stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _
     }
     let Ok((rd, wr, sock)) = Duplex::split(stream) else { return };
     let cfg = config(limits.max_client_message);
-    let mut ws = match tungstenite::accept_with_config(rd, Some(cfg)) {
+    let mut ws = match tungstenite::accept_with_config(rd, Some(config(limits.max_hello))) {
         Ok(ws) => ws,
         Err(e) => {
             log::debug!("live session: handshake failed: {e}");
@@ -328,8 +342,9 @@ fn serve(stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _
             let _ = out.try_send(Out::Close(CloseCode::Normal, String::new()));
         }
     };
-    match next_message(&mut ws, limits.max_client_message) {
+    match next_message(&mut ws, limits.max_hello) {
         Ok(Some(ClientMsg::Hello(hello))) => {
+            ws.set_config(|c| *c = cfg);
             let joined = sock.try_clone().is_ok_and(|s| hub.send(HubIn::Join { conn, hello, out: out.clone(), sock: s }).is_ok());
             if joined && ws.get_ref().set_read_timeout(Some(limits.idle_timeout)).is_ok() {
                 read_loop(&mut ws, conn, hub, limits, &end);
@@ -477,6 +492,11 @@ impl Hub {
             }
             HubIn::Gone { conn } => self.gone(conn),
             HubIn::Local(p) => self.presence(self.local, p),
+            HubIn::LocalMsg(ClientMsg::Presence(p)) => self.presence(self.local, p),
+            HubIn::LocalMsg(msg) => {
+                let outs = self.server.receive(self.local, msg);
+                self.deliver(outs);
+            }
             #[cfg(test)]
             HubIn::Cut => {
                 for c in self.conns.values() {
@@ -590,6 +610,7 @@ impl Hub {
             ServerMsg::PeerJoined(p) if p.client_id != self.local => self.inbox.push(Event::PeerJoined(p.clone())),
             ServerMsg::PeerLeft { client_id } => self.inbox.push(Event::PeerLeft(*client_id)),
             ServerMsg::Presence { client_id, presence } => self.inbox.presence(*client_id, presence.clone()),
+            ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => self.inbox.push(Event::Sync(msg.clone())),
             _ => {}
         }
     }

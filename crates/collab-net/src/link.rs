@@ -2,6 +2,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
+use figcraft_collab::message::ClientMsg;
 use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, Role, SessionInfo};
 
 use crate::guest::{Guest, GuestConfig};
@@ -140,6 +141,14 @@ impl LiveLink for NetLink {
         match &self.active {
             Some(Active::Host(h)) => h.presence(p.clone()),
             Some(Active::Guest(g)) => g.presence(p.clone()),
+            None => {}
+        }
+    }
+
+    fn send(&mut self, msg: ClientMsg) {
+        match &self.active {
+            Some(Active::Host(h)) => h.send(msg),
+            Some(Active::Guest(g)) => g.send(msg),
             None => {}
         }
     }

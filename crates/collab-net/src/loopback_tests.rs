@@ -186,8 +186,10 @@ fn guests_join_and_see_each_other() {
     ap.wait("Ada's welcome and colour", |e| e.iter().filter(|e| matches!(e, Event::Welcome { .. })).count() >= 2);
     let Some(Event::Welcome { info, peers }) = ap.events.iter().rev().find(|e| matches!(e, Event::Welcome { .. })) else { panic!("no welcome") };
     assert_eq!(info.name, "Ada");
-    assert_eq!(info.file_name, "Shared file", "the welcome tells the shared file's name");
-    assert_eq!(info.pages.len(), 1);
+    assert!(
+        ap.events.iter().any(|e| matches!(e, Event::Sync(ServerMsg::Welcome { snapshot, .. }) if !snapshot.is_empty())),
+        "the welcome carries the document for the sync client"
+    );
     assert_eq!(peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Hana"], "the host is already here");
     assert_eq!(peers[0].color, PEOPLE[0]);
     assert_eq!(info.color, PEOPLE[1], "the host hands out the next free colour");

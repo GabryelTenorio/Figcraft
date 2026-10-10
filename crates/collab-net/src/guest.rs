@@ -11,9 +11,9 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use figcraft_collab::Client;
 use figcraft_collab::message::{self, ClientMsg, Peer, Presence, ServerMsg};
-use figcraft_collab::{Client, Replica};
-use figcraft_engine::live::{Event, PageInfo, Role, SessionInfo, Status};
+use figcraft_engine::live::{Event, Role, SessionInfo, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::{CloseFrame, Role as WsRole, WebSocket};
 use tungstenite::{Bytes, Message};
@@ -61,6 +61,8 @@ pub struct Guest {
 
 enum Cmd {
     Presence(Presence),
+    /// For the server, in order (document changes).
+    Send(ClientMsg),
     Leave,
     /// The reader of connection `epoch` got its welcome.
     Welcomed(u64),
@@ -92,6 +94,12 @@ impl Guest {
     /// Your latest presence.
     pub fn presence(&self, p: Presence) {
         let _ = self.cmd.send(Cmd::Presence(p));
+    }
+
+    /// A message from the sync client (sent once the connection is welcomed; dropped when it
+    /// breaks: the next welcome starts over).
+    pub fn send(&self, msg: ClientMsg) {
+        let _ = self.cmd.send(Cmd::Send(msg));
     }
 
     /// Leave (returns at once: a connection attempt in progress ends on its own).
@@ -183,6 +191,7 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
                     match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
                         Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => return,
                         Ok(Cmd::Presence(p)) => pending = Some(p),
+                        // From the old connection's client: the next welcome starts over.
                         Ok(_) => {}
                         Err(RecvTimeoutError::Timeout) => break,
                     }
@@ -218,13 +227,17 @@ fn session(
     let mut last_sent = Instant::now();
     let hello = Client::hello(&cfg.invite.file, &cfg.invite.token, &cfg.name, "");
     let mut welcomed = false;
+    let mut queued: Vec<ClientMsg> = Vec::new();
     let mut throttle = Throttle::new(PRESENCE_INTERVAL);
     let outcome = if send(&mut writer, &hello, &mut last_sent) {
         loop {
             let ping_at = last_sent + cfg.limits.keepalive;
             let wake = earliest([throttle.due(), Some(ping_at)]).unwrap_or(ping_at);
             let mut out = None;
+            let mut now_send = Vec::new();
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
+                Ok(Cmd::Send(m)) if welcomed => now_send.push(m),
+                Ok(Cmd::Send(m)) => queued.push(m),
                 Ok(Cmd::Presence(p)) if welcomed => out = throttle.offer(p, Instant::now()),
                 Ok(Cmd::Presence(p)) => *pending = Some(p),
                 Ok(Cmd::Welcomed(e)) if e == epoch => {
@@ -232,6 +245,7 @@ fn session(
                     *was_live = true;
                     *attempt = 0;
                     out = pending.take().and_then(|p| throttle.offer(p, Instant::now()));
+                    now_send.append(&mut queued);
                 }
                 Ok(Cmd::Lost(e, o)) if e == epoch => break o,
                 Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => {
@@ -241,6 +255,9 @@ fn session(
                 // From an earlier connection.
                 Ok(Cmd::Welcomed(_) | Cmd::Lost(..)) => {}
                 Err(RecvTimeoutError::Timeout) => {}
+            }
+            if !now_send.iter().all(|m| send(&mut writer, m, &mut last_sent)) {
+                break Outcome::Retry("the connection dropped".into());
             }
             let now = Instant::now();
             let out = out.or_else(|| throttle.take_due(now));
@@ -313,19 +330,9 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
 /// Take in one message from the host; `Some` when the connection should end.
 fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
     match m {
-        ServerMsg::Welcome { client_id, snapshot, peers, .. } => {
-            // Documents don't sync yet: the snapshot only tells the shared file's name and pages.
-            let (file_name, pages) = match Replica::from_snapshot(&snapshot) {
-                Ok(r) => {
-                    let d = r.document();
-                    let pages = d.pages.iter().map(|p| PageInfo { id: p.0, name: d.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
-                    (d.name.clone(), pages)
-                }
-                Err(e) => {
-                    log::warn!("live session: can't read the shared file's snapshot: {e}");
-                    (String::new(), Vec::new())
-                }
-            };
+        ServerMsg::Welcome { client_id, ref peers, .. } => {
+            // The sync client opens the document (and fills in its name and pages).
+            let peers = peers.clone();
             let inv = &ctx.cfg.invite;
             let network = inv.host.parse::<SocketAddr>().map_or(true, |a| !a.ip().is_loopback());
             let info = SessionInfo {
@@ -333,8 +340,8 @@ fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
                 me: client_id,
                 name: ctx.cfg.name.clone(),
                 color: String::new(),
-                file_name,
-                pages,
+                file_name: String::new(),
+                pages: Vec::new(),
                 link: inv.link(),
                 url: inv.url(),
                 address: inv.host.clone(),
@@ -343,6 +350,7 @@ fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
             seen.peers = peers.clone();
             seen.info = Some(info.clone());
             ctx.inbox.push(Event::Welcome { info, peers });
+            ctx.inbox.push(Event::Sync(m));
             let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
         }
         ServerMsg::PeerJoined(p) => match seen.info.as_mut() {
@@ -368,8 +376,8 @@ fn take(m: ServerMsg, ctx: &ReaderCtx, seen: &mut Seen) -> Option<Outcome> {
             }
         }
         ServerMsg::Refused { reason } => return Some(Outcome::Refused(reason)),
-        // Document changes: applied once document sync lands; keep-alive answers need nothing.
-        ServerMsg::Changes { .. } | ServerMsg::Reject { .. } | ServerMsg::Pong => {}
+        ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => ctx.inbox.push(Event::Sync(m)),
+        ServerMsg::Pong => {}
     }
     None
 }

@@ -1,5 +1,5 @@
 //! Live sessions in the window: other people's cursors (smoothly following their pointer, with a
-//! name tag) and selections on the canvas, their avatars at the top of the right panel (click one
+//! name tag) and selections on the canvas (their edits arrive through the engine's sync), their avatars at the top of the right panel (click one
 //! to follow their view), the Share popover (start a session, the invite link, stop) and the
 //! Join dialog. Everything acts through the `collab.*` commands; the state is the engine's
 //! (`Session::live`). The network wakes the UI when something arrives, and cursors only ask for
@@ -18,8 +18,8 @@ use crate::right::{menu_item, menu_item_with, menu_popup};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
-/// What the note under live sessions says until documents sync.
-pub const PREVIEW_NOTE: &str = "Live cursors only — editing sync coming next.";
+/// Until undo is per person, it restores whole earlier states.
+const UNDO_NOTE: &str = "Undo isn't per person yet: it can also revert others' recent edits.";
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;
@@ -109,7 +109,7 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
         return;
     }
     let Ok(ds) = app.session.ds() else { return };
-    let (doc, page, shared) = (ds.doc.clone(), ds.page, live.shared_document);
+    let (doc, page, shared) = (ds.doc.clone(), ds.page, app.session.live_shared());
     let mut cursors = Vec::new();
     for (id, p) in &live.presence {
         let Some(peer) = live.peers.get(id) else { continue };
@@ -125,8 +125,8 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
                 }
             }
         }
-        // Cursors: on your page in a shared document; until documents sync, everyone has their
-        // own file, so cursors show in page coordinates on whatever page you look at.
+        // Cursors: on your page of the session's document; before its welcome arrives (or with
+        // another document in front) they show in page coordinates on whatever page you look at.
         if let Some((pg, x, y)) = p.cursor
             && (pg == page || !shared)
         {
@@ -275,12 +275,12 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
                     let pages: Vec<&str> = i.pages.iter().map(|p| p.name.as_str()).take(8).collect();
                     widgets::label(ui, &format!("Pages: {}", pages.join(", ")), t.text_secondary);
                 }
+                widgets::label(ui, UNDO_NOTE, t.text_secondary);
                 if widgets::button(ui, "Leave session", false, true).clicked() {
                     app.run("collab.leave", json!({}));
                 }
             }
         }
-        widgets::label(ui, PREVIEW_NOTE, t.text_secondary);
         ui.separator();
         if menu_item(ui, "Export…", "") {
             app.ui.export_preview = true;
@@ -347,6 +347,7 @@ fn host_ui(app: &mut FigApp, ui: &mut Ui) {
     }
     let t = Tokens::get(ui.ctx());
     widgets::label(ui, "The link carries the session's secret: share it only with people you invite.", t.text_secondary);
+    widgets::label(ui, UNDO_NOTE, t.text_secondary);
     if widgets::button(ui, "Stop session", false, true).clicked() {
         app.run("collab.stop", json!({}));
     }
@@ -366,7 +367,7 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
             .add(egui::TextEdit::singleline(&mut link).hint_text("figcraft://join?host=…").desired_width(380.0).id(egui::Id::new("live_join_link")));
         a11y::text(&resp, "Invite link", "");
         go = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        widgets::label(ui, PREVIEW_NOTE, t.text_secondary);
+        widgets::label(ui, "You'll get the host's file as a new tab and edit it together.", t.text_secondary);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             go |= widgets::button(ui, "Join", true, !link.trim().is_empty()).clicked();

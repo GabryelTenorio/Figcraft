@@ -141,3 +141,74 @@ fn a_bad_invite_is_reported() {
     pump(&mut host, &mut guest, "the refusal", |_, g| matches!(&g.live.status, Status::Failed { reason } if reason.contains("token")));
     assert!(host.live.peers.is_empty());
 }
+
+/// The synced properties of two documents agree (nothing to send from one to the other).
+fn same(a: &figcraft_doc::Document, b: &figcraft_doc::Document) -> bool {
+    figcraft_collab::diff(&figcraft_collab::Replica::new(a.clone()), b).is_ok_and(|d| d.changes.is_empty())
+}
+
+fn id_of(v: &Value) -> u64 {
+    v["id"].as_u64().unwrap()
+}
+
+#[test]
+fn edits_sync_between_apps() {
+    let mut host = session("Hana");
+    host.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 80, "height": 80})).unwrap();
+    let link = host.execute("collab.host", &json!({"port": 0})).unwrap()["link"].as_str().unwrap().to_string();
+    let mut a = session("Ada");
+    let mut b = session("Bo");
+    a.execute("collab.join", &json!({"link": link})).unwrap();
+    b.execute("collab.join", &json!({"link": link})).unwrap();
+    let all = |host: &mut Session, a: &mut Session, b: &mut Session, what: &str, f: &dyn Fn(&Session, &Session, &Session) -> bool| {
+        let start = Instant::now();
+        loop {
+            for s in [&mut *host, &mut *a, &mut *b] {
+                s.live_poll();
+                s.live_sync();
+            }
+            if f(host, a, b) {
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    all(&mut host, &mut a, &mut b, "everyone syncing", &|h, a, b| {
+        h.live.syncing() && a.live.syncing() && b.live.syncing() && h.live.peers.len() == 2
+    });
+    // The guests got the host's file as a new tab.
+    assert_eq!(a.docs.len(), 2);
+    assert!(same(host.doc().unwrap(), a.doc().unwrap()) && same(host.doc().unwrap(), b.doc().unwrap()));
+    // Ada creates, moves, recolours; makes and deletes an ellipse; Bo renames; the host adds text.
+    let rect = id_of(&a.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 50, "height": 40})).unwrap());
+    a.live_sync();
+    a.execute("node.set", &json!({"ids": [rect], "props": {"x": 300, "y": 120}})).unwrap();
+    a.live_sync();
+    a.execute("fill.set", &json!({"ids": [rect], "color": "#FF0000"})).unwrap();
+    let ellipse = id_of(&a.execute("shape.ellipse", &json!({"x": 0, "y": 200, "width": 30, "height": 30})).unwrap());
+    a.live_sync();
+    a.execute("edit.delete", &json!({"ids": [ellipse]})).unwrap();
+    all(&mut host, &mut a, &mut b, "Ada's rectangle at Bo", &|_, _, b| b.doc().unwrap().contains(figcraft_doc::NodeId(rect)));
+    b.execute("node.set", &json!({"ids": [rect], "props": {"name": "Card"}})).unwrap();
+    let text = id_of(&host.execute("text.create", &json!({"x": 10, "y": 300, "text": "Hello"})).unwrap());
+    all(&mut host, &mut a, &mut b, "everyone agreeing", &|h, a, b| {
+        let (hd, ad, bd) = (h.doc().unwrap(), a.doc().unwrap(), b.doc().unwrap());
+        same(hd, ad)
+            && same(hd, bd)
+            && ad.contains(figcraft_doc::NodeId(text))
+            && hd.node(figcraft_doc::NodeId(rect)).is_some_and(|n| n.name == "Card")
+    });
+    let (hd, ad) = (host.doc().unwrap().clone(), a.doc().unwrap().clone());
+    let n = ad.node(figcraft_doc::NodeId(rect)).unwrap();
+    assert_eq!(n.name, "Card");
+    assert!(!ad.contains(figcraft_doc::NodeId(ellipse)), "the deleted ellipse is gone everywhere");
+    assert!(!b.doc().unwrap().contains(figcraft_doc::NodeId(ellipse)));
+    assert_eq!(hd.node(figcraft_doc::NodeId(rect)).unwrap().fills, n.fills, "the colour came across");
+    // And the server's: someone joining now gets its document in the welcome.
+    let mut c = session("Cy");
+    c.execute("collab.join", &json!({"link": link})).unwrap();
+    all(&mut host, &mut a, &mut c, "the late joiner", &|_, _, c| c.live.syncing());
+    assert!(same(&hd, c.doc().unwrap()), "the server's document is everyone's");
+    host.execute("collab.stop", &json!({})).unwrap();
+}

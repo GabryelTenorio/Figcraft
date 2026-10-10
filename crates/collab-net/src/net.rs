@@ -18,8 +18,10 @@ use tungstenite::protocol::WebSocketConfig;
 pub struct NetLimits {
     /// Sockets a host keeps open at once, joined or not.
     pub max_connections: usize,
-    /// Largest message a client may send.
+    /// Largest message a client may send once it has joined (a batch can carry images), and
+    /// before: its hello.
     pub max_client_message: usize,
+    pub max_hello: usize,
     /// Largest message a client accepts from the host (a welcome carries the whole document).
     pub max_server_message: usize,
     /// Messages a client may send per second on average, and in a burst; beyond that it is
@@ -42,7 +44,8 @@ impl Default for NetLimits {
     fn default() -> Self {
         Self {
             max_connections: 64,
-            max_client_message: 16 << 20,
+            max_client_message: figcraft_collab::Limits::default().max_message_bytes,
+            max_hello: 64 << 10,
             max_server_message: figcraft_collab::Limits::default().max_message_bytes,
             rate: 100.0,
             burst: 400.0,

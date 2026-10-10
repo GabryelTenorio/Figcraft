@@ -29,6 +29,7 @@ impl LiveLink for Mock {
     }
     fn leave(&mut self) {}
     fn presence(&mut self, _: &Presence) {}
+    fn send(&mut self, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
     fn poll(&mut self) -> Vec<LiveEvent> {
         std::mem::take(&mut self.0.lock().unwrap())
     }
@@ -118,6 +119,22 @@ impl Harness {
         self.send(vec![LiveEvent::Welcome { info, peers: vec![Peer { client_id: 1, name: "Hana".into(), color: "#9747FF".into() }] }]);
     }
 
+    /// The host's welcome with the document (a session server seeded with this document): it opens
+    /// as a new tab, which is then the synced document.
+    fn sync(&mut self) {
+        use figcraft_engine::figcraft_collab::message::{ClientMsg, ServerMsg};
+        use figcraft_engine::figcraft_collab::{Client, Limits, Outgoing, Server};
+        let mut server = Server::new(self.app.session.doc().unwrap().clone(), "", Limits::default());
+        let ClientMsg::Hello(host) = Client::hello("f", "", "Hana", "") else { panic!("no hello") };
+        server.join(host).unwrap();
+        let ClientMsg::Hello(me) = Client::hello("f", "", "Ada", "") else { panic!("no hello") };
+        let (_, outs) = server.join(me).unwrap();
+        let w = outs.into_iter().find_map(|o| if let Outgoing::To(_, w @ ServerMsg::Welcome { .. }) = o { Some(w) } else { None }).unwrap();
+        self.send(vec![LiveEvent::Sync(w)]);
+        self.frames(2);
+        assert!(self.app.session.live_shared());
+    }
+
     fn page(&self) -> NodeId {
         self.app.session.page().unwrap()
     }
@@ -169,10 +186,11 @@ fn remote_cursors_selections_and_avatars_draw() {
         1,
         Presence { selection: Some(vec![rect]), viewport: Some((page, 0.0, 0.0, 600.0, 400.0)), ..cursor(page, 150.0, 150.0) },
     )]);
-    // Documents not synced: the layer ids in her selection aren't this document's.
+    // Before the document arrives, the layer ids in her selection aren't this document's.
     let shapes = h.frames(3);
-    assert_eq!(outlined(&shapes, HANA), 0, "no outline in an unsynced document");
-    h.app.session.live.shared_document = true;
+    assert_eq!(outlined(&shapes, HANA), 0, "no outline before the document syncs");
+    h.sync();
+    assert_eq!(h.app.session.docs.len(), 2, "the host's file opened as a tab");
     let shapes = h.frames(2);
     assert_eq!(h.app.session.live.status, Status::Live);
     // The cursor: the dart in Hana's colour, her name beside it, at her page position.
@@ -227,8 +245,9 @@ fn cursors_follow_pages_in_a_shared_document() {
     let (mut h, rect) = Harness::new();
     h.frames(3);
     h.joined();
-    h.app.session.live.shared_document = true;
     let other = id(&h.app.session.execute("page.add", &json!({"name": "Two"})).unwrap());
+    h.app.session.execute("page.select", &json!({"index": 0})).unwrap();
+    h.sync();
     h.app.session.execute("page.select", &json!({"index": 0})).unwrap();
     h.send(vec![LiveEvent::Presence(
         1,
@@ -237,8 +256,9 @@ fn cursors_follow_pages_in_a_shared_document() {
     let shapes = h.frames(2);
     assert!(crate::live::shown_at(&h.app).is_empty(), "on another page of this file");
     assert_eq!(outlined(&shapes, HANA), 0, "a selection on another page isn't outlined here");
-    // Unsynced documents (the preview): page ids mean nothing here, the cursor shows anyway.
-    h.app.session.live.shared_document = false;
+    // With another document in front, page ids mean nothing there: the cursor shows anyway.
+    h.app.session.execute("doc.switch", &json!({"index": 0})).unwrap();
+    assert!(!h.app.session.live_shared());
     h.send(vec![LiveEvent::Presence(1, cursor(NodeId(99_999), 5.0, 5.0))]);
     h.frames(2);
     assert_eq!(crate::live::shown_at(&h.app), vec![(1, (5.0, 5.0))]);
@@ -292,7 +312,7 @@ fn share_popover_and_join_dialog() {
     let share = text_center(&shapes, "Share");
     h.click(share);
     let shapes = h.frames(2);
-    for t in ["Live session", "Start live session", "Share on the local network", crate::live::PREVIEW_NOTE, "Export…"] {
+    for t in ["Live session", "Start live session", "Share on the local network", "Export…"] {
         assert!(has_text(&shapes, t), "the popover shows {t:?}");
     }
     // Starting fails with this link: the error shows, nothing else changes.

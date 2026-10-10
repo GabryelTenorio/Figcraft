@@ -486,9 +486,9 @@ save)}` returns `{changes, count, bytes}`: the change batch a live session would
 
 ### Live sessions
 
-People (and agents) in one file see each other's cursors, selections and viewports (a preview:
-documents don't sync between apps yet). Both the headless session and the attached app can host
-and join; each call takes in what happened since the last one.
+People (and agents) edit one file together and see each other's cursors, selections and
+viewports. Both the headless session and the attached app can host and join; each call takes in
+what happened since the last one and sends your edits (a joined file opens as a new document).
 
 - `collab.host {port?, bind?}` starts hosting the active document: `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
@@ -501,7 +501,7 @@ and join; each call takes in what happened since the last one.
   session, an unreachable host). `collab.leave {}` leaves.
 - `collab.peers {}` → `{available, status (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
-  follow, peers: [{id, name, color, presence: {cursor: [page, x, y], selection: [ids], viewport:
+  follow, syncing (the document arrived), document (the index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection: [ids], viewport:
   [page, x, y, w, h], editing_text}}]}`.
 - `collab.cursor {x, y}` puts your cursor at a page position (omit both to hide it): an agent's
   pointer. Your selection, page and view go out by themselves when they change.

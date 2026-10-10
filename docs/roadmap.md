@@ -17,7 +17,7 @@ are one Opus 5.5 agent; most milestones split across 4–6 agents on disjoint cr
    40–60 h, parallel by tool.
 4. **Localization layer**, then Figma's own languages first (ja, ko, es, pt-BR, fr, de): 15–25 h
    for the layer, 3–5 h per language plus native review.
-5. **Multiplayer M9**: document sync over the live sessions (the WebSocket transport, hosting from the app, invite links, live cursors, selections, avatars and follow landed), per [`collab-protocol.md`](collab-protocol.md): 45–90 h.
+5. **Multiplayer M9**: per-user undo, reconnect with offline edits, the browser client, a standalone server and sharing on top of the live sessions (the WebSocket transport, hosting from the app, invite links, document sync, live cursors, selections, avatars and follow landed), per [`collab-protocol.md`](collab-protocol.md): 45–90 h.
 
 ## Alpha gate
 
@@ -55,7 +55,7 @@ blockers.
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
 | M8 Hardening & performance (bench, retained canvas, accessibility, idle) | ~60% | real-file corpus, platform QA, GPU canvas, screen readers | 60–110 |
-| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, cursors, selections, avatars, follow, `collab.*` commands) | document sync over the live sessions, per-user undo, resuming after a reconnect, `figcraft://` link handler, browser client, standalone server, sharing | 45–90 |
+| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, document sync between apps, cursors, selections, avatars, follow, `collab.*` commands) | per-user undo, resuming after a reconnect, `figcraft://` link handler, browser client, standalone server, sharing | 45–90 |
 | M10 Localization (new) | not started | layer + 11 languages | 60–100 |
 | M11 Plugins | runtime, API, menu, manager and SDK done (#101) | run-time plugin UI, settings storage, distribution, widgets; Figma plugin compatibility is an owner decision | 25–55 |
 | M12 AI features (new, owner decision) | not started | local models | 30–60 |
