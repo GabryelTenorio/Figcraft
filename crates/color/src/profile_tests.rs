@@ -136,6 +136,21 @@ fn pixel_conversion_matches_colour_conversion() {
 }
 
 #[test]
+fn image_presets() {
+    assert_eq!(ImageFilters::preset("Black & white"), ImageFilters::preset("blackAndWhite"));
+    assert_eq!(ImageFilters::preset("black-and-white").map(|f| f.saturation), Some(-1.0));
+    assert_eq!(ImageFilters::preset("reset"), Some(ImageFilters::default()));
+    assert!(ImageFilters::preset("sepia-ish").is_none());
+    for (id, label, f) in ImageFilters::PRESETS {
+        assert_eq!(ImageFilters::preset(id), Some(f));
+        assert_eq!(ImageFilters::preset(label), Some(f));
+        assert_eq!(f.sanitized(), f, "{id} stays in range");
+    }
+    let junk = ImageFilters { exposure: f32::NAN, contrast: 9.0, ..ImageFilters::NONE }.sanitized();
+    assert_eq!((junk.exposure, junk.contrast), (0.0, 1.0));
+}
+
+#[test]
 fn paint_colors_visit_solids_and_stops() {
     let mut p = Paint::gradient(Gradient::default_for(GradientKind::Linear, Color::WHITE));
     let mut n = 0;

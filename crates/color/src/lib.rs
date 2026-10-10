@@ -328,6 +328,42 @@ impl ImageFilters {
     pub fn is_identity(&self) -> bool {
         *self == ImageFilters::default()
     }
+
+    /// The built-in adjustment presets: `(id, label, adjustments)`. "Reset" is the identity.
+    pub const PRESETS: [(&'static str, &'static str, ImageFilters); 7] = [
+        ("vivid", "Vivid", ImageFilters { contrast: 0.2, saturation: 0.45, highlights: -0.1, shadows: 0.1, ..ImageFilters::NONE }),
+        ("muted", "Muted", ImageFilters { contrast: -0.15, saturation: -0.45, ..ImageFilters::NONE }),
+        ("warm", "Warm", ImageFilters { temperature: 0.5, tint: 0.1, saturation: 0.1, ..ImageFilters::NONE }),
+        ("cool", "Cool", ImageFilters { temperature: -0.5, tint: -0.05, ..ImageFilters::NONE }),
+        ("blackAndWhite", "Black & white", ImageFilters { saturation: -1.0, contrast: 0.15, ..ImageFilters::NONE }),
+        ("fade", "Fade", ImageFilters { contrast: -0.35, saturation: -0.2, shadows: 0.35, highlights: -0.1, ..ImageFilters::NONE }),
+        ("reset", "Reset", ImageFilters::NONE),
+    ];
+
+    /// No adjustment (a `const` [`Default`]).
+    pub const NONE: ImageFilters =
+        ImageFilters { exposure: 0.0, contrast: 0.0, saturation: 0.0, temperature: 0.0, tint: 0.0, highlights: 0.0, shadows: 0.0 };
+
+    /// The built-in preset `name` (its id or label, ignoring case, spaces, `-`, `_` and `&`).
+    pub fn preset(name: &str) -> Option<ImageFilters> {
+        let key = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>();
+        let k = key(name);
+        Self::PRESETS.iter().find(|(id, label, _)| key(id) == k || key(label) == k).map(|(_, _, f)| *f)
+    }
+
+    /// Every value clamped into `-1..=1` (NaN → 0).
+    pub fn sanitized(self) -> Self {
+        let c = |v: f32| if v.is_finite() { v.clamp(-1.0, 1.0) } else { 0.0 };
+        Self {
+            exposure: c(self.exposure),
+            contrast: c(self.contrast),
+            saturation: c(self.saturation),
+            temperature: c(self.temperature),
+            tint: c(self.tint),
+            highlights: c(self.highlights),
+            shadows: c(self.shadows),
+        }
+    }
 }
 
 /// An image paint: the image is referenced by its content hash in the document's image store.

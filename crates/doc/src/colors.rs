@@ -3,13 +3,21 @@
 //! backdrops, styles, colour variables and the document colours. Image pixels are not values and
 //! are left alone.
 
-use figcraft_color::{Color, ColorProfile};
+use figcraft_color::{Color, ColorProfile, ImageFilters};
+use serde::{Deserialize, Serialize};
 
 use crate::proto::Action;
 use crate::{Document, Effect, EffectKind, LayoutGrid, Node, NodeKind, Style, StyleKind, TextData, TextStyle, VariableValue, Variables};
 
 /// A visitor over colour values.
 pub type ColorVisitor<'a> = dyn FnMut(&mut Color) + 'a;
+
+/// Image adjustments saved in a document under a name (the image paint's preset menu lists them).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ImagePreset {
+    pub name: String,
+    pub filters: ImageFilters,
+}
 
 impl Effect {
     pub fn for_each_color_mut(&mut self, f: &mut ColorVisitor) {

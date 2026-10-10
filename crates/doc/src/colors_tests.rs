@@ -1,5 +1,5 @@
 use super::*;
-use figcraft_color::{Paint, ProfileConversion};
+use figcraft_color::{ImageFilters, Paint, ProfileConversion};
 use std::collections::BTreeMap;
 
 const RED: Color = Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
@@ -105,13 +105,15 @@ fn in_srgb_borrows_or_converts() {
 }
 
 #[test]
-fn profile_serializes_only_when_set() {
+fn profile_and_presets_serialize_only_when_set() {
     let mut d = Document::new("s");
     let v = serde_json::to_value(&d).unwrap();
-    assert!(v.get("color_profile").is_none());
+    assert!(v.get("color_profile").is_none() && v.get("image_presets").is_none());
     d.color_profile = ColorProfile::DisplayP3;
+    d.image_presets.push(ImagePreset { name: "Mine".into(), filters: ImageFilters { contrast: 0.5, ..Default::default() } });
     let v = serde_json::to_value(&d).unwrap();
     assert_eq!(v["color_profile"], "displayP3");
     let back: Document = serde_json::from_value(v).unwrap();
     assert_eq!(back.color_profile, ColorProfile::DisplayP3);
+    assert_eq!(back.image_presets, d.image_presets);
 }

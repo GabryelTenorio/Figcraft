@@ -127,6 +127,9 @@ pub struct Document {
     /// The colour space colour values are in (sRGB unless the file says otherwise).
     #[serde(default, skip_serializing_if = "ColorProfile::is_srgb")]
     pub color_profile: ColorProfile,
+    /// Image adjustment presets saved in this file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_presets: Vec<ImagePreset>,
 }
 
 impl Default for Document {
@@ -153,6 +156,7 @@ impl Document {
             libraries: Arc::default(),
             published: None,
             color_profile: ColorProfile::Srgb,
+            image_presets: Vec::new(),
         };
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);

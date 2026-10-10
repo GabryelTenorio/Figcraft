@@ -89,6 +89,12 @@ Or in a project's `.mcp.json`:
   into the file's space. PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
   `cICP`), Display P3 JPG and WebP embed the ICC profile, and SVG and PDF export Display P3 files
   converted to sRGB (out-of-gamut colours clip).
+- **Image adjustments**: image paints carry `filters` (exposure, contrast, saturation, temperature,
+  tint, highlights, shadows; each -1..1). `image.adjust {ids?, target?: fill|stroke, index?,
+  preset?, filters?}` applies a built-in preset (`vivid`, `muted`, `warm`, `cool`, `blackAndWhite`,
+  `fade`, `reset`) or one saved in the file, with any `filters` values on top.
+  `image.savePreset {name, filters?}` saves the current (or given) adjustments in the file,
+  `image.deletePreset {name}` removes one and `image.presets` lists both kinds.
 - Text props (`fontFamily`, `fontStyle`, `fontSize`, `lineHeight`, `letterSpacing`, `textDecoration`,
   `textCase`, `textFills`, `fontVariations`…) apply to the whole layer, or to chars `start`..`end`
   when given (`text.style {id, start, end, …}` does the same). Styled ranges come back as

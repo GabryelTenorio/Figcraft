@@ -164,7 +164,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Selection & transform | 8 | 68% | measure hover polish, scale tool on-canvas handles | 5–8 |
 | Layers panel | 5 | 79% | keyboard row navigation | 1–2 |
 | Shapes & vector | 8 | 63% | variable width, multi-point transform box, point snapping, live boolean editing, arc handles on canvas, shape builder on strokes and open paths | 10–15 |
-| Paint | 7 | 71% | paint style picker polish, image adjustment presets; a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them) | 4–7 |
+| Paint | 7 | 74% | paint style picker polish; a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them) | 3–5 |
 | Strokes | 3 | 70% | stroke styles, variable width, arrowhead previews in the menus | 3–5 |
 | Effects | 4 | 70% | glass/texture fidelity, shadow spread on non-rects exactness | 4–7 |
 | Frames, groups, sections, masks | 5 | 75% | hiding section contents UI, section-level prototype/dev affordances | 2–4 |
