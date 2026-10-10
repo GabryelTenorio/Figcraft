@@ -433,6 +433,8 @@ fn detach(s: &mut Session, p: &Value) -> Result<Value> {
         n.source = None;
         n.overrides.clear();
         n.prop_refs.remove("mainComponent");
+        // No properties left to drive.
+        n.bound.retain(|k, _| !k.starts_with(PROP_BINDING));
         for nn in nested {
             rebase_instance(doc, nn);
         }
@@ -470,6 +472,10 @@ fn reset_instance(s: &mut Session, p: &Value) -> Result<Value> {
             && let NodeKind::Instance { props, .. } = &mut doc.get_mut(inst)?.kind
         {
             *props = defaults;
+        }
+        // ...and stop following variables.
+        if top && doc.node(inst).is_some_and(|n| n.bound.keys().any(|k| k.starts_with(PROP_BINDING))) {
+            doc.get_mut(inst)?.bound.retain(|k, _| !k.starts_with(PROP_BINDING));
         }
         done.push(inst);
     }
@@ -797,6 +803,43 @@ fn swap(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Whether instance `id` has a component property `name` that a `kind` variable can drive (a
+/// boolean property takes a boolean variable, a text property a string one).
+pub(crate) fn check_prop_binding(doc: &Document, id: NodeId, name: &str, kind: VariableType) -> std::result::Result<(), String> {
+    let Some(NodeKind::Instance { component, .. }) = doc.node(id).map(|n| &n.kind) else {
+        return Err(format!("{id} is not an instance (component properties are bound on instances)"));
+    };
+    match (prop_defs(doc, *component).get(name), kind) {
+        (Some(PropDef::Boolean { .. }), VariableType::Boolean) | (Some(PropDef::Text { .. }), VariableType::String) => Ok(()),
+        (Some(PropDef::Boolean { .. }), _) => Err(format!("`{name}` is a boolean property: bind a boolean variable")),
+        (Some(PropDef::Text { .. }), _) => Err(format!("`{name}` is a text property: bind a string variable")),
+        (Some(_), _) => Err(format!("`{name}`: only boolean and text properties can be bound to variables")),
+        (None, _) => Err(format!("the instance has no property named `{name}`")),
+    }
+}
+
+/// Write bound variable values into instance `id`'s boolean and text property values (only what
+/// changed; the instance then follows its new values like after `instance.setProperties`).
+pub(crate) fn apply_prop_bindings(doc: &mut Document, id: NodeId, sets: &[(String, VariableValue)]) {
+    let Some(NodeKind::Instance { component, props }) = doc.node(id).map(|n| &n.kind) else { return };
+    let Some(NodeKind::Component { props: defs, .. }) = doc.node(*component).map(|c| &c.kind) else { return };
+    let mut next = props.clone();
+    for (name, val) in sets {
+        let v = match (defs.get(name), val) {
+            (Some(PropDef::Boolean { .. }), VariableValue::Boolean(b)) => json!(b),
+            (Some(PropDef::Text { .. }), VariableValue::String(t)) => json!(t),
+            _ => continue,
+        };
+        next.insert(name.clone(), v);
+    }
+    if next != *props
+        && let Ok(n) = doc.get_mut(id)
+        && let NodeKind::Instance { props, .. } = &mut n.kind
+    {
+        *props = next;
+    }
+}
+
 /// Coerce a property value to the definition's type.
 fn coerce(cmd: &str, doc: &Document, name: &str, def: &PropDef, v: &Value) -> Result<Value> {
     match def {
@@ -1097,12 +1140,20 @@ fn rename_prop_refs(doc: &mut Document, comp: NodeId, old: &str, new: Option<&st
             }
         }
     }
+    // Instances' values and the variables bound to them follow (a deleted property drops both).
+    let old_key = format!("{PROP_BINDING}{old}");
     for inst in instances_of(doc, comp) {
-        if let NodeKind::Instance { props, .. } = &mut doc.get_mut(inst)?.kind
+        let n = doc.get_mut(inst)?;
+        if let NodeKind::Instance { props, .. } = &mut n.kind
             && let Some(v) = props.remove(old)
             && let Some(nw) = new
         {
             props.insert(nw.to_string(), v);
+        }
+        if let Some(var) = n.bound.remove(&old_key)
+            && let Some(nw) = new
+        {
+            n.bound.insert(format!("{PROP_BINDING}{nw}"), var);
         }
     }
     Ok(())

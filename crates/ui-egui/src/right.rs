@@ -3,9 +3,11 @@
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_color::{BlendMode, Paint, PaintKind};
 use figcraft_doc::*;
+use figcraft_engine::cmd::lists::moved_index;
 use serde_json::{Value, json};
 
 use crate::icons::{self, Icon};
+use crate::list_drag::{ListDrag, move_flags};
 use crate::style_picker::{self, StyleSlot};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
@@ -218,18 +220,24 @@ pub fn menu_check(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
 }
 
 pub(crate) fn row(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) {
-    block(ui, h, (h - FIELD_H) / 2.0, add);
+    row_rect(ui, h, add);
+}
+
+/// [`row`], returning the area the row takes.
+pub(crate) fn row_rect(ui: &mut Ui, h: f32, add: impl FnOnce(&mut Ui)) -> Rect {
+    block(ui, h, (h - FIELD_H) / 2.0, add)
 }
 
 /// A panel row `h` tall whose content is inset `inset_y` from its top and bottom (for content
-/// taller than one field).
-pub(crate) fn block(ui: &mut Ui, h: f32, inset_y: f32, add: impl FnOnce(&mut Ui)) {
+/// taller than one field); returns the area the row takes.
+pub(crate) fn block(ui: &mut Ui, h: f32, inset_y: f32, add: impl FnOnce(&mut Ui)) -> Rect {
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
     let mut child =
         ui.new_child(egui::UiBuilder::new().max_rect(r.shrink2(vec2(PAD, inset_y))).layout(egui::Layout::left_to_right(egui::Align::Center)));
     child.spacing_mut().item_spacing = vec2(8.0, 0.0);
     add(&mut child);
+    r
 }
 
 fn design(app: &mut FigApp, ui: &mut Ui) {
@@ -859,9 +867,20 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     match &list {
         None => row(ui, 32.0, |ui| widgets::label(ui, "Click + to replace mixed content", t.text_secondary)),
         Some(l) => {
-            // Top of the list paints on top: show in reverse like Figma.
+            // The last paint is on top: shown first. Rows drag to reorder.
+            let mut drag = ListDrag::new(ui, if fills { "fills" } else { "strokes" });
             for (i, p) in l.iter().enumerate().rev() {
-                paint_row(app, ui, &ids, i, p, fills);
+                let r = paint_row(app, ui, &ids, i, p, fills);
+                drag.row(ui, i, r, r, || paint_label(p));
+            }
+            if let Some((from, to)) = drag.finish(ui) {
+                app.run(if fills { "fill.move" } else { "stroke.move" }, json!({"ids": ids, "from": from, "to": to}));
+                // An open colour picker keeps editing the paint it was on.
+                if let Some(crate::colorpicker::PickerTarget::Paint { fills: f, index, .. }) = &mut app.ui.picker
+                    && *f == fills
+                {
+                    *index = moved_index(*index, from, to);
+                }
             }
         }
     }
@@ -1136,11 +1155,12 @@ fn cap_art(p: &egui::Painter, r: Rect, col: Color32, cap: StrokeCap, start: bool
     }
 }
 
-fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint, fills: bool) {
+/// Paint `i`'s row (swatch, colour or kind, opacity, visibility, remove); returns its area.
+fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint, fills: bool) -> Rect {
     let t = Tokens::get(ui.ctx());
     let ids = ids.to_vec();
     let cmd = if fills { "fill.set" } else { "stroke.set" };
-    row(ui, 32.0, |ui| {
+    row_rect(ui, 32.0, |ui| {
         let w = ui.available_width() - 56.0;
         let (r, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
         ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
@@ -1152,12 +1172,14 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         }
         let text_r = Rect::from_min_max(pos2(sw.max.x + 8.0, r.min.y), pos2(r.max.x - 52.0, r.max.y));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_r));
-        let bound = (i == 0)
-            .then(|| app.session.doc().ok().and_then(|d| crate::variable_ui::bound_name(d, &ids, if fills { "fill" } else { "stroke" })))
-            .flatten();
+        // The variable bound to this paint's colour (its key on the layers: `fill` or `fills/<i>/color`).
+        let bound = app.session.doc().ok().and_then(|d| {
+            let key = ids.first().and_then(|id| d.node(*id)).and_then(|n| figcraft_engine::cmd::lists::paint_binding_key(n, fills, i))?;
+            Some((key.to_string(), crate::variable_ui::bound_name(d, &ids, key)?))
+        });
         match &p.kind {
             PaintKind::Solid { .. } if bound.is_some() => {
-                let name = bound.clone().unwrap_or_default();
+                let (key, name) = bound.clone().unwrap_or_default();
                 let chip = Rect::from_min_max(pos2(text_r.min.x - 2.0, r.min.y + 3.0), pos2(text_r.max.x - 20.0, r.max.y - 3.0));
                 child.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
                 child.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
@@ -1169,12 +1191,12 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
                     regular(11.0),
                     t.text,
                 );
-                let _ = ui.interact(chip, Id::new(("bound_paint", fills)), Sense::hover()).on_hover_text(&name);
+                let _ = ui.interact(chip, Id::new(("bound_paint", fills, i)), Sense::hover()).on_hover_text(&name);
                 let dr = Rect::from_center_size(pos2(text_r.max.x - 9.0, r.center().y), vec2(18.0, 18.0));
-                let dresp = ui.interact(dr, Id::new(("detach_paint", fills)), Sense::click()).on_hover_text("Detach variable");
+                let dresp = ui.interact(dr, Id::new(("detach_paint", fills, i)), Sense::click()).on_hover_text("Detach variable");
                 icons::paint(ui.painter(), dr.shrink(3.0), Icon::Detach, t.icon_secondary);
                 if dresp.clicked() {
-                    app.run("variable.bind", json!({"ids": ids, "field": if fills { "fill" } else { "stroke" }, "variable": null}));
+                    app.run("variable.bind", json!({"ids": ids, "field": key, "variable": null}));
                 }
             }
             PaintKind::Solid { color } => {
@@ -1185,12 +1207,8 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
                     app.run(cmd, json!({"ids": ids, "index": i, "color": c.to_css_hex()}));
                 }
             }
-            other => {
-                let label = match other {
-                    PaintKind::Gradient(g) => format!("{:?}", g.kind),
-                    _ => "Image".into(),
-                };
-                child.painter().text(pos2(text_r.min.x, r.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text);
+            _ => {
+                child.painter().text(pos2(text_r.min.x, r.center().y), Align2::LEFT_CENTER, paint_label(p), regular(11.0), t.text);
             }
         }
         let op_r = Rect::from_min_max(pos2(r.max.x - 48.0, r.min.y), r.max);
@@ -1217,11 +1235,19 @@ fn paint_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &Paint,
         if icons::button(ui, Icon::Minus, 24.0, false, "Remove").clicked() {
             app.run(if fills { "fill.remove" } else { "stroke.remove" }, json!({"ids": ids, "index": i}));
         }
-    });
+    })
+}
+
+/// A paint row's label (also what a drag of it carries): its colour, gradient kind or "Image".
+fn paint_label(p: &Paint) -> String {
+    match &p.kind {
+        PaintKind::Solid { color } => color.to_hex(),
+        PaintKind::Gradient(g) => format!("{:?}", g.kind),
+        PaintKind::Image(_) => "Image".into(),
+    }
 }
 
 fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
     let ids = sel.to_vec();
     let list = common(doc, sel, |n| n.effects.clone());
     let empty = list.as_ref().is_none_or(|l| l.is_empty());
@@ -1234,9 +1260,10 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     style_picker::chip(app, ui, doc, &ids, StyleSlot::Effect);
     let Some(list) = list else { return };
+    let mut drag = ListDrag::new(ui, "effects");
     for (i, e) in list.iter().enumerate().rev() {
         let mut open = ui.data(|d| d.get_temp::<bool>(Id::new(("fx_open", i)))).unwrap_or(false);
-        row(ui, 32.0, |ui| {
+        let header = row_rect(ui, 32.0, |ui| {
             if icons::button(ui, Icon::Effects, 24.0, open, "Effect settings").clicked() {
                 open = !open;
                 ui.data_mut(|d| d.insert_temp(Id::new(("fx_open", i)), open));
@@ -1265,8 +1292,15 @@ fn effects(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         if open {
             effect_settings(app, ui, &ids, i, e);
         }
+        drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || e.label().to_string());
     }
-    let _ = t;
+    if let Some((from, to)) = drag.finish(ui) {
+        app.run("effect.move", json!({"ids": ids, "from": from, "to": to}));
+        move_flags(ui, "fx_open", list.len(), from, to);
+        if let Some(crate::colorpicker::PickerTarget::Effect { index, .. }) = &mut app.ui.picker {
+            *index = moved_index(*index, from, to);
+        }
+    }
 }
 
 /// A number field of effect `i` that can be bound to a variable (`effects/<i>/<prop>`).
@@ -1322,16 +1356,10 @@ fn effect_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &
             });
             // The colour: a bound variable's chip, else swatch, hex and alpha with a variable button.
             let color_field = format!("effects/{i}/color");
-            let bound = app.session.doc().ok().and_then(|d| crate::variable_ui::bound_name(d, ids, &color_field)).is_some();
             row(ui, 32.0, |ui| {
-                let row_rect = Rect::from_min_size(ui.cursor().min, vec2(half * 2.0 + 8.0, FIELD_H));
-                if bound {
-                    let (r, _) = ui.allocate_exact_size(row_rect.size(), Sense::hover());
-                    crate::variable_ui::bound_chip(app, ui, ids, &color_field, VariableType::Color, r);
-                    return;
-                }
-                fx_color(app, ui, ids, i, e, false, &edit_color);
-                crate::variable_ui::bind_button(ui, row_rect, ids, &color_field, VariableType::Color);
+                crate::variable_ui::bindable(app, ui, ids, &color_field, VariableType::Color, half * 2.0 + 8.0, |app, ui| {
+                    fx_color(app, ui, ids, i, e, false, &edit_color)
+                });
             });
             if !inner {
                 row(ui, 32.0, |ui| {
@@ -1498,43 +1526,152 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     style_picker::chip(app, ui, doc, &ids, StyleSlot::Grid);
     let Some(list) = list else { return };
-    for (i, g) in list.iter().enumerate() {
-        row(ui, 32.0, |ui| {
-            let label = match g.kind {
-                GridKind::Grid => format!("Grid ({})", g.size),
-                GridKind::Columns => format!("{} columns", g.count),
-                GridKind::Rows => format!("{} rows", g.count),
-            };
+    // The last grid first, like paints and effects; rows drag to reorder.
+    let mut drag = ListDrag::new(ui, "grids");
+    for (i, g) in list.iter().enumerate().rev() {
+        let open_id = Id::new(("grid_open", i));
+        let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+        let header = row_rect(ui, 32.0, |ui| {
+            if icons::button(ui, Icon::Grid, 24.0, open, "Layout grid settings").clicked() {
+                open = !open;
+                ui.data_mut(|d| d.insert_temp(open_id, open));
+            }
             let w = ui.available_width() - 56.0;
-            let resp = widgets::dropdown(ui, &label, w, Some(Icon::Grid));
+            let resp = widgets::dropdown(ui, &grid_label(g), w, None);
             egui::Popup::menu(&resp).width(220.0).show(|ui| {
                 for (l, kind) in [("Grid", GridKind::Grid), ("Columns", GridKind::Columns), ("Rows", GridKind::Rows)] {
                     if menu_item(ui, l, "") {
-                        let mut gs = list.clone();
-                        if let Some(slot) = gs.get_mut(i) {
-                            *slot = match kind {
-                                GridKind::Grid => LayoutGrid::default(),
-                                GridKind::Columns => LayoutGrid::columns(),
-                                GridKind::Rows => LayoutGrid::rows(),
-                            };
-                        }
-                        app.set_props(&ids, json!({"grids": gs}));
+                        let fresh = match kind {
+                            GridKind::Grid => LayoutGrid::default(),
+                            GridKind::Columns => LayoutGrid::columns(),
+                            GridKind::Rows => LayoutGrid::rows(),
+                        };
+                        app.set_props(&ids, json!({"grids": grids_with(&list, i, |x| *x = fresh)}));
                         ui.close();
                     }
                 }
             });
             if icons::button(ui, if g.visible { Icon::Eye } else { Icon::EyeOff }, 24.0, false, "Toggle").clicked() {
-                let mut gs = list.clone();
-                if let Some(slot) = gs.get_mut(i) {
-                    slot.visible = !slot.visible;
-                }
-                app.set_props(&ids, json!({"grids": gs}));
+                app.set_props(&ids, json!({"grids": grids_with(&list, i, |x| x.visible = !x.visible)}));
             }
             if icons::button(ui, Icon::Minus, 24.0, false, "Remove").clicked() {
                 app.run("grid.remove", json!({"ids": ids, "index": i}));
             }
         });
+        if open {
+            grid_settings(app, ui, &ids, &list, i, g);
+        }
+        drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || grid_label(g));
     }
+    if let Some((from, to)) = drag.finish(ui) {
+        app.run("grid.move", json!({"ids": ids, "from": from, "to": to}));
+        move_flags(ui, "grid_open", list.len(), from, to);
+    }
+}
+
+/// A layout grid's name in its row ("Grid (10)", "5 columns").
+fn grid_label(g: &LayoutGrid) -> String {
+    match g.kind {
+        GridKind::Grid => format!("Grid ({})", g.size),
+        GridKind::Columns => format!("{} columns", g.count),
+        GridKind::Rows => format!("{} rows", g.count),
+    }
+}
+
+/// `list` with grid `i` changed by `f`.
+fn grids_with(list: &[LayoutGrid], i: usize, f: impl FnOnce(&mut LayoutGrid)) -> Vec<LayoutGrid> {
+    let mut gs = list.to_vec();
+    if let Some(g) = gs.get_mut(i) {
+        f(g);
+    }
+    gs
+}
+
+/// Layout grid `i`'s settings: size (grids); count, type, width or height, margin or offset and
+/// gutter (columns and rows); colour. The numbers can be bound to number variables
+/// (`layoutGrids/<i>/<size|count|gutter|offset>`).
+fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGrid], i: usize, g: &LayoutGrid) {
+    let col = widgets::col_width(ui.available_width());
+    let set = |f: &dyn Fn(&mut LayoutGrid)| json!({"ids": ids, "props": {"grids": grids_with(list, i, f)}});
+    // One bindable number field, applied with `apply` (a scrub is one undo step).
+    let field = |app: &mut FigApp, ui: &mut Ui, name: &str, value: f64, apply: &dyn Fn(&mut LayoutGrid, f64)| {
+        let key = format!("layoutGrids/{i}/{name}");
+        let e = crate::variable_ui::number_field(app, ui, ids, &key, Id::new(("grid_field", name, i)), Lead::None, Some(value), "", col);
+        app.field_run(e, "node.set", |v| set(&|x| apply(x, v)));
+    };
+    let size = |x: &mut LayoutGrid, v: f64| x.size = v.max(1.0);
+    let offset = |x: &mut LayoutGrid, v: f64| x.offset = v.max(0.0);
+    let gutter = |x: &mut LayoutGrid, v: f64| x.gutter = v.max(0.0);
+    if g.kind == GridKind::Grid {
+        widgets::sublabels(ui, "Size", None);
+        row(ui, 32.0, |ui| field(app, ui, "size", g.size, &size));
+    } else {
+        let cols = g.kind == GridKind::Columns;
+        widgets::sublabels(ui, "Count", Some("Type"));
+        row(ui, 32.0, |ui| {
+            field(app, ui, "count", f64::from(g.count), &|x, v| x.count = v.round().clamp(1.0, 1000.0) as u32);
+            let names = if cols { ["Stretch", "Left", "Center", "Right"] } else { ["Stretch", "Top", "Center", "Bottom"] };
+            let aligns = [GridAlign::Stretch, GridAlign::Min, GridAlign::Center, GridAlign::Max];
+            let cur = aligns.iter().position(|a| *a == g.align).unwrap_or(0);
+            let resp = widgets::dropdown(ui, names.get(cur).copied().unwrap_or_default(), col, None);
+            egui::Popup::menu(&resp).show(|ui| {
+                for (k, (name, a)) in names.iter().zip(aligns).enumerate() {
+                    if menu_check(ui, k == cur, name, "") {
+                        // Fixed-size columns need a size of their own.
+                        app.run(
+                            "node.set",
+                            set(&|x| {
+                                x.align = a;
+                                if a != GridAlign::Stretch && !(x.size.is_finite() && x.size > 0.0) {
+                                    x.size = 60.0;
+                                }
+                            }),
+                        );
+                        ui.close();
+                    }
+                }
+            });
+        });
+        let span = if cols { "Width" } else { "Height" };
+        match g.align {
+            GridAlign::Stretch => {
+                widgets::sublabels(ui, "Margin", Some("Gutter"));
+                row(ui, 32.0, |ui| {
+                    field(app, ui, "offset", g.offset, &offset);
+                    field(app, ui, "gutter", g.gutter, &gutter);
+                });
+            }
+            GridAlign::Center => {
+                widgets::sublabels(ui, span, Some("Gutter"));
+                row(ui, 32.0, |ui| {
+                    field(app, ui, "size", g.size, &size);
+                    field(app, ui, "gutter", g.gutter, &gutter);
+                });
+            }
+            GridAlign::Min | GridAlign::Max => {
+                widgets::sublabels(ui, span, Some("Offset"));
+                row(ui, 32.0, |ui| {
+                    field(app, ui, "size", g.size, &size);
+                    field(app, ui, "offset", g.offset, &offset);
+                });
+                widgets::sublabels(ui, "Gutter", None);
+                row(ui, 32.0, |ui| field(app, ui, "gutter", g.gutter, &gutter));
+            }
+        }
+    }
+    // The colour: swatch, hex and alpha.
+    widgets::sublabels(ui, "Color", None);
+    row(ui, 32.0, |ui| {
+        let (sw, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+        widgets::paint_swatch(ui.painter(), sw, &Paint::solid(g.color));
+        if let Some(h) = widgets::text_field(ui, Id::new(("grid_hex", i)), &g.color.to_hex(), 80.0, "")
+            && let Some(c) = figcraft_color::Color::from_hex(&h)
+        {
+            app.run("node.set", set(&|x| x.color = c.with_alpha(x.color.a)));
+        }
+        let e = widgets::number_field(ui, Id::new(("grid_alpha", i)), Lead::None, Some((f64::from(g.color.a) * 100.0).round()), "%", 56.0, 1.0);
+        app.field_run(e, "node.set", |v| set(&|x| x.color = x.color.with_alpha((v / 100.0).clamp(0.0, 1.0) as f32)));
+    });
 }
 
 /// The Inspect tab: size and position, and code for the selected layer.

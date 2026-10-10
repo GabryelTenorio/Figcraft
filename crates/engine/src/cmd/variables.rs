@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
+use super::lists::BoundList;
 use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{Result, Session, bad, spec};
@@ -237,14 +238,17 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
         "characters" => "TEXT_CONTENT",
         "fontFamily" => "FONT_FAMILY",
         "fontStyle" => "FONT_STYLE",
-        "stroke" | "strokes/0/color" => "STROKE_COLOR",
-        f if f.starts_with("effects/") && f.ends_with("/color") => "EFFECT_COLOR",
-        f if f.starts_with("effects/") => "EFFECT_FLOAT",
-        "fill" | "fills" | "fills/0" | "fills/0/color" => match doc.node(node).map(|n| &n.kind) {
-            Some(NodeKind::Text(_)) => "TEXT_FILL",
-            Some(k) if k.is_frame_like() => "FRAME_FILL",
-            _ => "SHAPE_FILL",
+        f => match super::lists::list_binding(f)? {
+            (BoundList::Strokes, _, _) => "STROKE_COLOR",
+            (BoundList::Effects, _, "color") => "EFFECT_COLOR",
+            (BoundList::Effects, _, _) => "EFFECT_FLOAT",
+            (BoundList::Fills, _, _) => match doc.node(node).map(|n| &n.kind) {
+                Some(NodeKind::Text(_)) => "TEXT_FILL",
+                Some(k) if k.is_frame_like() => "FRAME_FILL",
+                _ => "SHAPE_FILL",
+            },
+            // Layout grid fields take any number variable.
+            (BoundList::Grids, _, _) => return None,
         },
-        _ => return None,
     })
 }

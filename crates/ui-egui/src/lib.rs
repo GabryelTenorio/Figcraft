@@ -23,6 +23,7 @@ pub mod home;
 pub mod icons;
 pub mod layers;
 pub mod layout_panel;
+pub mod list_drag;
 pub mod measure_overlay;
 pub mod menus;
 pub mod present;
@@ -50,6 +51,8 @@ mod comments_tests;
 mod layers_drag_tests;
 #[cfg(test)]
 mod layers_keys_tests;
+#[cfg(test)]
+mod panel_reorder_tests;
 #[cfg(test)]
 mod perf_tests;
 #[cfg(test)]

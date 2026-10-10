@@ -366,6 +366,34 @@ closing or saving a version ends the preview first, and `version.list` marks the
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
 
+### Paint, effect and layout grid lists
+
+A layer's fills, strokes, effects and layout grids are lists kept **bottom first**: index 0 paints
+first, the last one is on top (the Design panel lists them the other way round, topmost first).
+
+- **Reorder:** `fill.move`, `stroke.move`, `effect.move` and `grid.move {ids?, from, to}` move one
+  item (one undo step for every layer given; out-of-range or equal indices change nothing, negative
+  or fractional ones are refused). The item keeps everything (an image fill its image, scale mode
+  and adjustments, a gradient its stops and handles), and a paint, effect or grid style linked to
+  the list is unlinked (the list no longer matches it). In the app, drag a row by its grip (the
+  empty strip left of its fields); a line shows where it lands.
+- **Variable bindings follow their items** when a list is reordered or an item removed
+  (`fill.remove`, `stroke.remove`, `effect.remove`, `grid.remove`); a removed item's bindings go
+  with it. Binding fields (`variable.bind {field}`): `fill` / `stroke` (the first paint's colour) or
+  `fills/<i>/color` / `strokes/<i>/color`, `effects/<i>/<offsetX|offsetY|radius|spread|color>`,
+  `layoutGrids/<i>/<size|count|gutter|offset>` (number variables; count is kept to 1–1000, size and
+  gutter are never negative). Moving a bound paint rewrites its key (`fill` becomes `fills/2/color`).
+- **Instance properties:** `variable.bind {ids: [instance], field: "componentProperties/<name>",
+  variable}` drives a boolean property from a boolean variable and a text property from a string
+  variable (other types are refused); the value follows the variable's modes like any binding, the
+  binding follows renames of the property, and deleting the property, resetting the instance or
+  detaching it drops it. The instance's properties panel offers the same with its variable button.
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"fill.move","params":{"ids":[2],"from":0,"to":2}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"variable.bind","params":{"ids":[5],"field":"layoutGrids/0/gutter","variable":"gutter"}}}}
+```
+
 ### Ruler guides
 
 `guide.add {vertical, offset, frame? | page?}` (returns `{index}`), `guide.move {index, offset, …}`,

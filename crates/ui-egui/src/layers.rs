@@ -712,7 +712,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
                     }
                 } else {
-                    ui.painter().line_segment([pos2(x0, y), pos2(rr.max.x, y)], Stroke::new(2.0, ACCENT));
+                    crate::widgets::insertion_line(ui.painter(), x0, rr.max.x, y);
                 }
                 if ui.input(|i| i.pointer.any_released()) {
                     drop = Some((row.id, zone));
@@ -731,12 +731,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             1 => doc.node(dg).map(|n| n.name.clone()).unwrap_or_default(),
             n => format!("{n} layers"),
         };
-        let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("layer_drag_ghost")));
-        let galley = crate::bidi::name_galley(&painter, &label, regular(11.0), t.text, 240.0);
-        let r = Rect::from_min_size(p + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
-        painter.rect_filled(r, CornerRadius::same(5), t.panel);
-        painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
-        painter.galley(r.min + vec2(8.0, 4.0), galley, t.text);
+        let galley = crate::bidi::name_galley(ui.painter(), &label, regular(11.0), t.text, 240.0);
+        crate::widgets::drag_ghost(ui.ctx(), p, galley);
     }
     if ui.input(|i| i.pointer.any_released()) {
         ui.data_mut(|d| {

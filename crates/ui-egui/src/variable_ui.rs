@@ -224,9 +224,31 @@ pub fn number_field(
 /// otherwise nothing and false.
 pub fn bound_chip(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], field: &str, kind: VariableType, rect: Rect) -> bool {
     let Some(name) = app.session.doc().ok().and_then(|d| bound_name(d, ids, field)) else { return false };
-    let ev = widgets::bound_field(ui, Id::new(("bound_chip", field)), Lead::None, rect, &name);
+    let ev = widgets::bound_field(ui, Id::new(("bound_chip", field, ids)), Lead::None, rect, &name);
     handle(app, ui, ids, field, kind, ev);
     true
+}
+
+/// A control whose value can come from a variable: while `field` of `ids` is bound, the
+/// variable's chip (`width` wide) stands in for it; otherwise `control` lays it out in the current
+/// row and a variable button shows over that area on hover.
+pub fn bindable(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    field: &str,
+    kind: VariableType,
+    width: f32,
+    control: impl FnOnce(&mut FigApp, &mut Ui),
+) {
+    let area = Rect::from_min_size(ui.cursor().min, vec2(width, widgets::FIELD_H));
+    if app.session.doc().ok().and_then(|d| bound_name(d, ids, field)).is_some() {
+        let (r, _) = ui.allocate_exact_size(area.size(), Sense::hover());
+        bound_chip(app, ui, ids, field, kind, r);
+        return;
+    }
+    control(app, ui);
+    bind_button(ui, area, ids, field, kind);
 }
 
 /// A variable button at the right end of `rect` while the pointer is over it: opens the picker
@@ -237,7 +259,7 @@ pub fn bind_button(ui: &mut Ui, rect: Rect, ids: &[NodeId], field: &str, kind: V
     }
     let t = Tokens::get(ui.ctx());
     let b = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
-    let resp = ui.interact(b, Id::new(("bind_button", field)), Sense::click()).on_hover_text("Apply variable");
+    let resp = ui.interact(b, Id::new(("bind_button", field, ids)), Sense::click()).on_hover_text("Apply variable");
     if resp.hovered() {
         ui.painter().rect_filled(b, CornerRadius::same(4), t.hover);
     }

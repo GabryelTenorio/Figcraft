@@ -12,7 +12,7 @@
 use egui::{Id, Sense, Ui, vec2};
 use figcraft_doc::*;
 use figcraft_engine::components::{
-    inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
+    PROP_BINDING, inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
 };
 use serde_json::{Value, json};
 
@@ -652,20 +652,26 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
         row(ui, 32.0, |ui| {
             prop_label(ui, &k, type_icon(&d));
             let w = ui.available_width().max(60.0);
+            // Boolean and text values can come from a boolean or string variable.
+            let bind_field = format!("{PROP_BINDING}{k}");
             match d {
                 PropDef::Boolean { .. } => {
-                    let on = v.as_bool().unwrap_or(false);
-                    if widgets::checkbox(ui, on, "") {
-                        app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): !on}}));
-                    }
+                    crate::variable_ui::bindable(app, ui, &[id], &bind_field, VariableType::Boolean, w, |app, ui| {
+                        let on = v.as_bool().unwrap_or(false);
+                        if widgets::checkbox(ui, on, "") {
+                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): !on}}));
+                        }
+                    });
                 }
                 PropDef::Text { .. } => {
-                    let cur = v.as_str().unwrap_or_default().to_string();
-                    if let Some(ns) = widgets::text_field(ui, Id::new(("iprop", id, k.as_str())), &cur, w, "")
-                        && ns != cur
-                    {
-                        app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): ns}}));
-                    }
+                    crate::variable_ui::bindable(app, ui, &[id], &bind_field, VariableType::String, w, |app, ui| {
+                        let cur = v.as_str().unwrap_or_default().to_string();
+                        if let Some(ns) = widgets::text_field(ui, Id::new(("iprop", id, k.as_str())), &cur, w, "")
+                            && ns != cur
+                        {
+                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): ns}}));
+                        }
+                    });
                 }
                 PropDef::InstanceSwap { .. } => {
                     let cur = figcraft_engine::params::id_of(&v);

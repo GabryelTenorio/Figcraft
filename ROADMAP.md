@@ -105,7 +105,10 @@ dimension measured side by side.
    "Library updates available" covers changed variables and bound layers follow). Explicit variable
    modes in the Design panel: a frame's mode per collection, Auto (inherited) or its own, with
    enabled libraries' collections listed under the library's name (picking a mode copies the
-   collection in). *Left:* QA with larger real-world libraries. 1 h.
+   collection in). Instance boolean and text properties bound to boolean and string variables
+   (following modes, renames, reset and detach); layout grid settings in the Design panel whose
+   count, size, margin/offset and gutter bind to number variables; fills, strokes, effects and
+   layout grids reordered by dragging their rows, their variable bindings following. *Left:* QA with larger real-world libraries. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -251,7 +254,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Auto layout & constraints | 9 | 72% | visual QA of nested edge cases, arrow-key moves across nested auto layout frames | 2–4 |
 | Text | 8 | 67% | right-to-left layer names in the panels, text style picker depth, axis hover preview | 5–8 |
 | Components & variants | 9 | 76% | QA with larger real-world libraries | 1 |
-| Styles & variables | 5 | 86% | grid and component property bindings, reordering paints and effects in the panel | 1–2 |
+| Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 84% | building conditionals in the interaction editor, hotspot hints, comments and inspect in the presenter | 3–6 |
 | Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK) | 10–20 |
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |

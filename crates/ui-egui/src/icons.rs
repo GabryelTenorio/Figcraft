@@ -164,6 +164,8 @@ icons! {
     ViewGrid,
     /// Add an emoji reaction: a smiling face.
     Reaction,
+    /// Drag to reorder: two columns of three dots.
+    DragHandle,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -954,6 +956,12 @@ fn draw(p: &P, icon: Icon) {
             p.dot(6.0, 6.5, 0.9);
             p.dot(10.0, 6.5, 0.9);
             p.arc(8.0, 8.5, 3.0, 0.6, PI - 0.6);
+        }
+        DragHandle => {
+            for y in [4.0, 8.0, 12.0] {
+                p.dot(6.0, y, 1.1);
+                p.dot(10.0, y, 1.1);
+            }
         }
         ViewGrid => {
             for (x, y) in [(2.5, 2.5), (9.5, 2.5), (2.5, 9.5), (9.5, 9.5)] {

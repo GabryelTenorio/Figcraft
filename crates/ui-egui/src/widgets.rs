@@ -476,6 +476,23 @@ pub fn section_header(ui: &mut Ui, title: &str, buttons: &[(Icon, &str)], dim: b
     out
 }
 
+/// Where a dragged row will land: an accent line across `x0..x1` at `y`.
+pub fn insertion_line(painter: &egui::Painter, x0: f32, x1: f32, y: f32) {
+    painter.line_segment([pos2(x0, y), pos2(x1, y)], Stroke::new(2.0, crate::theme::ACCENT));
+}
+
+/// What a drag carries, following the pointer at `at`: `galley` in a small outlined box above
+/// everything else, with the grabbing hand.
+pub fn drag_ghost(ctx: &egui::Context, at: egui::Pos2, galley: std::sync::Arc<egui::Galley>) {
+    let t = Tokens::get(ctx);
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("drag_ghost")));
+    let r = Rect::from_min_size(at + vec2(14.0, 10.0), galley.size() + vec2(16.0, 8.0));
+    painter.rect_filled(r, CornerRadius::same(5), t.panel);
+    painter.rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, crate::theme::ACCENT), StrokeKind::Inside);
+    painter.galley(r.min + vec2(8.0, 4.0), galley, t.text);
+}
+
 pub fn separator(ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
