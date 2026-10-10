@@ -1121,6 +1121,72 @@ impl ExportSize {
     }
 }
 
+/// Print settings of a PDF export: bleed, printer's marks and CMYK colour.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct PrintSettings {
+    /// Bleed around each page, in points (one point per pixel): what lies past the page's edge
+    /// is printed this far out, to be trimmed off.
+    pub bleed: f64,
+    /// Crop marks outside the bleed, at the trim's corners.
+    pub crop_marks: bool,
+    /// Bleed marks outside the bleed, at the bleed's corners.
+    pub bleed_marks: bool,
+    /// CMYK colour (converted from RGB) instead of RGB.
+    pub cmyk: bool,
+}
+
+impl PrintSettings {
+    /// Largest bleed, in points (two inches).
+    pub const MAX_BLEED: f64 = 144.0;
+
+    pub fn is_default(&self) -> bool {
+        *self == PrintSettings::default()
+    }
+
+    /// The bleed made safe: finite, within `0..=MAX_BLEED`.
+    pub fn bleed(&self) -> f64 {
+        if self.bleed.is_finite() { self.bleed.clamp(0.0, Self::MAX_BLEED) } else { 0.0 }
+    }
+
+    pub fn marks(&self) -> bool {
+        self.crop_marks || (self.bleed_marks && self.bleed() > 0.0)
+    }
+
+    /// Whether the page gets a bleed or marks around its trim.
+    pub fn extends_page(&self) -> bool {
+        self.bleed() > 0.0 || self.marks()
+    }
+
+    /// A length in points: a number (points), or with a unit: `pt`, `px` (a point), `mm`, `cm`,
+    /// `in` or `"` ("3mm", "0.125 in", "9pt"). `None` unless finite and not negative.
+    pub fn parse_length(s: &str) -> Option<f64> {
+        let s = s.trim().to_ascii_lowercase();
+        let split = s.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e')).unwrap_or(s.len());
+        let (num, unit) = (s.get(..split)?.trim(), s.get(split..)?.trim());
+        let v: f64 = num.parse().ok()?;
+        let k = match unit {
+            "" | "pt" | "px" => 1.0,
+            "mm" => 72.0 / 25.4,
+            "cm" => 72.0 / 2.54,
+            "in" | "\"" => 72.0,
+            _ => return None,
+        };
+        let pt = v * k;
+        (pt.is_finite() && pt >= 0.0).then_some(pt)
+    }
+
+    /// A length for people: in millimetres when it's a whole tenth of one, else in points.
+    pub fn length_label(pt: f64) -> String {
+        let mm = pt * 25.4 / 72.0;
+        if ((mm * 10.0).round() - mm * 10.0).abs() < 1e-6 {
+            format!("{} mm", crate::text::trim_num((mm * 10.0).round() / 10.0))
+        } else {
+            format!("{} pt", crate::text::trim_num(pt))
+        }
+    }
+}
+
 /// One row of a node's Export section.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -1128,6 +1194,9 @@ pub struct ExportSetting {
     pub size: ExportSize,
     pub suffix: String,
     pub format: ExportFormat,
+    /// PDF only: bleed, marks and colour.
+    #[serde(skip_serializing_if = "PrintSettings::is_default")]
+    pub print: PrintSettings,
 }
 
 impl ExportSetting {
@@ -1137,7 +1206,7 @@ impl ExportSetting {
         match last.map(|e| e.size) {
             Some(ExportSize::Scale { value }) => {
                 let size = ExportSize::Scale { value: (value.floor() + 1.0).min(ExportSize::MAX_SCALE) };
-                ExportSetting { suffix: format!("@{}", size.label()), size, format: ExportFormat::Png }
+                ExportSetting { suffix: format!("@{}", size.label()), size, format: ExportFormat::Png, ..Default::default() }
             }
             _ => ExportSetting::default(),
         }

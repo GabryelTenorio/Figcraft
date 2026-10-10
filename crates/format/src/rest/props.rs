@@ -514,6 +514,7 @@ pub(super) fn export_settings(v: &Value) -> Vec<ExportSetting> {
                 },
                 suffix: clip_str(text(e, "suffix").unwrap_or("")).to_string(),
                 format: text(e, "format").and_then(ExportFormat::from_ext).unwrap_or_default(),
+                ..Default::default()
             }
         })
         .collect()

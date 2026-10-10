@@ -59,6 +59,18 @@ impl Args {
         }
     }
 
+    /// PDF print options: `--bleed LENGTH` (points, or "3mm", "0.125in"), `--crop-marks`,
+    /// `--bleed-marks`, `--cmyk`.
+    pub fn print(&self) -> CliResult<figcraft_doc::PrintSettings> {
+        let bleed = match self.values.get("bleed") {
+            None => 0.0,
+            Some(s) => figcraft_doc::PrintSettings::parse_length(s)
+                .filter(|b| *b <= figcraft_doc::PrintSettings::MAX_BLEED)
+                .ok_or_else(|| CliError::Usage(format!("--bleed takes points or a length like 3mm or 0.125in (up to 2in), got `{s}`")))?,
+        };
+        Ok(figcraft_doc::PrintSettings { bleed, crop_marks: self.flag("crop-marks"), bleed_marks: self.flag("bleed-marks"), cmyk: self.flag("cmyk") })
+    }
+
     pub fn scale(&self) -> CliResult<f64> {
         match self.values.get("scale") {
             None => Ok(1.0),

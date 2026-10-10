@@ -259,7 +259,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "export.add",
             "Add export setting",
-            "{ids?, setting? {size: 2x|512w|512h|{by: scale|width|height, value}, suffix?, format?: png|jpg|svg|pdf|webp}} (without a setting: 1x, then one scale step up with an \"@2x\"-style suffix)",
+            "{ids?, setting? {size: 2x|512w|512h|{by: scale|width|height, value}, suffix?, format?: png|jpg|svg|pdf|webp, bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}} (without a setting: 1x, then one scale step up with an \"@2x\"-style suffix)",
             true,
             |s, p| {
                 let cmd = "export.add";
@@ -277,7 +277,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "export.update",
             "Edit export setting",
-            "{ids?, index, size? (2x|512w|512h|{by, value}), suffix?, format? (png|jpg|svg|pdf|webp)}",
+            "{ids?, index, size? (2x|512w|512h|{by, value}), suffix?, format? (png|jpg|svg|pdf|webp), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
             true,
             |s, p| {
                 let cmd = "export.update";

@@ -28,14 +28,17 @@
 //! - layer blur, noise and texture: the whole node is rendered by `figcraft_render` and placed as
 //!   one image.
 //!
-//! Pages are sized in points, one point per pixel of the document.
+//! Pages are sized in points, one point per pixel of the document. For print ([`PdfOptions::print`],
+//! see [`print`]): a bleed around each page, crop and bleed marks, MediaBox / BleedBox / TrimBox,
+//! and CMYK colour.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod draw;
+pub mod print;
 mod raster;
 mod text;
 
-use figcraft_doc::{Document, NodeId};
+use figcraft_doc::{Document, NodeId, PrintSettings};
 use figcraft_geom::{Affine, Rect};
 
 /// Export settings.
@@ -47,11 +50,13 @@ pub struct PdfOptions {
     pub raster_scale: f64,
     /// Document title (metadata).
     pub title: Option<String>,
+    /// Bleed, printer's marks and CMYK colour.
+    pub print: PrintSettings,
 }
 
 impl Default for PdfOptions {
     fn default() -> Self {
-        Self { outline_text: false, raster_scale: 2.0, title: None }
+        Self { outline_text: false, raster_scale: 2.0, title: None, print: PrintSettings::default() }
     }
 }
 
@@ -83,7 +88,8 @@ pub fn export_nodes_pdf(doc: &Document, ids: &[NodeId]) -> Result<Vec<u8>, PdfEr
     export_groups(doc, &[ids.to_vec()], &PdfOptions::default())
 }
 
-/// One page per group of ids.
+/// One page per group of ids. For print, a page of one frame is trimmed to the frame's box (its
+/// shadows and outside strokes go into the bleed).
 pub fn export_groups(doc: &Document, groups: &[Vec<NodeId>], opts: &PdfOptions) -> Result<Vec<u8>, PdfError> {
     let mut pages: Vec<(Vec<NodeId>, Rect)> = Vec::new();
     for g in groups.iter().filter(|g| !g.is_empty()) {
@@ -97,8 +103,15 @@ pub fn export_groups(doc: &Document, groups: &[Vec<NodeId>], opts: &PdfOptions) 
             }
         }
         let first = g.first().copied().unwrap_or(NodeId(0));
-        let b = bounds.ok_or(PdfError::NoBounds(first))?;
-        if b.width() > MAX_PAGE_SIDE || b.height() > MAX_PAGE_SIDE {
+        let frame = match g.as_slice() {
+            [one] if opts.print.extends_page() && doc.node(*one).is_some_and(|n| n.kind.is_frame_like()) => {
+                doc.world_bounds(*one).filter(|b| rect_finite(*b) && b.width() > 0.0 && b.height() > 0.0)
+            }
+            _ => None,
+        };
+        let b = frame.or(bounds).ok_or(PdfError::NoBounds(first))?;
+        let grow = 2.0 * print::Sheet::new(b.width(), b.height(), &opts.print).margin;
+        if b.width() + grow > MAX_PAGE_SIDE || b.height() + grow > MAX_PAGE_SIDE {
             return Err(PdfError::TooLarge(b.width().round(), b.height().round()));
         }
         pages.push((g.clone(), b));
@@ -147,22 +160,40 @@ fn write(doc: &Document, pages: &[(Vec<NodeId>, Rect)], opts: &PdfOptions) -> Re
     }
     pdf.set_metadata(meta);
     let mut ex = draw::Exporter::new(doc, opts);
+    let print = &opts.print;
     for (ids, b) in pages {
         // Zero-area nodes (a line, an empty group) still get a (tiny) page.
         let (w, h) = (b.width().max(1.0), b.height().max(1.0));
-        let size = krilla::geom::Size::from_wh(w as f32, h as f32).ok_or(PdfError::TooLarge(w, h))?;
-        let mut page = pdf.start_page_with(krilla::page::PageSettings::new(size));
+        // The page's trim on a sheet grown by the bleed and the marks.
+        let sheet = print::Sheet::new(w, h, print);
+        let size = krilla::geom::Size::from_wh(sheet.width as f32, sheet.height as f32).ok_or(PdfError::TooLarge(sheet.width, sheet.height))?;
+        let mut settings = krilla::page::PageSettings::new(size);
+        if print.extends_page() {
+            let k = |r: Rect| krilla::geom::Rect::from_ltrb(r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32);
+            settings = settings.with_bleed_box(k(sheet.bleed_box())).with_trim_box(k(sheet.trim));
+        }
+        let mut page = pdf.start_page_with(settings);
         let mut s = page.surface();
-        ex.page_origin = Affine::translate((-b.x0, -b.y0));
-        ex.page_rect = *b;
+        ex.page_origin = Affine::translate((sheet.margin - b.x0, sheet.margin - b.y0));
+        ex.page_rect = b.inflate(sheet.bleed, sheet.bleed);
         ex.page_ids = ids.clone();
+        ex.bleed_root = match ids.as_slice() {
+            [one] if sheet.bleed > 0.0 => Some((*one, sheet.bleed)),
+            _ => None,
+        };
+        // Nothing is drawn past the bleed (the marks live there).
+        let clipped = print.extends_page() && sheet.push_bleed_clip(&mut s);
         for id in ids {
             let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
             ex.node(&mut s, *id, ex.page_origin * parent_xf, 0, false);
         }
+        if clipped {
+            s.pop();
+        }
+        sheet.draw_marks(&mut s, ex.ink());
         s.finish();
         for (r, url) in std::mem::take(&mut ex.links) {
-            if let Some(a) = link_annotation(r, url, w, h) {
+            if let Some(a) = link_annotation(r, url, sheet.width, sheet.height) {
                 page.add_annotation(a);
             }
         }
@@ -177,5 +208,7 @@ mod backdrop_tests;
 mod effect_order_tests;
 #[cfg(test)]
 mod export_tests;
+#[cfg(test)]
+mod print_tests;
 #[cfg(test)]
 mod tests;

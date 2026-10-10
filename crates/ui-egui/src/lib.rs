@@ -207,6 +207,8 @@ pub struct UiState {
     pub quit: bool,
     /// The Export dialog is open.
     pub export_preview: bool,
+    /// The Export dialog's PDF print options (bleed, marks, CMYK).
+    pub pdf_print: figcraft_doc::PrintSettings,
     /// The Color profile dialog is open, with this profile chosen.
     pub color_profile: Option<figcraft_color::ColorProfile>,
     /// The open style picker.
@@ -283,6 +285,7 @@ impl Default for UiState {
             render_ms: 0.0,
             quit: false,
             export_preview: false,
+            pdf_print: figcraft_doc::PrintSettings::default(),
             color_profile: None,
             style_picker: None,
             style_grid: false,

@@ -48,10 +48,10 @@ pub fn paste(app: &mut FigApp, event_text: Option<&str>) {
             // A comment's link opens its thread.
             if text.trim().starts_with("figcraft://comment/") {
                 app.run("comment.open", json!({"link": text.trim()}));
-            } else if text.trim_start().starts_with("<svg") || text.trim_start().starts_with("<?xml") {
+            } else if figcraft_engine::looks_like_svg(&text) {
                 use base64::Engine as _;
                 let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
-                app.run("file.import", json!({"data": b64, "name": "pasted.svg", "x": cx, "y": cy}));
+                app.run("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": true}));
             } else {
                 app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
             }

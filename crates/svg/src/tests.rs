@@ -41,5 +41,5 @@ fn import_gradient_and_groups() {
     let f = import_svg(&mut d, svg, p, 0.0, 0.0, "x").unwrap();
     let kinds: Vec<&str> = d.subtree(f).iter().map(|i| d.node(*i).unwrap().kind.type_name()).collect();
     assert!(kinds.contains(&"GROUP"));
-    assert!(kinds.iter().filter(|k| **k == "VECTOR").count() >= 2);
+    assert!(kinds.contains(&"RECTANGLE") && kinds.contains(&"ELLIPSE"), "{kinds:?}");
 }
