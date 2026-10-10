@@ -27,6 +27,8 @@ enum Rename {
     /// (collection, mode)
     Mode(String, String),
     Variable(String),
+    /// (collection, group path)
+    Group(String, String),
 }
 
 /// The open editor's state (`UiState::variables`; None = closed).
@@ -38,6 +40,8 @@ pub struct Editor {
     rename: Option<Rename>,
     /// The variable whose details (name, description, scopes) are open.
     details: Option<String>,
+    /// The group the table shows ("space" or "color/brand"); None = every variable.
+    group: Option<String>,
 }
 
 impl Editor {
@@ -165,6 +169,9 @@ fn sidebar(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
                 ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, &c.name, font, t.text);
             }
             if resp.clicked() {
+                if !selected {
+                    st.group = None;
+                }
                 st.collection = Some(c.id.clone());
             }
             if resp.double_clicked() {
@@ -180,8 +187,119 @@ fn sidebar(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
                     ui.close();
                 }
             });
+            if selected {
+                group_rows(app, ui, vars, c, st);
+            }
         }
     });
+}
+
+/// Every group path in `names` with its ancestors ("a/b/c" → "a", "a/b"), sorted.
+fn groups<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for name in names {
+        let mut path = group_of(name);
+        while !path.is_empty() {
+            if !out.iter().any(|g| g == path) {
+                out.push(path.to_string());
+            }
+            path = group_of(path);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// "All variables" and the collection's groups (indented by depth): picking one filters the
+/// table; groups can be renamed (every variable in them follows) or deleted.
+fn group_rows(app: &mut FigApp, ui: &mut Ui, vars: &Variables, coll: &Collection, st: &mut Editor) {
+    let t = Tokens::get(ui.ctx());
+    let names: Vec<&str> = vars.variables.iter().filter(|v| v.collection == coll.id).map(|v| v.name.as_str()).collect();
+    let list = groups(names.iter().copied());
+    if list.is_empty() {
+        return;
+    }
+    let rows = std::iter::once(None).chain(list.iter().map(Some));
+    for g in rows {
+        let (r, resp) = ui.allocate_exact_size(vec2(SIDEBAR_W, 26.0), Sense::click());
+        let r = r.shrink2(vec2(8.0, 0.0));
+        let on = st.group.as_ref() == g;
+        if on {
+            ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+        } else if resp.hovered() {
+            ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, t.border), StrokeKind::Inside);
+        }
+        let depth = g.map_or(0, |g| g.matches('/').count());
+        let x = r.min.x + 20.0 + depth as f32 * 12.0;
+        let label = g.map_or("All variables", |g| g.rsplit('/').next().unwrap_or(g));
+        let count = names.iter().filter(|n| g.is_none_or(|g| n.starts_with(&format!("{g}/")))).count();
+        ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, count.to_string(), regular(10.0), t.text_tertiary);
+        let name_r = Rect::from_min_max(pos2(x, r.min.y + 3.0), pos2(r.max.x - 28.0, r.max.y - 3.0));
+        let Some(g) = g else {
+            ui.painter().text(name_r.left_center(), Align2::LEFT_CENTER, label, regular(11.0), t.text_secondary);
+            if resp.clicked() {
+                st.group = None;
+            }
+            continue;
+        };
+        let target = Rename::Group(coll.id.clone(), g.clone());
+        if st.rename.as_ref() == Some(&target) {
+            if let Some(new) = rename_field(ui, st, &target, label, name_r, regular(11.0)) {
+                rename_group(app, vars, coll, g, &new, st);
+            }
+        } else {
+            ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, label, regular(11.0), t.text);
+        }
+        if resp.clicked() {
+            st.group = Some(g.clone());
+        }
+        if resp.double_clicked() {
+            start_rename(ui, st, target.clone());
+        }
+        resp.context_menu(|ui| {
+            if menu_item(ui, "Rename group", "") {
+                start_rename(ui, st, target.clone());
+                ui.close();
+            }
+            if menu_item(ui, "Delete group", "") {
+                let steps: Vec<serde_json::Value> = vars
+                    .variables
+                    .iter()
+                    .filter(|v| v.collection == coll.id && v.name.starts_with(&format!("{g}/")))
+                    .map(|v| json!({"command": "variable.delete", "params": {"variable": v.id}}))
+                    .collect();
+                app.run("command.batch", json!({"label": "Delete group", "commands": steps}));
+                if st.group.as_ref().is_some_and(|s| s == g || s.starts_with(&format!("{g}/"))) {
+                    st.group = None;
+                }
+                ui.close();
+            }
+        });
+    }
+}
+
+/// Rename the last part of group `g` to `new`: every variable under it moves along (one undo step).
+fn rename_group(app: &mut FigApp, vars: &Variables, coll: &Collection, g: &str, new: &str, st: &mut Editor) {
+    let new = new.trim().replace('/', "-");
+    if new.is_empty() {
+        return;
+    }
+    let renamed = match g.rsplit_once('/') {
+        Some((parent, _)) => format!("{parent}/{new}"),
+        None => new,
+    };
+    let prefix = format!("{g}/");
+    let steps: Vec<serde_json::Value> = vars
+        .variables
+        .iter()
+        .filter(|v| v.collection == coll.id && v.name.starts_with(&prefix))
+        .map(|v| json!({"command": "variable.update", "params": {"variable": v.id, "name": format!("{renamed}/{}", &v.name[prefix.len()..])}}))
+        .collect();
+    if app.run("command.batch", json!({"label": "Rename group", "commands": steps})).is_some()
+        && st.group.as_deref().is_some_and(|s| s == g || s.starts_with(&prefix))
+    {
+        st.group = st.group.as_ref().map(|s| format!("{renamed}{}", &s[g.len()..]));
+    }
 }
 
 fn create_collection(app: &mut FigApp, ui: &Ui, vars: &Variables, st: &mut Editor) {
@@ -235,8 +353,9 @@ fn table(app: &mut FigApp, ui: &mut Ui, vars: &Variables, st: &mut Editor) {
             .vertical_align(egui::Align::Center),
     );
     let q = st.query.trim().to_lowercase();
+    let in_group = |v: &Variable| st.group.as_ref().is_none_or(|g| v.name.starts_with(&format!("{g}/")));
     let mut list: Vec<&Variable> =
-        vars.variables.iter().filter(|v| v.collection == coll.id && (q.is_empty() || v.name.to_lowercase().contains(&q))).collect();
+        vars.variables.iter().filter(|v| v.collection == coll.id && in_group(v) && (q.is_empty() || v.name.to_lowercase().contains(&q))).collect();
     list.sort_by(|a, b| group_of(&a.name).cmp(group_of(&b.name)));
     let width = (NAME_W + coll.modes.len() as f32 * MODE_W + 40.0).max(ui.available_width());
     egui::ScrollArea::both().id_salt("vars_table").auto_shrink([false, false]).show(ui, |ui| {
@@ -576,5 +695,17 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
         });
     if !open {
         st.details = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::groups;
+
+    #[test]
+    fn groups_include_parents_once_and_sorted() {
+        let names = ["space/sm", "space/md", "color/brand/blue", "color/text", "plain", "color/brand/red"];
+        assert_eq!(groups(names.into_iter()), ["color", "color/brand", "space"]);
+        assert!(groups(["a", "b"].into_iter()).is_empty());
     }
 }
