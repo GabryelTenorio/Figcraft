@@ -123,6 +123,40 @@ impl Exporter<'_> {
         self.place_raster(s, &raster(&pix, Self::view_rect(&view)), 1.0, n.blend);
     }
 
+    /// The backdrop of node `id` (what this page draws under it), blurred by its background blurs
+    /// and cut to its shape, as one image.
+    pub(crate) fn backdrop(&mut self, id: NodeId) -> Option<Raster> {
+        let doc = self.doc;
+        let n = doc.node(id)?;
+        let radii: Vec<f64> = n
+            .effects
+            .iter()
+            .filter(|e| e.visible)
+            .filter_map(|e| match e.kind {
+                EffectKind::BackgroundBlur { radius } if radius.is_finite() && radius > 0.0 => Some(radius.min(1000.0)),
+                _ => None,
+            })
+            .collect();
+        let reach = radii.iter().fold(0.0, |a: f64, r| a.max(*r)) * 2.0;
+        let world = doc.world_transform(id);
+        let (path, rule) = figcraft_render::node_outline(doc, n)?;
+        let b = doc.world_render_bounds(id)?;
+        // Render a margin around the shape so the blur pulls in what lies just outside it.
+        let view = self.raster_view(b.inflate(reach + 1.0, reach + 1.0))?;
+        let mut tmp = doc.clone();
+        hide_from(&mut tmp, id, &self.page_ids);
+        let mut back = Pixmap::new(view.width, view.height)?;
+        figcraft_render::render_nodes_into(&tmp, &self.page_ids, &view, &mut back);
+        for r in radii {
+            fx::blur(&mut back, r / 2.0 * view.scale);
+        }
+        let mut shape = Pixmap::new(view.width, view.height)?;
+        let paint = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::WHITE), anti_alias: true, ..Default::default() };
+        shape.fill_path(&figcraft_render::ts_path(&path)?, &paint, rule, figcraft_render::draw::ts_transform(view.transform() * world), None);
+        fx::mask_by(&mut back, &shape, false);
+        Some(raster(&back, Self::view_rect(&view)))
+    }
+
     /// The drop and inner shadows of node `id`, as images.
     pub(crate) fn shadows(&mut self, id: NodeId) -> Option<Shadows> {
         let doc = self.doc;
@@ -224,4 +258,31 @@ impl Exporter<'_> {
 /// A device-pixel distance as an integer offset (non-finite → 0, capped).
 fn finite_px(v: f64) -> i32 {
     if v.is_finite() { v.round().clamp(-100_000.0, 100_000.0) as i32 } else { 0 }
+}
+
+/// Hide node `id` and everything painted after it (later siblings up its ancestry, the page's
+/// later layers and the strokes its ancestors paint over their children): what is left is its
+/// backdrop on the page made of `roots`.
+pub(crate) fn hide_from(doc: &mut figcraft_doc::Document, id: NodeId, roots: &[NodeId]) {
+    let mut hide: Vec<NodeId> = vec![id];
+    let mut cur = id;
+    for _ in 0..crate::draw::MAX_DEPTH {
+        if let Some(i) = roots.iter().position(|r| *r == cur) {
+            hide.extend(roots.iter().skip(i + 1));
+            break;
+        }
+        let Some(parent) = doc.node(cur).and_then(|n| n.parent) else { break };
+        if let Some(p) = doc.node(parent) {
+            hide.extend(p.children.iter().skip_while(|c| **c != cur).skip(1));
+        }
+        if let Some(pn) = doc.node_mut(parent) {
+            pn.strokes.clear();
+        }
+        cur = parent;
+    }
+    for h in hide {
+        if let Some(n) = doc.node_mut(h) {
+            n.visible = false;
+        }
+    }
 }

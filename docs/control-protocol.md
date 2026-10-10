@@ -99,7 +99,7 @@ text tool).
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool), `iconGallery` (bool:
@@ -114,8 +114,9 @@ frame id: open the prototype preview pane like `proto.preview`; false or `null` 
 to what it can scroll), `colorProfileDialog` (`srgb|displayP3`: open File ▸ Color profile with that
 profile chosen; `null` closes it), `stylePicker` (`fill|stroke|effect|grid`: open the style picker
 for the selection; `null` closes it) with `stylePickerEdit` (a style id or name: open its editor),
-`stylePickerView` (`list|grid`). Returns `ui.inspect` (which reports `stylePicker` and
-`stylePickerView`).
+`stylePickerView` (`list|grid`), `protoEditor` (`[layer id, interaction index]`: open that
+interaction's editor in the Prototype panel; `null` closes it). Returns `ui.inspect` (which reports
+`stylePicker` and `stylePickerView`).
 
 ### `ui.screenshot {path}`
 

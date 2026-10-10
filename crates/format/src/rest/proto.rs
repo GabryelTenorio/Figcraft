@@ -3,9 +3,10 @@
 //! `prototypeDevice`, `prototypeBackgrounds` and `prototypeStartNodeID`.
 
 use figcraft_doc::proto::{
-    Action, DeviceRotation, Direction, Easing, Interaction, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+    Action, ConditionalBlock, DeviceRotation, Direction, Easing, Expr, ExprOp, Interaction, MAX_ACTION_DEPTH, MAX_EXPR_DEPTH, Overflow,
+    OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
 };
-use figcraft_doc::{Node, NodeId, VariableValue};
+use figcraft_doc::{Node, NodeId, VariableType, VariableValue};
 use serde_json::{Value, json};
 
 use super::Ctx;
@@ -14,8 +15,9 @@ use super::variables;
 
 /// Longest transition or delay kept (ms).
 const MAX_MS: f64 = 60_000.0;
-/// Deepest nesting of conditional blocks followed.
-const MAX_ACTION_DEPTH: usize = 8;
+/// Most blocks of one conditional and arguments of one expression function read.
+const MAX_BLOCKS: usize = 64;
+const MAX_ARGS: usize = 64;
 /// Longest URL kept (characters).
 const MAX_URL: usize = 4096;
 /// Default transition length when the file names none (ms).
@@ -200,7 +202,7 @@ impl Ctx<'_> {
         }
     }
 
-    /// Append the action `a` maps to (conditional blocks without a condition are inlined).
+    /// Append the action `a` maps to (a lone conditional block without a condition is inlined).
     fn action<'v>(&mut self, a: &'v Value, out: &mut Vec<Action>, transition: &mut Option<&'v Value>, depth: usize) {
         let mapped = match text(a, "type") {
             Some("BACK") => Some(Action::Back),
@@ -214,23 +216,21 @@ impl Ctx<'_> {
                 mapped
             }
             Some("SET_VARIABLE") => self.set_variable(a),
-            Some("SET_VARIABLE_MODE") => {
-                self.warn("prototype actions that change variable modes are not supported and were skipped");
+            Some("SET_VARIABLE_MODE") => self.set_variable_mode(a),
+            Some("CONDITIONAL") if depth >= MAX_ACTION_DEPTH => {
+                self.warn("conditional prototype actions nested too deeply were skipped");
                 None
             }
-            Some("CONDITIONAL") => {
-                let blocks = list(a, "conditionalBlocks");
-                match blocks {
-                    // A lone block without a condition always runs.
-                    [only] if only.get("condition").is_none_or(Value::is_null) && depth < MAX_ACTION_DEPTH => {
-                        for inner in list(only, "actions") {
-                            self.action(inner, out, transition, depth + 1);
-                        }
+            Some("CONDITIONAL") => match list(a, "conditionalBlocks") {
+                // A lone block without a condition always runs.
+                [only] if only.get("condition").is_none_or(Value::is_null) => {
+                    for inner in list(only, "actions") {
+                        self.action(inner, out, transition, depth + 1);
                     }
-                    _ => self.warn("conditional prototype actions are not supported and were skipped"),
+                    None
                 }
-                None
-            }
+                blocks => self.conditional(blocks, transition, depth),
+            },
             Some("UPDATE_MEDIA_RUNTIME") => {
                 self.warn("video actions are not supported and were skipped");
                 None
@@ -241,6 +241,35 @@ impl Ctx<'_> {
             }
         };
         out.extend(mapped);
+    }
+
+    /// If / else if / else blocks; skipped whole when a condition can't be imported (running the
+    /// wrong branch would be worse than none).
+    fn conditional<'v>(&mut self, blocks: &'v [Value], transition: &mut Option<&'v Value>, depth: usize) -> Option<Action> {
+        let mut out = Vec::new();
+        for b in blocks.iter().take(MAX_BLOCKS) {
+            let condition = match b.get("condition").filter(|c| !c.is_null()) {
+                None => None,
+                Some(c) => match self.expr(c, 0) {
+                    Some(e) => Some(e),
+                    None => {
+                        self.warn("conditional prototype actions with conditions that can't be evaluated were skipped");
+                        return None;
+                    }
+                },
+            };
+            let mut actions = Vec::new();
+            for inner in list(b, "actions") {
+                self.action(inner, &mut actions, transition, depth + 1);
+            }
+            let otherwise = condition.is_none();
+            out.push(ConditionalBlock { condition, actions });
+            if otherwise {
+                // Blocks after the "else" never run.
+                break;
+            }
+        }
+        out.iter().any(|b| !b.actions.is_empty()).then_some(Action::Conditional { blocks: out })
     }
 
     fn node_action(&mut self, a: &Value) -> Option<Action> {
@@ -279,20 +308,98 @@ impl Ctx<'_> {
             self.warn("set-variable actions on variables that aren't in the variables JSON were skipped");
             return None;
         };
-        let id = id.clone();
-        let kind = *kind;
-        let value = a.get("variableValue").and_then(|d| d.get("value")).and_then(|v| variables::value(kind, v));
-        let value = match value {
+        let (variable, kind) = (id.clone(), *kind);
+        let Some(data) = a.get("variableValue").filter(|d| d.is_object()) else {
+            self.warn("set-variable actions without a value were skipped");
+            return None;
+        };
+        let dynamic = data.get("value").is_some_and(|v| variables::alias(v).is_some()) || expr_parts(data).is_some();
+        if dynamic {
+            // A variable reference or an expression, computed when the action runs.
+            let Some(expr) = self.expr(data, 0) else {
+                self.warn("set-variable actions with values that can't be evaluated were skipped");
+                return None;
+            };
+            return Some(Action::SetVariable { variable, value: Value::Null, expr: Some(expr) });
+        }
+        let value = match data.get("value").and_then(|v| variables::value(kind, v)) {
             Some(VariableValue::Color(c)) => json!(c.to_css_hex()),
             Some(VariableValue::Number(n)) => json!(n),
             Some(VariableValue::String(s)) => json!(s),
             Some(VariableValue::Boolean(b)) => json!(b),
             Some(VariableValue::Alias(_)) | None => {
-                self.warn("set-variable actions with expressions or variable references are not supported and were skipped");
+                self.warn("set-variable actions with values that don't fit the variable were skipped");
                 return None;
             }
         };
-        Some(Action::SetVariable { variable: id, value })
+        Some(Action::SetVariable { variable, value, expr: None })
+    }
+
+    fn set_variable_mode(&mut self, a: &Value) -> Option<Action> {
+        let collection = text(a, "variableCollectionId");
+        let mode = text(a, "variableModeId");
+        match (collection, mode) {
+            (Some(c), Some(m)) if self.var_modes.get(c).is_some_and(|modes| modes.iter().any(|x| x == m)) => {
+                Some(Action::SetVariableMode { collection: c.to_string(), mode: m.to_string() })
+            }
+            _ => {
+                self.warn("set-variable-mode actions on collections or modes that aren't in the variables JSON were skipped");
+                None
+            }
+        }
+    }
+
+    /// A `VariableData` value (literal, variable reference or expression) as an expression.
+    fn expr(&mut self, data: &Value, depth: usize) -> Option<Expr> {
+        if depth > MAX_EXPR_DEPTH {
+            return None;
+        }
+        if let Some((function, args)) = expr_parts(data) {
+            let op = match function {
+                "ADDITION" => ExprOp::Add,
+                "SUBTRACTION" => ExprOp::Subtract,
+                "MULTIPLICATION" => ExprOp::Multiply,
+                "DIVISION" => ExprOp::Divide,
+                "EQUALS" => ExprOp::Equals,
+                "NOT_EQUAL" => ExprOp::NotEqual,
+                "LESS_THAN" => ExprOp::Less,
+                "LESS_THAN_OR_EQUAL" => ExprOp::LessOrEqual,
+                "GREATER_THAN" => ExprOp::Greater,
+                "GREATER_THAN_OR_EQUAL" => ExprOp::GreaterOrEqual,
+                "AND" => ExprOp::And,
+                "OR" => ExprOp::Or,
+                "NOT" => ExprOp::Not,
+                "NEGATE" => ExprOp::Negate,
+                _ => {
+                    self.warn("prototype expressions with unsupported functions (like variable mode lookups) were skipped");
+                    return None;
+                }
+            };
+            if args.is_empty() || args.len() > MAX_ARGS {
+                return None;
+            }
+            let args = args.iter().map(|x| self.expr(x, depth + 1)).collect::<Option<Vec<Expr>>>()?;
+            return Some(Expr::op(op, args));
+        }
+        let v = data.get("value")?;
+        if let Some(id) = variables::alias(v) {
+            if !self.var_kinds.contains_key(id) {
+                self.warn("prototype expressions on variables that aren't in the variables JSON were skipped");
+                return None;
+            }
+            return Some(Expr::var(id));
+        }
+        let kind = match text(data, "resolvedType").or_else(|| text(data, "type")).and_then(variables::kind_of) {
+            Some(k) => k,
+            // Untyped: from the JSON value itself.
+            None => match v {
+                Value::Bool(_) => VariableType::Boolean,
+                Value::Number(_) => VariableType::Number,
+                Value::String(_) => VariableType::String,
+                _ => VariableType::Color,
+            },
+        };
+        variables::value(kind, v).map(Expr::Value)
     }
 
     /// The imported layer a REST id names.
@@ -326,6 +433,12 @@ impl Ctx<'_> {
         let e = t.get("easing");
         (tr, ms, easing_type(e.and_then(|e| text(e, "type")), e))
     }
+}
+
+/// The function name and arguments of an `EXPRESSION` value.
+fn expr_parts(data: &Value) -> Option<(&str, &[Value])> {
+    let e = data.get("value").filter(|v| v.get("expressionFunction").is_some())?;
+    Some((text(e, "expressionFunction")?, list(e, "expressionArguments")))
 }
 
 /// An easing curve by its type name, with custom parameters from `e`.

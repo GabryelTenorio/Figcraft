@@ -9,17 +9,17 @@ use figcraft_doc::proto::{
 use figcraft_doc::{VariableType, VariableValue};
 use serde_json::json;
 
-const THEME: &str = "VariableCollectionId:1:1";
-const BRAND: &str = "VariableID:1:2";
-const SPACE: &str = "VariableID:1:3";
-const LABEL: &str = "VariableID:1:6";
-const FLAG: &str = "VariableID:1:7";
+pub(super) const THEME: &str = "VariableCollectionId:1:1";
+pub(super) const BRAND: &str = "VariableID:1:2";
+pub(super) const SPACE: &str = "VariableID:1:3";
+pub(super) const LABEL: &str = "VariableID:1:6";
+pub(super) const FLAG: &str = "VariableID:1:7";
 
-fn at(x: f64, y: f64) -> Value {
+pub(super) fn at(x: f64, y: f64) -> Value {
     json!([[1, 0, x], [0, 1, y]])
 }
 
-fn alias(id: &str) -> Value {
+pub(super) fn alias(id: &str) -> Value {
     json!({"type": "VARIABLE_ALIAS", "id": id})
 }
 
@@ -28,7 +28,7 @@ fn rgba(r: f64, g: f64, b: f64) -> Value {
 }
 
 /// A local variables response: one collection with two modes (the second is the default).
-fn variables_json() -> Value {
+pub(super) fn variables_json() -> Value {
     json!({"status": 200, "error": false, "meta": {
         "variableCollections": {THEME: {"id": THEME, "name": "Theme", "key": "k", "defaultModeId": "1:1", "remote": false,
             "hiddenFromPublishing": false, "variableIds": [],
@@ -212,7 +212,7 @@ fn interactions_triggers_actions_and_transitions() {
     let id = |n: &str| named(&doc, n).id;
     let button = named(&doc, "Button");
     let its = &button.interactions;
-    assert_eq!(its.len(), 7, "{its:#?}");
+    assert_eq!(its.len(), 8, "{its:#?}");
 
     assert_eq!(its[0].trigger, Trigger::OnClick);
     assert_eq!(its[0].actions, [Action::Navigate { dest: id("Details"), preserve_scroll: false }]);
@@ -231,11 +231,13 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!(its[3].trigger, Trigger::MouseEnter);
     assert_eq!(its[3].actions, [Action::OpenUrl { url: "https://example.com".into() }]);
     assert_eq!(its[4].trigger, Trigger::OnHover);
-    assert_eq!(its[4].actions, [Action::SetVariable { variable: FLAG.into(), value: json!(false) }]);
+    assert_eq!(its[4].actions, [Action::SetVariable { variable: FLAG.into(), value: json!(false), expr: None }]);
     assert_eq!((its[4].transition, its[4].duration_ms), (Transition::Instant, 300));
     assert_eq!(its[5].actions, [Action::CloseOverlay], "a lone unconditional block is inlined");
-    assert_eq!(its[6].trigger, Trigger::MouseUp);
-    assert_eq!(its[6].actions, [Action::ScrollTo { dest: id("Home") }], "unresolved destinations are dropped");
+    assert_eq!(its[6].trigger, Trigger::OnDrag);
+    assert_eq!(its[6].actions, [Action::SetVariableMode { collection: THEME.into(), mode: "1:0".into() }]);
+    assert_eq!(its[7].trigger, Trigger::MouseUp);
+    assert_eq!(its[7].actions, [Action::ScrollTo { dest: id("Home") }], "unresolved destinations are dropped");
 
     // The legacy single transition.
     let details = named(&doc, "Details");
@@ -244,13 +246,13 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!((&legacy.trigger, &legacy.actions[..]), (&Trigger::OnClick, &[Action::Navigate { dest: id("Home"), preserve_scroll: false }][..]));
     assert_eq!((legacy.transition, legacy.duration_ms, legacy.easing), (Transition::Dissolve, 200, Easing::EaseIn));
 
-    for w in ["change variable modes", "video triggers", "modifier keys", "without a destination"] {
+    for w in ["video triggers", "modifier keys", "without a destination"] {
         assert!(has(&warnings, w), "{w}: {warnings:?}");
     }
     // Without variables, set-variable actions have nothing to set.
     let (doc, warnings) = import(&file_json(), &no_images).unwrap();
     assert_eq!(named(&doc, "Button").interactions.len(), 6);
-    assert!(has(&warnings, "set-variable actions"), "{warnings:?}");
+    assert!(has(&warnings, "set-variable actions") && has(&warnings, "set-variable-mode actions"), "{warnings:?}");
 }
 
 #[test]
@@ -327,7 +329,7 @@ fn junk_in_prototypes_and_variables_never_panics() {
                 assert!(doc.validate().is_empty(), "{p} = {j}");
                 for n in doc.nodes() {
                     for it in &n.interactions {
-                        assert!(it.actions.iter().filter_map(Action::dest).all(|d| doc.contains(d)), "{p} = {j}");
+                        assert!(figcraft_doc::proto::walk(&it.actions).filter_map(Action::dest).all(|d| doc.contains(d)), "{p} = {j}");
                     }
                     assert!(n.bound.values().all(|v| doc.variables.get(v).is_some()), "{p} = {j}");
                 }

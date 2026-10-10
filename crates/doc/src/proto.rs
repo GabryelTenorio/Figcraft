@@ -1,7 +1,15 @@
 //! Prototype data: interactions (trigger → actions) with transitions, flows and overflow.
 
-use crate::NodeId;
+use crate::{CollectionId, ModeId, NodeId, Variables};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[path = "proto_expr.rs"]
+mod expr;
+pub use expr::*;
+
+/// Deepest nesting of conditional blocks followed.
+pub const MAX_ACTION_DEPTH: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -382,7 +390,109 @@ pub enum Action {
     SetVariable {
         variable: String,
         value: serde_json::Value,
+        /// Computed when the action runs, in place of `value` (`count + 1`, `not open`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expr: Option<Expr>,
     },
+    /// Switch a variable collection to one of its modes for the rest of the prototype.
+    SetVariableMode {
+        collection: CollectionId,
+        mode: ModeId,
+    },
+    /// If / else if / else: the actions of the first block whose condition holds run (a block
+    /// without a condition is the "else").
+    Conditional {
+        blocks: Vec<ConditionalBlock>,
+    },
+}
+
+/// One branch of a conditional action.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ConditionalBlock {
+    /// `None`: always (the "else" block).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<Expr>,
+    #[serde(default)]
+    pub actions: Vec<Action>,
+}
+
+impl ConditionalBlock {
+    /// The actions of the first block that applies, with variables resolved in `modes`.
+    pub fn choose<'a>(blocks: &'a [ConditionalBlock], vars: &Variables, modes: &BTreeMap<CollectionId, ModeId>) -> Option<&'a [Action]> {
+        blocks.iter().find(|b| b.condition.as_ref().is_none_or(|c| c.holds(vars, modes))).map(|b| b.actions.as_slice())
+    }
+}
+
+/// Every action in `actions` and in their conditional blocks (depth-first, in order).
+pub fn walk(actions: &[Action]) -> Walk<'_> {
+    Walk { stack: vec![(actions.iter(), 0)] }
+}
+
+/// Iterator of [`walk`].
+pub struct Walk<'a> {
+    stack: Vec<(std::slice::Iter<'a, Action>, usize)>,
+}
+
+impl<'a> Iterator for Walk<'a> {
+    type Item = &'a Action;
+    fn next(&mut self) -> Option<&'a Action> {
+        loop {
+            let (it, depth) = self.stack.last_mut()?;
+            let depth = *depth;
+            let Some(a) = it.next() else {
+                self.stack.pop();
+                continue;
+            };
+            if let Action::Conditional { blocks } = a
+                && depth < MAX_ACTION_DEPTH
+            {
+                self.stack.extend(blocks.iter().rev().map(|b| (b.actions.iter(), depth + 1)));
+            }
+            return Some(a);
+        }
+    }
+}
+
+/// Call `f` on every action in `actions` and in their conditional blocks.
+pub fn walk_mut(actions: &mut [Action], f: &mut dyn FnMut(&mut Action)) {
+    walk_mut_at(actions, f, 0);
+}
+
+fn walk_mut_at(actions: &mut [Action], f: &mut dyn FnMut(&mut Action), depth: usize) {
+    for a in actions {
+        f(a);
+        if let Action::Conditional { blocks } = a
+            && depth < MAX_ACTION_DEPTH
+        {
+            for b in blocks {
+                walk_mut_at(&mut b.actions, f, depth + 1);
+            }
+        }
+    }
+}
+
+/// Keep the actions `keep` accepts, inside conditional blocks too; conditionals left with no
+/// action in any block go as well.
+pub fn retain_deep(actions: &mut Vec<Action>, keep: &mut dyn FnMut(&Action) -> bool) {
+    retain_at(actions, keep, 0);
+}
+
+fn retain_at(actions: &mut Vec<Action>, keep: &mut dyn FnMut(&Action) -> bool, depth: usize) {
+    actions.retain_mut(|a| {
+        if !keep(a) {
+            return false;
+        }
+        match a {
+            Action::Conditional { blocks } if depth < MAX_ACTION_DEPTH => {
+                for b in blocks.iter_mut() {
+                    retain_at(&mut b.actions, keep, depth + 1);
+                }
+                blocks.iter().any(|b| !b.actions.is_empty())
+            }
+            Action::Conditional { .. } => false,
+            _ => true,
+        }
+    });
 }
 
 impl Action {
@@ -397,7 +507,25 @@ impl Action {
             Action::OpenUrl { .. } => "Open link",
             Action::ChangeTo { .. } => "Change to",
             Action::SetVariable { .. } => "Set variable",
+            Action::SetVariableMode { .. } => "Set variable mode",
+            Action::Conditional { .. } => "Conditional",
         }
+    }
+
+    /// The variables the action (and what it nests) sets or reads.
+    pub fn variables(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        for a in walk(std::slice::from_ref(self)) {
+            match a {
+                Action::SetVariable { variable, expr, .. } => {
+                    out.push(variable.as_str());
+                    out.extend(expr.iter().flat_map(Expr::variables));
+                }
+                Action::Conditional { blocks } => out.extend(blocks.iter().filter_map(|b| b.condition.as_ref()).flat_map(Expr::variables)),
+                _ => {}
+            }
+        }
+        out
     }
     pub fn dest(&self) -> Option<NodeId> {
         match self {

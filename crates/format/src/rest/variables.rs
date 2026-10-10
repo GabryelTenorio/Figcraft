@@ -23,8 +23,8 @@ pub fn source(v: &Value) -> Option<&Value> {
     [v.get("meta"), Some(v)].into_iter().flatten().find(|m| m.get("variableCollections").is_some_and(Value::is_object))
 }
 
-fn kind_of(t: Option<&str>) -> Option<VariableType> {
-    Some(match t? {
+pub(super) fn kind_of(t: &str) -> Option<VariableType> {
+    Some(match t {
         "COLOR" => VariableType::Color,
         "FLOAT" => VariableType::Number,
         "STRING" => VariableType::String,
@@ -110,7 +110,7 @@ impl Ctx<'_> {
         if id.is_empty() || self.var_kinds.contains_key(&id) {
             return None;
         }
-        let Some(kind) = kind_of(text(v, "resolvedType")) else {
+        let Some(kind) = text(v, "resolvedType").and_then(kind_of) else {
             self.warn("variables of unknown types were skipped");
             return None;
         };

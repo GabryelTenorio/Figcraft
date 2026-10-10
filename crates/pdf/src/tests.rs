@@ -5,13 +5,13 @@ use super::*;
 use figcraft_color::{BlendMode, Color, Gradient, GradientKind, ImageScaleMode, Paint};
 use figcraft_doc::{BoolOp, Effect, EffectKind, ImageData, NodeKind, StrokeAlign, TextData};
 
-fn page_count(pdf: &[u8]) -> usize {
+pub(crate) fn page_count(pdf: &[u8]) -> usize {
     let s = String::from_utf8_lossy(pdf);
     s.matches("/Type/Page").count() - s.matches("/Type/Pages").count()
 }
 
 /// Every stream inflated (krilla deflates content, fonts and CMaps), joined.
-fn inflated(pdf: &[u8]) -> String {
+pub(crate) fn inflated(pdf: &[u8]) -> String {
     let mut out = String::new();
     let mut i = 0;
     while let Some(off) = find(&pdf[i..], b"stream") {
@@ -37,7 +37,7 @@ fn find(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).position(|w| w == n)
 }
 
-fn png(w: u32, h: u32) -> Vec<u8> {
+pub(crate) fn png(w: u32, h: u32) -> Vec<u8> {
     let mut p = figcraft_render::Pixmap::new(w, h).unwrap();
     for (i, px) in p.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (x, y) = (i as u32 % w, i as u32 / w);
@@ -47,7 +47,7 @@ fn png(w: u32, h: u32) -> Vec<u8> {
     figcraft_render::encode_png(&p).unwrap()
 }
 
-fn has_inter() -> bool {
+pub(crate) fn has_inter() -> bool {
     figcraft_text::find_face("Inter", "Regular").is_some()
 }
 

@@ -81,8 +81,18 @@ fn trigger_summary(t: &Trigger) -> String {
     }
 }
 
-const ACTIONS: [&str; 9] =
-    ["Navigate to", "Change to", "Back", "Scroll to", "Open link", "Open overlay", "Swap overlay", "Close overlay", "Set variable"];
+const ACTIONS: [&str; 10] = [
+    "Navigate to",
+    "Change to",
+    "Back",
+    "Scroll to",
+    "Open link",
+    "Open overlay",
+    "Swap overlay",
+    "Close overlay",
+    "Set variable",
+    "Set variable mode",
+];
 
 const TRANSITIONS: [&str; 8] = ["Instant", "Dissolve", "Smart animate", "Move in", "Move out", "Push", "Slide in", "Slide out"];
 
@@ -127,12 +137,25 @@ fn name_of(doc: &Document, id: NodeId) -> String {
 
 /// One-line action summary ("Navigate to Frame 2").
 fn action_summary(doc: &Document, a: &Action) -> String {
+    let vars = &doc.variables;
     match a {
         Action::OpenUrl { url } if !url.is_empty() => format!("Open link {url}"),
-        Action::SetVariable { variable, .. } => {
-            let name = doc.variables.get(variable).map(|v| v.name.clone()).unwrap_or_else(|| variable.clone());
-            format!("Set variable {name}")
+        Action::SetVariable { variable, expr, .. } => {
+            let name = vars.get(variable).map_or(variable.as_str(), |v| v.name.as_str());
+            match expr {
+                Some(e) => format!("Set {name} to {}", e.display(vars)),
+                None => format!("Set variable {name}"),
+            }
         }
+        Action::SetVariableMode { collection, mode } => {
+            let c = vars.collection(collection);
+            let mode = c.and_then(|c| c.modes.iter().find(|m| &m.id == mode)).map_or(mode.as_str(), |m| m.name.as_str());
+            format!("Set {} to {mode}", c.map_or(collection.as_str(), |c| c.name.as_str()))
+        }
+        Action::Conditional { blocks } => match blocks.first().and_then(|b| b.condition.as_ref()) {
+            Some(c) => format!("If {}", c.display(vars)),
+            None => a.label().to_string(),
+        },
         other => match other.dest() {
             Some(d) => format!("{} {}", other.label(), name_of(doc, d)),
             None => other.label().to_string(),
@@ -173,7 +196,13 @@ fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId, cur: Optio
                 Some(VariableValue::String(s)) => json!(s),
                 _ => Value::Null,
             };
-            Action::SetVariable { variable: v.id.clone(), value }
+            Action::SetVariable { variable: v.id.clone(), value, expr: None }
+        }
+        "Set variable mode" => {
+            let c = doc.variables.collections.iter().find(|c| !c.modes.is_empty())?;
+            // The mode after the default: switching to the default changes nothing.
+            let m = c.modes.get(1).or(c.modes.first())?;
+            Action::SetVariableMode { collection: c.id.clone(), mode: m.id.clone() }
         }
         _ => return None,
     })
@@ -566,7 +595,10 @@ fn editor_popover(app: &mut FigApp, ctx: &egui::Context, doc: &Document, page: N
                 trigger_rows(app, ui, node, k, it);
                 widgets::separator(ui);
                 action_rows(app, ui, doc, page, node, k, it);
-                if !matches!(it.actions.first(), Some(Action::OpenUrl { .. } | Action::SetVariable { .. } | Action::CloseOverlay)) {
+                if !matches!(
+                    it.actions.first(),
+                    Some(Action::OpenUrl { .. } | Action::SetVariable { .. } | Action::SetVariableMode { .. } | Action::CloseOverlay)
+                ) {
                     widgets::separator(ui);
                     animation_rows(app, ui, node, k, it);
                 }
@@ -710,7 +742,7 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
         let resp = widgets::dropdown(ui, action.label(), ui.available_width(), None);
         egui::Popup::menu(&resp).show(|ui| {
             for (i, l) in ACTIONS.iter().enumerate() {
-                if i == 2 || i == 4 || i == 5 || i == 8 {
+                if matches!(i, 2 | 4 | 5 | 8) {
                     ui.separator();
                 }
                 if menu_item(ui, l, "") {
@@ -719,6 +751,7 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                         None => app.toast(match *l {
                             "Change to" => "Change to needs a layer inside a variant",
                             "Set variable" => "Create a variable first",
+                            "Set variable mode" => "Create a variable collection first",
                             _ => "There's no destination for that action",
                         }),
                     }
@@ -757,7 +790,7 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                 }
             });
         }
-        Action::SetVariable { variable, value } => {
+        Action::SetVariable { variable, value, expr } => {
             let vars = doc.variables.variables.clone();
             widgets::sublabels(ui, "Variable", None);
             row(ui, 32.0, |ui| {
@@ -766,7 +799,7 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                 egui::Popup::menu(&resp).show(|ui| {
                     for v in &vars {
                         if menu_item(ui, &v.name, "") {
-                            patch(app, node, k, json!({"action": {"type": "setVariable", "variable": v.id, "value": value}}));
+                            patch(app, node, k, json!({"action": {"type": "setVariable", "variable": v.id, "value": value, "expr": expr}}));
                             ui.close();
                         }
                     }
@@ -774,10 +807,12 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
             });
             row(ui, 32.0, |ui| {
                 widgets::label(ui, "Value", t.text_secondary);
-                let shown = match value {
-                    Value::String(s) => s.clone(),
-                    Value::Null => String::new(),
-                    other => other.to_string(),
+                // An expression shows as text; typing a value replaces it.
+                let shown = match (expr, value) {
+                    (Some(e), _) => e.display(&doc.variables),
+                    (None, Value::String(s)) => s.clone(),
+                    (None, Value::Null) => String::new(),
+                    (None, other) => other.to_string(),
                 };
                 if let Some(s) = widgets::text_field(ui, Id::new(("proto_varval", node, k)), &shown, ui.available_width(), "Value") {
                     let v = serde_json::from_str::<Value>(s.trim()).ok().filter(|v| !v.is_string()).unwrap_or(Value::String(s));
@@ -837,6 +872,54 @@ fn action_rows(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId, node
                         }
                     }
                 });
+            }
+        }
+        Action::SetVariableMode { collection, mode } => {
+            let colls = &doc.variables.collections;
+            let current = doc.variables.collection(collection);
+            widgets::sublabels(ui, "Collection", None);
+            row(ui, 32.0, |ui| {
+                let resp = widgets::dropdown(ui, current.map_or("Choose collection", |c| c.name.as_str()), ui.available_width(), None);
+                egui::Popup::menu(&resp).show(|ui| {
+                    for c in colls {
+                        if menu_item(ui, &c.name, "")
+                            && let Some(m) = c.modes.first()
+                        {
+                            patch(app, node, k, json!({"action": Action::SetVariableMode { collection: c.id.clone(), mode: m.id.clone() }}));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+            widgets::sublabels(ui, "Mode", None);
+            row(ui, 32.0, |ui| {
+                let modes = current.map(|c| c.modes.as_slice()).unwrap_or_default();
+                let name = modes.iter().find(|m| &m.id == mode).map_or("Choose mode", |m| m.name.as_str());
+                let resp = widgets::dropdown(ui, name, ui.available_width(), None);
+                egui::Popup::menu(&resp).show(|ui| {
+                    for m in modes {
+                        if menu_item(ui, &m.name, "") {
+                            patch(app, node, k, json!({"action": Action::SetVariableMode { collection: collection.clone(), mode: m.id.clone() }}));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        }
+        Action::Conditional { blocks } => {
+            // Read-only: the branches and what each runs.
+            for (i, b) in blocks.iter().enumerate() {
+                let head = match (&b.condition, i) {
+                    (Some(c), 0) => format!("If {}", c.display(&doc.variables)),
+                    (Some(c), _) => format!("Else if {}", c.display(&doc.variables)),
+                    (None, _) => "Else".to_string(),
+                };
+                widgets::sublabels(ui, &head, None);
+                let lines: Vec<String> =
+                    if b.actions.is_empty() { vec!["Nothing".to_string()] } else { b.actions.iter().map(|a| action_summary(doc, a)).collect() };
+                for l in lines {
+                    row(ui, 24.0, |ui| widgets::label(ui, &l, t.text_secondary));
+                }
             }
         }
         Action::Back | Action::CloseOverlay => {}

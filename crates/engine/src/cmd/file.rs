@@ -617,12 +617,8 @@ pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale:
             let doc = &*doc.in_srgb();
             // Frames export one page each; anything else shares one page.
             let all_frames = ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
-            let r = if all_frames {
-                figcraft_pdf::export_pdf(doc, ids, &figcraft_pdf::PdfOptions::default())
-            } else {
-                figcraft_pdf::export_nodes_pdf(doc, &super::edit::z_sorted(doc, ids))
-            };
-            r.map_err(|e| EngineError::Other(e.to_string()))
+            let groups: Vec<Vec<NodeId>> = if all_frames { ids.iter().map(|i| vec![*i]).collect() } else { vec![super::edit::z_sorted(doc, ids)] };
+            pdf_bytes(doc, &groups)
         }
         _ => {
             let pix = if ids.len() == 1 {
@@ -779,6 +775,23 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())}))
 }
 
+/// A PDF with one page per group of layers (an sRGB document), titled after the file.
+fn pdf_bytes(doc: &Document, groups: &[Vec<NodeId>]) -> Result<Vec<u8>> {
+    let opts = figcraft_pdf::PdfOptions { title: Some(doc.name.clone()), ..Default::default() };
+    figcraft_pdf::export_groups(doc, groups, &opts).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Every top-level frame of `page` (reading order) as one PDF page each, and the page count.
+pub fn frames_pdf(doc: &Document, page: NodeId) -> Result<(Vec<u8>, usize)> {
+    let mut frames = doc.top_frames(page);
+    frames.retain(|f| doc.node(*f).is_some_and(|n| n.visible));
+    if frames.is_empty() {
+        return Err(EngineError::Disabled("file.exportFramesPdf".into(), "the page has no visible frames".into()));
+    }
+    let groups: Vec<Vec<NodeId>> = frames.iter().map(|f| vec![*f]).collect();
+    Ok((pdf_bytes(&doc.in_srgb(), &groups)?, frames.len()))
+}
+
 /// Every top-level frame of a page (reading order), one PDF page each.
 fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = s.doc()?;
@@ -787,19 +800,13 @@ fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("file.exportFramesPdf", "`page` is not a page")),
         None => s.page()?,
     };
-    let frames = doc.top_frames(page);
-    if frames.is_empty() {
-        return Err(EngineError::Disabled("file.exportFramesPdf".into(), "the page has no frames".into()));
-    }
-    let title = Some(doc.name.clone());
-    let bytes = figcraft_pdf::export_pdf(doc, &frames, &figcraft_pdf::PdfOptions { title, ..Default::default() })
-        .map_err(|e| EngineError::Other(e.to_string()))?;
+    let (bytes, pages) = frames_pdf(doc, page)?;
     match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
-            Ok(json!({"path": path, "bytes": bytes.len(), "pages": frames.len()}))
+            Ok(json!({"path": path, "bytes": bytes.len(), "pages": pages}))
         }
-        None => Ok(json!({"format": "pdf", "pages": frames.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
+        None => Ok(json!({"format": "pdf", "pages": pages, "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
     }
 }
 

@@ -120,7 +120,7 @@ Or in a project's `.mcp.json`:
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale \| size, path?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
+| `export {ids, format, scale \| size, path?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
@@ -167,7 +167,15 @@ moves or resizes it, `{action: "remove", index}` deletes it. Rendering, PNG/SVG/
 ### Prototypes
 
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
-the scroll position with `preserveScroll: true`), flows `proto.flow.add` / `rename` / `remove`,
+the scroll position with `preserveScroll: true`). Variable actions: `{type: "setVariable",
+variable, value}` sets a value, or with `expr` an expression computed when it runs;
+`{type: "setVariableMode", collection, mode}` switches a collection's mode for the prototype (ids or
+names; modes chosen on layers inside the screen still win); `{type: "conditional", blocks:
+[{condition?, actions}]}` runs the first block whose condition holds (a block without one is the
+"else"). Expressions are `{value: {type: number|string|boolean|color|alias, value}}` (`alias` reads
+a variable) or `{op: {op, args}}` with `add` (text joins when a string is involved), `subtract`,
+`multiply`, `divide`, `equals`, `notEqual`, `less`, `lessOrEqual`, `greater`, `greaterOrEqual`,
+`and`, `or`, `not` and `negate`. Flows `proto.flow.add` / `rename` / `remove`,
 and the device, its rotation and the background `proto.settings {device?, background?,
 rotation?, color?, width?, height?, responsive?}` (`None`, `iPhone 16`, `iPhone 16 Pro Max`,
 `Android Compact`, `iPad mini`, `MacBook Air`, `Desktop` or `Custom size`; `rotation` `portrait` or
@@ -281,13 +289,14 @@ The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, 
 `run_command {command: "file.import", params: {path}}` (pages appended to the current document,
 with their flows, prototype settings and variables).
 The result's `warnings` list what was skipped or approximated (unsupported layer, paint and effect
-types, video and gamepad triggers, conditional and variable-mode actions, bindings to library
+types, video and gamepad triggers, variable mode lookups in expressions, bindings to library
 variables, instances of components outside the file, which come in as frames). Pages, the layer
 tree, geometry, paints, strokes, effects, corners, constraints, auto layout, layout grids, exports,
 text with styled runs, vectors, components, component sets, instances and component properties are
 mapped, and so is prototyping: `interactions` (on click, hover, press, drag, after delay, mouse
-enter/leave/down/up and key triggers; navigate, overlays, back, scroll to, change to, open link and
-set variable actions; dissolve, smart animate, move, push and slide transitions with their easing,
+enter/leave/down/up and key triggers; navigate, overlays, back, scroll to, change to, open link,
+set variable (values, variable references and expressions), set variable mode and conditional
+(if / else if / else over expressions) actions; dissolve, smart animate, move, push and slide transitions with their easing,
 custom bezier and spring curves included), flow starting points, scroll overflow and fixed/sticky
 layers, and the prototype device. Image fills keep their `imageRef` and show a grey
 placeholder unless the image files sit in an `images` folder next to the JSON, named by `imageRef`

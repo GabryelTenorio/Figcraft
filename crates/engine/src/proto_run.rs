@@ -1,0 +1,87 @@
+//! Prototype actions on variables, run by the prototype player on its own copy of the document:
+//! set variable (a value or an expression), set variable mode, and choosing the branch of a
+//! conditional action.
+
+use figcraft_doc::proto::{Action, ConditionalBlock, Expr};
+use figcraft_doc::{Document, NodeId, VariableType, VariableValue};
+use serde_json::Value;
+
+use crate::cmd::styles::apply_bindings;
+use crate::params::{color_of, f64_of};
+
+/// A JSON value as a value of a `kind` variable (`None` when it doesn't fit).
+pub fn literal(kind: VariableType, v: &Value) -> Option<VariableValue> {
+    Some(match kind {
+        VariableType::Color => VariableValue::Color(color_of(v)?),
+        VariableType::Number => VariableValue::Number(f64_of(v).filter(|n| n.is_finite())?),
+        VariableType::Boolean => VariableValue::Boolean(match v {
+            Value::Bool(b) => *b,
+            Value::String(s) => s == "true",
+            Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+            _ => return None,
+        }),
+        VariableType::String => VariableValue::String(match v {
+            Value::String(s) => s.clone(),
+            Value::Bool(_) | Value::Number(_) => v.to_string(),
+            _ => return None,
+        }),
+    })
+}
+
+/// An expression result as a value of a `kind` variable: numbers and booleans become text for
+/// string variables; other mismatches don't fit.
+fn fit(kind: VariableType, v: VariableValue) -> Option<VariableValue> {
+    match (kind, v) {
+        (VariableType::String, v @ (VariableValue::Number(_) | VariableValue::Boolean(_))) => Some(VariableValue::String(v.display())),
+        (k, v) if v.type_of() == Some(k) => Some(v),
+        _ => None,
+    }
+}
+
+/// Set `variable` to `value`, or to `expr` evaluated in the modes of `node` (the layer whose
+/// interaction runs), in every mode, and re-apply bindings. False when nothing could be set.
+pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Value, expr: Option<&Expr>) -> bool {
+    let Some(var) = doc.variables.get(variable) else { return false };
+    let (id, kind) = (var.id.clone(), var.kind);
+    let v = match expr {
+        Some(e) => e.eval(&doc.variables, &doc.modes_for(node)).and_then(|v| fit(kind, v)),
+        None => literal(kind, value),
+    };
+    let Some(v) = v else { return false };
+    let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == id) else { return false };
+    for val in slot.values.values_mut() {
+        *val = v.clone();
+    }
+    apply_bindings(doc);
+    true
+}
+
+/// Switch `collection` to `mode` (ids or names) for the prototype `frame` is in: on its page, and
+/// on the page's top-level frames that chose another mode of it (modes chosen deeper inside still
+/// win), then re-apply bindings. False for an unknown collection or mode.
+pub fn set_mode(doc: &mut Document, frame: NodeId, collection: &str, mode: &str) -> bool {
+    let Some(c) = doc.variables.collection(collection) else { return false };
+    let Some(mode) = c.modes.iter().find(|m| m.id == mode).or_else(|| c.modes.iter().find(|m| m.name == mode)).map(|m| m.id.clone()) else {
+        return false;
+    };
+    let cid = c.id.clone();
+    let Some(page) = doc.page_of(frame) else { return false };
+    let mut targets: Vec<NodeId> = doc
+        .node(page)
+        .map(|p| p.children.iter().copied().filter(|t| doc.node(*t).is_some_and(|n| n.var_modes.contains_key(&cid))).collect())
+        .unwrap_or_default();
+    targets.push(page);
+    for id in targets {
+        if let Some(n) = doc.node_mut(id) {
+            n.var_modes.insert(cid.clone(), mode.clone());
+        }
+    }
+    apply_bindings(doc);
+    true
+}
+
+/// The actions of the branch of a conditional action that runs, with variables resolved in the
+/// modes of `node`.
+pub fn branch(doc: &Document, node: NodeId, blocks: &[ConditionalBlock]) -> Vec<Action> {
+    ConditionalBlock::choose(blocks, &doc.variables, &doc.modes_for(node)).map(<[Action]>::to_vec).unwrap_or_default()
+}

@@ -8,13 +8,14 @@
 //! - solid fills and linear/radial gradients (with per-stop opacity), paint opacity and blend modes;
 //! - strokes, as filled outlines (`figcraft_render::draw::stroke_area`), so Inside/Outside
 //!   alignment, per-side weights, dashes and arrow caps are exact;
-//! - clip content (a clip path), masks (an alpha soft mask drawn from the mask layer, so vector,
-//!   gradient and image masks all work), node opacity and blend modes (isolated groups);
+//! - clip content (a clip path), masks (alpha and luminance masks are soft masks drawn from the mask
+//!   layer, so vector, gradient and image masks all work; vector masks clip to the mask's outline),
+//!   node opacity and blend modes (isolated groups);
 //! - text: real text in its embedded (subset) font, selectable and searchable, positioned glyph by
 //!   glyph from `figcraft_text`'s layout. Fonts that can't be embedded, glyphs without a source
 //!   character (list markers, ellipses), non-solid/gradient text fills and text strokes fall back
 //!   to glyph outlines. If the PDF writer rejects a font, the whole export is retried with
-//!   outlined text.
+//!   outlined text. Hyperlinked text becomes clickable link annotations (one per line and link).
 //!
 //! What is rasterised (at [`PdfOptions::raster_scale`], 2× by default):
 //! - image fills are embedded as images (the original PNG/JPEG/GIF/WebP bytes when no image
@@ -22,7 +23,11 @@
 //! - angular and diamond gradients: an image of the paint clipped to the shape;
 //! - drop and inner shadows: images of just the shadow, under/over the vector content;
 //! - layer blur, noise and texture: the whole node is rendered by `figcraft_render` and placed as
-//!   one image. Background blur has no backdrop to blur in an isolated export and is left out.
+//!   one image;
+//! - background blur: what the page draws under the layer, rendered, blurred and cut to its shape,
+//!   placed under its (vector) content.
+//!
+//! Pages are sized in points, one point per pixel of the document.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod draw;
@@ -109,6 +114,26 @@ pub fn export_groups(doc: &Document, groups: &[Vec<NodeId>], opts: &PdfOptions) 
     }
 }
 
+/// Longest hyperlink kept (bytes).
+const MAX_URL: usize = 8192;
+
+/// A clickable area opening `url`, cut to the w×h page (`None` when nothing of it is on the page).
+fn link_annotation(r: Rect, url: String, w: f64, h: f64) -> Option<krilla::annotation::Annotation> {
+    use krilla::action::LinkAction;
+    use krilla::annotation::{LinkAnnotation, Target};
+    if !rect_finite(r) {
+        return None;
+    }
+    let r = r.intersect(Rect::new(0.0, 0.0, w, h));
+    let url = url.trim();
+    if !(r.width() > 0.0 && r.height() > 0.0) || url.is_empty() || url.len() > MAX_URL {
+        return None;
+    }
+    let rect = krilla::geom::Rect::from_ltrb(r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32)?;
+    let target = Target::Action(LinkAction::new(url.to_string()).into());
+    Some(LinkAnnotation::new(rect, target).into())
+}
+
 fn rect_finite(r: Rect) -> bool {
     r.x0.is_finite() && r.y0.is_finite() && r.x1.is_finite() && r.y1.is_finite()
 }
@@ -129,15 +154,23 @@ fn write(doc: &Document, pages: &[(Vec<NodeId>, Rect)], opts: &PdfOptions) -> Re
         let mut s = page.surface();
         ex.page_origin = Affine::translate((-b.x0, -b.y0));
         ex.page_rect = *b;
+        ex.page_ids = ids.clone();
         for id in ids {
             let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
             ex.node(&mut s, *id, ex.page_origin * parent_xf, 0, false);
         }
         s.finish();
+        for (r, url) in std::mem::take(&mut ex.links) {
+            if let Some(a) = link_annotation(r, url, w, h) {
+                page.add_annotation(a);
+            }
+        }
         page.finish();
     }
     pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))
 }
 
+#[cfg(test)]
+mod export_tests;
 #[cfg(test)]
 mod tests;
