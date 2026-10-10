@@ -13,16 +13,16 @@ use crate::{EngineError, Session};
 
 /// What the scripted link was asked to do, and the events it hands out next.
 #[derive(Default)]
-struct Script {
-    events: Vec<Event>,
+pub(crate) struct Script {
+    pub(crate) events: Vec<Event>,
     sent: Vec<Presence>,
     hosted: Vec<HostOptions>,
     joined: Vec<String>,
     left: usize,
-    msgs: Vec<ClientMsg>,
+    pub(crate) msgs: Vec<ClientMsg>,
 }
 
-struct Mock(Arc<Mutex<Script>>);
+pub(crate) struct Mock(pub(crate) Arc<Mutex<Script>>);
 
 impl LiveLink for Mock {
     fn host(&mut self, opts: HostOptions) -> Result<SessionInfo, String> {
@@ -50,7 +50,7 @@ impl LiveLink for Mock {
     }
 }
 
-fn info(role: Role, me: u32) -> SessionInfo {
+pub(crate) fn info(role: Role, me: u32) -> SessionInfo {
     SessionInfo {
         role,
         me,

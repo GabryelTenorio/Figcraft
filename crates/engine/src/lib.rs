@@ -335,6 +335,15 @@ impl DocState {
         self.checkpoint = self.doc.clone();
     }
 
+    /// Push a snapshot undo step: the document was `before` (shown with `selection` on `page`).
+    pub(crate) fn push_undo(&mut self, label: &str, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
+        self.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection, page });
+        if self.history.undo.len() > self.history.limit.max(1) {
+            self.history.undo.remove(0);
+        }
+        self.history.redo.clear();
+    }
+
     pub fn is_dirty(&self) -> bool {
         let doc = self.preview.as_ref().map(|p| &p.doc).or(self.text_preview.as_ref()).unwrap_or(&self.doc);
         !Arc::ptr_eq(doc, &self.saved_doc) || self.versions_changed
@@ -678,16 +687,45 @@ impl Session {
         let changed = !Arc::ptr_eq(&ds.doc, &bdoc);
         if changed {
             normalize(ds.doc_mut(), &bdoc);
-            if spec.history && ds.interaction.is_none() {
-                ds.history.undo.push(HistoryEntry { label: spec.label.to_string(), doc: bdoc, selection: bsel, page: bpage });
-                if ds.history.undo.len() > ds.history.limit.max(1) {
-                    ds.history.undo.remove(0);
-                }
-                ds.history.redo.clear();
-            }
         }
+        let edit = changed && ds.interaction.is_none();
         ds.clean_selection();
         ds.revision += 1;
+        if edit {
+            self.record(uid, spec.history.then_some(spec.label), bdoc, bsel, bpage);
+        }
+    }
+
+    /// Record an edit of document `uid` (it was `before`, shown with `selection` on `page`) as one
+    /// undo step called `label` (`None`: not undoable). On a live session's document the edit is
+    /// synced and the step is the user's own ([`live`]); otherwise it is a snapshot of `before`.
+    pub(crate) fn record(&mut self, uid: u64, label: Option<&str>, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
+        if self.live_doc(uid) {
+            return self.live_edit(label);
+        }
+        if let (Some(label), Some(ds)) = (label, self.docs.iter_mut().find(|d| d.uid == uid)) {
+            ds.push_undo(label, before, selection, page);
+        }
+    }
+
+    /// How many undo and redo steps the active document has (the user's own in a live session).
+    pub fn undo_depth(&self) -> (usize, usize) {
+        match self.ds() {
+            Ok(ds) if self.live_doc(ds.uid) => self.live.client().map_or((0, 0), figcraft_collab::Client::history_len),
+            Ok(ds) => (ds.history.undo.len(), ds.history.redo.len()),
+            Err(_) => (0, 0),
+        }
+    }
+
+    /// The labels of the active document's last `n` undo steps, the next one first.
+    pub fn undo_labels(&self, n: usize) -> Vec<String> {
+        match self.ds() {
+            Ok(ds) if self.live_doc(ds.uid) => {
+                self.live.client().map(|c| c.undo_labels().rev().take(n).map(str::to_string).collect()).unwrap_or_default()
+            }
+            Ok(ds) => ds.history.undo.iter().rev().take(n).map(|h| h.label.clone()).collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
@@ -729,13 +767,13 @@ impl Session {
     pub fn commit_interaction(&mut self) -> Result<()> {
         let ds = self.ds_mut()?;
         let Some(it) = ds.interaction.take() else { return Ok(()) };
+        let (uid, page) = (ds.uid, ds.page);
+        ds.revision += 1;
         if !Arc::ptr_eq(&it.doc, &ds.doc) && *it.doc != *ds.doc {
-            ds.history.undo.push(HistoryEntry { label: it.label, doc: it.doc, selection: it.selection, page: ds.page });
-            ds.history.redo.clear();
+            self.record(uid, Some(&it.label), it.doc, it.selection, page);
         } else {
             ds.doc = it.doc;
         }
-        ds.revision += 1;
         Ok(())
     }
 
@@ -752,12 +790,21 @@ impl Session {
 
     pub fn undo(&mut self) -> Result<bool> {
         textpreview::end(self);
+        let live = self.ds().is_ok_and(|d| self.live_doc(d.uid));
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.undo".into(), PREVIEW_READ_ONLY.into()));
         }
-        ds.interaction = None;
+        if let Some(it) = ds.interaction.take()
+            && live
+        {
+            // The gesture in progress is dropped (it was never synced).
+            ds.doc = it.doc;
+        }
         ds.text_edit = None;
+        if live {
+            return Ok(self.live_travel(true));
+        }
         let Some(e) = ds.history.undo.pop() else { return Ok(false) };
         let redo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
         ds.history.redo.push(redo);
@@ -773,12 +820,20 @@ impl Session {
 
     pub fn redo(&mut self) -> Result<bool> {
         textpreview::end(self);
+        let live = self.ds().is_ok_and(|d| self.live_doc(d.uid));
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled("edit.redo".into(), PREVIEW_READ_ONLY.into()));
         }
-        ds.interaction = None;
+        if let Some(it) = ds.interaction.take()
+            && live
+        {
+            ds.doc = it.doc;
+        }
         ds.text_edit = None;
+        if live {
+            return Ok(self.live_travel(false));
+        }
         let Some(e) = ds.history.redo.pop() else { return Ok(false) };
         let undo = HistoryEntry { label: e.label.clone(), doc: ds.doc.clone(), selection: ds.selection.clone(), page: ds.page };
         ds.history.undo.push(undo);
@@ -809,7 +864,9 @@ impl Session {
         let (before, sel, page, saved_len, uid) = (ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.uid);
         // The steps inside are dropped again below, so they mustn't push the oldest ones out.
         let limit = std::mem::replace(&mut ds.history.limit, usize::MAX);
+        self.live_hold(uid, true);
         let result = f(self);
+        self.live_hold(uid, false);
         let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) else { return result };
         ds.history.limit = limit;
         ds.history.undo.truncate(saved_len);
@@ -818,11 +875,7 @@ impl Session {
             ds.selection = sel;
             ds.page = page;
         } else if !Arc::ptr_eq(&before, &ds.doc) {
-            ds.history.undo.push(HistoryEntry { label: label.to_string(), doc: before, selection: sel, page });
-            if ds.history.undo.len() > limit.max(1) {
-                ds.history.undo.remove(0);
-            }
-            ds.history.redo.clear();
+            self.record(uid, Some(label), before, sel, page);
         }
         result
     }
@@ -838,8 +891,8 @@ impl Session {
                 "selection": ds.selection,
                 "tool": self.tool.tool.id(),
                 "zoom": ds.view.zoom,
-                "undo": ds.history.undo.len(),
-                "redo": ds.history.redo.len(),
+                "undo": self.undo_depth().0,
+                "redo": self.undo_depth().1,
                 "documents": self.docs.len(),
             }),
             Err(_) => json!({"documents": 0}),
@@ -1076,7 +1129,11 @@ mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod collab_live_tests;
+#[cfg(test)]
 mod collab_tests;
+#[cfg(test)]
+mod collab_undo_tests;
 #[cfg(test)]
 mod comments_polish_tests;
 #[cfg(test)]

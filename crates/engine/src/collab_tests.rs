@@ -10,7 +10,7 @@ use crate::Session;
 use crate::collab::EngineRecompute;
 
 /// A starting file: a frame with a few layers and some text.
-fn base() -> Document {
+pub(crate) fn base() -> Document {
     let mut s = Session::new();
     let f = s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 400, "height": 300})).unwrap()["id"].clone();
     for i in 0..3 {
@@ -32,7 +32,7 @@ fn base() -> Document {
 
 /// A random command with parameters that make sense for `doc` (often valid, sometimes not:
 /// cycles, deleted targets…).
-fn random_command(doc: &Document, rng: &mut Rng, with_undo: bool) -> (&'static str, Value) {
+pub(crate) fn random_command(doc: &Document, rng: &mut Rng, with_undo: bool) -> (&'static str, Value) {
     let store = doc.libraries.store;
     let all: Vec<&figcraft_doc::Node> = doc.nodes().filter(|n| store.is_none_or(|st| doc.page_of(n.id) != Some(st))).collect();
     let ids = |f: &dyn Fn(&figcraft_doc::Node) -> bool| -> Vec<NodeId> { all.iter().filter(|n| f(n)).map(|n| n.id).collect() };

@@ -1,18 +1,18 @@
 //! The browser client's connection logic, free of the browser so it runs (and is tested) on any
 //! target: a [`Driver`] reacts to socket events and to the clock the way the native guest's
-//! threads do — hello on open, changes and presence held until the welcome, presence throttled
-//! to about 30 a second (latest wins), a ping when quiet, a connection that goes silent counted as
+//! threads do — hello on open (resuming as the same client after a drop), presence held until the
+//! welcome and changes made for an earlier connection dropped (the sync client sends again what
+//! the server didn't get), presence throttled to about 30 a second (latest wins), a ping when quiet, a connection that goes silent counted as
 //! dropped, and reconnects with growing pauses after a live connection drops. The browser layer
 //! (`web.rs`) feeds it the WebSocket's events and wakes it at [`Driver::deadline`].
 
-use figcraft_collab::Client;
 use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
 use figcraft_engine::live::{Event, Status};
 // `std::time::Instant` on native builds; the browser's clock in the web build.
 use web_time::Instant;
 
 use crate::inbox::Inbox;
-use crate::join::{GuestConfig, Next, Outcome, Seen, Taken, after, closed, take};
+use crate::join::{GuestConfig, Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
 /// A WebSocket the driver opens, writes and closes; what it receives comes back through the
@@ -32,15 +32,13 @@ struct Conn {
     opened: bool,
     welcomed: bool,
     seen: Seen,
-    /// Changes waiting for the welcome.
-    queued: Vec<ClientMsg>,
     last_sent: Instant,
     last_heard: Instant,
 }
 
 impl Conn {
     fn new(now: Instant) -> Self {
-        Self { started: now, opened: false, welcomed: false, seen: Seen::default(), queued: Vec::new(), last_sent: now, last_heard: now }
+        Self { started: now, opened: false, welcomed: false, seen: Seen::default(), last_sent: now, last_heard: now }
     }
 }
 
@@ -52,6 +50,8 @@ pub(crate) struct Driver<S: Socket> {
     conn: Option<Conn>,
     was_live: bool,
     attempt: u32,
+    /// What a reconnect resumes with.
+    resume: Resuming,
     /// Your latest presence while not welcomed (sent with the welcome).
     pending: Option<Presence>,
     throttle: Throttle<Presence>,
@@ -69,6 +69,7 @@ impl<S: Socket> Driver<S> {
             conn: None,
             was_live: false,
             attempt: 0,
+            resume: Resuming::default(),
             pending: None,
             throttle: Throttle::new(PRESENCE_INTERVAL),
             reconnect_at: None,
@@ -97,8 +98,7 @@ impl<S: Socket> Driver<S> {
         let Some(c) = self.conn.as_mut() else { return };
         c.opened = true;
         c.last_heard = now;
-        let inv = &self.cfg.invite;
-        let hello = Client::hello(&inv.file, &inv.token, &self.cfg.name, "");
+        let hello = hello(&self.cfg, &self.resume);
         if !self.write(&hello, now) {
             self.end(Outcome::Retry("the connection dropped".into()), now);
         }
@@ -109,7 +109,8 @@ impl<S: Socket> Driver<S> {
         let Some(c) = self.conn.as_mut() else { return };
         c.last_heard = now;
         let taken = match message::decode::<ServerMsg>(bytes, self.cfg.limits.max_server_message) {
-            Ok(m) => take(m, &self.cfg, &self.inbox, &mut c.seen),
+            // Single-threaded: the connection counts as welcomed below, before the engine polls.
+            Ok(m) => take(m, &self.cfg, &self.inbox, &mut c.seen, &self.resume, &|| {}),
             Err(e) => Taken::End(Outcome::Refused(format!("the host sent a message this version can't read ({e})"))),
         };
         match taken {
@@ -117,12 +118,8 @@ impl<S: Socket> Driver<S> {
             Taken::End(o) => self.end(o, now),
             Taken::Welcomed => {
                 c.welcomed = true;
-                let queued = std::mem::take(&mut c.queued);
                 self.was_live = true;
                 self.attempt = 0;
-                if !queued.iter().all(|m| self.write(m, now)) {
-                    return self.end(Outcome::Retry("the connection dropped".into()), now);
-                }
                 if let Some(p) = self.pending.take() {
                     self.presence(p, now);
                 }
@@ -162,13 +159,14 @@ impl<S: Socket> Driver<S> {
         }
     }
 
-    /// A message from the sync client, in order: sent once the connection is welcomed, dropped
-    /// while there is none (the next welcome starts over).
+    /// A message from the sync client, in order, on a welcomed connection; dropped otherwise (it
+    /// was made for an earlier connection: the sync client sends again what the server didn't get
+    /// once it has caught up with the next welcome).
     pub(crate) fn send(&mut self, msg: ClientMsg, now: Instant) {
-        let Some(c) = self.conn.as_mut() else { return };
-        if !c.welcomed {
-            c.queued.push(msg);
-        } else if !self.write(&msg, now) {
+        if !self.conn.as_ref().is_some_and(|c| c.welcomed) {
+            return;
+        }
+        if !self.write(&msg, now) {
             self.end(Outcome::Retry("the connection dropped".into()), now);
         }
     }

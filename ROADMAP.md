@@ -123,7 +123,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Localization layer, then ja, ko, es, pt-BR, fr, de: 35–55 h.
-5. Multiplayer (M9): per-user undo, reconnect with offline edits and sharing on top of the live sessions (transport, hosting, invite links that open the app, document sync, presence and the browser client landed): 45–90 h.
+5. Multiplayer (M9): sharing and a standalone server with TLS on top of the live sessions (transport, hosting, invite links that open the app, document sync, presence, per-user undo, reconnect with offline edits and the browser client landed): 45–90 h.
 
 ## Progress log
 

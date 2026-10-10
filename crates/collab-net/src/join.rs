@@ -2,9 +2,11 @@
 //! and the browser client: the join settings, how a connection ended and what follows, and taking
 //! in what the host sends.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
-use figcraft_collab::message::{Peer, ServerMsg};
+use figcraft_collab::Client;
+use figcraft_collab::message::{ClientMsg, Peer, Resume, ServerMsg};
 use figcraft_engine::live::{Event, Role, SessionInfo, Status};
 
 use crate::inbox::Inbox;
@@ -104,6 +106,22 @@ pub(crate) fn after(outcome: Outcome, cfg: &GuestConfig, was_live: bool, attempt
     }
 }
 
+/// Who this guest is in the session and the last sequence number it got (from the welcome and the
+/// batches since): what a reconnect resumes with. The engine applies every message it got, in
+/// order, before the next welcome, so its sync client is at that sequence number by then. (Shared
+/// by the native guest's reader and writer threads.)
+pub(crate) type Resuming = Mutex<Option<Resume>>;
+
+/// The hello for a new connection: back after a drop, the same client catching up from where it
+/// was.
+pub(crate) fn hello(cfg: &GuestConfig, resume: &Resuming) -> ClientMsg {
+    let mut hello = Client::hello(&cfg.invite.file, &cfg.invite.token, &cfg.name, "");
+    if let (ClientMsg::Hello(h), Some(r)) = (&mut hello, resume.lock().ok().and_then(|r| *r)) {
+        h.resume = Some(r);
+    }
+    hello
+}
+
 /// What a connection knows of the session (to tell the UI who's here).
 #[derive(Default)]
 pub(crate) struct Seen {
@@ -114,16 +132,21 @@ pub(crate) struct Seen {
 /// What taking in one message from the host means for the connection.
 pub(crate) enum Taken {
     Continue,
-    /// The welcome: the connection is live (send what waited).
+    /// The welcome: the connection is live (send the presence that waited).
     Welcomed,
     /// The connection should end.
     End(Outcome),
 }
 
-/// Take in one message from the host: events for the UI go to `inbox`.
-pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Seen) -> Taken {
+/// Take in one message from the host: events for the UI go to `inbox`, and `resume` follows the
+/// session. On the welcome, `welcomed` runs before the UI hears of it: what the sync client sends
+/// in answer must go out on this connection.
+pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Seen, resume: &Resuming, welcomed: &dyn Fn()) -> Taken {
     match m {
-        ServerMsg::Welcome { client_id, ref peers, .. } => {
+        ServerMsg::Welcome { session, client_id, seq, ref peers, .. } => {
+            if let Ok(mut r) = resume.lock() {
+                *r = Some(Resume { session, client_id, seq });
+            }
             // The sync client opens the document (and fills in its name and pages).
             let peers = peers.clone();
             let inv = &cfg.invite;
@@ -141,6 +164,7 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
             };
             seen.peers = peers.clone();
             seen.info = Some(info.clone());
+            welcomed();
             inbox.push(Event::Welcome { info, peers });
             inbox.push(Event::Sync(m));
             return Taken::Welcomed;
@@ -168,7 +192,15 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
             }
         }
         ServerMsg::Refused { reason } => return Taken::End(Outcome::Refused(reason)),
-        ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => inbox.push(Event::Sync(m)),
+        ServerMsg::Changes(ref acc) => {
+            if let Ok(mut r) = resume.lock()
+                && let Some(r) = r.as_mut()
+            {
+                r.seq = acc.seq;
+            }
+            inbox.push(Event::Sync(m));
+        }
+        ServerMsg::Reject { .. } => inbox.push(Event::Sync(m)),
         ServerMsg::Pong => {}
     }
     Taken::Continue

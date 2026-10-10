@@ -10,7 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::Error;
-use crate::change::{Change, DocProp, Entry, Json};
+use crate::change::{Change, DocProp, Entry, Family, Json};
 
 /// An entry of a document-level list that has an id.
 trait Keyed: Clone + PartialEq + Serialize + DeserializeOwned {
@@ -306,25 +306,29 @@ pub(crate) fn apply(doc: &mut Document, change: &Change) -> Result<bool, Error> 
     Ok(false)
 }
 
-/// The current value of what `change` writes, as a change (for a rejected batch's fixes): the
-/// property or entry as it is now, or the entry's removal. List properties revert whole.
-pub(crate) fn current(doc: &Document, change: &Change) -> Result<Option<Change>, Error> {
-    let entry = match change {
-        Change::SetDoc { prop, .. } => {
-            if let Some(value) = get_scalar(doc, *prop)? {
-                return Ok(Some(Change::SetDoc { prop: *prop, value }));
-            }
-            let (prop, value) = match prop {
-                DocProp::Styles | DocProp::StyleOrder => (DocProp::Styles, Json::of(&doc.styles)?),
-                DocProp::Comments | DocProp::CommentOrder => (DocProp::Comments, Json::of(&doc.comments)?),
-                DocProp::Collections | DocProp::CollectionOrder => (DocProp::Collections, Json::of(&doc.variables.collections)?),
-                _ => (DocProp::Variables, Json::of(&doc.variables.variables)?),
-            };
-            return Ok(Some(Change::SetDoc { prop, value }));
-        }
-        Change::Put { entry, .. } | Change::Remove { entry } => entry,
-        _ => return Ok(None),
-    };
+/// Document-level property `prop` of `doc` (lists whole; orders as the ids in order).
+pub(crate) fn get(doc: &Document, prop: DocProp) -> Result<Json, Error> {
+    if let Some(v) = get_scalar(doc, prop)? {
+        return Ok(v);
+    }
+    fn order<T: Keyed>(list: &[T]) -> Result<Json, Error> {
+        Json::of(&list.iter().map(T::key).collect::<Vec<_>>())
+    }
+    match prop {
+        DocProp::Styles => Json::of(&doc.styles),
+        DocProp::StyleOrder => order(&doc.styles),
+        DocProp::Comments => Json::of(&doc.comments),
+        DocProp::CommentOrder => order(&doc.comments),
+        DocProp::Collections => Json::of(&doc.variables.collections),
+        DocProp::CollectionOrder => order(&doc.variables.collections),
+        DocProp::Variables => Json::of(&doc.variables.variables),
+        DocProp::VariableOrder => order(&doc.variables.variables),
+        _ => Err(Error::Invalid(format!("{prop:?} has no value"))),
+    }
+}
+
+/// Document-level entry `entry` of `doc` (`None`: there is none).
+pub(crate) fn entry_value(doc: &Document, entry: &Entry) -> Result<Option<Json>, Error> {
     let value = match entry {
         Entry::Style(k) => doc.styles.iter().find(|s| s.id == *k).map(Json::of),
         Entry::Comment(k) => doc.comments.iter().find(|c| c.id == *k).map(Json::of),
@@ -333,8 +337,29 @@ pub(crate) fn current(doc: &Document, change: &Change) -> Result<Option<Change>,
         Entry::DevSnapshot(k) => doc.dev_snapshots.get(k).map(|s| Json::of(s.as_ref())),
         Entry::Image(k) => doc.images.get(k).map(image_json),
     };
-    Ok(Some(match value {
-        Some(v) => Change::Put { entry: entry.clone(), value: v? },
-        None => Change::Remove { entry: entry.clone() },
-    }))
+    value.transpose()
+}
+
+/// The current value of what `change` writes, as a change (for a rejected batch's fixes): the
+/// property or entry as it is now, or the entry's removal. List properties revert whole.
+pub(crate) fn current(doc: &Document, change: &Change) -> Result<Option<Change>, Error> {
+    match change {
+        Change::SetDoc { prop, .. } => {
+            // An order reverts as the whole list (the entries may have changed too).
+            let prop = match prop.list() {
+                Some(Ok(_)) | None => *prop,
+                Some(Err(l)) => match l {
+                    Family::Styles => DocProp::Styles,
+                    Family::Comments => DocProp::Comments,
+                    Family::Collections => DocProp::Collections,
+                    Family::Variables => DocProp::Variables,
+                },
+            };
+            Ok(Some(Change::SetDoc { prop, value: get(doc, prop)? }))
+        }
+        Change::Put { entry, .. } | Change::Remove { entry } => {
+            Ok(crate::change::Target::Entry(entry.clone()).write(entry_value(doc, entry)?.as_ref()))
+        }
+        _ => Ok(None),
+    }
 }

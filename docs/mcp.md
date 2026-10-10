@@ -482,7 +482,9 @@ and a file keeps the newest 20 autosaves (user versions are never dropped for th
 `collab.diff {against? (undo: the last undoable action, the default | saved: since the last
 save)}` returns `{changes, count, bytes}`: the change batch a live session would send for that edit
 (per-property `create` / `set` / `delete` and document-level changes, see
-`docs/collab-protocol.md`) and its binary size. It changes nothing.
+`docs/collab-protocol.md`) and its binary size. It changes nothing. In a live session, where undo
+is per user (`edit.undo` / `edit.redo` take back only your own steps, see
+`docs/collab-protocol.md`), only `saved` applies.
 
 ### Live sessions
 
@@ -504,11 +506,16 @@ joined file opens as a new document).
   (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
   follow, syncing (the document arrived), document (the index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection: [ids], viewport:
-  [page, x, y, w, h], editing_text}}]}`.
+  [page, x, y, w, h], editing_text: {node, caret, selection?}}}]}`.
 - `collab.cursor {x, y}` puts your cursor at a page position (omit both to hide it): an agent's
   pointer. Your selection, page and view go out by themselves when they change.
 - `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
   pan or zoom of your own, or Escape).
+- On the session's document every command (or `batch`, or gesture) is one step of your own undo
+  history: `edit.undo` / `edit.redo` take back only your steps and leave what others changed since.
+  An edit the host refuses (someone deleted the layer) is rolled back and the reason is the
+  session's message. While the connection is reconnecting, editing goes on; the edits go out when
+  it is back (the same client, catching up with what it missed).
 - `collab.registerLinks {on?}` → `{on, registered}` makes the desktop app the opener of
   `figcraft://` invite links, or stops (no `on`: switch). Only where the app registers them itself
   (Windows, per user); elsewhere it reports the command unavailable. It also sets the

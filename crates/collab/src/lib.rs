@@ -11,7 +11,12 @@
 //!   a [`Client`] applies its own edits at once and reconciles when the server confirms, rejects or
 //!   orders someone else's batch first. Conflicting writes to one property resolve last-writer-wins
 //!   in server order, so every replica converges to the server's state.
-//! - [`sim`] runs a server and several clients over in-memory links with random delays (tests).
+//! - The client keeps the user's own undo history ([`Client::undo`], [`Client::redo`]): an undo
+//!   writes back what the user's step replaced where nobody else wrote since. Refused batches
+//!   leave the history with a [`Notice`]. Offline, batches queue; on reconnect the server sends
+//!   what the client missed (or a snapshot) and the queue goes out ([`Client::reconnect`]).
+//! - [`sim`] runs a server and several clients over in-memory links with random delays, dropped
+//!   connections and an undo checker (tests).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod change;
@@ -19,6 +24,7 @@ pub mod client;
 mod diff;
 mod docprops;
 pub mod frac;
+mod history;
 pub mod message;
 pub mod replica;
 pub mod server;
@@ -26,13 +32,15 @@ pub mod sim;
 
 use std::collections::BTreeSet;
 
+pub use change::Target;
 pub use change::{Change, DocProp, Entry, Json, Prop};
-pub use client::Client;
+pub use client::{Client, HISTORY_LIMIT};
 pub use diff::{Diff, diff};
 pub use figcraft_doc::{Document, NodeId};
-pub use message::{ClientMsg, Hello, Peer, Presence, ServerMsg};
+pub use history::{BatchKind, Notice};
+pub use message::{Accepted, CatchUp, ClientMsg, EditingText, Hello, Peer, Presence, Processed, Resume, ServerMsg};
 pub use replica::{Applied, Mode, Replica};
-pub use server::{Outgoing, Server};
+pub use server::{Outgoing, Server, SessionState};
 
 /// What can go wrong syncing.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -65,11 +73,24 @@ pub struct Limits {
     pub max_peers: usize,
     /// Longest display name or colour string (chars).
     pub max_name: usize,
+    /// Most accepted batches the server keeps for clients that reconnect (older ones catch up
+    /// with a snapshot).
+    pub max_log_batches: usize,
+    /// Most changes in those batches together.
+    pub max_log_changes: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { max_message_bytes: 64 << 20, max_changes: 500_000, max_nodes: 5_000_000, max_peers: 256, max_name: 64 }
+        Limits {
+            max_message_bytes: 64 << 20,
+            max_changes: 500_000,
+            max_nodes: 5_000_000,
+            max_peers: 256,
+            max_name: 64,
+            max_log_batches: 10_000,
+            max_log_changes: 1_000_000,
+        }
     }
 }
 
@@ -96,6 +117,10 @@ mod diff_tests;
 #[cfg(test)]
 mod frac_tests;
 #[cfg(test)]
+mod reconnect_tests;
+#[cfg(test)]
 mod server_tests;
 #[cfg(test)]
 mod sim_tests;
+#[cfg(test)]
+mod undo_tests;

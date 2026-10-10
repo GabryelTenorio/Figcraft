@@ -36,6 +36,9 @@ pub fn specs() -> Vec<CommandSpec> {
 fn diff_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds()?;
     let from: Arc<Document> = match string(p, "against").as_deref().unwrap_or("undo") {
+        "undo" if s.live_doc(ds.uid) => {
+            return Err(EngineError::Disabled("collab.diff".into(), "in a live session undo is per user: compare against \"saved\"".into()));
+        }
         "undo" => {
             ds.history.undo.last().map(|e| e.doc.clone()).ok_or_else(|| EngineError::Disabled("collab.diff".into(), "nothing to undo".into()))?
         }

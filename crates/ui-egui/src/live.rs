@@ -22,8 +22,8 @@ use crate::widgets;
 const BROWSER_NOTE: &str =
     "In the browser you can join sessions hosted by the desktop app. A page opened over https can only reach sessions on this computer.";
 
-/// Until undo is per person, it restores whole earlier states.
-const UNDO_NOTE: &str = "Undo isn't per person yet: it can also revert others' recent edits.";
+/// How undo works in a session (per person).
+const UNDO_NOTE: &str = "Undo takes back only your own changes; what others changed since stays.";
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;

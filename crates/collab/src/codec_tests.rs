@@ -3,7 +3,10 @@
 use figcraft_doc::{Document, NodeId, NodeKind};
 
 use crate::change::{Change, Json, Prop};
-use crate::message::{ClientMsg, Hello, PROTOCOL, Peer, Presence, ServerMsg, WIRE_VERSION, decode, decode_json, encode, encode_json};
+use crate::message::{
+    Accepted, CatchUp, ClientMsg, EditingText, Hello, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, WIRE_VERSION, decode, decode_json,
+    encode, encode_json,
+};
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
 
@@ -34,6 +37,7 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
             name: "Ada".into(),
             color: "#FF8800".into(),
             client_version: "0.2.0".into(),
+            resume: Some(Resume { session: 77, client_id: 4, seq: 10 }),
         }),
         moved_layer(),
         cursor(),
@@ -41,15 +45,30 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
             cursor: None,
             selection: Some(vec![NodeId(2), NodeId(3)]),
             viewport: Some((NodeId(1), 0.0, 0.0, 1200.0, 800.0)),
-            editing_text: Some(NodeId(7)),
+            editing_text: Some(Box::new(EditingText { node: NodeId(7), caret: 3, selection: Some((1, 3)) })),
         }),
         ClientMsg::Ack { seq: 9 },
         ClientMsg::Ping,
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
     let server = vec![
-        ServerMsg::Welcome { client_id: 4, seq: 10, snapshot, peers: vec![peer.clone()] },
-        ServerMsg::Changes { seq: 11, author: 4, batch_id: 2, changes: vec![set.clone(), Change::Delete { id: NodeId(5) }] },
+        ServerMsg::Welcome {
+            session: 77,
+            client_id: 4,
+            seq: 10,
+            catch_up: CatchUp::Snapshot(snapshot),
+            processed: Processed::default(),
+            peers: vec![peer.clone()],
+        },
+        ServerMsg::Welcome {
+            session: 77,
+            client_id: 4,
+            seq: 11,
+            catch_up: CatchUp::Delta(vec![Accepted { seq: 11, author: 5, batch_id: 1, changes: vec![set.clone()] }]),
+            processed: Processed { last_batch: 7, refused: vec![3, 6] },
+            peers: vec![],
+        },
+        ServerMsg::Changes(Accepted { seq: 11, author: 4, batch_id: 2, changes: vec![set.clone(), Change::Delete { id: NodeId(5) }] }),
         ServerMsg::Reject { batch_id: 3, reason: "no".into(), fixes: vec![set] },
         ServerMsg::Presence { client_id: 4, presence: Presence::default() },
         ServerMsg::PeerJoined(peer),

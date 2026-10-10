@@ -7,11 +7,11 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use figcraft_collab::Client;
 use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
 use figcraft_engine::live::{Event, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
@@ -20,7 +20,7 @@ use tungstenite::{Bytes, Message};
 
 use crate::inbox::Inbox;
 pub use crate::join::GuestConfig;
-use crate::join::{Next, Outcome, Seen, Taken, after, closed, take};
+use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
 use crate::net::{Duplex, config, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
@@ -116,6 +116,7 @@ fn connect(cfg: &GuestConfig) -> Result<Conn, String> {
 }
 
 fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<Cmd>) {
+    let resume: Arc<Resuming> = Arc::default();
     let mut attempt = 0u32;
     let mut was_live = false;
     let mut pending: Option<Presence> = None;
@@ -124,7 +125,7 @@ fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<C
     loop {
         epoch += 1;
         let outcome = match connect(cfg) {
-            Ok(c) => session(c, cfg, inbox, rx, me, epoch, &mut pending, &mut was_live, &mut attempt),
+            Ok(c) => session(c, cfg, inbox, rx, me, epoch, &resume, &mut pending, &mut was_live, &mut attempt),
             Err(e) => Outcome::Retry(e),
         };
         match after(outcome, cfg, was_live, &mut attempt, inbox) {
@@ -158,13 +159,14 @@ fn session(
     rx: &Receiver<Cmd>,
     me: &Sender<Cmd>,
     epoch: u64,
+    resume: &Arc<Resuming>,
     pending: &mut Option<Presence>,
     was_live: &mut bool,
     attempt: &mut u32,
 ) -> Outcome {
     let Conn { reader, mut writer, sock } = c;
     let reader = {
-        let ctx = ReaderCtx { inbox: inbox.clone(), tx: me.clone(), epoch, cfg: cfg.clone() };
+        let ctx = ReaderCtx { inbox: inbox.clone(), tx: me.clone(), epoch, cfg: cfg.clone(), resume: resume.clone() };
         match std::thread::Builder::new().name("live-guest-read".into()).spawn(move || read_loop(reader, &ctx)) {
             Ok(t) => t,
             Err(e) => {
@@ -174,9 +176,8 @@ fn session(
         }
     };
     let mut last_sent = Instant::now();
-    let hello = Client::hello(&cfg.invite.file, &cfg.invite.token, &cfg.name, "");
+    let hello = hello(cfg, resume);
     let mut welcomed = false;
-    let mut queued: Vec<ClientMsg> = Vec::new();
     let mut throttle = Throttle::new(PRESENCE_INTERVAL);
     let outcome = if send(&mut writer, &hello, &mut last_sent) {
         loop {
@@ -186,7 +187,9 @@ fn session(
             let mut now_send = Vec::new();
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Cmd::Send(m)) if welcomed => now_send.push(m),
-                Ok(Cmd::Send(m)) => queued.push(m),
+                // Made for the previous connection (the sync client sends again what the server
+                // didn't get once it has caught up with this connection's welcome).
+                Ok(Cmd::Send(_)) => {}
                 Ok(Cmd::Presence(p)) if welcomed => out = throttle.offer(p, Instant::now()),
                 Ok(Cmd::Presence(p)) => *pending = Some(p),
                 Ok(Cmd::Welcomed(e)) if e == epoch => {
@@ -194,7 +197,6 @@ fn session(
                     *was_live = true;
                     *attempt = 0;
                     out = pending.take().and_then(|p| throttle.offer(p, Instant::now()));
-                    now_send.append(&mut queued);
                 }
                 Ok(Cmd::Lost(e, o)) if e == epoch => break o,
                 Ok(Cmd::Leave) | Err(RecvTimeoutError::Disconnected) => {
@@ -238,6 +240,7 @@ struct ReaderCtx {
     tx: Sender<Cmd>,
     epoch: u64,
     cfg: GuestConfig,
+    resume: Arc<Resuming>,
 }
 
 fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
@@ -245,13 +248,15 @@ fn read_loop(mut ws: WebSocket<Duplex>, ctx: &ReaderCtx) {
     let outcome = loop {
         match ws.read() {
             Ok(Message::Binary(b)) => match message::decode::<ServerMsg>(&b, ctx.cfg.limits.max_server_message) {
-                Ok(m) => match take(m, &ctx.cfg, &ctx.inbox, &mut seen) {
-                    Taken::Continue => {}
-                    Taken::Welcomed => {
+                Ok(m) => {
+                    let welcomed = || {
                         let _ = ctx.tx.send(Cmd::Welcomed(ctx.epoch));
+                    };
+                    match take(m, &ctx.cfg, &ctx.inbox, &mut seen, &ctx.resume, &welcomed) {
+                        Taken::Continue | Taken::Welcomed => {}
+                        Taken::End(o) => break o,
                     }
-                    Taken::End(o) => break o,
-                },
+                }
                 Err(e) => break Outcome::Refused(format!("the host sent a message this version can't read ({e})")),
             },
             Ok(Message::Close(f)) => break f.map_or_else(|| closed(0, ""), |f| closed(f.code.into(), &f.reason)),

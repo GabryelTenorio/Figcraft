@@ -187,7 +187,9 @@ fn guests_join_and_see_each_other() {
     let Some(Event::Welcome { info, peers }) = ap.events.iter().rev().find(|e| matches!(e, Event::Welcome { .. })) else { panic!("no welcome") };
     assert_eq!(info.name, "Ada");
     assert!(
-        ap.events.iter().any(|e| matches!(e, Event::Sync(ServerMsg::Welcome { snapshot, .. }) if !snapshot.is_empty())),
+        ap.events.iter().any(
+            |e| matches!(e, Event::Sync(ServerMsg::Welcome { catch_up: figcraft_collab::CatchUp::Snapshot(snapshot), .. }) if !snapshot.is_empty())
+        ),
         "the welcome carries the document for the sync client"
     );
     assert_eq!(peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Hana"], "the host is already here");
@@ -496,10 +498,14 @@ fn guests_reconnect_after_a_network_failure() {
     gp.wait("reconnecting", |e| e.iter().any(|e| matches!(e, Event::Status(Status::Reconnecting { attempt: 1 }))));
     gp.wait("welcome again", |e| e.iter().filter(|e| matches!(e, Event::Welcome { .. })).count() >= 3);
     let second = gp.me();
-    assert_ne!(first, second, "a new connection is a new client id");
-    hp.wait("the old one left and the new one joined", |e| {
+    assert_eq!(first, second, "a reconnect resumes as the same client");
+    assert!(
+        gp.events.iter().any(|e| matches!(e, Event::Sync(ServerMsg::Welcome { catch_up: figcraft_collab::CatchUp::Delta(_), .. }))),
+        "it catches up with what it missed, not the whole file"
+    );
+    hp.wait("it left and came back", |e| {
         e.iter().any(|e| matches!(e, Event::PeerLeft(id) if *id == first))
-            && e.iter().any(|e| matches!(e, Event::PeerJoined(p) if p.client_id == second))
+            && e.iter().filter(|e| matches!(e, Event::PeerJoined(p) if p.client_id == second)).count() >= 2
     });
     // Presence flows again on the new connection.
     g.presence(presence(9.0, 9.0));

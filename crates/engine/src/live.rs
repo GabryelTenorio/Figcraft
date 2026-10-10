@@ -10,16 +10,19 @@
 //! Peers, presence and document changes are the wire types of the collaboration core
 //! ([`figcraft_collab::message`]). Each participant runs a core [`Client`]: the host's session
 //! document is the one it shared, a guest gets the host's file as a new tab from the welcome.
-//! After every local edit (once a gesture ends) the session document is diffed into a batch and
-//! sent; batches from the host's server are applied through the client and installed with
-//! [`Session::apply_remote`], which never touches the undo history.
+//! Every command, gesture or group on the session document is synced as one batch and is one step
+//! of the user's own undo history ([`Session::record`]); undo and redo there take back only the
+//! user's own steps ([`figcraft_collab::Client::undo`]). Batches from the host's server are applied
+//! through the client and installed with [`Session::apply_remote`], which never touches the undo
+//! history. After a dropped connection the client resumes with its id and catches up; what it
+//! made meanwhile goes out then.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use figcraft_collab::Client;
-use figcraft_collab::message::{ClientMsg, ServerMsg};
+use figcraft_collab::message::{ClientMsg, EditingText, ServerMsg};
 use figcraft_doc::{Document, NodeId};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -230,6 +233,8 @@ pub struct Live {
     synced: Option<Arc<Document>>,
     /// Server batches waiting for a gesture or preview on the session document to end.
     deferred: Vec<ServerMsg>,
+    /// Nesting of [`Session::grouped`] on the session document: its edits sync once, at the end.
+    hold: u32,
     /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
     /// installs one; see [`crate::invite_links`]).
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
@@ -268,6 +273,13 @@ impl Live {
         self.doc_uid = None;
         self.synced = None;
         self.deferred.clear();
+        self.hold = 0;
+    }
+
+    /// The document sync client (once the welcome arrived): peers, pending batches, the user's
+    /// undo history.
+    pub fn client(&self) -> Option<&Client> {
+        self.client.as_ref()
     }
 
     /// Document changes are syncing (the welcome arrived).
@@ -363,7 +375,10 @@ impl Session {
             cursor: self.live.cursor.map(|(x, y)| (ds.page, x, y)),
             selection: Some(ds.selection.clone()),
             viewport: Some((ds.page, x0, y0, ds.view.vw / z, ds.view.vh / z)),
-            editing_text: ds.text_edit.as_ref().map(|t| t.id),
+            editing_text: ds.text_edit.as_ref().map(|t| {
+                let (a, b) = (t.anchor.min(t.caret), t.anchor.max(t.caret));
+                Box::new(EditingText { node: t.id, caret: t.caret, selection: (a != b).then_some((a, b)) })
+            }),
         })
     }
 
@@ -393,11 +408,14 @@ impl Session {
                         live.reset();
                     }
                     Status::Off => live.reset(),
-                    // Who's here comes again with the next welcome.
+                    // Who's here comes again with the next welcome; edits wait for it.
                     Status::Reconnecting { .. } => {
                         live.peers.clear();
                         live.presence.clear();
                         live.sent = None;
+                        if let Some(c) = live.client.as_mut() {
+                            c.disconnect();
+                        }
                     }
                     Status::Connecting | Status::Live => {}
                 }
@@ -439,6 +457,8 @@ impl Session {
                     live.presence.insert(id, p);
                 }
             }
+            // Back after a dropped connection: the client catches up in order with the rest.
+            Event::Sync(msg @ ServerMsg::Welcome { .. }) if live.client.is_some() => live.deferred.push(msg),
             Event::Sync(ServerMsg::Welcome { .. }) => {
                 if let Event::Sync(w) = e {
                     self.live_welcome(w);
@@ -467,6 +487,10 @@ impl Session {
             (Some(Role::Host), Some(uid)) => {
                 if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
                     let was_dirty = ds.is_dirty();
+                    // Undo is per user from now on: earlier whole-document steps would revert
+                    // others' edits.
+                    ds.history.undo.clear();
+                    ds.history.redo.clear();
                     ds.doc_mut().set_client_id(client.id());
                     if !was_dirty {
                         ds.mark_saved();
@@ -510,16 +534,30 @@ impl Session {
         self.message = Some(reason);
     }
 
-    /// Send the session document's local edits, unless a gesture or preview is still showing.
+    /// Send the session document's edits not synced yet (none, unless something changed it
+    /// outside a command), unless a gesture or preview is still showing.
     fn live_flush(&mut self) {
+        self.live_edit(None);
+    }
+
+    /// Whether document `uid` is the live session's synced document: its edits sync and its undo
+    /// history is the user's own.
+    pub fn live_doc(&self, uid: u64) -> bool {
+        self.live.client.is_some() && self.live.doc_uid == Some(uid)
+    }
+
+    /// Sync the session document's edits as one batch: one step of the user's undo history called
+    /// `label`, or not undoable (`None`). Nothing while a gesture or preview shows, or inside a
+    /// group (it syncs when the group ends).
+    pub(crate) fn live_edit(&mut self, label: Option<&str>) {
         let Some(uid) = self.live.doc_uid else { return };
         let Some(ds) = self.docs.iter().find(|d| d.uid == uid) else { return };
-        if busy(ds) || self.live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
+        if self.live.hold > 0 || busy(ds) || self.live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
             return;
         }
         let doc = ds.doc.clone();
         let Some(client) = self.live.client.as_mut() else { return };
-        match client.edit(&doc) {
+        match client.edit_with(&doc, label) {
             Ok(Some(msg)) => {
                 if let Some(l) = self.live.link.as_mut() {
                     l.send(msg);
@@ -529,6 +567,44 @@ impl Session {
             Err(e) => return self.live_fail(format!("Couldn't sync an edit: {e}")),
         }
         self.live.synced = Some(doc);
+    }
+
+    /// A group of commands on document `uid` starts (`on`) or ends: in between its edits don't
+    /// sync on their own.
+    pub(crate) fn live_hold(&mut self, uid: u64, on: bool) {
+        if self.live_doc(uid) {
+            self.live.hold = if on { self.live.hold.saturating_add(1) } else { self.live.hold.saturating_sub(1) };
+        }
+    }
+
+    /// Undo (`back`) or redo the user's own last step on the session document: what it wrote goes
+    /// back where nobody else wrote since. Returns whether there was a step to take back.
+    pub(crate) fn live_travel(&mut self, back: bool) -> bool {
+        let Some(uid) = self.live.doc_uid else { return false };
+        // Edits not synced yet go first.
+        self.live_flush();
+        let Some(client) = self.live.client.as_mut() else { return false };
+        let (undo, redo) = client.history_len();
+        let msgs = match if back { client.undo(&EngineRecompute) } else { client.redo(&EngineRecompute) } {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("live session: {} failed: {e}", if back { "undo" } else { "redo" });
+                return false;
+            }
+        };
+        let (u, r) = client.history_len();
+        let did = if back { r > redo } else { u > undo };
+        let doc = Arc::new(client.document().clone());
+        if let Some(l) = self.live.link.as_mut() {
+            for m in msgs {
+                l.send(m);
+            }
+        }
+        if did {
+            self.apply_remote(uid, doc.clone());
+            self.live.synced = Some(doc);
+        }
+        did
     }
 
     /// Apply the server's batches that waited (none while a gesture or preview shows).
@@ -552,6 +628,11 @@ impl Session {
             }
         }
         let doc = Arc::new(client.document().clone());
+        // Edits the server refused were rolled back: say why (the UI's toast).
+        let notices: Vec<String> = client.take_notices().iter().map(figcraft_collab::Notice::message).collect();
+        if !notices.is_empty() {
+            self.message = Some(notices.join("; "));
+        }
         if let Some(l) = self.live.link.as_mut() {
             for m in out {
                 l.send(m);

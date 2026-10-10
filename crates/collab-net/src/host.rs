@@ -122,6 +122,7 @@ impl Host {
             name,
             color: PEOPLE[0].to_string(),
             client_version: env!("CARGO_PKG_VERSION").to_string(),
+            resume: None,
         };
         let (me, outs) = server.join(hello).map_err(|r| io::Error::other(format!("{r:?}")))?;
         // The host's window syncs through its own client too: its welcome carries the document.
@@ -522,6 +523,13 @@ impl Hub {
         };
         match self.server.join(hello) {
             Ok((id, outs)) => {
+                // A guest back after a drop keeps its id: its old connection, if the hub hasn't
+                // noticed it's gone yet, is closed without the guest leaving.
+                if let Some(old) = self.ids.get(&id).copied().filter(|old| *old != conn)
+                    && let Some(c) = self.conns.remove(&old)
+                {
+                    shutdown(&c.sock);
+                }
                 self.conns.insert(conn, Conn { out, sock, id });
                 self.ids.insert(id, conn);
                 self.deliver(outs);

@@ -115,12 +115,19 @@ fn batches_are_ordered_echoed_and_rebroadcast() {
     assert!(matches!(s.receive(999, ClientMsg::Ping).as_slice(), [Outgoing::To(999, ServerMsg::Refused { .. })]));
 }
 
+/// A new batch id (the server ignores a batch id it already processed).
+fn next_batch() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 fn rejected(s: &mut Server, from: u32, changes: Vec<Change>) -> (String, Vec<Change>) {
+    let batch = next_batch();
     let before = s.replica().clone();
-    let out = s.receive(from, ClientMsg::Changes { base_seq: s.seq(), batch_id: 1, changes });
+    let out = s.receive(from, ClientMsg::Changes { base_seq: s.seq(), batch_id: batch, changes });
     assert_eq!(s.replica(), &before, "nothing applied");
     match out.as_slice() {
-        [Outgoing::To(to, ServerMsg::Reject { batch_id: 1, reason, fixes })] if *to == from => (reason.clone(), fixes.clone()),
+        [Outgoing::To(to, ServerMsg::Reject { batch_id, reason, fixes })] if *to == from && *batch_id == batch => (reason.clone(), fixes.clone()),
         other => panic!("not rejected: {other:?}"),
     }
 }
@@ -144,12 +151,12 @@ fn invalid_batches_are_rejected_whole() {
     rejected(&mut s, a.id(), vec![create(77, frame)]);
     // A valid change with an invalid one: neither applies.
     let (reason, _) = rejected(&mut s, a.id(), vec![set(frame, Prop::Name, "ok".into()), set(NodeId(4242), Prop::Name, "x".into())]);
-    assert!(reason.contains("4242"), "{reason}");
+    assert!(reason.contains("deleted by someone else"), "{reason}");
     // A cycle through a new frame.
     rejected(&mut s, a.id(), vec![create((me << 32) | 1, frame), set(frame, Prop::Parent, serde_json::json!((me << 32) | 1))]);
     // Too many changes; based on the future.
     rejected(&mut s, a.id(), vec![set(frame, Prop::Name, "a".into()); 4]);
-    let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 5, batch_id: 1, changes: vec![] });
+    let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 5, batch_id: next_batch(), changes: vec![] });
     assert!(matches!(out.as_slice(), [Outgoing::To(_, ServerMsg::Reject { .. })]));
     // Deleting the last page.
     rejected(&mut s, a.id(), vec![Change::Delete { id: page }]);
@@ -166,12 +173,12 @@ fn deleted_nodes_can_come_back_but_ids_are_never_handed_out_twice() {
     let snap = crate::replica::create_change(gone.document().node(frame).unwrap(), gone.key(frame)).unwrap();
     // b deletes the frame (an old id); a brings it back, as undo would.
     let out = s.receive(b.id(), ClientMsg::Changes { base_seq: 0, batch_id: 1, changes: vec![Change::Delete { id: frame }] });
-    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes { .. })]));
+    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes(..))]));
     for m in for_client(&out, a.id()) {
         a.receive(m, &NoRecompute).unwrap();
     }
     let out = s.receive(a.id(), ClientMsg::Changes { base_seq: 1, batch_id: 1, changes: vec![snap.clone()] });
-    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes { .. })]), "{out:?}");
+    assert!(matches!(out.as_slice(), [Outgoing::All(ServerMsg::Changes(..))]), "{out:?}");
     assert_eq!(s.document(), gone.document());
 }
 
@@ -194,7 +201,7 @@ fn fixes_roll_a_rejected_client_back_to_the_server_state() {
     // A client without a confirmed copy can roll back with the fixes: they delete what the server
     // doesn't have (b's delete arrives first on a's connection).
     let mut rolled = optimistic.clone();
-    let ServerMsg::Changes { changes, .. } = &for_client(&out_b, a.id())[0] else { panic!() };
+    let ServerMsg::Changes(crate::Accepted { changes, .. }) = &for_client(&out_b, a.id())[0] else { panic!() };
     rolled.apply(changes, Mode::Lenient).unwrap();
     rolled.apply(fixes, Mode::Lenient).unwrap();
     assert_eq!(rolled.document(), s.document());
@@ -237,7 +244,7 @@ fn remote_batches_apply_under_pending_ones() {
     assert_eq!(a.view(), s.replica());
     assert_eq!(b.view(), s.replica());
     // Messages out of order are protocol errors.
-    let stale = ServerMsg::Changes { seq: 1, author: b.id(), batch_id: 1, changes: vec![] };
+    let stale = ServerMsg::Changes(crate::Accepted { seq: 1, author: b.id(), batch_id: 1, changes: vec![] });
     assert!(a.receive(stale, &NoRecompute).is_err());
     assert!(a.receive(ServerMsg::Reject { batch_id: 9, reason: String::new(), fixes: vec![] }, &NoRecompute).is_err());
     assert!(Client::join(ServerMsg::Pong).is_err());
@@ -265,7 +272,7 @@ fn junk_batches_never_panic_and_never_corrupt_the_document() {
         serde_json::json!([1.0, 0.0, 0.0, 1.0, 5.0, 5.0]),
         serde_json::json!(true),
     ];
-    for _ in 0..3000 {
+    for round in 0..3000u64 {
         let ids: Vec<NodeId> = s.document().ids().collect();
         let id = |rng: &mut Rng| match rng.below(3) {
             0 => NodeId((me << 32) | rng.below(50) as u64),
@@ -296,7 +303,7 @@ fn junk_batches_never_panic_and_never_corrupt_the_document() {
                 _ => Change::Put { entry: Entry::Comment(rng.below(3) as u64), value: v(&mut rng) },
             });
         }
-        let _ = s.receive(a.id(), ClientMsg::Changes { base_seq: s.seq(), batch_id: 1, changes });
+        let _ = s.receive(a.id(), ClientMsg::Changes { base_seq: s.seq(), batch_id: round + 1, changes });
         assert!(s.document().validate().is_empty(), "{:?}", s.document().validate());
     }
 }

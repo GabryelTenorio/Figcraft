@@ -1,6 +1,6 @@
 //! The browser client's connection logic ([`Driver`]) on native: against a scripted socket with a
-//! made-up clock (hello, holding changes and presence until the welcome, throttling, pings, a
-//! silent host, reconnecting, refusals, giving up), and against a real host over loopback through
+//! made-up clock (hello, holding presence until the welcome, throttling, pings, a silent host,
+//! reconnecting as the same client, refusals, giving up), and against a real host over loopback through
 //! a small blocking socket, which checks that what the browser sends is what the host speaks.
 
 use std::net::TcpStream;
@@ -97,7 +97,7 @@ fn ms(n: u64) -> Duration {
 }
 
 #[test]
-fn hello_then_the_welcome_releases_what_waited() {
+fn hello_then_the_welcome_releases_presence() {
     let t0 = Instant::now();
     let (mut d, inbox) = start(Script::default(), t0);
     assert_eq!(d.sock.opened, vec!["ws://127.0.0.1:47900/"], "the token isn't in the URL");
@@ -107,18 +107,18 @@ fn hello_then_the_welcome_releases_what_waited() {
     d.opened(t0 + ms(10));
     let [ClientMsg::Hello(h)] = d.sock.sent.as_slice() else { panic!("{:?}", d.sock.sent) };
     assert_eq!((h.file.as_str(), h.token.as_str(), h.name.as_str()), (FILE, TOKEN, "Ada"));
-    // Before the welcome: presence is held (latest wins), changes wait in order.
+    assert_eq!(h.resume, None, "a new participant");
+    // Before the welcome: presence is held (latest wins); changes were made for no connection the
+    // server knows, so they're dropped (the sync client sends again what the server didn't get).
     d.presence(cursor(1.0), t0 + ms(20));
     d.presence(cursor(2.0), t0 + ms(21));
     d.send(ClientMsg::Ack { seq: 1 }, t0 + ms(22));
     d.send(ClientMsg::Ack { seq: 2 }, t0 + ms(23));
     assert_eq!(d.sock.sent.len(), 1);
     d.message(&welcome(), t0 + ms(30));
-    assert_eq!(
-        d.sock.sent[1..],
-        [ClientMsg::Ack { seq: 1 }, ClientMsg::Ack { seq: 2 }, ClientMsg::Presence(cursor(2.0))],
-        "changes in order, then the latest presence"
-    );
+    assert_eq!(d.sock.sent[1..], [ClientMsg::Presence(cursor(2.0))], "the latest presence; no stale changes");
+    d.send(ClientMsg::Ack { seq: 3 }, t0 + ms(31));
+    assert_eq!(d.sock.sent.last(), Some(&ClientMsg::Ack { seq: 3 }), "welcomed: changes go out");
     let events = inbox.drain();
     assert!(
         matches!(events.as_slice(), [Event::Welcome { info, peers }, Event::Sync(ServerMsg::Welcome { .. })] if !info.network && peers.is_empty())
@@ -158,7 +158,7 @@ fn a_silent_host_counts_as_dropped_and_the_client_reconnects() {
     let (mut d, inbox) = start(Script::default(), t0);
     d.opened(t0);
     d.message(&welcome(), t0);
-    inbox.drain();
+    let first_id = inbox.drain().iter().find_map(|e| if let Event::Welcome { info, .. } = e { Some(info.me) } else { None }).unwrap();
     // Pings go out, nothing comes back for 45 s.
     for s in [15, 30] {
         d.tick(t0 + Duration::from_secs(s));
@@ -177,6 +177,10 @@ fn a_silent_host_counts_as_dropped_and_the_client_reconnects() {
     d.tick(again);
     assert_eq!(d.sock.opened.len(), 2);
     d.opened(again);
+    // Back as the same client, from the last sequence number it got.
+    let Some(ClientMsg::Hello(h)) = d.sock.sent.last() else { panic!("no hello") };
+    let r = h.resume.expect("resumes");
+    assert_eq!((r.client_id, r.seq), (first_id, 0));
     d.message(&welcome(), again);
     assert_eq!(d.sock.sent.iter().filter(|m| matches!(m, ClientMsg::Ack { seq: 9 })).count(), 0);
     assert_eq!(d.sock.sent.last(), Some(&ClientMsg::Presence(cursor(7.0))), "your presence once you're back");

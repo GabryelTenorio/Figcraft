@@ -61,13 +61,13 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   ordering and validation, client reconciliation, binary messages, randomized convergence tests over
   real commands), and live sessions run over the network (`crates/collab-net`: hosting from the
   app, invite links that open the app, document sync between apps, live cursors, selections,
-  avatars and follow, and the browser build joins), but undo isn't per person, a reconnect loses
-  offline edits, sessions are plain `ws://` (no TLS, so an https page can only join on the same
-  computer), and there are no share links or permissions (`docs/collab-protocol.md`).
+  avatars and follow, and the browser build joins) with per-person undo, refused edits rolled back
+  with a reason, and reconnects that resume and send what was made offline; but sessions are plain
+  `ws://` (no TLS, so an https page can only join on the same computer), and there are no share
+  links or permissions (`docs/collab-protocol.md`).
 - **Impact:** Figma's defining feature; most teams use it every day. Solo designers can work
   without it.
-- **Estimate:** 45–90 h: per-user undo, resuming after a reconnect, then sharing and
-  permissions and a standalone server with TLS.
+- **Estimate:** 45–90 h: sharing and permissions and a standalone server with TLS.
 
 ### 3. Nothing checked against real Figma files
 - **Missing:** a corpus of real documents (design systems, app screens, prototypes) imported and

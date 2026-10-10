@@ -234,3 +234,75 @@ pub enum Entry {
     /// An image by content hash (value: `{width, height, bytes}` with the encoded bytes in base64).
     Image(String),
 }
+
+/// One synced value a change writes: a node property, a document-level property or a
+/// document-level entry. Per-user undo tracks what a batch wrote by target.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Target {
+    Node(NodeId, Prop),
+    Doc(DocProp),
+    Entry(Entry),
+}
+
+impl Target {
+    /// What `change` writes (`None` for creations and deletions, which change whole nodes).
+    pub fn of(change: &Change) -> Option<Target> {
+        match change {
+            Change::Set { id, prop, .. } => Some(Target::Node(*id, *prop)),
+            Change::SetDoc { prop, .. } => Some(Target::Doc(*prop)),
+            Change::Put { entry, .. } | Change::Remove { entry } => Some(Target::Entry(entry.clone())),
+            Change::Create { .. } | Change::Delete { .. } => None,
+        }
+    }
+
+    /// The change that writes `value` here (`None`: an entry that isn't there, or no value for a
+    /// property, which writes nothing).
+    pub fn write(&self, value: Option<&Json>) -> Option<Change> {
+        match (self, value) {
+            (Target::Node(id, prop), Some(v)) => Some(Change::Set { id: *id, prop: *prop, value: v.clone() }),
+            (Target::Doc(prop), Some(v)) => Some(Change::SetDoc { prop: *prop, value: v.clone() }),
+            (Target::Entry(entry), Some(v)) => Some(Change::Put { entry: entry.clone(), value: v.clone() }),
+            (Target::Entry(entry), None) => Some(Change::Remove { entry: entry.clone() }),
+            (Target::Node(..) | Target::Doc(_), None) => None,
+        }
+    }
+}
+
+/// A document-level list that syncs per entry and as a whole (see [`DocProp`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Family {
+    Styles,
+    Comments,
+    Collections,
+    Variables,
+}
+
+impl DocProp {
+    /// The list this property is the whole of (`Ok`) or the order of (`Err`).
+    pub(crate) fn list(self) -> Option<Result<Family, Family>> {
+        Some(match self {
+            DocProp::Styles => Ok(Family::Styles),
+            DocProp::StyleOrder => Err(Family::Styles),
+            DocProp::Comments => Ok(Family::Comments),
+            DocProp::CommentOrder => Err(Family::Comments),
+            DocProp::Collections => Ok(Family::Collections),
+            DocProp::CollectionOrder => Err(Family::Collections),
+            DocProp::Variables => Ok(Family::Variables),
+            DocProp::VariableOrder => Err(Family::Variables),
+            _ => return None,
+        })
+    }
+}
+
+impl Entry {
+    /// The list this entry belongs to (dev snapshots and images aren't ordered lists).
+    pub(crate) fn list(&self) -> Option<Family> {
+        match self {
+            Entry::Style(_) => Some(Family::Styles),
+            Entry::Comment(_) => Some(Family::Comments),
+            Entry::Collection(_) => Some(Family::Collections),
+            Entry::Variable(_) => Some(Family::Variables),
+            Entry::DevSnapshot(_) | Entry::Image(_) => None,
+        }
+    }
+}
