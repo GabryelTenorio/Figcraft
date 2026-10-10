@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::icons::{self, Icon};
-use crate::right::{block, common, menu_item, row};
+use crate::right::{block, common, menu_item, menu_popup, row};
 use crate::theme::{ACCENT, Tokens, regular};
 use crate::widgets::{self, FIELD_H, Lead};
 
@@ -155,7 +155,7 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
             }
             let current = first.map(|n| if horizontal { n.width } else { n.height }).unwrap_or(0.0);
             let ids2 = ids.clone();
-            egui::Popup::menu(&resp).width(200.0).show(|ui| {
+            menu_popup(&resp).width(200.0).show(|ui| {
                 let mut opts = vec![("Fixed", "fixed")];
                 if has_al || is_text {
                     opts.push(("Hug contents", "hug"));
@@ -312,7 +312,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             app.field(ids, "gap", e, |v| json!(v));
             ui.add_space(8.0);
             let resp = widgets::dropdown(ui, if auto { "Auto gap" } else { "Fixed gap" }, 96.0, None);
-            egui::Popup::menu(&resp).show(|ui| {
+            menu_popup(&resp).show(|ui| {
                 if menu_item(ui, "Fixed", "") {
                     app.set_props(ids, json!({"mainAlign": "min"}));
                     ui.close();
@@ -434,7 +434,7 @@ fn tracks(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId]) {
                     Sizing::Fill => ("Fill", Icon::FillContainer),
                 };
                 let resp = widgets::dropdown(ui, label, col, Some(icon));
-                egui::Popup::menu(&resp).show(|ui| {
+                menu_popup(&resp).show(|ui| {
                     for (l, v) in [("Fixed", "fixed"), ("Hug contents", "hug"), ("Fill (fr)", "fill")] {
                         if menu_item(ui, l, "") {
                             app.run("layout.setTrack", with(v, None));

@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 use crate::FigApp;
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
+use crate::widgets;
 
 /// A page in the player's history (what Back returns to, and how).
 #[derive(Clone, Debug)]
@@ -179,13 +180,20 @@ pub struct PresentView {
     pub device_frame: bool,
     /// Show the comments on the presented frame (Shift+C).
     pub comments: bool,
+    /// A click where nothing reacts flashes the hotspots (the layers with interactions).
+    pub hotspot_hints: bool,
+    /// A panel beside the prototype shows the Inspect properties of the layer under the pointer.
+    pub inspect: bool,
 }
 
 impl Default for PresentView {
     fn default() -> Self {
-        Self { scale: PresentScale::Fit, device_frame: true, comments: false }
+        Self { scale: PresentScale::Fit, device_frame: true, comments: false, hotspot_hints: true, inspect: false }
     }
 }
+
+/// How long the hotspot hints take to fade out (seconds).
+const FLASH_SECS: f64 = 0.5;
 
 /// A frame scrolling from one offset to another.
 type ScrollMove = (NodeId, (f64, f64), (f64, f64));
@@ -249,6 +257,12 @@ pub struct Presenter {
     press: Option<Pos2>,
     dragged: bool,
     flash_until: f64,
+    /// The active screen's hotspots as last laid out (screen rects).
+    hot: Vec<(NodeId, Rect)>,
+    /// The time of the last frame played.
+    clock: f64,
+    /// The layer the Inspect panel shows (the last one under the pointer).
+    inspected: Option<NodeId>,
     urls: Vec<String>,
     /// The editor's document as last copied (the player copies it again when it changes).
     source: Option<Arc<Document>>,
@@ -311,6 +325,9 @@ impl Presenter {
             press: None,
             dragged: false,
             flash_until: 0.0,
+            hot: Vec::new(),
+            clock: 0.0,
+            inspected: None,
             urls: Vec::new(),
             source: None,
             drag_scroll: None,
@@ -525,6 +542,11 @@ impl Presenter {
             "scale": self.view.scale.id(),
             "deviceFrame": self.view.device_frame,
             "comments": self.view.comments,
+            "hotspotHints": self.view.hotspot_hints,
+            "hotspots": self.hot.iter().map(|(id, r)| json!({"id": id, "rect": [r.min.x, r.min.y, r.max.x, r.max.y]})).collect::<Vec<_>>(),
+            "hotspotFlash": self.flash_until > self.clock,
+            "inspect": self.view.inspect,
+            "inspected": self.inspected,
             "deviceColor": doc.and_then(|d| page_settings(d, self.current).device_color()).map(|c| c.name),
             "responsive": self.fit.map(|f| [f.0, f.1]),
             "frameSize": doc.and_then(|d| d.node(self.current)).map(|n| [n.width, n.height]),
@@ -1269,43 +1291,14 @@ pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option
     Rect::from_min_size(pos2(x, y), size)
 }
 
-/// Layers with interactions under `root`, with their screen rects (clipped by frames that clip
-/// content and by `screen`), bottom-most first.
+/// The hotspots of the screen `root` (its visible layers with interactions, bottom-most first)
+/// placed on screen and clipped by `screen`.
 fn hotspots(doc: &Document, root: NodeId, place: &Place, screen: Rect) -> Vec<(NodeId, Rect)> {
-    let mut out = Vec::new();
-    let mut hidden: HashSet<NodeId> = HashSet::new();
-    for id in doc.subtree(root) {
-        let Some(n) = doc.node(id) else { continue };
-        if !n.visible || n.parent.is_some_and(|p| hidden.contains(&p)) {
-            hidden.insert(id);
-            continue;
-        }
-        if n.interactions.is_empty() {
-            continue;
-        }
-        let Some(b) = doc.world_bounds(id) else { continue };
-        let mut r = place.rect(b).intersect(screen);
-        let mut cur = n.parent;
-        if id != root {
-            while let Some(a) = cur {
-                if let Some(an) = doc.node(a)
-                    && an.clip
-                    && an.kind.is_frame_like()
-                    && let Some(ab) = doc.world_bounds(a)
-                {
-                    r = r.intersect(place.rect(ab));
-                }
-                if a == root {
-                    break;
-                }
-                cur = doc.node(a).and_then(|x| x.parent);
-            }
-        }
-        if r.is_positive() {
-            out.push((id, r));
-        }
-    }
-    out
+    figcraft_engine::proto_run::hotspots(doc, root)
+        .into_iter()
+        .map(|(id, b)| (id, place.rect(b).intersect(screen)))
+        .filter(|(_, r)| r.is_positive())
+        .collect()
 }
 
 /// The first interaction index on `id` whose trigger satisfies `want`.
@@ -1466,6 +1459,8 @@ enum BarAction {
     Responsive(bool),
     /// Show or hide the comments on the presented frame.
     Comments,
+    /// Show or hide the Inspect panel.
+    Inspect,
 }
 
 /// The full-window presenter (while `app.ui.present` is set). Escape or Close ends it.
@@ -1482,11 +1477,21 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     if !typing && ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::C)) {
         action = Some(BarAction::Comments);
     }
+    if pres.view.inspect {
+        let t = Tokens::get(&ctx);
+        egui::Panel::right("present_inspect")
+            .resizable(false)
+            .exact_size(INSPECT_W)
+            .frame(egui::Frame::NONE.fill(t.panel).stroke(Stroke::new(1.0, t.border)))
+            .show(ui, |ui| inspect_panel(app, ui, &pres));
+    }
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
         action = player(&mut pres, ui, ui.max_rect(), now, Chrome { keys: !typing, ..FULL }).or(action);
     });
-    if action == Some(BarAction::Comments) {
-        pres.view.comments = !pres.view.comments;
+    match action {
+        Some(BarAction::Comments) => pres.view.comments = !pres.view.comments,
+        Some(BarAction::Inspect) => pres.view.inspect = !pres.view.inspect,
+        _ => {}
     }
     if pres.view.comments
         && let Some((frame, place, clip)) = pres.shown
@@ -1507,6 +1512,43 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         return;
     }
     app.ui.present = Some(pres);
+}
+
+/// The width of the presenter's Inspect panel.
+const INSPECT_W: f32 = 280.0;
+
+/// The presenter's Inspect panel: the inspected layer's properties, as in the Inspect tab.
+fn inspect_panel(app: &mut FigApp, ui: &mut Ui, pres: &Presenter) {
+    let t = Tokens::get(ui.ctx());
+    let found = pres.inspected.zip(pres.doc.as_ref()).and_then(|(id, doc)| doc.node(id).map(|n| (id, doc, n.name.clone())));
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        let Some((id, doc, name)) = found else {
+            widgets::section_header(ui, "Inspect", &[], false);
+            crate::right::row(ui, 32.0, |ui| widgets::label(ui, "Hover a layer to see its properties", t.text_secondary));
+            return;
+        };
+        widgets::section_header(ui, &name, &[], false);
+        for section in figcraft_engine::devinspect::properties(doc, id) {
+            crate::right::inspect_section(app, ui, &section);
+        }
+    });
+}
+
+/// The top-most visible layer of `root` (it included) under the screen point `q`.
+fn layer_at(doc: &Document, root: NodeId, place: &Place, q: Pos2) -> Option<NodeId> {
+    let mut hidden: HashSet<NodeId> = HashSet::new();
+    let mut hit = None;
+    for id in doc.subtree(root) {
+        let Some(n) = doc.node(id) else { continue };
+        if !n.visible || n.parent.is_some_and(|p| hidden.contains(&p)) {
+            hidden.insert(id);
+            continue;
+        }
+        if doc.world_bounds(id).is_some_and(|b| place.rect(b).contains(q)) {
+            hit = Some(id);
+        }
+    }
+    hit
 }
 
 /// The prototype preview pane: the player in a floating, resizable window over the canvas. It
@@ -1714,6 +1756,7 @@ fn corner_masks(s: Rect, r: f32, color: Color32) -> egui::Shape {
 /// Returns what the bar asked for (restarting is done here).
 fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) -> Option<BarAction> {
     let ctx = ui.ctx().clone();
+    p.clock = now;
     let bar = Rect::from_min_size(rect.min, vec2(rect.width(), chrome.bar_h));
     let area = Rect::from_min_max(pos2(rect.min.x, bar.max.y), rect.max);
     let bg = crate::theme::doc_c32(ui.ctx(), p.doc.as_ref().map(|d| page_settings(d, p.current)).unwrap_or_default().background);
@@ -1764,6 +1807,9 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         painter.rect_filled(l.screen, CornerRadius::ZERO, bg);
     }
     draw(p, &painter, &ctx, &l, now);
+    if p.view.inspect && !chrome.pane {
+        inspect_hover(p, &painter, &ctx, &l, area);
+    }
     if let Some((d, _)) = body {
         device_glass(&painter, d.name, l.screen, l.landscape);
     }
@@ -1784,6 +1830,24 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(d.clamp(0.0, 60.0)));
     }
     action
+}
+
+/// Inspecting: the layer under the pointer becomes the inspected one; it is outlined.
+fn inspect_hover(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Layout, area: Rect) {
+    let (root, place, clip) = match l.overlays.last() {
+        Some((id, pl, _)) => (*id, *pl, l.screen),
+        None => (p.current, l.place, l.clip),
+    };
+    if let Some(q) = ctx.pointer_hover_pos().filter(|q| area.contains(*q) && clip.contains(*q))
+        && let Some(id) = layer_at(&l.disp, root, &place, q)
+    {
+        p.inspected = Some(id);
+    }
+    if let Some(id) = p.inspected.filter(|id| *id == root || l.disp.is_ancestor(root, *id))
+        && let Some(b) = l.disp.world_bounds(id)
+    {
+        painter.with_clip_rect(clip).rect_stroke(place.rect(b), CornerRadius::ZERO, Stroke::new(1.5, ACCENT), StrokeKind::Outside);
+    }
 }
 
 /// The bar above the prototype: the flow picker and the frame's name on the left, the buttons on
@@ -1818,6 +1882,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             (BarAction::Restart, "Restart", Icon::Reset),
             (BarAction::Options, "Options", Icon::Dots),
             (BarAction::Comments, "Comments", Icon::Comment),
+            (BarAction::Inspect, "Inspect", Icon::Code),
         ]
     };
     let mut x = bar.max.x - if chrome.pane { 6.0 } else { 8.0 };
@@ -1829,7 +1894,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         if chrome.pane {
             resp = resp.on_hover_text(*label);
         }
-        let on = *act == BarAction::Comments && p.view.comments;
+        let on = (*act == BarAction::Comments && p.view.comments) || (*act == BarAction::Inspect && p.view.inspect);
         if on {
             ui.painter().rect_filled(br, CornerRadius::same(5), ACCENT);
         } else if resp.hovered() {
@@ -1838,13 +1903,16 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
         if *act == BarAction::Comments {
             resp = resp.on_hover_text("Show comments (Shift+C)");
         }
+        if *act == BarAction::Inspect {
+            resp = resp.on_hover_text("Inspect the layer under the pointer: size, colours, typography");
+        }
         if chrome.pane {
             icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);
         } else {
             ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
         }
         if *act == BarAction::Options {
-            let menu = egui::Popup::menu(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
+            let menu = crate::right::menu_popup(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
             action = action.or(menu.and_then(|m| m.inner));
         } else if resp.clicked() {
             action = Some(*act);
@@ -1866,7 +1934,7 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             left.rect_filled(fr, CornerRadius::same(5), hover);
         }
         left.galley(pos2(fr.min.x + 8.0, fr.center().y - galley.size().y / 2.0), galley, text);
-        egui::Popup::menu(&resp).width(240.0).show(|ui| {
+        crate::right::menu_popup(&resp).width(240.0).show(|ui| {
             let t = Tokens::get(ui.ctx());
             for f in &flows {
                 if crate::right::menu_check(ui, f.start == p.start, &f.name, "") {
@@ -1891,7 +1959,8 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
 
 /// The full-window presenter's options menu: how the prototype is sized (Z cycles them), whether
 /// the frame is responsive (a file setting: the frame takes the window's size, or on a device the
-/// screen's, instead of being scaled or shown at a fixed size), the device's body, restart (R).
+/// screen's, instead of being scaled or shown at a fixed size), the device's body, hotspot hints,
+/// restart (R).
 fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsive: bool, now: f64) -> Option<BarAction> {
     use crate::right::menu_check;
     let mut action = None;
@@ -1927,6 +1996,10 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsi
     }
     if device.is_some_and(|d| !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, "Show device frame", "") {
         p.view.device_frame = !p.view.device_frame;
+        ui.close();
+    }
+    if menu_check(ui, p.view.hotspot_hints, "Show hotspot hints", "") {
+        p.view.hotspot_hints = !p.view.hotspot_hints;
         ui.close();
     }
     if menu_check(ui, false, "Restart", "R") {
@@ -2004,6 +2077,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     };
     let doc = &l.disp;
     let hot = hotspots(doc, root, &place, clip);
+    p.hot.clone_from(&hot);
     // "While hovering / pressing" reverts.
     if let Some(tmp) = &p.temp {
         let leave = if tmp.press { released || !down } else { pos.is_none_or(|q| !tmp.rect.contains(q)) };
@@ -2168,7 +2242,9 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
                 return;
             }
             // Clicking where nothing reacts flashes the hotspots.
-            p.flash_until = now + 0.5;
+            if p.view.hotspot_hints {
+                p.flash_until = now + FLASH_SECS;
+            }
         }
     }
     // Keys.
@@ -2374,10 +2450,10 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
             Some((id, pl, _)) => (*id, *pl, l.screen),
             None => (p.current, l.place, l.clip),
         };
-        let a = ((p.flash_until - now) / 0.5) as f32;
+        let a = ((p.flash_until - now) / FLASH_SECS) as f32;
         for (_, r) in hotspots(&l.disp, root, &place, clip) {
-            painter.rect_filled(r, CornerRadius::same(2), ACCENT.gamma_multiply(0.25 * a));
-            painter.rect_stroke(r, CornerRadius::same(2), Stroke::new(1.5, ACCENT.gamma_multiply(a)), StrokeKind::Outside);
+            painter.rect_filled(r, CornerRadius::same(4), ACCENT.gamma_multiply(0.25 * a));
+            painter.rect_stroke(r, CornerRadius::same(4), Stroke::new(1.5, ACCENT.gamma_multiply(a)), StrokeKind::Outside);
         }
         ctx.request_repaint();
     }

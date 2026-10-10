@@ -48,9 +48,11 @@ fn mods_match(want: Modifiers, got: Modifiers) -> bool {
     want.shift == got.shift && want.command == got.command && want.alt == got.alt && (want.ctrl == got.ctrl || got.mac_cmd)
 }
 
-pub fn handle(app: &mut FigApp, ctx: &Context) {
-    // Text fields in panels own the keyboard.
-    if ctx.memory(|m| m.focused().is_some()) || app.ui.palette.is_some() {
+/// Run the shortcuts this frame's keys press. `typing`: a field had the keyboard when the frame
+/// began.
+pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
+    // Text fields in panels own the keyboard (also the key that ends their editing).
+    if typing || ctx.memory(|m| m.focused().is_some()) || app.ui.palette.is_some() {
         return;
     }
     let events: Vec<Event> = ctx.input(|i| i.events.clone());

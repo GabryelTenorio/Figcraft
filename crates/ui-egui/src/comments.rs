@@ -684,7 +684,7 @@ fn message(
                     let menu = Id::new(("comment_msg_more_menu", id, i));
                     let more =
                         hover_button(ui, Id::new(("comment_msg_more", id, i)), Icon::Dots, hovered || egui::Popup::is_id_open(&ctx, menu), "More");
-                    egui::Popup::menu(&more).id(menu).show(|ui| {
+                    crate::right::menu_popup(&more).id(menu).show(|ui| {
                         if crate::right::menu_item(ui, "Edit", "") {
                             *act = Some(Act::Edit(i, m.text.clone()));
                             ui.close();
@@ -703,7 +703,7 @@ fn message(
                     hovered || egui::Popup::is_id_open(&ctx, menu),
                     "Add reaction",
                 );
-                egui::Popup::menu(&react).id(menu).show(|ui| {
+                crate::right::menu_popup(&react).id(menu).show(|ui| {
                     ui.horizontal(|ui| {
                         for e in REACTIONS {
                             let on = m.reacted(e, cx.me);
@@ -901,7 +901,7 @@ pub fn thread(app: &mut FigApp, ctx: &egui::Context, id: u64, anchor: Pos2, boun
                         act = Some(Act::Close);
                     }
                     let more = icons::button(ui, Icon::Dots, 24.0, false, "More");
-                    egui::Popup::menu(&more).show(|ui| {
+                    crate::right::menu_popup(&more).show(|ui| {
                         if crate::right::menu_item(ui, "Mark as unread", "") {
                             act = Some(Act::MarkUnread);
                             ui.close();
@@ -1033,7 +1033,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
             let menu = icons::button(ui, Icon::Adjust, 24.0, app.ui.comments.filter != Filter::Open, "Filter and sort");
-            egui::Popup::menu(&menu).width(200.0).show(|ui| {
+            crate::right::menu_popup(&menu).width(200.0).show(|ui| {
                 for f in Filter::ALL {
                     if crate::right::menu_check(ui, app.ui.comments.filter == f, f.label(), "") {
                         app.ui.comments.filter = f;

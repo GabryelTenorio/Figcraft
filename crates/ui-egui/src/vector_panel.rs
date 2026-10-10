@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::icons::Icon;
-use crate::right::{menu_item, row};
+use crate::right::{menu_item, menu_popup, row};
 use crate::widgets::{self, FieldEdit, Lead, PAD};
 
 /// Run a point command from a field: typed values are one step, scrubs one step when released.
@@ -116,7 +116,7 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
             HandleMirroring::AngleAndLength => "Mirror angle and length",
         };
         let resp = widgets::dropdown(ui, mirror.map(label).unwrap_or("Mixed"), col * 2.0 + 8.0, None);
-        egui::Popup::menu(&resp).show(|ui| {
+        menu_popup(&resp).show(|ui| {
             for m in [HandleMirroring::None, HandleMirroring::Angle, HandleMirroring::AngleAndLength] {
                 if menu_item(ui, label(m), "") {
                     app.run("vector.edit.mirroring", json!({"mode": m.id()}));

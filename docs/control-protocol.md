@@ -62,7 +62,8 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 
 ### `ui.inspect {}`
 
-UI state: panels and tabs, current tool, canvas rect, dialogs, view, timings (`frameMs`,
+UI state: panels and tabs, current tool (`tool`: its id, overlay hints and, for a selected
+ellipse, its arc handles `arcHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
 `renderMs`) and what the last canvas render had to do (`canvas.renderWork`: `full`, `partial` with
 the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype plays, `presenter`
 (full window) and `preview` (the preview pane) hold the player's state: the `current` frame and its
@@ -71,8 +72,12 @@ the `pixels` re-rendered after a pan or an edit, or `reused`). While a prototype
 its screen shows, the presented frame's `frameSize` and, for a responsive prototype, the screen it
 was resized to (`responsive`: `[w, h]`, else `null`), the size option (`scale`:
 `fit|fitWidth|fill|actual`, `deviceFrame`), the `zoom` it shows at, how
-far the view is panned (`pan`, `panRange`) and whether a scroll is still coasting (`flinging`)
-(`null` when nothing plays). `presentOptions` holds the options the next presentation starts with.
+far the view is panned (`pan`, `panRange`), whether a scroll is still coasting (`flinging`), the
+active screen's `hotspots` (`[{id, rect: [x0, y0, x1, y1]}]` in window points, bottom-most first),
+whether a click where nothing reacts flashes them (`hotspotHints`) and they are flashing now
+(`hotspotFlash`), and whether the Inspect panel shows (`inspect`) with the layer it shows
+(`inspected`) (`null` when nothing plays). `presentOptions` holds the options the next presentation
+starts with (`scale`, `deviceFrame`, `comments`, `hotspotHints`, `inspect`).
 `textPreview` is true while a live text preview shows on the canvas (a hovered text style or named
 instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 

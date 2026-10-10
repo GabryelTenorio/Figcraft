@@ -88,7 +88,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Vectors without compromise</h3>
-      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes, per-side strokes and variable width strokes (width profile presets, and a Variable width tool that drags width points along the path). Rectangles with smooth (squircle) corners, polygons, stars and arcs.
+      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes, per-side strokes and variable width strokes (width profile presets, and a Variable width tool that drags width points along the path). Rectangles with smooth (squircle) corners, polygons, stars, and arcs and rings shaped with on-canvas sweep, start and ratio handles.
     </td>
     <td width="50%" valign="top">
       <h3>Paints and effects</h3>
@@ -102,7 +102,7 @@
     </td>
     <td width="50%" valign="top">
       <h3>Prototype and hand off</h3>
-      Connections, triggers, actions and Smart Animate-style transitions, flows, a presentation view with device frames and a live preview pane. Alt to measure distances and padding on the canvas, Inspect mode with measurements, annotations, a ready-for-dev list and code (CSS, HTML, React, SwiftUI, Compose) where components take their properties as parameters, comment threads pinned to frames (replies, @mentions, reactions, read state) and named version history. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
+      Connections, triggers, actions and Smart Animate-style transitions, variables with conditionals (if / else if / else built in the interaction editor, expressions like <code>count + 1</code>), flows, a presentation view with device frames, hotspot hints and an Inspect panel, and a live preview pane. Alt to measure distances and padding on the canvas, Inspect mode with measurements, annotations, a ready-for-dev list and code (CSS, HTML, React, SwiftUI, Compose) where components take their properties as parameters, comment threads pinned to frames (replies, @mentions, reactions, read state) and named version history. Export any layer at any scale to PNG, JPG, WebP, SVG or PDF.
     </td>
   </tr>
 </table>

@@ -148,7 +148,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().circle_filled(hr.center() + vec2(0.0, 1.0), 17.0, Color32::from_black_alpha(20));
     ui.painter().circle_filled(hr.center(), 16.0, t.panel);
     ui.painter().text(hr.center(), Align2::CENTER_CENTER, "?", crate::theme::regular(15.0), t.text);
-    egui::Popup::menu(&hresp).show(|ui| {
+    crate::right::menu_popup(&hresp).show(|ui| {
         for (l, c) in [("Keyboard shortcuts", "help.shortcuts"), ("Help page", "help.page"), ("About FigCraft", "help.about")] {
             if crate::right::menu_item(ui, l, figcraft_engine::catalog::shortcut(c).unwrap_or("")) {
                 app.run(c, json!({}));

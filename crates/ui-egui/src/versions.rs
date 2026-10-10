@@ -375,8 +375,8 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<A
             }
         }
     };
-    egui::Popup::menu(&more).show(&mut menu);
-    egui::Popup::context_menu(&resp).show(&mut menu);
+    crate::right::menu_popup(&more).show(&mut menu);
+    crate::right::context_popup(&resp).show(&mut menu);
     if resp.double_clicked() {
         out = Some(Action::Edit(row.id.clone()));
     } else if resp.clicked() && !previewing && out.is_none() {

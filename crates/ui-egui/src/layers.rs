@@ -227,7 +227,7 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
             app.ui.rename_page = Some((id, name.clone()));
             ui.memory_mut(|m| m.request_focus(Id::new(("pagename", id)).with("te")));
         }
-        resp.context_menu(|ui| {
+        crate::right::context_popup(&resp).show(|ui| {
             if ui.button("Rename page").clicked() {
                 app.ui.rename_page = Some((id, name.clone()));
                 ui.close();

@@ -9,6 +9,7 @@
 
 pub mod al_keys;
 pub mod annotations;
+pub mod arc_handles;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -946,6 +947,8 @@ mod al_nesting_tests;
 #[cfg(test)]
 mod annotations_tests;
 #[cfg(test)]
+mod arc_handles_tests;
+#[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
@@ -981,6 +984,8 @@ mod paint_tests;
 mod pixel_preview_tests;
 #[cfg(test)]
 mod progressive_blur_tests;
+#[cfg(test)]
+mod proto_conditional_tests;
 #[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
