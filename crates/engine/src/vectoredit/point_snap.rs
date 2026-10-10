@@ -26,7 +26,8 @@ const MAX_MOVING: usize = 256;
 /// dragged; their segments' midpoints move too), the points and segment midpoints of the other
 /// visible vectors on `page`, the layer targets around it and `extra` page points.
 pub fn targets(doc: &Document, page: NodeId, edited: Option<NodeId>, moving: &[usize], extra: &[Point]) -> Targets {
-    let mut t = Targets::gather(doc, page, edited.as_slice());
+    // Points are snapped on the page.
+    let mut t = Targets::gather_in(doc, page, edited.as_slice(), figcraft_geom::Affine::IDENTITY);
     let mut budget = MAX_POINTS;
     for p in extra.iter().take(budget) {
         t.add_point(*p);

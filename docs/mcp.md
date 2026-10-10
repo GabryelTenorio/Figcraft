@@ -476,7 +476,10 @@ first, the last one is on top (the Design panel lists them the other way round, 
 `guide.remove {index, …}` and `guide.clear {…}` edit the guides of the current page, another
 `page`, or a `frame` (frames, components and instances). A frame's guides are in its own
 coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
-it. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's guide.
+it. On a rotated frame they run along its own axes, and the layers inside it snap to them (and to
+their siblings and the frame's edges) along those axes, keeping whole pixels in the frame's
+coordinates. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's
+guide, along the frame's axis nearer the ruler's.
 
 ### Measuring, the Scale tool, arc handles and selecting
 

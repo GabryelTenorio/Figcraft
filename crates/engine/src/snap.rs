@@ -3,9 +3,11 @@
 //! guide lines (with spacing labels) for the canvas to draw in red. Vector points also snap to
 //! other points (see `vectoredit::snap`); landing on one shows a marker (a zero-length guide).
 
-use figcraft_doc::{Document, NodeId, NodeKind};
-use figcraft_geom::{Point, Rect, Vec2};
+use figcraft_doc::{Document, NodeId};
+use figcraft_geom::{Affine, Point, Rect, Vec2, transform_rect_bbox};
 use serde::Serialize;
+
+use crate::guides;
 
 /// A guide line to draw: from (x0, y0) to (x1, y1) in page coordinates, with an optional label
 /// (a distance) at its middle; `dashed` marks a measurement's extension line.
@@ -42,13 +44,32 @@ pub struct Targets {
     pub boxes: Vec<Rect>,
     /// Points to land on exactly (see [`Targets::add_point`]).
     pub points: Vec<Point>,
+    /// Page ← snap space. The lines above are in snap space: the page's, or the moving layers'
+    /// parent frame's own when it is rotated, so that its edges, layout grids and guides (and the
+    /// siblings turned with it) run along the snap axes.
+    pub space: Affine,
+    /// The moving layers' box in snap space when gathered.
+    pub moving: Option<Rect>,
 }
 
 impl Targets {
     /// Gather snap lines from the siblings of `moving` (and the parent frame), page guides and
-    /// layout grids, excluding the moving nodes and their descendants.
+    /// layout grids, excluding the moving nodes and their descendants. Inside a rotated frame they
+    /// are gathered in its space.
     pub fn gather(doc: &Document, page: NodeId, moving: &[NodeId]) -> Targets {
-        let mut t = Targets::default();
+        let parent = parent_of(doc, page, moving);
+        let xf = doc.world_transform(parent);
+        let space = if parent != page && !guides::axis_aligned(xf) { xf } else { Affine::IDENTITY };
+        Self::gather_in(doc, page, moving, space)
+    }
+
+    /// [`Self::gather`] in snap space `space` (page ← snap space; the page's is the identity).
+    /// Lines that don't run along its axes are left out.
+    pub fn gather_in(doc: &Document, page: NodeId, moving: &[NodeId], space: Affine) -> Targets {
+        let to = space.inverse();
+        // A layer's box in snap space.
+        let bbox = |id: NodeId| doc.node(id).map(|n| transform_rect_bbox(to * doc.world_transform(id), n.local_rect())).filter(|b| b.is_finite());
+        let mut t = Targets { space, moving: moving.iter().filter_map(|m| bbox(*m)).reduce(|a, b| a.union(b)), ..Default::default() };
         let push = |r: Rect, t: &mut Targets| {
             for x in [r.x0, r.center().x, r.x1] {
                 t.xs.push((x, r.y0, r.y1));
@@ -58,10 +79,10 @@ impl Targets {
             }
             t.boxes.push(r);
         };
-        let parent = moving.first().and_then(|m| doc.node(*m)).and_then(|n| n.parent).unwrap_or(page);
+        let parent = parent_of(doc, page, moving);
         // The parent frame's own box (and its layout grids).
         if parent != page
-            && let Some(b) = doc.world_bounds(parent)
+            && let Some(b) = bbox(parent)
         {
             for x in [b.x0, b.center().x, b.x1] {
                 t.xs.push((x, b.y0, b.y1));
@@ -69,7 +90,7 @@ impl Targets {
             for y in [b.y0, b.center().y, b.y1] {
                 t.ys.push((y, b.x0, b.x1));
             }
-            let (gx, gy) = figcraft_layout::grid_snap_lines(doc, parent);
+            let (gx, gy) = figcraft_layout::grid_snap_lines_in(doc, parent, to * doc.world_transform(parent));
             for x in gx {
                 t.xs.push((x, b.y0, b.y1));
             }
@@ -83,33 +104,33 @@ impl Targets {
                 if moving.contains(c) || !doc.node(*c).is_some_and(|n| n.visible) {
                     continue;
                 }
-                if let Some(b) = doc.world_bounds(*c) {
+                if let Some(b) = bbox(*c) {
                     push(b, &mut t);
                 }
             }
         }
-        if let Some(NodeKind::Page { guides, .. }) = doc.node(page).map(|n| &n.kind) {
-            for g in guides {
-                if g.vertical {
-                    t.xs.push((g.offset, -1e7, 1e7));
-                } else {
-                    t.ys.push((g.offset, -1e7, 1e7));
+        // The guides of `owner` mapped into snap space by `m`, across `span` (the owner's box
+        // there; None: everywhere).
+        let lines = |owner: NodeId, m: Affine, span: Option<Rect>, t: &mut Targets| {
+            for g in doc.node(owner).map(|n| n.guides()).unwrap_or_default() {
+                match (guides::line_in(m, g.vertical, g.offset), span) {
+                    (Some((true, x)), Some(b)) => t.xs.push((x, b.y0, b.y1)),
+                    (Some((false, y)), Some(b)) => t.ys.push((y, b.x0, b.x1)),
+                    (Some((true, x)), None) => t.xs.push((x, -1e7, 1e7)),
+                    (Some((false, y)), None) => t.ys.push((y, -1e7, 1e7)),
+                    (None, _) => {}
                 }
             }
-        }
+        };
+        lines(page, to, None, &mut t);
         // The guides of the frames the moving layers are in, across each frame.
         let mut f = parent;
         for _ in 0..128 {
             let Some(n) = doc.node(f).filter(|_| f != page) else { break };
-            if let Some(b) = doc.world_bounds(f).filter(|_| !n.guides.is_empty()) {
-                let xf = doc.world_transform(f);
-                for g in &n.guides {
-                    if g.vertical {
-                        t.xs.push(((xf * Point::new(g.offset, 0.0)).x, b.y0, b.y1));
-                    } else {
-                        t.ys.push(((xf * Point::new(0.0, g.offset)).y, b.x0, b.x1));
-                    }
-                }
+            if !n.guides.is_empty()
+                && let Some(b) = bbox(f)
+            {
+                lines(f, to * doc.world_transform(f), Some(b), &mut t);
             }
             let Some(up) = n.parent else { break };
             f = up;
@@ -125,17 +146,62 @@ impl Targets {
         self.points.push(p);
     }
 
-    /// Snap a moving box: returns the (dx, dy) correction and guides to draw.
+    /// Snap a moving box `r` given in snap space: returns the correction (a page vector) and the
+    /// guides to draw.
     pub fn snap_rect(&self, r: Rect, threshold: f64) -> (f64, f64, Vec<Guide>) {
         let (xs, ys) = rect_spans(r);
         let (dx, dy, guides) = self.snap_spans(&xs, &ys, threshold);
-        (dx.unwrap_or(0.0), dy.unwrap_or(0.0), guides)
+        let d = self.to_page_vec(Vec2::new(dx.unwrap_or(0.0), dy.unwrap_or(0.0)));
+        (d.x, d.y, self.to_page(guides))
     }
 
-    /// Snap a single point (resize handles, drawing).
+    /// Snap the moving layers moved by page vector `d`: the correction to add to it (a page
+    /// vector) and the guides to draw.
+    pub fn snap_move(&self, d: Vec2, threshold: f64) -> (Vec2, Vec<Guide>) {
+        let Some(b) = self.moving else { return (Vec2::ZERO, Vec::new()) };
+        let (dx, dy, guides) = self.snap_rect(b + self.to_space_vec(d), threshold);
+        (Vec2::new(dx, dy), guides)
+    }
+
+    /// Page move `d` adjusted so that the moving layers' box keeps its origin on whole pixels of
+    /// the snap space (a rotated frame's own, inside one).
+    pub fn round_move(&self, d: Vec2) -> Vec2 {
+        let Some(b) = self.moving else { return d };
+        let l = self.to_space_vec(d);
+        self.to_page_vec(Vec2::new((b.x0 + l.x).round() - b.x0, (b.y0 + l.y).round() - b.y0))
+    }
+
+    /// Snap a single page point (resize handles, drawing): the correction (a page vector) and
+    /// the guides to draw.
     pub fn snap_point(&self, x: f64, y: f64, threshold: f64) -> (f64, f64, Vec<Guide>) {
-        let (dx, dy, guides) = self.snap_spans(&[(x, y, y)], &[(y, x, x)], threshold);
-        (dx.unwrap_or(0.0), dy.unwrap_or(0.0), guides)
+        let q = self.space.inverse() * Point::new(x, y);
+        let (dx, dy, guides) = self.snap_spans(&[(q.x, q.y, q.y)], &[(q.y, q.x, q.x)], threshold);
+        let d = self.to_page_vec(Vec2::new(dx.unwrap_or(0.0), dy.unwrap_or(0.0)));
+        (d.x, d.y, self.to_page(guides))
+    }
+
+    /// Page vector `v` in snap space.
+    fn to_space_vec(&self, v: Vec2) -> Vec2 {
+        linear(self.space.inverse(), v)
+    }
+
+    /// Snap-space vector `v` on the page.
+    fn to_page_vec(&self, v: Vec2) -> Vec2 {
+        linear(self.space, v)
+    }
+
+    /// Guides found in snap space, on the page.
+    fn to_page(&self, guides: Vec<Guide>) -> Vec<Guide> {
+        if self.space == Affine::IDENTITY {
+            return guides;
+        }
+        guides
+            .into_iter()
+            .map(|g| {
+                let (a, b) = (self.space * Point::new(g.x0, g.y0), self.space * Point::new(g.x1, g.y1));
+                Guide { x0: a.x, y0: a.y, x1: b.x, y1: b.y, ..g }
+            })
+            .collect()
     }
 
     /// Snap several moving points together (vector points): the correction on each axis (`None`
@@ -204,6 +270,17 @@ impl Targets {
         }
         out
     }
+}
+
+/// The parent of the moving layers (the first one's), or the page.
+fn parent_of(doc: &Document, page: NodeId, moving: &[NodeId]) -> NodeId {
+    moving.first().and_then(|m| doc.node(*m)).and_then(|n| n.parent).unwrap_or(page)
+}
+
+/// Vector `v` mapped by `m` (without its translation).
+fn linear(m: Affine, v: Vec2) -> Vec2 {
+    let [a, b, c, d, _, _] = m.as_coeffs();
+    Vec2::new(a * v.x + c * v.y, b * v.x + d * v.y)
 }
 
 /// A box's edges and centre lines as moving lines (see [`Targets::snap_spans`]).

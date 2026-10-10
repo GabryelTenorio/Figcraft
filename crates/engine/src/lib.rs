@@ -19,6 +19,7 @@ pub mod devinspect;
 pub mod distance;
 pub mod drop;
 pub mod guard;
+pub mod guides;
 pub mod inspect;
 pub mod library;
 pub mod measure;
@@ -992,6 +993,8 @@ mod proto_present_tests;
 mod proto_responsive_tests;
 #[cfg(test)]
 mod proto_run_tests;
+#[cfg(test)]
+mod rotated_guides_tests;
 #[cfg(test)]
 mod rotated_select_tests;
 #[cfg(test)]
