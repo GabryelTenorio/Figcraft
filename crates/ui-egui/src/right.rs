@@ -139,15 +139,23 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
             }
         }
         ui.separator();
-        for (label, cmd) in [
-            ("Pixel preview", "view.pixelPreview"),
-            ("Pixel grid", "view.pixelGrid"),
-            ("Snap to pixel grid", "view.snapPixel"),
-            ("Layout grids", "view.layoutGrids"),
-            ("Rulers", "view.rulers"),
-            ("Outlines", "view.outlines"),
-        ] {
-            if menu_item(ui, label, figcraft_engine::catalog::shortcut(cmd).unwrap_or("")) {
+        let Ok(v) = app.session.ds().map(|d| d.view.clone()) else { return };
+        for (label, scale) in [("Pixel preview 1x", 1u8), ("Pixel preview 2x", 2)] {
+            let on = v.pixel_preview && v.pixel_scale == scale;
+            if menu_check(ui, on, label, "") {
+                app.run("view.pixelPreview", json!({"on": !on, "scale": scale}));
+                ui.close();
+            }
+        }
+        let toggles: [(&str, &str, bool); 5] = [
+            ("Pixel grid", "view.pixelGrid", v.pixel_grid),
+            ("Snap to pixel grid", "view.snapPixel", v.snap_pixel),
+            ("Layout grids", "view.layoutGrids", v.layout_grids),
+            ("Rulers", "view.rulers", v.rulers),
+            ("Outlines", "view.outlines", v.outlines),
+        ];
+        for (label, cmd, on) in toggles {
+            if menu_check(ui, on, label, figcraft_engine::catalog::shortcut(cmd).unwrap_or("")) {
                 app.run(cmd, json!({}));
                 ui.close();
             }
