@@ -275,9 +275,10 @@ accepted batches: a value it changes was last written by its author (or after th
 seen sequence number), and every layer it deletes was created by its author or moved into the
 deleted layer after that. Random sessions of synthetic edits and of real engine commands, with
 undo, redo and dropped connections, converge with no violation (thousands of seeds were run while
-building it; an ignored test runs more). The engine's tests also cover a gesture staying one step
-while others' edits arrive mid-gesture, a group of commands syncing as one step, an undo right
-after an edit waiting for it, and a refused edit's toast.
+building it; an ignored test runs more). The engine's tests (its live session with a scripted
+link) also cover a gesture staying one step while others edit, a group of commands syncing as one
+step, an undo right after an edit waiting for it, a refused edit's toast, a dropped connection
+resuming with its offline edits, and leaving the session going back to snapshot undo.
 
 ## Presence
 
