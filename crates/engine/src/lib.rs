@@ -1060,6 +1060,8 @@ mod paint_reorder_tests;
 #[cfg(test)]
 mod paint_tests;
 #[cfg(test)]
+mod pdf_print_tests;
+#[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
 mod progressive_blur_tests;

@@ -133,7 +133,7 @@ Or in a project's `.mcp.json`:
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale \| size, path?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
+| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
@@ -521,6 +521,18 @@ noise and texture over the result.
   the layer: on the page in PDF, among the exported layers in SVG), layer blur, noise and texture
   in PDF; noise grains (an image over the vector layer), texture and progressive layer blur (the
   layer whole) in SVG, where uniform layer blur and shadows stay SVG filters.
+- **PDF for print:** a bleed grows each page by that much on every side and shows what lies past
+  the frame there (the frame's fills reach out to the bleed edge with gradients and images in
+  place, its children are clipped to the bleed instead of the frame, nothing is drawn past it);
+  a page of one frame is trimmed to the frame's box (its shadows go into the bleed). Crop marks
+  (at the trim's corners) and bleed marks (at the bleed's) are 0.25 pt hairlines 18 pt long,
+  starting 3 pt outside the bleed, in registration colour. MediaBox is the sheet, BleedBox the
+  trim grown by the bleed, TrimBox the frame. CMYK converts every colour (fills, strokes, text,
+  gradient stops, images and rasterised effects) from sRGB with `K = 1 − max(R, G, B)`,
+  `C = (1 − R − K) / (1 − K)` (M and Y alike), deterministic and profile-free: the file is
+  DeviceCMYK without an output intent, because embedding one needs a CMYK ICC profile and none
+  ships with FigCraft. Soft masks stay RGB (they aren't printed) and transparency groups blend in
+  RGB, as the PDF writer declares them.
 
 ### Paint, effect and layout grid lists
 

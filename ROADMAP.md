@@ -193,9 +193,15 @@ dimension measured side by side.
    PDF, the Export panel, `figcraft-cli export -o x.pdf`), vectors, gradients and strokes as
    vectors, real selectable text in subset fonts with clickable hyperlinks, images embedded once,
    opacity and blend modes, clip content, alpha/luminance/vector masks, shadows and layer and
-   background blurs as images; checked by rendering the PDFs back against PNG exports.
-   *Left:* .fig import (best effort), variable mode lookups in prototype expressions, PDF print
-   options (bleed, CMYK), SVG filters other than shadows and blurs (left out with a warning). 10–20 h.
+   background blurs as images; checked by rendering the PDFs back against PNG exports. PDF print
+   options in the Export panel (per PDF export setting), the Export dialog, `file.export`,
+   `file.exportLayers`, `file.exportFramesPdf` and `figcraft-cli export`: a bleed showing what lies
+   past the frame (its fills reach out, its children are clipped at the bleed), crop and bleed
+   marks outside it, MediaBox / BleedBox / TrimBox, and CMYK colour (a documented, deterministic
+   naive conversion; images and rasterised effects too).
+   *Left:* .fig import (best effort), variable mode lookups in prototype expressions, a CMYK
+   output intent (no CMYK ICC profile can ship in the repository), SVG filters other than shadows
+   and blurs (left out with a warning). 8–16 h.
 7. **Look & feel and interaction-fidelity pass**: *landed:* keyboard shortcuts audited against the
    public shortcut reference: one keymap (`figcraft_engine::keymap`) drives the menus, the canvas,
    the control channel and MCP, with macOS and Windows/Linux keys where they differ (mask, bring to
@@ -334,7 +340,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Components & variants | 9 | 79% | QA with real-world (not synthetic) libraries | 1 |
 | Styles & variables | 5 | 89% | variant properties and gradient stops bound to variables, REST import of bindings past the first paint and on layout grids, a colour picker for layout grid colours | 1 |
 | Prototyping | 6 | 89% | dragging actions to reorder them, QA against larger prototypes with conditionals | 2–4 |
-| Import/export | 6 | 66% | .fig import (best effort), variable-mode lookups in prototype expressions, PDF print options (bleed, CMYK), SVG filters beyond shadows and blurs and rotated repeating patterns | 10–20 |
+| Import/export | 6 | 71% | .fig import (best effort), variable-mode lookups in prototype expressions, SVG filters beyond shadows and blurs and rotated repeating patterns, a CMYK output intent for print PDFs (needs a CMYK ICC profile) | 8–16 |
 | Dev mode / inspect | 2 | 84% | changes since ready for dev (compare view), focus view on one frame, annotation categories, visual QA | 1–2 |
 | Comments, versions, misc | 3 | 55% | plugins (WASM), multiplayer | 8–14 |
 

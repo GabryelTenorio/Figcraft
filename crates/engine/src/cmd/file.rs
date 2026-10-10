@@ -31,14 +31,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`)}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
             false,
             export
         ),
         spec!(
             "file.exportLayers",
             "Export layers",
-            "{ids? (default the selection, else every layer on the page with export settings), dir? (folder to write into; else each file comes back as base64 `data`)}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
+            "{ids? (default the selection, else every layer on the page with export settings), dir? (folder to write into; else each file comes back as base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
             false,
             export_layers
         ),
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.exportFramesPdf",
             "Export frames to PDF",
-            "{path?, page? (page id, default the current page)}  every top-level frame in reading order, one PDF page each; returns base64 `data` without a path",
+            "{path?, page? (page id, default the current page), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}  every top-level frame in reading order, one PDF page each; returns base64 `data` without a path",
             false,
             export_frames_pdf
         ),
@@ -610,6 +610,11 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Encode `ids` (or the page) in `format` at `scale`.
 pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale: f64) -> Result<Vec<u8>> {
+    export_bytes_with(doc, ids, format, scale, &PrintSettings::default())
+}
+
+/// [`export_bytes`], PDFs with `print`'s bleed, marks and colour.
+pub fn export_bytes_with(doc: &Document, ids: &[NodeId], format: ExportFormat, scale: f64, print: &PrintSettings) -> Result<Vec<u8>> {
     if ids.is_empty() {
         return Err(EngineError::Disabled("file.export".into(), "nothing to export".into()));
     }
@@ -623,7 +628,7 @@ pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale:
             // Frames export one page each; anything else shares one page.
             let all_frames = ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
             let groups: Vec<Vec<NodeId>> = if all_frames { ids.iter().map(|i| vec![*i]).collect() } else { vec![super::edit::z_sorted(doc, ids)] };
-            pdf_bytes(doc, &groups)
+            pdf_bytes(doc, &groups, print)
         }
         _ => {
             let pix = if ids.len() == 1 {
@@ -663,7 +668,8 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         Some(size) => export_scale(doc, &ids, size),
         None => num_or(p, "scale", 1.0).clamp(0.01, ExportSize::MAX_SCALE),
     };
-    let bytes = export_bytes(doc, &ids, format, scale)?;
+    let print = print_param("file.export", p, PrintSettings::default())?;
+    let bytes = export_bytes_with(doc, &ids, format, scale, &print)?;
     match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
@@ -690,7 +696,37 @@ pub(super) fn export_setting(cmd: &str, mut e: ExportSetting, p: &Value) -> Resu
     if let Some(f) = string(p, "format") {
         e.format = ExportFormat::from_ext(&f).ok_or_else(|| bad(cmd, "format: png|jpg|svg|pdf|webp"))?;
     }
+    e.print = print_param(cmd, p, e.print)?;
     Ok(e)
+}
+
+/// Whether `p` sets any PDF print option.
+fn has_print_param(p: &Value) -> bool {
+    ["bleed", "cropMarks", "bleedMarks", "cmyk"].iter().any(|k| get(p, k).is_some_and(|v| !v.is_null()))
+}
+
+/// `base` with the PDF print options `p` sets: `bleed` (points, or a length like "3mm" or
+/// "0.125in"), `cropMarks`, `bleedMarks`, `cmyk`.
+pub(super) fn print_param(cmd: &str, p: &Value, mut base: PrintSettings) -> Result<PrintSettings> {
+    match get(p, "bleed") {
+        None | Some(Value::Null) => {}
+        Some(v) => {
+            let pt = match v {
+                Value::String(s) => PrintSettings::parse_length(s),
+                v => v.as_f64().filter(|n| n.is_finite() && *n >= 0.0),
+            };
+            base.bleed = pt
+                .filter(|b| *b <= PrintSettings::MAX_BLEED)
+                .ok_or_else(|| bad(cmd, "bleed: points, or a length like \"3mm\" or \"0.125in\" (up to 144 pt, 2 in)"))?;
+        }
+    }
+    for (key, slot) in [("cropMarks", &mut base.crop_marks), ("bleedMarks", &mut base.bleed_marks), ("cmyk", &mut base.cmyk)] {
+        match get(p, key) {
+            None | Some(Value::Null) => {}
+            Some(v) => *slot = bool_of(v).ok_or_else(|| bad(cmd, format!("{key}: true or false")))?,
+        }
+    }
+    Ok(base)
 }
 
 /// An export size passed as `size`: "2x", "512w", "512h", a number (scale) or `{by, value}`.
@@ -761,10 +797,12 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(cmd.into(), "no export settings (add one with export.add)".into()));
     }
     let dir = string(p, "dir");
+    // Print options passed here stand in for every PDF setting's own.
+    let print = has_print_param(p).then(|| print_param(cmd, p, PrintSettings::default())).transpose()?;
     let mut files = Vec::with_capacity(jobs.len());
     for job in &jobs {
         let scale = export_scale(doc, &[job.id], job.setting.size);
-        let bytes = export_bytes(doc, &[job.id], job.setting.format, scale)?;
+        let bytes = export_bytes_with(doc, &[job.id], job.setting.format, scale, print.as_ref().unwrap_or(&job.setting.print))?;
         let mut f = json!({"name": job.file, "id": job.id, "bytes": bytes.len()});
         match &dir {
             Some(d) => {
@@ -781,20 +819,20 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A PDF with one page per group of layers (an sRGB document), titled after the file.
-fn pdf_bytes(doc: &Document, groups: &[Vec<NodeId>]) -> Result<Vec<u8>> {
-    let opts = figcraft_pdf::PdfOptions { title: Some(doc.name.clone()), ..Default::default() };
+fn pdf_bytes(doc: &Document, groups: &[Vec<NodeId>], print: &PrintSettings) -> Result<Vec<u8>> {
+    let opts = figcraft_pdf::PdfOptions { title: Some(doc.name.clone()), print: *print, ..Default::default() };
     figcraft_pdf::export_groups(doc, groups, &opts).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// Every top-level frame of `page` (reading order) as one PDF page each, and the page count.
-pub fn frames_pdf(doc: &Document, page: NodeId) -> Result<(Vec<u8>, usize)> {
+pub fn frames_pdf(doc: &Document, page: NodeId, print: &PrintSettings) -> Result<(Vec<u8>, usize)> {
     let mut frames = doc.top_frames(page);
     frames.retain(|f| doc.node(*f).is_some_and(|n| n.visible));
     if frames.is_empty() {
         return Err(EngineError::Disabled("file.exportFramesPdf".into(), "the page has no visible frames".into()));
     }
     let groups: Vec<Vec<NodeId>> = frames.iter().map(|f| vec![*f]).collect();
-    Ok((pdf_bytes(&doc.in_srgb(), &groups)?, frames.len()))
+    Ok((pdf_bytes(&doc.in_srgb(), &groups, print)?, frames.len()))
 }
 
 /// Every top-level frame of a page (reading order), one PDF page each.
@@ -805,7 +843,8 @@ fn export_frames_pdf(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("file.exportFramesPdf", "`page` is not a page")),
         None => s.page()?,
     };
-    let (bytes, pages) = frames_pdf(doc, page)?;
+    let print = print_param("file.exportFramesPdf", p, PrintSettings::default())?;
+    let (bytes, pages) = frames_pdf(doc, page, &print)?;
     match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
