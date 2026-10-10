@@ -220,7 +220,12 @@ dimension measured side by side.
    renders in ~8 ms instead of ~50 ms. `.figcraft` at 50k layers saves in ~0.09 s instead of ~1 s
    and loads in ~0.16 s instead of ~0.86 s (JSON streamed to and from the document without a
    value tree, layer fields at their defaults left out: 63 → 22 MB of JSON, old files still
-   open). *Left:* a real-world file corpus, Windows/Linux/browser QA, accessibility. 30–50 h.
+   open). The retained canvas is held to a full render: a seeded random walk (edits, undo/redo,
+   pans and zooms over nested, rotated and clipping frames, groups, masks, booleans, auto layout,
+   effects, text, instances, variables and styles) checks every step, and found clip edges on a
+   pixel boundary letting a column through in some renders. Drags show live on the canvas (every
+   finished render is shown, not only the newest one asked for), and a button held still no
+   longer rebuilds the preview and re-renders every frame. *Left:* a real-world file corpus, Windows/Linux/browser QA, accessibility. 30–50 h.
 
 ### Where we're going
 
@@ -292,7 +297,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 
 | Area | Weight | Score | Remaining work | Hours |
 |---|---|---|---|---|
-| Canvas & navigation | 6 | 80% | visual QA at extreme zooms | 1 |
+| Canvas & navigation | 6 | 80% | frame labels along a rotated frame's top edge, visual QA at extreme zooms | 1 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
 | Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
 | Shapes & vector | 8 | 76% | live boolean editing, Design panel arc fields, shape builder on strokes and open paths, one-sided widths | 4–8 |

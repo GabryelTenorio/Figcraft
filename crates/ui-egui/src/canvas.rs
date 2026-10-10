@@ -18,7 +18,6 @@ pub struct CanvasState {
     texture: Option<egui::TextureHandle>,
     tex_view: Option<figcraft_render::View>,
     submitted: Option<JobKey>,
-    generation: u64,
     /// What the last canvas render had to do (shown by `ui.inspect`).
     pub render_work: Option<figcraft_render::Work>,
     dragging: bool,
@@ -38,7 +37,6 @@ impl Default for CanvasState {
             texture: None,
             tex_view: None,
             submitted: None,
-            generation: 0,
             render_work: None,
             dragging: false,
             space_pan: false,
@@ -141,9 +139,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     input(app, ui, &resp);
     app.sync_preedit();
     request_render(app, worker, ppp);
-    if let Some(done) = worker.poll()
-        && done.generation == app.canvas.generation
-    {
+    // Every finished render is shown, even when a newer one is already on its way: renders finish
+    // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
+    if let Some(done) = worker.poll() {
         // A pixel preview render is magnified with hard pixel edges.
         let filter = if app.session.ds().ok().and_then(pixel_preview) == Some(done.view.scale) {
             egui::TextureOptions::NEAREST
@@ -261,14 +259,12 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     if app.canvas.submitted.as_ref() == Some(&key) {
         return;
     }
-    app.canvas.generation += 1;
     let job = Job {
         doc,
         page: ds.page,
         view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
         outline: ds.view.outlines,
         skip: vec![],
-        generation: app.canvas.generation,
     };
     worker.submit(job);
     app.canvas.submitted = Some(key);

@@ -325,11 +325,19 @@ fn needs_layer(n: &Node) -> bool {
     n.opacity < 0.999 || !matches!(n.blend, BlendMode::Normal | BlendMode::PassThrough) || n.effects.iter().any(|e| e.visible)
 }
 
+/// `v` on the whole pixel that only float noise keeps it off: an edge on a pixel boundary comes out
+/// a hair either side of it depending on the view's origin, and rounding outwards would then
+/// take in a whole extra row or column in one render and not in another.
+fn snap_px(v: f64) -> f64 {
+    let r = v.round();
+    if (v - r).abs() < 1e-6 { r } else { v }
+}
+
 fn int_rect(r: Rect, limit: (u32, u32)) -> Option<IntRect> {
-    let x0 = r.x0.floor().max(0.0);
-    let y0 = r.y0.floor().max(0.0);
-    let x1 = r.x1.ceil().min(f64::from(limit.0));
-    let y1 = r.y1.ceil().min(f64::from(limit.1));
+    let x0 = snap_px(r.x0).floor().max(0.0);
+    let y0 = snap_px(r.y0).floor().max(0.0);
+    let x1 = snap_px(r.x1).ceil().min(f64::from(limit.0));
+    let y1 = snap_px(r.y1).ceil().min(f64::from(limit.1));
     if !(x1 > x0 && y1 > y0) {
         return None;
     }
