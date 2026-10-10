@@ -1772,8 +1772,8 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let sel = ds.selection.clone();
     let Some(first) = sel.first().copied() else {
         widgets::section_header(ui, "Inspect", &[], false);
-        row(ui, 32.0, |ui| widgets::label(ui, "Select a layer to see its properties and code", t.text_secondary));
-        row(ui, 32.0, |ui| widgets::label(ui, "Hover other layers to measure the distance", t.text_secondary));
+        widgets::note(ui, "Select a layer to see its properties and code", t.text_secondary);
+        widgets::note(ui, "Hover other layers to measure the distance", t.text_secondary);
         crate::dev_mode::ready_list(app, ui);
         return;
     };

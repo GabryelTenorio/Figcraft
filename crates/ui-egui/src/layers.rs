@@ -308,16 +308,22 @@ pub(crate) fn rows_for(ui: &Ui, doc: &Arc<Document>, page: NodeId, expanded: &BT
         let c = d.get_temp_mut_or_default::<RowCache>(Id::new("layer_rows"));
         let fresh = c.doc.as_ref().is_some_and(|d| Arc::ptr_eq(d, doc)) && c.page == Some(page) && c.expanded == ex && c.filter == filter;
         if !fresh {
-            let mut rows = Vec::new();
-            if filter.is_empty() {
-                collect(doc, page, 0, false, expanded, &mut rows);
-            } else {
-                matching(doc, page, filter, &mut rows);
-            }
+            let rows = listed_rows(doc, page, expanded, filter);
             *c = RowCache { doc: Some(doc.clone()), page: Some(page), expanded: ex, filter: filter.to_string(), rows: Arc::new(rows) };
         }
         c.rows.clone()
     })
+}
+
+/// The rows to list, uncached: the expanded tree, or the layers matching `filter` (lowercase).
+fn listed_rows(doc: &Document, page: NodeId, expanded: &BTreeSet<NodeId>, filter: &str) -> Vec<Row> {
+    let mut rows = Vec::new();
+    if filter.is_empty() {
+        collect(doc, page, 0, false, expanded, &mut rows);
+    } else {
+        matching(doc, page, filter, &mut rows);
+    }
+    rows
 }
 
 /// Whether the children of `n` don't show on the canvas (given whether `n` itself doesn't).
@@ -367,12 +373,7 @@ pub(crate) fn key_nav(app: &mut FigApp, key: egui::Key, shift: bool) -> bool {
     let (doc, page, sel) = (ds.doc.clone(), ds.page, ds.selection.clone());
     // The rows as listed: the expanded tree, or the search results.
     let filter = app.ui.layer_filter.trim().to_lowercase();
-    let mut rows = Vec::new();
-    if filter.is_empty() {
-        collect(&doc, page, 0, false, &app.ui.expanded, &mut rows);
-    } else {
-        matching(&doc, page, &filter, &mut rows);
-    }
+    let rows = listed_rows(&doc, page, &app.ui.expanded, &filter);
     let select = |app: &mut FigApp, ids: Vec<NodeId>, anchor: NodeId| {
         app.ui.layer_anchor = Some(anchor);
         app.run("select.set", json!({"ids": ids}));
@@ -422,6 +423,61 @@ pub(crate) fn key_nav(app: &mut FigApp, key: egui::Key, shift: bool) -> bool {
         }
     }
     true
+}
+
+/// A layer being renamed in the layers panel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rename {
+    pub id: NodeId,
+    /// The rename just started: its field takes the keyboard (and its row scrolls into view) the
+    /// next time the panel draws.
+    pub start: bool,
+}
+
+/// Start renaming a layer in the layers panel (Cmd/Ctrl+R): the topmost listed of `ids`, which
+/// becomes the selection. Shows the panel and opens the rows above the layer.
+pub(crate) fn start_rename(app: &mut FigApp, ids: &[NodeId]) {
+    let Ok(ds) = app.session.ds() else { return };
+    let (doc, page) = (ds.doc.clone(), ds.page);
+    for a in ids.iter().flat_map(|i| doc.ancestors(*i)).filter(|a| *a != page) {
+        app.ui.expanded.insert(a);
+    }
+    let rows = listed_rows(&doc, page, &app.ui.expanded, &app.ui.layer_filter.trim().to_lowercase());
+    let Some(id) = rows.iter().map(|r| r.id).find(|r| ids.contains(r)) else { return };
+    app.ui.left_tab = LeftTab::File;
+    app.ui.left_collapsed = false;
+    rename_layer(app, id);
+}
+
+/// Rename `id` in its row, selected (the selection follows a rename that moves with Tab).
+fn rename_layer(app: &mut FigApp, id: NodeId) {
+    app.ui.rename = Some(Rename { id, start: true });
+    if app.session.selection() != [id] {
+        app.run("select.set", json!({"ids": [id]}));
+    }
+    app.ui.layer_anchor = Some(id);
+    // The rename scrolls its row into view itself.
+    app.ui.layers_seen_sel = app.session.selection();
+}
+
+fn rename_id(id: NodeId) -> Id {
+    Id::new(("rename", id))
+}
+
+/// Left edge of a row's contents (disclosure triangle) in the row's inner rect `rr`.
+fn row_x0(rr: Rect, depth: usize) -> f32 {
+    rr.min.x + 4.0 + depth as f32 * 16.0
+}
+
+/// The name field of the row being renamed (row rect `r`): the new name once committed. The
+/// rename ends when the field lets go of the keyboard.
+fn rename_field(app: &mut FigApp, ui: &mut Ui, id: NodeId, depth: usize, name: &str, r: Rect) -> Option<String> {
+    let rr = r.shrink2(vec2(8.0, 0.0));
+    let rect = Rect::from_min_max(pos2(row_x0(rr, depth) + 32.0, r.min.y + 4.0), pos2(rr.max.x - 4.0, r.max.y - 4.0));
+    let start = app.ui.rename.is_some_and(|x| x.start);
+    let (out, open) = crate::widgets::rename_field(ui, rename_id(id), name, rect, regular(11.0), start);
+    app.ui.rename = open.then_some(Rename { id, start: false });
+    out
 }
 
 /// Expand or collapse `id` and everything inside it (Alt-click on a disclosure triangle).
@@ -507,11 +563,28 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     }
     let filter = app.ui.layer_filter.trim().to_lowercase();
     let rows = rows_for(ui, &doc, page, &app.ui.expanded, &filter);
-    let scroll_to = if reveal { sel.first().and_then(|s| rows.iter().position(|r| r.id == *s)) } else { None };
+    let mut scroll_to = if reveal { sel.first().and_then(|s| rows.iter().position(|r| r.id == *s)) } else { None };
+    // A rename in progress ends when its layer isn't listed any more; Tab / Shift+Tab commit it and
+    // go on to the next / previous row.
+    let mut rename_row: Option<(usize, NodeId, usize)> = None;
+    let mut rename_next: Option<NodeId> = None;
+    if let Some(rn) = app.ui.rename {
+        match rows.iter().position(|r| r.id == rn.id) {
+            None => app.ui.rename = None,
+            Some(i) => {
+                if rn.start {
+                    scroll_to = Some(i);
+                } else if let Some(back) = crate::widgets::take_tab(ui) {
+                    ui.memory_mut(|m| m.surrender_focus(rename_id(rn.id).with("te")));
+                    rename_next = if back { i.checked_sub(1) } else { Some(i + 1) }.and_then(|j| rows.get(j)).map(|r| r.id);
+                }
+                rename_row = rows.get(i).map(|r| (i, r.id, r.depth));
+            }
+        }
+    }
     let mut clicked: Option<(NodeId, egui::Modifiers)> = None;
     let mut toggle: Option<NodeId> = None;
     let mut deep: Option<(NodeId, bool)> = None;
-    let mut rename_next: Option<(usize, bool)> = None;
     let mut vis: Option<NodeId> = None;
     let mut lock: Option<NodeId> = None;
     let mut rename_done: Option<(NodeId, String)> = None;
@@ -568,7 +641,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         // Stable widget ids for a row wherever the list is scrolled.
         band_ui.skip_ahead_auto_ids(first);
         let ui = &mut band_ui;
-        for (ri, row) in rows.iter().enumerate().take(last).skip(first) {
+        for row in rows.iter().take(last).skip(first) {
             let Some(n) = doc.node(row.id) else { continue };
             let (r, resp) = ui.allocate_exact_size(vec2(w, ROW), Sense::click_and_drag());
             let selected = sel.contains(&row.id);
@@ -590,7 +663,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             if resp.hovered() {
                 hovered_row = Some(row.id);
             }
-            let x0 = rr.min.x + 4.0 + row.depth as f32 * 16.0;
+            let x0 = row_x0(rr, row.depth);
             // Expand triangle.
             if row.has_kids {
                 let tri = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
@@ -616,14 +689,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             };
             icons::paint(ui.painter(), Rect::from_center_size(pos2(x0 + 22.0, r.center().y), vec2(14.0, 14.0)), icon, icon_col);
             let name_x = x0 + 36.0;
-            let editing = app.ui.rename.as_ref().is_some_and(|(i, _)| *i == row.id);
-            if editing {
-                // Tab / Shift+Tab: commit and rename the next / previous layer.
-                if let Some(back) = ui.input(|i| i.key_pressed(egui::Key::Tab).then_some(i.modifiers.shift)) {
-                    rename_next = Some((ri, back));
-                }
-                let tr = Rect::from_min_max(pos2(name_x - 4.0, r.min.y + 4.0), pos2(rr.max.x - 4.0, r.max.y - 4.0));
-                if let Some(new) = crate::widgets::text_field_inline(ui, Id::new(("rename", row.id)), &n.name, tr, regular(11.0)) {
+            if app.ui.rename.is_some_and(|rn| rn.id == row.id) {
+                if let Some(new) = rename_field(app, ui, row.id, row.depth, &n.name, r) {
                     rename_done = Some((row.id, new));
                 }
             } else {
@@ -669,8 +736,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 clicked = Some((row.id, ui.input(|i| i.modifiers)));
             }
             if resp.double_clicked() {
-                app.ui.rename = Some((row.id, n.name.clone()));
-                ui.memory_mut(|m| m.request_focus(Id::new(("rename", row.id)).with("te")));
+                app.ui.rename = Some(Rename { id: row.id, start: true });
             }
             if resp.secondary_clicked() {
                 if !sel.contains(&row.id) {
@@ -727,6 +793,15 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 if ui.input(|i| i.pointer.any_released()) {
                     drop = Some((row.id, zone));
                 }
+            }
+        }
+        // The field of a rename scrolled out of view stays (unseen), so the rename goes on.
+        if let Some((i, id, depth)) = rename_row.filter(|(i, ..)| !(first..last).contains(i))
+            && let Some(n) = doc.node(id)
+        {
+            let r = Rect::from_min_size(pos2(band.min.x, top + i as f32 * pitch), vec2(w, ROW));
+            if let Some(new) = rename_field(app, ui, id, depth, &n.name, r) {
+                rename_done = Some((id, new));
             }
         }
         // Empty space below clears selection.
@@ -787,20 +862,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         app.run("object.toggleLock", json!({"ids": [id]}));
     }
     if let Some((id, new)) = rename_done {
-        app.ui.rename = None;
         app.run("object.rename", json!({"ids": [id], "name": new}));
     }
-    if let Some((i, back)) = rename_next {
-        app.ui.rename = None;
-        let next = if back { i.checked_sub(1) } else { i.checked_add(1) }.and_then(|j| rows.get(j));
-        if let Some(row) = next
-            && let Some(n) = doc.node(row.id)
-        {
-            app.ui.rename = Some((row.id, n.name.clone()));
-            app.run("select.set", json!({"ids": [row.id]}));
-            app.ui.layers_seen_sel = app.session.selection();
-            ui.memory_mut(|m| m.request_focus(Id::new(("rename", row.id)).with("te")));
-        }
+    if let Some(id) = rename_next {
+        rename_layer(app, id);
     }
     if let Some((id, m)) = clicked {
         app.ui.layers_focus = true;

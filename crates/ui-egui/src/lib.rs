@@ -54,6 +54,8 @@ mod layers_drag_tests;
 #[cfg(test)]
 mod layers_keys_tests;
 #[cfg(test)]
+mod layers_rename_tests;
+#[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
 mod perf_tests;
@@ -146,7 +148,8 @@ pub struct UiState {
     pub left_tab: LeftTab,
     pub pages_open: bool,
     pub expanded: BTreeSet<NodeId>,
-    pub rename: Option<(NodeId, String)>,
+    /// The layer being renamed in the layers panel.
+    pub rename: Option<layers::Rename>,
     pub rename_page: Option<(NodeId, String)>,
     pub main_menu: bool,
     pub palette: Option<String>,
@@ -294,6 +297,8 @@ pub struct FigApp {
     fonts_installed: bool,
     /// System faces for scripts the built-in fonts lack were added (after the font scan).
     script_fonts: bool,
+    /// A field had the keyboard when the last frame ended.
+    field_focus: bool,
     /// Control-channel requests waiting for the next frame.
     pub control_queue: Vec<ControlRequest>,
     /// Input events from the control channel (`ui.input`) for the next frame's raw input.
@@ -310,6 +315,7 @@ impl FigApp {
             worker: None,
             fonts_installed: false,
             script_fonts: false,
+            field_focus: false,
             control_queue: Vec::new(),
             control_input: Vec::new(),
         }
@@ -433,6 +439,11 @@ impl FigApp {
                 "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
+                "layers.rename" => {
+                    let ids: Vec<NodeId> =
+                        r.data.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(figcraft_engine::params::id_of).collect();
+                    layers::start_rename(self, &ids);
+                }
                 "comment.open" => {
                     if let Some(id) = r.data.get("id").and_then(Value::as_u64) {
                         self.ui.comments.show(id);
@@ -545,8 +556,9 @@ impl FigApp {
         }
         let t = theme::Tokens::get(&ctx);
         // A field that had the keyboard when the frame began keeps its keys from the shortcuts
-        // even if it lets go during the frame (Enter commits it).
-        let typing = ctx.memory(|m| m.focused().is_some());
+        // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
+        // focus on Escape before the frame, which cancels the field's edit and nothing else).
+        let typing = std::mem::take(&mut self.field_focus) || ctx.memory(|m| m.focused().is_some());
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
@@ -613,6 +625,12 @@ impl FigApp {
         self.end_unwanted_text_preview(&ctx);
         dialogs::show(self, &ctx);
         self.toast_ui(&ctx);
+        // A rename started after the layers panel drew (Cmd/Ctrl+R, a double-click) opens its field
+        // next frame.
+        if self.ui.rename.is_some_and(|r| r.start) && !hidden && !self.ui.left_collapsed && self.ui.left_tab == LeftTab::File {
+            ctx.request_repaint();
+        }
+        self.field_focus = ctx.memory(|m| m.focused().is_some());
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;

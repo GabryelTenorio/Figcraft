@@ -710,6 +710,41 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     }
 }
 
+/// [`text_field_inline`] for a rename in progress: it takes the keyboard, with the whole name
+/// selected, when `start`, and the rename is over once it lets go. Returns the new name once
+/// committed and whether the rename goes on.
+pub fn rename_field(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egui::FontId, start: bool) -> (Option<String>, bool) {
+    let te_id = id.with("te");
+    if start {
+        ui.data_mut(|d| d.remove::<String>(id.with("buf")));
+        ui.memory_mut(|m| m.request_focus(te_id));
+    }
+    let out = text_field_inline(ui, id, value, rect, font);
+    let open = out.is_none() && ui.memory(|m| m.has_focus(te_id));
+    (out, open)
+}
+
+/// Tab (`Some(false)`) or Shift+Tab (`Some(true)`) pressed this frame, taken from the input and
+/// from egui's focus traversal, for a field that moves on to the next item itself.
+pub fn take_tab(ui: &Ui) -> Option<bool> {
+    let back = ui.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab) {
+            Some(true)
+        } else {
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Tab).then_some(false)
+        }
+    })?;
+    ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+    Some(back)
+}
+
+/// A short secondary note (an empty list's hint) that wraps inside the panel's side padding.
+pub fn note(ui: &mut Ui, text: &str, color: Color32) {
+    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(PAD as i8, 6)).show(ui, |ui| {
+        ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(color)).wrap());
+    });
+}
+
 /// A small grey label above a row of fields ("Position", "Dimensions"…). With two labels the
 /// second starts at the second field column.
 pub fn sublabels(ui: &mut Ui, a: &str, b: Option<&str>) {

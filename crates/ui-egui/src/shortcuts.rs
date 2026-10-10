@@ -44,8 +44,10 @@ fn key_of(k: &str) -> Option<Key> {
     })
 }
 
+/// Whether the modifiers held match a shortcut's. Off macOS, Ctrl is the command key (egui sets
+/// both `ctrl` and `command` for it), so a held command stands for Ctrl too.
 fn mods_match(want: Modifiers, got: Modifiers) -> bool {
-    want.shift == got.shift && want.command == got.command && want.alt == got.alt && (want.ctrl == got.ctrl || got.mac_cmd)
+    want.shift == got.shift && want.command == got.command && want.alt == got.alt && (want.ctrl == got.ctrl || got.mac_cmd || got.command)
 }
 
 /// Run the shortcuts this frame's keys press. `typing`: a field had the keyboard when the frame

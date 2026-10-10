@@ -270,7 +270,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 |---|---|---|---|---|
 | Canvas & navigation | 6 | 78% | rulers and guides on rotated frames, visual QA at extreme zooms | 1–2 |
 | Selection & transform | 8 | 78% | measuring and transform handles checked side by side, rotated groups and mixed selections QA | 2–4 |
-| Layers panel | 5 | 86% | Tab to rename the next layer, visual QA of long lists | 1 |
+| Layers panel | 5 | 88% | visual QA of long lists and deep trees | 0.5–1 |
 | Shapes & vector | 8 | 74% | live boolean editing, arc handles on canvas, shape builder on strokes and open paths, one-sided widths | 4–8 |
 | Paint | 7 | 78% | a wide-gamut canvas (egui draws sRGB, so Display P3 colours outside sRGB clip on screen; exports keep them), images' own embedded colour profiles (images are taken as sRGB) | 1–3 |
 | Strokes | 3 | 82% | stroke styles | 1–2 |
