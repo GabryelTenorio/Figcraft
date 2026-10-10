@@ -248,3 +248,16 @@ fn identifiers_are_escaped_and_unique() {
     assert!(s.execute("inspect.componentCode", &json!({"id": c, "language": "html"})).is_err());
     assert!(s.execute("inspect.componentCode", &json!({"id": 999_999})).is_err());
 }
+
+#[test]
+fn bound_variables_become_custom_properties() {
+    let mut s = Session::new();
+    let (c, _, _) = card(&mut s);
+    ex(&mut s, "variable.createCollection", json!({"name": "Tokens"}));
+    ex(&mut s, "variable.create", json!({"collection": "Tokens", "name": "Colors/Brand 500", "type": "color", "value": "#3366FF"}));
+    ex(&mut s, "variable.bind", json!({"ids": [c], "field": "fill", "variable": "Colors/Brand 500"}));
+    let css = code(&mut s, c, "css");
+    assert!(css.contains("background: var(--colors-brand-500, #3366FF);"), "{css}");
+    let react = code(&mut s, c, "react");
+    assert!(react.contains(":root {\n  --colors-brand-500: #3366FF;\n}"), "{react}");
+}
