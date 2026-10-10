@@ -9,7 +9,7 @@ continuous Claude Opus 5.5 agent work (including builds and the CI gate), for **
 **4–6 parallel agents** on disjoint crates. They are counted from the remaining work in the parity
 table below and updated as work lands.
 
-_Last updated: 2026-10-10 (day 2: vector editing, auto layout, text, components and assets, prototyping, interop, styles and variables, inspect code, panels polish)._
+_Last updated: 2026-10-10 (day 2: vector editing and the shape builder, auto layout nesting, bidi text, components, local libraries, variables editor and bindings, version previews and autosaves, prototype preview pane and device scrolling, REST prototypes and variables, export panel, Inspect properties/assets/HTML, canvas performance, panels polish)._
 
 ## Where we are
 
@@ -17,11 +17,11 @@ _Last updated: 2026-10-10 (day 2: vector editing, auto layout, text, components 
 |---|---|
 | Infrastructure (crates, command registry, undo, renderer, formats, control channel, tests) | **~70%** |
 | Look & feel vs the incumbent's 2026 UI (measured side by side) | **~65%** |
-| Menu/command breadth (`docs/parity.md`) | **97%** of the catalogued menu tree has a command |
-| Feature depth (weighted rubric below) | **~58%** |
-| Parity including interaction fidelity and hardening | **~35–40%** |
-| Time to **feature parity** | **~130–210 h** one agent · **~35–60 h** with 4–6 agents |
-| Time to **full parity** (feature parity + fidelity pass + hardening) | **~210–330 h** one agent · **~60–95 h** with 4–6 agents |
+| Menu/command breadth (`docs/parity.md`) | **97.5%** (196/201) of the catalogued menu tree has a command |
+| Feature depth (weighted rubric below) | **~68%** |
+| Parity including interaction fidelity and hardening | **~40–45%** |
+| Time to **feature parity** | **~80–130 h** one agent · **~25–40 h** with 4–6 agents |
+| Time to **full parity** (feature parity + fidelity pass + hardening) | **~160–250 h** one agent · **~45–75 h** with 4–6 agents |
 
 ## Honest assessment (2026-10-09)
 
@@ -51,7 +51,9 @@ dimension measured side by side.
    document only gets the committed text), variable fonts (axes and named instances read from the
    font, named instances as styles, Type settings ▸ Variable sliders, per-range axis values applied
    to shaping, outlines and PDF), range-aware Typography panel with "Mixed". Range fills in the Fill
-   section. *Left:* axis hover preview, right-to-left/bidi text, visual QA. 6–10 h.
+   section. Right-to-left and mixed-direction text (Unicode bidi: Arabic shaping, mirrored brackets,
+   caret, clicks and selection follow the runs; arrow keys move visually). *Left:* axis hover
+   preview, right-to-left layer names in the panels, visual QA. 5–8 h.
 3. **Auto layout depth**: *landed:* on-canvas padding/gap handles (also wrapped-row and grid
    column/row gaps, grid tracks outlined), min/max width/height (UI, Hug/Fill/Fixed, hugging text
    wraps at its max), ignore auto layout (absolute position) with constraints, text baseline
@@ -95,9 +97,9 @@ dimension measured side by side.
 7. **Look & feel and interaction-fidelity pass**: tool by tool, panel by panel against the incumbent
    (cursors, modifier keys, hover states, menus, popovers). 40–60 h.
 8. **Collaboration (local):** comments landed (pins, threads, resolve, panel). Version history
-   landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel);
-   previews on the canvas and autosave checkpoints are missing. Multiplayer and plugins are not
-   started. 25–55 h.
+   landed (named versions saved in the `.figcraft` file; restore, rename, duplicate, delete; panel;
+   view a version on the canvas read-only before restoring it; autosave checkpoints every 30
+   minutes, folded in the panel). Multiplayer and plugins are not started. 20–50 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -110,10 +112,10 @@ dimension measured side by side.
 
 ### Where we're going
 
-- **Next:** hardening and performance (9) with the fidelity pass (7); the rest of vector editing
-  (variable width) and components (nested overrides, libraries).
-- **Then:** interop depth (6: .fig best effort, paste from other apps), version history and
-  collaboration (8).
+- **Next:** the fidelity pass (7) and hardening (9: zoomed-out renders and save/load at 50k layers,
+  a real-file corpus); variable width strokes; component slots and nested override edge cases
+  (in progress); paint colour profiles and style picker polish (in progress).
+- **Then:** interop depth (6: PDF export, .fig best effort), plugins and collaboration (8).
 - **Alpha:** release builds on every push to `release` (packaging in progress), demo files, docs.
 
 ## Shipped so far
@@ -150,7 +152,7 @@ dimension measured side by side.
   transitions, light and dark themes, home screen, About/Preferences/shortcuts/variables dialogs.
 - **Automation:** desktop control channel (`--control <port>`: execute commands, inspect document/UI,
   synthetic pointer/keys/typing, menu invocation, screenshots, renders).
-- **Tests:** ~260 automated tests including junk-parameter sweeps over every command (and every vector-edit command while editing), importer fuzzing and render regressions.
+- **Tests:** ~390 automated tests including junk-parameter sweeps over every command (and every vector-edit command while editing), importer fuzzing and render regressions.
 
 ## Parity estimate (weighted rubric)
 
@@ -175,7 +177,7 @@ Scores by behaviour, 0–100%. Hours are what remains (one agent).
 | Dev mode / inspect | 2 | 78% | component code with properties as parameters, visual QA | 2–3 |
 | Comments, versions, misc | 3 | 45% | comment polish, plugins (WASM) | 9–15 |
 
-Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~59%).
+Weighted feature depth ≈ **68%** (self-graded, from the table).
 
 ## Milestones
 
@@ -183,10 +185,10 @@ Weighted feature depth ≈ **58%** (self-graded; the table's arithmetic gives ~5
 |---|---|
 | M0 Foundation: workspace, model, renderer, engine, UI shell, app, control channel | done (2026-10-09) |
 | M0.9 CLI + MCP, web build, release packaging, PDF export | in progress |
-| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~60% |
-| M2 Layout depth | ~60% |
-| M3 Components & styles depth | ~40% |
-| M4 Vector & text depth | ~45% |
-| M5 Prototype & present | ~30% |
-| M6 Interop & dev mode | ~35% |
+| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~70% |
+| M2 Layout depth | ~72% |
+| M3 Components & styles depth | ~62% |
+| M4 Vector & text depth | ~60% |
+| M5 Prototype & present | ~72% |
+| M6 Interop & dev mode | ~55% |
 | M7 Release (signed builds for all platforms, README screenshots) | started |
