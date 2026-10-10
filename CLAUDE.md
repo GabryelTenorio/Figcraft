@@ -12,8 +12,9 @@ follow its standards, and contribute reusable learnings back there. Never code: 
 code.
 
 ## Start every session here
-1. Read [`ROADMAP.md`](ROADMAP.md): where we stand, the prioritized gap list, and the time estimates.
-   Unless the user gives you a task, pick work from that list.
+1. Read [`ROADMAP.md`](ROADMAP.md) (stage, headline numbers, estimates) and
+   [`docs/gaps.md`](docs/gaps.md) (the ranked work list). Unless the user gives you a task, pick
+   work from the top of `docs/gaps.md`.
 2. Read `plan/STATUS.md` and `plan/execution-plan.md` (local, gitignored) if present; behaviour
    reference notes are in `plan/figma/*.md`.
 3. Orient → plan → implement + test → verify (screenshot) → record (ROADMAP, devlog) → commit.
@@ -103,9 +104,13 @@ to `main`.
   write manifests atomically, delete your target dir when done (disk is limited).
 
 ## Roadmap
-`ROADMAP.md` (committed) is the shared picture: status by dimension, the gap list, milestones, the
-parity table and time-to-parity estimates. When a task lands, update it in the same commit. Grade by
-behaviour against the incumbent, not by whether a menu item exists; err low.
+Progress docs follow craftrules `standards/progress-docs.md`: [`ROADMAP.md`](ROADMAP.md) (one-page
+summary and stage), [`docs/target-app-parity.md`](docs/target-app-parity.md) (the authoritative
+assessment), [`docs/gaps.md`](docs/gaps.md) (ranked work list), [`docs/roadmap.md`](docs/roadmap.md)
+(milestones), [`docs/architecture.md`](docs/architecture.md), the per-area `docs/*-parity.md` files
+and the generated [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`).
+When a task lands, update the affected rows and the status line and revision history in the same
+commit. Grade by behaviour against the incumbent, not by whether a menu item exists; err low.
 
 ## Contributor credits (About window)
 
