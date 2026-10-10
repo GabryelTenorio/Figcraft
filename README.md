@@ -78,7 +78,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Layouts that build themselves</h3>
-      Auto layout in both directions, with wrap and grid (fixed, hug and `fr` tracks, cells that span), padding, gaps, alignment including text baselines, Hug / Fill / Fixed sizing, min and max sizes, absolute positioning, and drag handles for padding and spacing right on the canvas. Constraints and layout grids for everything else.
+      Auto layout in both directions, with wrap and grid (fixed, hug and `fr` tracks, cells that span), padding, gaps, alignment including text baselines, Hug / Fill / Fixed sizing, min and max sizes, absolute positioning, drag handles for padding and spacing right on the canvas, and arrow keys that move children through the flow, grid cells and nested frames. Constraints and layout grids for everything else.
     </td>
     <td width="50%" valign="top">
       <h3>Components that scale</h3>
