@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the essentials user and mainstream practitioner numbers; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness by audience with hours; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -30,6 +30,24 @@ libraries and AI features, and that counted no file-format blocker. Figma users 
 those every day, so this re-measure weights them in. The core-editor depth figure drops from ~79%
 to ~67% because nothing has yet been checked against real Figma files or side by side tool by
 tool; presence was being graded as behaviour in places.
+
+## Readiness by audience
+
+| Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
+|---|---|---|---|
+| Full target (ready for real work) | ~46% | ~400–750 h | multiplayer (60–110), localization (60–100), plugins (40–80), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Mainstream practitioner | ~43% | ~180–330 h | core editor depth incl. `.fig` import (98–188), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
+
+Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
+per 1,000 added lines, 1–2.5 h per feature PR, ~7 h per honest depth point in the polish tail; see
+[how the hours are calibrated](#how-the-hours-are-calibrated)). Each audience's work is a subset of
+the next. About 70–80% parallelizes across 4–6 agents on disjoint crates (roughly ÷4 in
+wall-clock); the `.fig` reader, the multiplayer core and a plugin runtime each need one owner, and
+native-speaker review, real-file licensing and screen-reader QA need people.
+
+The full number is an additive weighted sum over the dimension table; mainstream and essentials use
+multiplicative discounts, as the standard says.
 
 ## What was measured, and how
 
@@ -527,6 +545,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Readiness-by-audience table: hours to ~95% for full (~400–750 h), mainstream (~180–330 h) and essentials (~85–160 h). Full number confirmed as an additive weighted sum; unchanged |
 | 2026-10-10 | minor | Added the essentials user number (~53%: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send) |
 | 2026-10-10 | minor | Added the mainstream practitioner number (~43%: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange) and user-evidence count (none). Checked that ready for real work (~46%) is built from the written dimension weights and scores; unchanged |
 | 2026-10-10 | minor | Stage checked against the alpha gate: stays alpha |

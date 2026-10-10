@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~29 points and ~210–380 h away (one Opus 5.5 agent; ~45–85 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (added the essentials user and mainstream practitioner numbers) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness by audience with hours to ~95%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -20,6 +20,21 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Mainstream practitioner | **~43%** | estimated: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~210–380 h** one agent | estimated |
 | Remaining to full parity | **~420–790 h** one agent (~100–180 h wall-clock with 5 agents) | estimated |
+
+### Readiness by audience
+
+| Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
+|---|---|---|---|
+| Full target (ready for real work) | ~46% | ~400–750 h | multiplayer (60–110), localization (60–100), plugins (40–80), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Mainstream practitioner | ~43% | ~180–330 h | core editor depth incl. `.fig` import (98–188), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
+
+Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
+per 1,000 added lines, 1–2.5 h per feature PR, ~7 h per honest depth point in the polish tail; see
+[how the hours are calibrated](docs/target-app-parity.md#how-the-hours-are-calibrated)). Each audience's work is a subset of
+the next. About 70–80% parallelizes across 4–6 agents on disjoint crates (roughly ÷4 in
+wall-clock); the `.fig` reader, the multiplayer core and a plugin runtime each need one owner, and
+native-speaker review, real-file licensing and screen-reader QA need people.
 
 Hours are Opus 5.5 agent wall-clock hours, calibrated from this repo's history: the app was built in
 ~25 wall-clock hours by 4–6 parallel agents (~110–150 agent-hours, ~1 agent-hour per 1,000 added
@@ -133,6 +148,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Readiness by audience with hours to ~95% (full ~400–750, mainstream ~180–330, essentials ~85–160) |
 | 2026-10-10 | minor | Added essentials user (~53%) and mainstream practitioner (~43%); ready for real work unchanged at ~46% |
 | 2026-10-10 | minor | Alpha gate (core workflows) checked under the revised stage rules: passes, stays alpha |
 | 2026-10-10 | major | Rewritten to the craftrules progress-docs shape after a full re-measure; rubric, area narrative and inventory moved to docs/target-app-parity.md, gaps to docs/gaps.md, milestones to docs/roadmap.md. Depth ~79% (self-graded, 16 areas) → ready for real work ~46% (all dimensions); full parity 115–195 h → 420–790 h |
