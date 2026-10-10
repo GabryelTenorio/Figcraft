@@ -23,7 +23,7 @@ fn annotations_are_added_edited_and_removed_with_undo() {
     ex(&mut s, "select.set", json!({"ids": [r]}));
     assert_eq!(ex(&mut s, "annotation.add", json!({"properties": ["height"]}))["index"], 1);
     ex(&mut s, "annotation.edit", json!({"id": r, "index": 1, "label": "Tap target"}));
-    assert_eq!(node(&s, r).annotations[1], Annotation { label: "Tap target".into(), properties: vec!["height".into()] });
+    assert_eq!(node(&s, r).annotations[1], Annotation { label: "Tap target".into(), properties: vec!["height".into()], category: None });
     ex(&mut s, "annotation.edit", json!({"id": r, "index": 1, "properties": []}));
     assert!(node(&s, r).annotations[1].properties.is_empty());
     // Each change is one undo step.
@@ -121,7 +121,7 @@ fn annotations_are_saved_and_old_files_open() {
     assert!(n.annotations.is_empty());
     // Unknown pinned ids from newer files are kept and skipped.
     let mut n2 = n.clone();
-    n2.annotations.push(Annotation { label: String::new(), properties: vec!["future".into(), "width".into()] });
+    n2.annotations.push(Annotation { label: String::new(), properties: vec!["future".into(), "width".into()], category: None });
     let a = n2.annotations[0].clone();
     let pinned = crate::annotations::pinned(&doc, r, &a);
     assert_eq!(pinned.len(), 1);

@@ -43,13 +43,20 @@ pub struct PendingShot {
     pub id: Value,
     pub path: String,
     pub reply: std::sync::mpsc::Sender<ControlReply>,
+    /// When it was asked for (UI clock, seconds).
+    pub since: f64,
 }
+
+/// How long a screenshot waits for the window to deliver it (the control server gives up then too).
+const SHOT_TIMEOUT: f64 = 60.0;
 
 fn pending(ctx: &Context) -> std::sync::Arc<std::sync::Mutex<Vec<PendingShot>>> {
     ctx.data_mut(|d| d.get_temp_mut_or_insert_with(egui::Id::new("pending_shots"), || std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))).clone())
 }
 
 pub fn drain(app: &mut FigApp, ctx: &Context) {
+    let now = ctx.input(|i| i.time);
+    let list = pending(ctx);
     // Finish screenshots that arrived.
     let shots: Vec<std::sync::Arc<egui::ColorImage>> = ctx.input(|i| {
         i.events
@@ -61,9 +68,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
             .collect()
     });
     if let Some(img) = shots.last() {
-        let list = pending(ctx);
-        let mut list = list.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        for p in list.drain(..) {
+        for p in list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
             let res = save_color_image(img, &p.path).map(|_| json!({"path": p.path, "width": img.size[0], "height": img.size[1]}));
             let _ = p.reply.send(ControlReply { id: p.id, result: res });
         }
@@ -72,13 +77,26 @@ pub fn drain(app: &mut FigApp, ctx: &Context) {
     for r in reqs {
         if r.method == "ui.screenshot" {
             let path = r.params.get("path").and_then(Value::as_str).unwrap_or("figcraft-screenshot.png").to_string();
-            pending(ctx).lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(PendingShot { id: r.id, path, reply: r.reply });
+            list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(PendingShot { id: r.id, path, reply: r.reply, since: now });
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
-            ctx.request_repaint();
             continue;
         }
         let res = handle(app, ctx, &r.method, &r.params);
         let _ = r.reply.send(ControlReply { id: r.id, result: res });
+        ctx.request_repaint();
+    }
+    // The window delivers a screenshot some frames after it was asked for (once the GPU has copied
+    // it back), and only while frames are drawn: keep drawing until it arrives (a hidden window
+    // never delivers; its requests expire).
+    let mut list = list.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    list.retain(|p| {
+        let live = now - p.since < SHOT_TIMEOUT;
+        if !live {
+            let _ = p.reply.send(ControlReply { id: p.id.clone(), result: Err("the window didn't deliver a screenshot (is it visible?)".into()) });
+        }
+        live
+    });
+    if !list.is_empty() {
         ctx.request_repaint();
     }
 }
@@ -443,6 +461,30 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if let Some(v) = p.get("exportPreview").and_then(Value::as_bool) {
                 app.ui.export_thumb = v;
+            }
+            // Dev Mode's compare view: a ready-for-dev frame or section opens it, null closes it;
+            // `devCompareMode` is sideBySide or overlay, `devCompareSplit` the overlay slider (0–1).
+            if let Some(v) = p.get("devCompare") {
+                app.ui.dev.compare = figcraft_engine::params::id_of(v).map(crate::dev_compare::CompareView::new);
+            }
+            if let Some(c) = app.ui.dev.compare.as_mut() {
+                match p.get("devCompareMode").and_then(Value::as_str) {
+                    Some("overlay") => c.mode = crate::dev_compare::Mode::Overlay,
+                    Some("sideBySide") => c.mode = crate::dev_compare::Mode::SideBySide,
+                    Some(_) => return Err("devCompareMode: sideBySide|overlay".into()),
+                    None => {}
+                }
+                if let Some(x) = p.get("devCompareSplit").and_then(Value::as_f64).filter(|x| x.is_finite()) {
+                    c.split = x.clamp(0.0, 1.0) as f32;
+                }
+            }
+            // Which annotations the canvas shows: all, none (uncategorised) or a category.
+            if let Some(v) = p.get("annotationFilter").and_then(Value::as_str) {
+                let doc = app.session.doc().map_err(|e| e.to_string())?;
+                app.ui.dev.categories = crate::dev_mode::CategoryFilter::parse(doc, v).ok_or("annotationFilter: all|none|a category id or name")?;
+            }
+            if b(p, "resetFrameStats") {
+                app.frame_stats.reset();
             }
             Ok(app.inspect())
         }

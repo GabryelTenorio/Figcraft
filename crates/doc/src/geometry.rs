@@ -97,6 +97,11 @@ pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Option<Nod
     None
 }
 
+/// Like [`hit_leaf`], but only within layer `root` (it included).
+pub fn hit_in(doc: &Document, root: NodeId, pt: Point, tol: f64) -> Option<NodeId> {
+    hit_rec(doc, root, pt, tol, 0)
+}
+
 fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Option<NodeId> {
     if depth > 512 {
         return None;

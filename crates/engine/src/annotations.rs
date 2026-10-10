@@ -1,6 +1,11 @@
 //! Dev Mode annotations: notes designers attach to layers for developers, each with optional
-//! pinned properties (width, fill, font size…) that Dev Mode shows with their current values. They
-//! are stored on the layer (`Node::annotations`), saved with the file and undoable.
+//! pinned properties (width, fill, font size…) that Dev Mode shows with their current values and
+//! an optional category (Development, Accessibility… or one of the file's own, each with a colour).
+//! They are stored on the layer (`Node::annotations`), saved with the file and undoable; the
+//! categories are stored with the document (`Document::annotation_categories`, left out while
+//! they're the defaults).
+
+use std::sync::LazyLock;
 
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -16,6 +21,32 @@ pub const MAX_PER_LAYER: usize = 64;
 pub const MAX_LABEL: usize = 5_000;
 /// Most annotated layers listed or drawn for one page.
 pub const MAX_LISTED: usize = 2_000;
+/// Most annotation categories in a file.
+pub const MAX_CATEGORIES: usize = 64;
+/// Longest category name (chars).
+pub const MAX_CATEGORY_NAME: usize = 64;
+
+/// The file's annotation categories (the defaults until it changes them).
+pub fn categories(doc: &Document) -> &[AnnotationCategory] {
+    static DEFAULTS: LazyLock<Vec<AnnotationCategory>> = LazyLock::new(AnnotationCategory::defaults);
+    doc.annotation_categories.as_deref().unwrap_or(&DEFAULTS)
+}
+
+/// Annotation `a`'s category (`None`: uncategorised, or a category the file no longer has).
+pub fn category_of<'d>(doc: &'d Document, a: &Annotation) -> Option<&'d AnnotationCategory> {
+    let id = a.category.as_deref()?;
+    categories(doc).iter().find(|c| c.id == id)
+}
+
+/// The category named by `key`: its id, else its name (ignoring case).
+pub fn find_category<'a>(list: &'a [AnnotationCategory], key: &str) -> Option<&'a AnnotationCategory> {
+    let key = key.trim();
+    list.iter().find(|c| c.id == key).or_else(|| list.iter().find(|c| c.name.eq_ignore_ascii_case(key)))
+}
+
+fn category_json(c: &AnnotationCategory) -> Value {
+    json!({"id": c.id, "name": c.name, "color": c.color.to_css_hex()})
+}
 
 /// A property an annotation can pin: its id, its label and where Dev Mode's property list shows it
 /// (a section and a row; `None` = the section's rows other pinnable properties don't claim).
@@ -131,7 +162,11 @@ pub fn annotation_json(doc: &Document, id: NodeId, index: usize, a: &Annotation)
             o
         })
         .collect();
-    json!({"id": id, "name": name, "index": index, "label": a.label, "properties": props})
+    let mut o = json!({"id": id, "name": name, "index": index, "label": a.label, "properties": props});
+    if let Some(c) = category_of(doc, a) {
+        o["category"] = category_json(c);
+    }
+    o
 }
 
 /// `properties` from params: known ids, each once, in the given order.
@@ -158,6 +193,25 @@ fn parse_label(cmd: &str, p: &Value) -> crate::Result<Option<String>> {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s.trim_end().chars().take(MAX_LABEL).collect())),
         Some(_) => Err(bad(cmd, "`label` must be a string")),
+    }
+}
+
+/// `category` from params: `Some(None)` clears it (null or ""), `Some(Some(id))` sets it, `None`
+/// leaves it.
+fn parse_category(cmd: &str, doc: &Document, p: &Value) -> crate::Result<Option<Option<String>>> {
+    match p.get("category") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(s)) if s.trim().is_empty() => Ok(Some(None)),
+        Some(Value::String(s)) => {
+            let list = categories(doc);
+            let c = find_category(list, s).ok_or_else(|| {
+                let names: Vec<&str> = list.iter().map(|c| c.name.as_str()).collect();
+                bad(cmd, format!("no category {s:?}; one of: {}", names.join(", ")))
+            })?;
+            Ok(Some(Some(c.id.clone())))
+        }
+        Some(_) => Err(bad(cmd, "`category` must be a category id or name (null: none)")),
     }
 }
 
@@ -193,12 +247,17 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "annotation.add",
             "Add annotation",
-            "{id? (default the first selected layer), label? (the note), properties?: [width|height|top|left|rotation|opacity|cornerRadius|direction|gap|padding|alignment|fontFamily|fontStyle|fontSize|lineHeight|letterSpacing|textAlign|fill|stroke|strokeWeight|effects]} → {id, index}  (a note, pinned properties or both)",
+            "{id? (default the first selected layer), label? (the note), properties?: [width|height|top|left|rotation|opacity|cornerRadius|direction|gap|padding|alignment|fontFamily|fontStyle|fontSize|lineHeight|letterSpacing|textAlign|fill|stroke|strokeWeight|effects], category? (id or name)} → {id, index}  (a note, pinned properties or both)",
             true,
             |s, p| {
                 let cmd = "annotation.add";
                 let id = layer(cmd, s, p)?;
-                let a = Annotation { label: parse_label(cmd, p)?.unwrap_or_default(), properties: parse_properties(cmd, p)?.unwrap_or_default() };
+                let category = parse_category(cmd, s.doc()?, p)?.flatten();
+                let a = Annotation {
+                    label: parse_label(cmd, p)?.unwrap_or_default(),
+                    properties: parse_properties(cmd, p)?.unwrap_or_default(),
+                    category,
+                };
                 check(cmd, &a)?;
                 let n = s.doc_mut()?.get_mut(id)?;
                 if n.annotations.len() >= MAX_PER_LAYER {
@@ -208,25 +267,34 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"id": id, "index": n.annotations.len() - 1}))
             }
         ),
-        spec!("annotation.edit", "Edit annotation", "{id?, index, label?, properties?: [..] (replaces the pinned properties)}", true, |s, p| {
-            let cmd = "annotation.edit";
-            let id = layer(cmd, s, p)?;
-            let index = existing(cmd, s, id, p)?;
-            let (label, props) = (parse_label(cmd, p)?, parse_properties(cmd, p)?);
-            if label.is_none() && props.is_none() {
-                return Err(bad(cmd, "pass `label` and/or `properties`"));
+        spec!(
+            "annotation.edit",
+            "Edit annotation",
+            "{id?, index, label?, properties?: [..] (replaces the pinned properties), category? (id or name; null: none)}",
+            true,
+            |s, p| {
+                let cmd = "annotation.edit";
+                let id = layer(cmd, s, p)?;
+                let index = existing(cmd, s, id, p)?;
+                let (label, props, category) = (parse_label(cmd, p)?, parse_properties(cmd, p)?, parse_category(cmd, s.doc()?, p)?);
+                if label.is_none() && props.is_none() && category.is_none() {
+                    return Err(bad(cmd, "pass `label`, `properties` and/or `category`"));
+                }
+                let n = s.doc_mut()?.get_mut(id)?;
+                let a = n.annotations.get_mut(index).ok_or_else(|| bad(cmd, "no such annotation"))?;
+                if let Some(l) = label {
+                    a.label = l;
+                }
+                if let Some(pr) = props {
+                    a.properties = pr;
+                }
+                if let Some(c) = category {
+                    a.category = c;
+                }
+                check(cmd, a)?;
+                Ok(json!({"id": id, "index": index}))
             }
-            let n = s.doc_mut()?.get_mut(id)?;
-            let a = n.annotations.get_mut(index).ok_or_else(|| bad(cmd, "no such annotation"))?;
-            if let Some(l) = label {
-                a.label = l;
-            }
-            if let Some(pr) = props {
-                a.properties = pr;
-            }
-            check(cmd, a)?;
-            Ok(json!({"id": id, "index": index}))
-        }),
+        ),
         spec!("annotation.remove", "Remove annotation", "{id?, index? (omit: every annotation on the layer)}", true, |s, p| {
             let cmd = "annotation.remove";
             let id = layer(cmd, s, p)?;
@@ -250,10 +318,21 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "annotation.list",
             "List annotations",
-            "{ids? | id? (those layers), page? (page id, or \"all\"; default the current page)} → {annotations: [{id, name, index, label, properties: [{property, label, value (null when the layer has none), token?, color?}]}]}",
+            "{ids? | id? (those layers), page? (page id, or \"all\"; default the current page), category? (id or name, or \"none\": only those)} → {annotations: [{id, name, index, label, category?: {id, name, color}, properties: [{property, label, value (null when the layer has none), token?, color?}]}]}",
             false,
             |s, p| {
                 let doc = s.doc()?;
+                // Only one category's (`Some(None)`: the uncategorised).
+                let only: Option<Option<String>> = match string(p, "category") {
+                    None => None,
+                    Some(k) if k.eq_ignore_ascii_case("none") => Some(None),
+                    Some(k) => Some(Some(
+                        find_category(categories(doc), &k)
+                            .map(|c| c.id.clone())
+                            .ok_or_else(|| bad("annotation.list", format!("no category {k:?}")))?,
+                    )),
+                };
+                let shown = |a: &Annotation| only.as_ref().is_none_or(|want| category_of(doc, a).map(|c| c.id.as_str()) == want.as_deref());
                 let layers: Vec<NodeId> = if get(p, "ids").is_some() || get(p, "id").is_some() {
                     targets(s, p).into_iter().filter(|i| doc.contains(*i)).collect()
                 } else if string(p, "page").is_some_and(|v| v.eq_ignore_ascii_case("all")) {
@@ -268,10 +347,125 @@ pub fn specs() -> Vec<CommandSpec> {
                 let list: Vec<Value> = layers
                     .iter()
                     .filter_map(|i| doc.node(*i).map(|n| (i, n)))
-                    .flat_map(|(i, n)| n.annotations.iter().enumerate().map(move |(k, a)| annotation_json(doc, *i, k, a)))
+                    .flat_map(|(i, n)| n.annotations.iter().enumerate().filter(|(_, a)| shown(a)).map(move |(k, a)| annotation_json(doc, *i, k, a)))
                     .collect();
                 Ok(json!({"annotations": list}))
             }
         ),
+        spec!(
+            "annotation.categories",
+            "Annotation categories",
+            "{} → {categories: [{id, name, color, count (annotations in it, every page)}]}",
+            false,
+            |s, _| {
+                let doc = s.doc()?;
+                let mut counts: std::collections::BTreeMap<&str, usize> = Default::default();
+                for c in doc.nodes().flat_map(|n| n.annotations.iter()).filter_map(|a| a.category.as_deref()) {
+                    *counts.entry(c).or_default() += 1;
+                }
+                let list: Vec<Value> = categories(doc)
+                    .iter()
+                    .map(|c| {
+                        let mut o = category_json(c);
+                        o["count"] = json!(counts.get(c.id.as_str()).copied().unwrap_or(0));
+                        o
+                    })
+                    .collect();
+                Ok(json!({"categories": list}))
+            }
+        ),
+        spec!("annotation.addCategory", "Add annotation category", "{name, color? (default the first unused colour)} → {id}", true, |s, p| {
+            let cmd = "annotation.addCategory";
+            let mut list = categories(s.doc()?).to_vec();
+            if list.len() >= MAX_CATEGORIES {
+                return Err(bad(cmd, format!("a file has at most {MAX_CATEGORIES} categories")));
+            }
+            let name = category_name(cmd, &list, None, p)?.ok_or_else(|| bad(cmd, "`name` required"))?;
+            let color = match category_color(cmd, p)? {
+                Some(c) => c,
+                None => {
+                    let used = |c: &figcraft_color::Color| list.iter().any(|x| x.color.to_hex() == c.to_hex());
+                    let fallback = AnnotationCategory::COLORS
+                        .get(list.len() % AnnotationCategory::COLORS.len())
+                        .copied()
+                        .unwrap_or(figcraft_color::Color::BLACK);
+                    AnnotationCategory::COLORS.iter().find(|c| !used(c)).copied().unwrap_or(fallback)
+                }
+            };
+            let id = (1..=MAX_CATEGORIES + 1).map(|k| format!("custom-{k}")).find(|i| !list.iter().any(|c| c.id == *i)).unwrap_or_default();
+            list.push(AnnotationCategory { id: id.clone(), name, color });
+            s.doc_mut()?.annotation_categories = Some(list);
+            Ok(json!({"id": id}))
+        }),
+        spec!("annotation.editCategory", "Edit annotation category", "{id (id or name), name?, color?}  (rename and/or recolour)", true, |s, p| {
+            let cmd = "annotation.editCategory";
+            let mut list = categories(s.doc()?).to_vec();
+            let key = req_string(cmd, p, "id")?;
+            let k = find_category(&list, &key)
+                .and_then(|c| list.iter().position(|x| x.id == c.id))
+                .ok_or_else(|| bad(cmd, format!("no category {key:?}")))?;
+            let (name, color) = (category_name(cmd, &list, Some(k), p)?, category_color(cmd, p)?);
+            if name.is_none() && color.is_none() {
+                return Err(bad(cmd, "pass `name` and/or `color`"));
+            }
+            let c = list.get_mut(k).ok_or_else(|| bad(cmd, "no such category"))?;
+            if let Some(n) = name {
+                c.name = n;
+            }
+            if let Some(col) = color {
+                c.color = col;
+            }
+            let id = c.id.clone();
+            s.doc_mut()?.annotation_categories = Some(list);
+            Ok(json!({"id": id}))
+        }),
+        spec!(
+            "annotation.removeCategory",
+            "Delete annotation category",
+            "{id (id or name)} → {id, uncategorized (how many annotations were in it)}  (its annotations stay, without a category)",
+            true,
+            |s, p| {
+                let cmd = "annotation.removeCategory";
+                let doc = s.doc()?;
+                let mut list = categories(doc).to_vec();
+                let key = req_string(cmd, p, "id")?;
+                let id = find_category(&list, &key).map(|c| c.id.clone()).ok_or_else(|| bad(cmd, format!("no category {key:?}")))?;
+                list.retain(|c| c.id != id);
+                let in_it = |a: &Annotation| a.category.as_deref() == Some(id.as_str());
+                let layers: Vec<NodeId> = doc.nodes().filter(|n| n.annotations.iter().any(in_it)).map(|n| n.id).collect();
+                let doc = s.doc_mut()?;
+                doc.annotation_categories = Some(list);
+                let mut count = 0usize;
+                for l in layers {
+                    for a in doc.get_mut(l)?.annotations.iter_mut().filter(|a| in_it(a)) {
+                        a.category = None;
+                        count += 1;
+                    }
+                }
+                Ok(json!({"id": id, "uncategorized": count}))
+            }
+        ),
     ]
+}
+
+/// `name` from params for category `editing` (`None`: a new one): trimmed, capped, not empty and
+/// not another category's.
+fn category_name(cmd: &str, list: &[AnnotationCategory], editing: Option<usize>, p: &Value) -> crate::Result<Option<String>> {
+    let Some(v) = get(p, "name") else { return Ok(None) };
+    let name: String = v.as_str().ok_or_else(|| bad(cmd, "`name` must be a string"))?.trim().chars().take(MAX_CATEGORY_NAME).collect();
+    if name.is_empty() {
+        return Err(bad(cmd, "a category needs a name"));
+    }
+    if list.iter().enumerate().any(|(i, c)| Some(i) != editing && c.name.eq_ignore_ascii_case(&name)) {
+        return Err(bad(cmd, format!("there is already a category named {name:?}")));
+    }
+    Ok(Some(name))
+}
+
+/// `color` from params, opaque.
+fn category_color(cmd: &str, p: &Value) -> crate::Result<Option<figcraft_color::Color>> {
+    match get(p, "color") {
+        Some(v) => Ok(Some(color_of(v).ok_or_else(|| bad(cmd, "`color` must be a colour (hex or CSS)"))?.with_alpha(1.0))),
+        None => Ok(None),
+    }
 }

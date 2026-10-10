@@ -44,6 +44,7 @@ struct Frame {
     outline: bool,
     lod: bool,
     skip: Vec<NodeId>,
+    solo: Option<NodeId>,
     background: Option<figcraft_color::Color>,
     scale: u64,
     /// The view's top-left in device pixels (page origin × scale).
@@ -135,6 +136,7 @@ impl Retained {
             && last.outline == opts.outline_mode
             && last.lod == opts.lod
             && last.skip == opts.skip
+            && last.solo == opts.solo
             && last.background == opts.background
             && last.scale == snapped.scale.to_bits()
             && last.pix.width() == snapped.width
@@ -176,6 +178,7 @@ impl Retained {
             outline: opts.outline_mode,
             lod: opts.lod,
             skip: opts.skip.clone(),
+            solo: opts.solo,
             background: opts.background,
             scale: view.scale.to_bits(),
             px,

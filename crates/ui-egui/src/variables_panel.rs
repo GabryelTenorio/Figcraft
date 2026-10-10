@@ -171,21 +171,16 @@ fn header(ui: &mut Ui, open: &mut bool) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
     ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Local variables", semibold(13.0), t.text);
-    if small_button(ui, Id::new("vars_close"), Rect::from_center_size(pos2(r.max.x - 22.0, r.center().y), vec2(24.0, 24.0)), Icon::Close, "Close") {
+    if widgets::icon_button_at(
+        ui,
+        Id::new("vars_close"),
+        Rect::from_center_size(pos2(r.max.x - 22.0, r.center().y), vec2(24.0, 24.0)),
+        Icon::Close,
+        "Close",
+    ) {
         *open = false;
     }
     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.border));
-}
-
-/// A square icon button painted at `rect`; true when clicked.
-fn small_button(ui: &mut Ui, id: Id, rect: Rect, icon: Icon, tip: &str) -> bool {
-    let t = Tokens::get(ui.ctx());
-    let resp = ui.interact(rect, id, Sense::click()).tip(tip);
-    if resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
-    }
-    icons::paint(ui.painter(), rect.shrink(5.0), icon, t.icon);
-    resp.clicked()
 }
 
 fn rename_id(target: &Rename) -> Id {
@@ -216,7 +211,7 @@ fn sidebar(app: &mut FigApp, ui: &mut Ui, views: &[View], local: &Variables, st:
     let t = Tokens::get(ui.ctx());
     let (hr, _) = ui.allocate_exact_size(vec2(SIDEBAR_W, 40.0), Sense::hover());
     ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Collections", semibold(11.0), t.text_secondary);
-    if small_button(
+    if widgets::icon_button_at(
         ui,
         Id::new("vars_add_coll"),
         Rect::from_center_size(pos2(hr.max.x - 20.0, hr.center().y), vec2(24.0, 24.0)),
@@ -545,7 +540,13 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
     }
     let x = r.min.x + NAME_W + coll.modes.len() as f32 * MODE_W;
     if view.editable()
-        && small_button(ui, Id::new("vars_add_mode"), Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(24.0, 24.0)), Icon::Plus, "Add mode")
+        && widgets::icon_button_at(
+            ui,
+            Id::new("vars_add_mode"),
+            Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(24.0, 24.0)),
+            Icon::Plus,
+            "Add mode",
+        )
     {
         let name = unique("Mode", |n| coll.modes.iter().any(|m| m.name == n));
         if let Some(id) = app.run("variable.addMode", json!({"collection": coll.id, "name": name})).and_then(|r| r["id"].as_str().map(str::to_string))
@@ -676,7 +677,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
         }
         // Detach: keep the value it resolves to now.
-        if hovered && small_button(ui, id.with("detach"), alias_btn, Icon::Detach, "Detach alias") {
+        if hovered && widgets::icon_button_at(ui, id.with("detach"), alias_btn, Icon::Detach, "Detach alias") {
             let modes = [(coll.id.clone(), mode.to_string())].into_iter().collect();
             if let Some(resolved) = view.vars.resolve(&v.id, &modes) {
                 set(app, v, mode, value_json(&resolved));
@@ -730,7 +731,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
         }
         VariableValue::Alias(_) => {}
     }
-    if hovered && small_button(ui, id.with("mkalias"), alias_btn, Icon::Variable, "Create alias") {
+    if hovered && widgets::icon_button_at(ui, id.with("mkalias"), alias_btn, Icon::Variable, "Create alias") {
         crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
     }
 }

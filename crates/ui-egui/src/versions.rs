@@ -392,40 +392,21 @@ pub fn preview_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
         return;
     };
     let t = Tokens::get(ctx);
-    let mut action = None;
-    egui::Area::new(Id::new("version_preview_banner"))
-        .order(egui::Order::Foreground)
-        .pivot(Align2::CENTER_TOP)
-        .fixed_pos(pos2(canvas.center().x, canvas.min.y + 12.0))
-        .show(ctx, |ui| {
-            egui::Frame::NONE
-                .fill(t.panel)
-                .stroke(Stroke::new(1.0, t.border))
-                .corner_radius(CornerRadius::same(8))
-                .shadow(egui::epaint::Shadow { offset: [0, 2], blur: 12, spread: 0, color: t.shadow })
-                .inner_margin(egui::Margin { left: 14, right: 8, top: 8, bottom: 8 })
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        icons::paint(
-                            ui.painter(),
-                            Rect::from_center_size(ui.cursor().min + vec2(7.0, 12.0), vec2(14.0, 14.0)),
-                            Icon::Clock,
-                            t.icon_secondary,
-                        );
-                        ui.add_space(20.0);
-                        ui.label(egui::RichText::new(format!("Viewing “{name}”")).font(semibold(11.0)).color(t.text));
-                        ui.label(egui::RichText::new(crate::comments::ago_long(time)).font(regular(11.0)).color(t.text_secondary));
-                        ui.add_space(4.0);
-                        if widgets::button(ui, "Back to current", false, true).clicked() {
-                            action = Some(false);
-                        }
-                        if widgets::button(ui, "Restore this version", true, true).clicked() {
-                            action = Some(true);
-                        }
-                    });
-                });
-        });
+    let action = widgets::canvas_banner(ctx, Id::new("version_preview_banner"), canvas, |ui| {
+        let mut action = None;
+        icons::paint(ui.painter(), Rect::from_center_size(ui.cursor().min + vec2(7.0, 12.0), vec2(14.0, 14.0)), Icon::Clock, t.icon_secondary);
+        ui.add_space(20.0);
+        ui.label(egui::RichText::new(format!("Viewing “{name}”")).font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(crate::comments::ago_long(time)).font(regular(11.0)).color(t.text_secondary));
+        ui.add_space(4.0);
+        if widgets::button(ui, "Back to current", false, true).clicked() {
+            action = Some(false);
+        }
+        if widgets::button(ui, "Restore this version", true, true).clicked() {
+            action = Some(true);
+        }
+        action
+    });
     match action {
         Some(true) => {
             if app.run("version.restore", json!({"id": id})).is_some() {
