@@ -16,6 +16,8 @@ use figcraft_geom::{Affine, Rect};
 use figcraft_render::{Alone, Pixmap, View, backdrop, shadow};
 use krilla::geom::Size;
 use krilla::image::Image;
+
+use crate::print::Ink;
 use krilla::surface::Surface;
 
 use crate::draw::{Exporter, MAX_RASTER_SIDE, affine_ok, blend, norm, to_xf};
@@ -33,8 +35,10 @@ pub(crate) struct Shadows {
     pub inner: Vec<Raster>,
 }
 
-fn raster(p: &Pixmap, rect: Rect) -> Raster {
-    Raster { image: Image::from_rgba8(figcraft_render::to_rgba8(p), p.width(), p.height()), rect, px: (p.width(), p.height()) }
+impl Raster {
+    fn new(p: &Pixmap, rect: Rect, ink: Ink) -> Raster {
+        Raster { image: ink.bitmap(figcraft_render::to_rgba8(p), p.width(), p.height()), rect, px: (p.width(), p.height()) }
+    }
 }
 
 impl Exporter<'_> {
@@ -103,7 +107,7 @@ impl Exporter<'_> {
         // Its backdrop effects are placed separately (see `backdrop`).
         let Some(pix) = figcraft_render::render_alone(doc, id, &view, Alone::WithEffects) else { return };
         // The renderer applied opacity; the blend mode applies against the PDF backdrop.
-        self.place_raster(s, &raster(&pix, Self::view_rect(&view)), 1.0, n.blend);
+        self.place_raster(s, &Raster::new(&pix, Self::view_rect(&view), self.ink()), 1.0, n.blend);
     }
 
     /// Node `id`'s background blurs and glass as an image over its shape, drawn by the renderer
@@ -111,7 +115,7 @@ impl Exporter<'_> {
     /// ancestors' own fills included), the way the canvas and PNG export draw them.
     pub(crate) fn backdrop(&mut self, id: NodeId) -> Option<Raster> {
         let (pix, view) = self.backdrop_pixels(id)?;
-        Some(raster(&pix, Self::view_rect(&view)))
+        Some(Raster::new(&pix, Self::view_rect(&view), self.ink()))
     }
 
     /// [`Exporter::backdrop`]'s pixels and the page area they cover.
@@ -158,12 +162,12 @@ impl Exporter<'_> {
             match &e.kind {
                 EffectKind::DropShadow(sh) => {
                     if let Some(p) = shadow::drop_shadow(&caster, sh) {
-                        out.drop.push((raster(&p, rect), sh.blend));
+                        out.drop.push((Raster::new(&p, rect, self.ink()), sh.blend));
                     }
                 }
                 EffectKind::InnerShadow(sh) => {
                     if let Some(p) = shape.as_ref().and_then(|o| shadow::inner_shadow(o, w, h, xf, view.scale, sh)) {
-                        out.inner.push(raster(&p, rect));
+                        out.inner.push(Raster::new(&p, rect, self.ink()));
                     }
                 }
                 _ => {}

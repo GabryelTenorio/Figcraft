@@ -173,7 +173,7 @@ fn glyph_runs(
             let continues = run.as_ref().is_some_and(|r| r.face == g.face.id && (r.size - g.size).abs() < 1e-9);
             if !continues {
                 if let Some(r) = run.take() {
-                    write_run(s, r, p, w, h, gxf);
+                    write_run(s, r, p, w, h, gxf, ex.ink());
                 }
                 run = Some(Run { face: g.face.id, font, size: g.size, x0: g.x, y0: g.y, glyphs: Vec::new(), text: String::new(), last_chars: None });
             }
@@ -182,7 +182,7 @@ fn glyph_runs(
             }
         }
         if let Some(r) = run.take() {
-            write_run(s, r, p, w, h, gxf);
+            write_run(s, r, p, w, h, gxf, ex.ink());
         }
     }
     rest
@@ -203,11 +203,12 @@ fn push_glyph(r: &mut Run, g: &Glyph, chars: &[char]) {
     r.glyphs.push((g.gid, g.x, g.y, g.advance, range));
 }
 
-fn write_run(s: &mut Surface, r: Run, p: &Paint, w: f64, h: f64, gxf: Affine) {
+#[allow(clippy::too_many_arguments)]
+fn write_run(s: &mut Surface, r: Run, p: &Paint, w: f64, h: f64, gxf: Affine, ink: crate::print::Ink) {
     if r.glyphs.is_empty() {
         return;
     }
-    let Some((paint, opacity)) = vector_paint(p, w, h) else { return };
+    let Some((paint, opacity)) = vector_paint(p, w, h, ink) else { return };
     let size = r.size;
     let glyphs: Vec<KrillaGlyph> = r
         .glyphs

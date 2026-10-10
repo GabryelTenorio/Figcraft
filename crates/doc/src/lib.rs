@@ -849,6 +849,8 @@ mod diff_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
+mod print_tests;
+#[cfg(test)]
 mod proto_expr_parse_tests;
 #[cfg(test)]
 mod proto_expr_tests;

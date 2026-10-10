@@ -52,7 +52,7 @@ pub(crate) fn has_inter() -> bool {
 }
 
 /// A page with two frames: shapes, gradients, an image, strokes, a mask, a boolean, effects, text.
-fn sample_doc() -> (Document, Vec<NodeId>) {
+pub(crate) fn sample_doc() -> (Document, Vec<NodeId>) {
     let mut d = Document::new("sample");
     let p = d.first_page().unwrap();
     let f1 = d.create(p, NodeKind::Frame, "Card", 0.0, 0.0, 320.0, 240.0).unwrap();

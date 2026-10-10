@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use figcraft_doc::{Document, ExportFormat, NodeId, NodeKind};
+use figcraft_doc::{Document, ExportFormat, NodeId, NodeKind, PrintSettings};
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
@@ -106,18 +106,18 @@ pub fn write_doc(doc: &Document, page: NodeId, out: &str) -> CliResult<()> {
             .ok_or_else(|| CliError::Failed("the page is empty: nothing to export".into()))?
             .into_bytes(),
         "png" | "jpg" | "jpeg" | "webp" => encode(doc, &render_page(doc, page, 1.0)?, &e)?,
-        "pdf" => page_pdf(doc, page)?,
+        "pdf" => page_pdf(doc, page, &PrintSettings::default())?,
         other => return Err(CliError::Usage(format!("unknown output format `.{other}` (figcraft, json, svg, png, jpg, webp, pdf)"))),
     };
     write(out, &bytes)
 }
 
 /// A page as PDF: its top-level frames one page each, or (without frames) everything on one page.
-fn page_pdf(doc: &Document, page: NodeId) -> CliResult<Vec<u8>> {
+fn page_pdf(doc: &Document, page: NodeId, print: &PrintSettings) -> CliResult<Vec<u8>> {
     let r = if doc.top_frames(page).iter().any(|f| doc.node(*f).is_some_and(|n| n.visible)) {
-        figcraft_engine::cmd::file::frames_pdf(doc, page).map(|(bytes, _)| bytes)
+        figcraft_engine::cmd::file::frames_pdf(doc, page, print).map(|(bytes, _)| bytes)
     } else {
-        figcraft_engine::cmd::file::export_bytes(doc, &children(doc, page), ExportFormat::Pdf, 1.0)
+        figcraft_engine::cmd::file::export_bytes_with(doc, &children(doc, page), ExportFormat::Pdf, 1.0, print)
     };
     r.map_err(|e| CliError::Failed(e.to_string()))
 }
@@ -181,20 +181,32 @@ fn sanitize(name: &str) -> String {
     if s.is_empty() { "layer".into() } else { s.chars().take(100).collect() }
 }
 
-pub fn export(file: &str, out: &str, format: Option<&str>, scale: f64, page: Option<&str>, node: Option<&str>) -> CliResult<ExitCode> {
+/// What `export` exports and how.
+pub struct Target {
+    pub format: Option<String>,
+    pub scale: f64,
+    pub page: Option<String>,
+    pub node: Option<String>,
+    /// PDF only.
+    pub print: PrintSettings,
+}
+
+pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     let doc = load(file)?;
-    let page = page_named(&doc, page)?;
-    let fmt = match format {
+    let page = page_named(&doc, t.page.as_deref())?;
+    let (scale, node, print) = (t.scale, t.node.as_deref(), &t.print);
+    let fmt = match t.format.as_deref() {
         Some(f) => image_format(&f.to_ascii_lowercase()).ok_or_else(|| CliError::Usage(format!("unknown --format `{f}` (png|jpg|svg|webp|pdf)")))?,
         None => image_format(&ext(out)).unwrap_or(ExportFormat::Png),
     };
     let target = node.map(|q| find_node(&doc, page, q)).transpose()?;
     let single = image_format(&ext(out)).is_some();
-    let bytes_of = |ids: &[NodeId]| figcraft_engine::cmd::file::export_bytes(&doc, ids, fmt, scale).map_err(|e| CliError::Failed(e.to_string()));
+    let bytes_of =
+        |ids: &[NodeId]| figcraft_engine::cmd::file::export_bytes_with(&doc, ids, fmt, scale, print).map_err(|e| CliError::Failed(e.to_string()));
     if single {
         let bytes = match target {
             Some(t) => bytes_of(&[t])?,
-            None if fmt == ExportFormat::Pdf => page_pdf(&doc, page)?,
+            None if fmt == ExportFormat::Pdf => page_pdf(&doc, page, print)?,
             None => bytes_of(&children(&doc, page))?,
         };
         write(out, &bytes)?;

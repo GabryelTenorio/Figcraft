@@ -26,7 +26,7 @@ page 1 "Screens": 380 nodes, 4 top-level
   …
 ```
 
-### `export <file> -o <out> [--format png|jpg|svg|webp|pdf] [--scale N] [--page NAME] [--node ID|NAME]`
+### `export <file> -o <out> [--format png|jpg|svg|webp|pdf] [--scale N] [--page NAME] [--node ID|NAME] [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk]`
 
 - `<out>` is a directory: one file per top-level frame of the page (default the first page), named
   after the frame (`Home.png`, `Settings.png`…); with no frames, one file per top-level layer.
@@ -38,11 +38,19 @@ page 1 "Screens": 380 nodes, 4 top-level
   order, each the frame's size in points (a page without frames goes on one page). Shapes, text
   and gradients stay vector, text is real (selectable, with subset fonts) and its links clickable;
   shadows and blurs are images.
+- PDF print options: `--bleed` (points, or a length like `3mm` or `0.125in`, up to 2 in) grows each
+  page by the bleed, which shows what lies past the frame's edge (its fills reach out to it, its
+  children are clipped there instead); `--crop-marks` and `--bleed-marks` draw hairline marks
+  outside the bleed; the page boxes are set (MediaBox the sheet, BleedBox, TrimBox the frame).
+  `--cmyk` writes CMYK colour, images included, converted from sRGB with the naive formula
+  `K = 1 − max(R, G, B)`, `C = (1 − R − K) / (1 − K)` (M and Y alike): DeviceCMYK without an
+  output intent (no CMYK profile ships with FigCraft), so proof against your printer's profile.
 
 ```sh
 figcraft-cli export app.figcraft -o exports/ --scale 2
 figcraft-cli export app.figcraft -o hero.svg --node "Hero"
 figcraft-cli export app.figcraft -o screens.pdf --page "Screens"
+figcraft-cli export app.figcraft -o poster.pdf --node "Poster" --bleed 3mm --crop-marks --cmyk
 ```
 
 ### `convert <in> <out>`

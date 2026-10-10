@@ -196,7 +196,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale`. With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
+            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale` (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
             obj(
                 json!({
                     "ids": ids_schema("Layers to export (several are composited into one image)"),
@@ -204,6 +204,10 @@ pub fn tool_definitions() -> Vec<Value> {
                     "scale": num("Pixel scale for raster formats (default 1, max 64)"),
                     "size": string("Instead of `scale`: `2x`, or a width or height in pixels like `512w` / `512h`"),
                     "path": string("Output file path"),
+                    "bleed": {"type": ["number", "string"], "description": "PDF: bleed around each page, in points or as a length like `3mm` or `0.125in`"},
+                    "cropMarks": boolean("PDF: crop marks"),
+                    "bleedMarks": boolean("PDF: bleed marks"),
+                    "cmyk": boolean("PDF: CMYK colour instead of RGB"),
                 }),
                 &[],
             ),
@@ -645,6 +649,12 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     }
     if let Some(s) = s_arg(a, "size")? {
         params.insert("size".into(), json!(s));
+    }
+    // PDF print options, checked by the command.
+    for k in ["bleed", "cropMarks", "bleedMarks", "cmyk"] {
+        if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
+            params.insert(k.into(), v.clone());
+        }
     }
     if let Some(p) = s_arg(a, "path")? {
         params.insert("path".into(), json!(p));
