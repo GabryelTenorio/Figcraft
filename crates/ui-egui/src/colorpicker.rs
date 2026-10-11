@@ -682,6 +682,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     done = true;
                 }
                 ui.data_mut(|d| d.insert_temp(Id::new("cp_hsb"), (hsb.h, hsb.s, hsb.b, nc.to_rgba8())));
+                // A Display P3 colour sRGB can't show: the canvas (sRGB) shows the nearest one.
+                if app.session.doc().is_ok_and(|d| d.color_profile.conversion_to(figcraft_color::ColorProfile::Srgb).clips(nc)) {
+                    gamut_warning(ui, &t);
+                }
                 if changed {
                     match &mut paint.kind {
                         PaintKind::Solid { color } => {
@@ -741,6 +745,19 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         app.ui.picker = None;
     }
     let _ = Pos2::ZERO;
+}
+
+/// The colour picker's note under the fields for a colour outside sRGB.
+fn gamut_warning(ui: &mut Ui, t: &Tokens) {
+    use crate::a11y::Tip;
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let (r, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+        icons::paint(ui.painter(), r, Icon::GamutWarning, t.icon_secondary);
+        widgets::label(ui, "Outside sRGB", t.text_secondary);
+    })
+    .response
+    .tip("sRGB screens and files can't show this Display P3 color: the canvas shows the nearest sRGB color, P3 exports keep it");
 }
 
 /// Layers a pattern can tile: the file's components and the current page's top-level layers, but

@@ -210,6 +210,7 @@ fn a_finished_background_render_wakes_the_ui() {
         outlined: vec![],
         skip: vec![],
         solo: None,
+        proof: false,
     });
     let start = Instant::now();
     while wakes.load(Ordering::SeqCst) == 0 {

@@ -116,6 +116,23 @@ impl ProfileConversion {
         Color::new(encode(r), encode(g), encode(b), c.a)
     }
 
+    /// Whether `c` falls outside the target space: a channel clips by more than two 8-bit steps
+    /// (the colour picker's gamut warning).
+    pub fn clips(&self, c: Color) -> bool {
+        let Some(m) = &self.m else { return false };
+        apply(m, [decode(c.r), decode(c.g), decode(c.b)]).into_iter().any(outside)
+    }
+
+    /// Which premultiplied 8-bit RGBA pixels fall outside the target space (see [`Self::clips`]):
+    /// the canvas's soft proof.
+    pub fn clipped_pixels(&self, rgba: &[u8]) -> Vec<bool> {
+        let pixels = rgba.as_chunks::<4>().0;
+        let Some(m) = &self.m else { return vec![false; pixels.len()] };
+        let to_linear: [f64; 256] = std::array::from_fn(|i| decode(i as f32 / 255.0));
+        let lin = |v: u8| to_linear.get(usize::from(v)).copied().unwrap_or(0.0);
+        pixels.iter().map(|&[r, g, b, a]| a != 0 && apply(m, [r, g, b].map(|c| lin(straight(c, a)))).into_iter().any(outside)).collect()
+    }
+
     /// Convert premultiplied 8-bit RGBA pixels in place (table-driven; a no-op for the identity).
     pub fn apply_pixels(&self, rgba: &mut [u8]) {
         let Some(m) = &self.m else { return };
@@ -129,13 +146,26 @@ impl ProfileConversion {
                 continue;
             }
             let alpha = u32::from(*a);
-            let straight = |c: u8| if alpha == 255 { c } else { ((u32::from(c) * 255 + alpha / 2) / alpha).min(255) as u8 };
-            let v = [lin(straight(*r)), lin(straight(*g)), lin(straight(*b))];
+            let v = [lin(straight(*r, *a)), lin(straight(*g, *a)), lin(straight(*b, *a))];
             let out = m.map(|row| enc(row[0] * v[0] + row[1] * v[1] + row[2] * v[2]));
             let premul = |c: u8| if alpha == 255 { c } else { ((u32::from(c) * alpha + 127) / 255) as u8 };
             (*r, *g, *b) = (premul(out[0]), premul(out[1]), premul(out[2]));
         }
     }
+}
+
+/// A premultiplied 8-bit channel without its alpha (`a` > 0).
+fn straight(c: u8, a: u8) -> u8 {
+    let alpha = u32::from(a.max(1));
+    if alpha == 255 { c } else { ((u32::from(c) * 255 + alpha / 2) / alpha).min(255) as u8 }
+}
+
+/// A linear channel the target space can't hold: below 0 or above 1 by more than two 8-bit steps
+/// once encoded (smaller excesses are the rounding of 8-bit values in the other space).
+fn outside(l: f64) -> bool {
+    const SLACK: f64 = 2.0 / 255.0;
+    let enc = |x: f64| if x <= 0.003_130_8 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
+    (l < 0.0 && enc(-l) > SLACK) || (l > 1.0 && enc(l) > 1.0 + SLACK)
 }
 
 /// Entries of the linear → encoded table [`ProfileConversion::apply_pixels`] uses.

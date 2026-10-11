@@ -21,6 +21,8 @@ pub struct Job {
     pub skip: Vec<NodeId>,
     /// Only this layer (the focus view).
     pub solo: Option<NodeId>,
+    /// Soft-proof sRGB: stripe the colours sRGB can't show.
+    pub proof: bool,
 }
 
 pub struct Done {
@@ -43,6 +45,17 @@ pub fn screen_image(pix: &Pixmap, profile: ColorProfile) -> egui::ColorImage {
     egui::ColorImage::from_rgba_premultiplied(size, &data)
 }
 
+/// Soft proof: grey diagonal stripes over the pixels whose colours sRGB can't show.
+fn mark_outside_srgb(image: &mut egui::ColorImage, pix: &Pixmap, profile: ColorProfile) {
+    let w = image.size[0].max(1);
+    let clipped = profile.conversion_to(ColorProfile::Srgb).clipped_pixels(pix.data());
+    for (i, (px, out)) in image.pixels.iter_mut().zip(clipped).enumerate() {
+        if out && ((i % w) + (i / w)) % 8 < 4 {
+            *px = egui::Color32::from_gray(128);
+        }
+    }
+}
+
 fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     #[cfg(not(target_arch = "wasm32"))]
     let t0 = std::time::Instant::now();
@@ -56,7 +69,10 @@ fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
         ..Default::default()
     };
     let (view, pix, work) = retained.render(&job.doc, job.page, &job.view, &opts)?;
-    let image = screen_image(pix, job.doc.color_profile);
+    let mut image = screen_image(pix, job.doc.color_profile);
+    if job.proof {
+        mark_outside_srgb(&mut image, pix, job.doc.color_profile);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     #[cfg(target_arch = "wasm32")]

@@ -88,7 +88,10 @@ Or in a project's `.mcp.json`:
   appearance; `false` keeps the values and reinterprets them. Images are treated as sRGB and managed
   into the file's space. PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
   `cICP`), Display P3 JPG and WebP embed the ICC profile, and SVG and PDF export Display P3 files
-  converted to sRGB (out-of-gamut colours clip).
+  converted to sRGB (out-of-gamut colours clip). The app's canvas shows sRGB (P3 colours outside sRGB clip on screen):
+  `view.proofSrgb {on?}` (View ▸ Soft-proof sRGB) stripes those pixels so `screenshot {window:
+  true}` shows where they are (after the next canvas render), and the colour picker says Outside
+  sRGB for such a colour.
 - **Image adjustments**: image paints carry `filters` (exposure, contrast, saturation, temperature,
   tint, highlights, shadows; each -1..1). `image.adjust {ids?, target?: fill|stroke, index?,
   preset?, filters?}` applies a built-in preset (`vivid`, `muted`, `warm`, `cool`, `blackAndWhite`,

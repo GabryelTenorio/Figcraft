@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (gamut warnings and soft-proof sRGB; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -75,6 +75,7 @@ interaction feel not yet compared.
 | Slices shown on the canvas (View ▸ Slices) | done | dashed rectangles |
 | Dragging a layer inside a group keeps it in the group | done | frames and auto layout take other drops |
 | Layout grids (Ctrl+G) | done | |
+| Gamut warnings for Display P3 files | done | colour picker note; View ▸ Soft-proof sRGB stripes what sRGB can't show (the canvas itself is sRGB) |
 | Gradient and padding/gap handles on the canvas | done | |
 | Hover outline, selection colours, handle sizes | done | measured from UI3 screenshots |
 | Cursors per tool and modifier | partial | not compared |
@@ -94,6 +95,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Gamut warnings: the colour picker flags Display P3 colours outside sRGB; View ▸ Soft-proof sRGB stripes them on the canvas |
 | 2026-10-11 | minor | Canvas fixes: boolean groups clicked where their result is, a layer dragged inside a group stays in it, View ▸ Frame outlines and View ▸ Slices draw |
 | 2026-10-11 | minor | Outline mode done: outlines for the selection (the selected layers draw as outlines, the rest normally) and mask outlines |
 | 2026-10-11 | minor | Design panel arc fields, live boolean editing (operands on the canvas, live results, per-operand operations), shape builder on strokes and open paths, one-sided widths (Alt-drag a width handle) |

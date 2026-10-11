@@ -162,7 +162,8 @@ its parameters form when it has parameters; `null` closes the form), `focusRegio
 (`toolbar|layers|canvas|properties`: give that region the keyboard as F6 would, on the next frame),
 `iconGallery` (bool:
 every UI icon at 12, 16, 24 and 32 px over the window, for reviewing the icon set), `colorPicker`
-(`{fills?, index?}`: open the colour picker on the selection's paint; `null` closes it), `variables` (bool,
+(`{fills?, index?}`: open the colour picker on the selection's paint, which notes a Display P3 colour
+outside sRGB; `null` closes it), `variables` (bool,
 or a collection id or name to show, or `{library, collection?}` for an enabled library's collection: the
 Variables editor), `layerFilter` (string:
 open the layers search with that filter; `null` closes it), `collapseLayers` (true: collapse the

@@ -199,6 +199,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.maskOutlines", "Mask outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.mask_outlines)),
         spec!("view.pixelPreview", "Pixel preview", "{on?, scale? (1|2: rendered pixels per page pixel; turns it on)}", false, pixel_preview),
         spec!("view.frameOutlines", "Frame outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.frame_outlines)),
+        spec!(
+            "view.proofSrgb",
+            "Soft-proof sRGB",
+            "{on?}  mark the colours of a Display P3 file that sRGB screens and files can't show",
+            false,
+            |s, p| { flag(s, p, |v| &mut v.proof_srgb) }
+        ),
         spec!("view.snapGeometry", "Snap to geometry", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_geometry)),
         spec!("view.snapObjects", "Snap to objects", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_objects)),
         spec!("view.snapPixel", "Snap to pixel grid", "{on?}", false, |s, p| flag(s, p, |v| &mut v.snap_pixel)),
