@@ -419,7 +419,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             0 => PaintKind::Solid { color: base.with_alpha(1.0) },
                             5 => {
                                 // Pick an image file.
-                                match app.services.pick_open("Choose image", &["png", "jpg", "jpeg", "webp", "gif"]) {
+                                match app.services.pick_open("Choose image", &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
                                     Some(p) => match std::fs::read(&p) {
                                         Ok(bytes) => {
                                             let hash = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes));

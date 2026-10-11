@@ -576,7 +576,7 @@ impl FigApp {
     }
 
     pub fn open_dialog(&mut self) {
-        if let Some(p) = self.services.pick_open("Open", &["figcraft", "json", "svg", "png", "jpg", "jpeg", "webp", "gif"]) {
+        if let Some(p) = self.services.pick_open("Open", &["figcraft", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
             let ps = p.to_string_lossy().to_string();
             if self.run("file.open", json!({"path": ps})).is_some() {
                 self.ui.home = false;
@@ -585,7 +585,11 @@ impl FigApp {
     }
 
     pub fn import_dialog(&mut self, place: bool) {
-        let exts: &[&str] = if place { &["png", "jpg", "jpeg", "webp", "gif"] } else { &["svg", "png", "jpg", "jpeg", "webp", "gif", "figcraft"] };
+        let exts: &[&str] = if place {
+            &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]
+        } else {
+            &["svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft"]
+        };
         if let Some(p) = self.services.pick_open(if place { "Place image" } else { "Import" }, exts) {
             let ps = p.to_string_lossy().to_string();
             self.run("file.import", json!({"path": ps}));
