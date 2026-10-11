@@ -96,6 +96,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::annotations::specs());
         list.extend(crate::distance::specs());
         list.extend(crate::collab::specs());
+        list.extend(crate::branches::specs());
         list.extend(crate::plugins::specs());
         list.extend(crate::live::specs());
         list.extend(crate::invite_links::specs());

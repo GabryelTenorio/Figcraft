@@ -124,6 +124,35 @@ pub fn before_doc(doc: &Document, id: NodeId) -> Option<Document> {
     doc.with_dev_snapshot(id)
 }
 
+/// Every layer that changed between two versions of a whole document, page by page (pages added
+/// or removed as a whole), for reviewing a branch.
+pub fn compare_docs(before: &Document, now: &Document) -> Comparison {
+    let mut out = Comparison {
+        id: NodeId(0),
+        name: now.name.clone(),
+        changed: false,
+        snapshot: true,
+        changes: Vec::new(),
+        added: 0,
+        removed: 0,
+        modified: 0,
+        truncated: false,
+    };
+    let mut w = Walk { before, now, now_ids: now.ids().collect(), before_ids: before.ids().collect(), out: &mut out };
+    for p in &now.pages {
+        if before.contains(*p) {
+            w.layer(*p, 0);
+        } else {
+            w.whole(now, *p, 0, ChangeKind::Added);
+        }
+    }
+    for p in before.pages.iter().filter(|p| !now.contains(**p)) {
+        w.whole(before, *p, 0, ChangeKind::Removed);
+    }
+    out.changed = !out.changes.is_empty();
+    out
+}
+
 fn bounded_set(doc: &Document, id: NodeId) -> BTreeSet<NodeId> {
     doc.subtree(id).into_iter().take(MAX_SNAPSHOT_NODES * 2).collect()
 }
@@ -163,7 +192,9 @@ impl Walk<'_> {
             return;
         }
         let Some(now) = self.now.node(id) else { return };
-        let props = layer_changes(self.before, self.now, id);
+        // A layer shared by both versions under a shared parent didn't change (nor its place).
+        let shared = |n: NodeId| self.before.node_arc(n).zip(self.now.node_arc(n)).is_some_and(|(x, y)| std::sync::Arc::ptr_eq(x, y));
+        let props = if shared(id) && now.parent.is_none_or(shared) { Vec::new() } else { layer_changes(self.before, self.now, id) };
         if !props.is_empty() {
             self.push(LayerChange {
                 id,

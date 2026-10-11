@@ -81,6 +81,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "file.save" => app.save(),
         "file.saveAs" => app.save_as_dialog(),
         "file.saveVersion" => crate::versions::start_save(app),
+        "branch.create" => crate::versions::start_branch(app),
         "file.export" | "file.exportSvg" => app.ui.export_preview = true,
         "edit.copyAsCss" => {
             let ids = app.session.selection();
@@ -142,7 +143,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.ui.last_copy = Some(text);
         }
         "edit.paste" => paste(app, None),
-        "file.close" if app.session.ds().map(|d| d.is_dirty()).unwrap_or(false) => {
+        "file.close" if app.session.ds().is_ok_and(|d| d.is_dirty() && d.branch_of.is_none()) => {
             let save = pretty_shortcut(crate::shortcuts::shortcut("file.save").unwrap_or(""));
             app.toast(format!("Unsaved changes: save first ({save}), or close the tab with {}-click to discard", pretty_shortcut("Alt")));
         }
