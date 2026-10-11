@@ -1,13 +1,13 @@
 //! Plugins in the UI: the installed plugins in the Plugins menu, the parameters form a command
-//! with parameters asks for before it runs, and the Manage plugins window. Everything runs through
-//! the engine's `plugin.*` commands.
+//! with parameters asks for before it runs, the panel a running plugin shows, and the Manage
+//! plugins window. Everything runs through the engine's `plugin.*` commands.
 
-use egui::{Context, Id, RichText, Ui};
+use egui::{Align2, Context, Id, RichText, Ui};
 use figcraft_engine::plugins::{Access, InstalledPlugin, Param, ParamKind};
 use serde_json::{Map, Value, json};
 
 use crate::FigApp;
-use crate::dialogs::window;
+use crate::dialogs::{floating, window};
 use crate::i18n::{tr, trf};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, FieldEdit, Lead};
@@ -31,14 +31,15 @@ pub fn start(app: &mut FigApp, id: &str, command: &str) {
             let values = c.params.iter().map(|p| (p.name.clone(), p.default_value())).collect();
             app.ui.plugin_form = Some(PluginForm { id: id.to_string(), command: c.id.clone(), values });
         }
-        _ => run(app, id, command, Value::Object(Map::new())),
+        _ => run(app, "plugin.run", json!({"id": id, "command": command})),
     }
 }
 
-/// Run a plugin command; a text output is shown as a toast unless the plugin showed a message.
-fn run(app: &mut FigApp, id: &str, command: &str, params: Value) {
+/// Run `plugin.run` or `plugin.event`; a text output is shown as a toast unless the plugin showed
+/// a message.
+fn run(app: &mut FigApp, cmd: &str, params: Value) {
     let toast = app.ui.toast.clone();
-    let Some(out) = app.run("plugin.run", json!({"id": id, "command": command, "params": params})) else { return };
+    let Some(out) = app.run(cmd, params) else { return };
     if app.ui.toast == toast
         && let Some(text) = out["output"].as_str().filter(|t| !t.trim().is_empty())
     {
@@ -87,13 +88,38 @@ pub fn menu(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> bool {
     true
 }
 
-/// The plugin windows (Manage plugins, a command's parameters).
+/// The plugin windows (Manage plugins, a command's parameters, a plugin's panel).
 pub fn show(app: &mut FigApp, ctx: &Context) {
     if app.ui.plugins_window {
         manage_window(app, ctx);
     }
     if app.ui.plugin_form.is_some() {
         form_window(app, ctx);
+    }
+    if app.session.plugins.panel.is_some() {
+        panel_window(app, ctx);
+    }
+}
+
+/// The panel a running plugin shows, at first beside the properties panel (it can be moved): a
+/// pressed button or a changed value calls the plugin back (`plugin.event`); closing it ends the
+/// plugin's session.
+fn panel_window(app: &mut FigApp, ctx: &Context) {
+    let Some(open) = app.session.plugins.panel.as_ref() else { return };
+    let t = Tokens::get(ctx);
+    let mut keep = true;
+    let mut changed = None;
+    let id = open.manifest.id.as_str();
+    let at = egui::pos2(ctx.content_rect().right() - 252.0, 52.0);
+    floating(open.title(), ctx).id(Id::new(("plugin_panel", id))).pivot(Align2::RIGHT_TOP).default_pos(at).open(&mut keep).show(ctx, |ui| {
+        ui.set_width(320.0);
+        changed = controls(ui, id, &open.panel.controls, &open.values, &t);
+    });
+    let id = id.to_string();
+    if !keep {
+        app.run("plugin.close", json!({"id": id}));
+    } else if let Some((control, value)) = changed {
+        run(app, "plugin.event", json!({"id": id, "control": control, "value": value}));
     }
 }
 
@@ -177,16 +203,9 @@ fn form_window(app: &mut FigApp, ctx: &Context) {
     let title = if label.contains(name.as_str()) { label.to_string() } else { format!("{name}: {label}") };
     window(&title, ctx).id(Id::new("plugin_form")).open(&mut open).show(ctx, |ui| {
         ui.set_width(320.0);
-        egui::Grid::new("plugin_form_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            for p in &command.params {
-                ui.label(RichText::new(p.title()).font(regular(11.0)).color(t.text_secondary));
-                let current = form.values.get(&p.name).cloned().unwrap_or_else(|| p.default_value());
-                if let Some(v) = field(ui, &form, p, &current) {
-                    form.values.insert(p.name.clone(), v);
-                }
-                ui.end_row();
-            }
-        });
+        if let Some((name, v)) = controls(ui, &format!("{}/{}", form.id, form.command), &command.params, &form.values, &t) {
+            form.values.insert(name, v);
+        }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             submit = widgets::button(ui, tr("Run"), true, true).clicked();
@@ -195,24 +214,73 @@ fn form_window(app: &mut FigApp, ctx: &Context) {
     });
     app.ui.plugin_form = (open && !submit && !cancel).then_some(form.clone());
     if submit {
-        run(app, &form.id, &form.command, Value::Object(form.values));
+        run(app, "plugin.run", json!({"id": form.id, "command": form.command, "params": form.values}));
     }
 }
 
-/// One parameter's field; the new value when it changed.
-fn field(ui: &mut Ui, form: &PluginForm, p: &Param, current: &Value) -> Option<Value> {
-    let id = Id::new(("plugin_param", &form.id, &form.command, &p.name));
+/// Parameters or panel controls in two columns (label, field); buttons in a row share one line,
+/// the first button filled. Returns the control the user changed or pressed: its name and new
+/// value (null for a button).
+fn controls(ui: &mut Ui, salt: &str, params: &[Param], values: &Map<String, Value>, t: &Tokens) -> Option<(String, Value)> {
+    let mut changed = None;
+    let mut first_button = true;
+    egui::Grid::new(("plugin_controls", salt)).num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+        for row in params.chunk_by(|a, b| a.kind == ParamKind::Button && b.kind == ParamKind::Button) {
+            let Some(p) = row.first() else { continue };
+            // Checkboxes and buttons carry their own label; a list's sits by its first item.
+            let caption = if matches!(p.kind, ParamKind::Boolean | ParamKind::Button | ParamKind::Note) { "" } else { p.title() };
+            let caption = RichText::new(caption).font(regular(11.0)).color(t.text_secondary);
+            if p.kind == ParamKind::List {
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| ui.label(caption));
+            } else {
+                ui.label(caption);
+            }
+            let hit = match p.kind {
+                ParamKind::Note => {
+                    ui.vertical(|ui| {
+                        ui.set_max_width(FIELD_W);
+                        ui.add(egui::Label::new(RichText::new(&p.label).font(regular(11.0)).color(t.text)).wrap());
+                    });
+                    None
+                }
+                ParamKind::Button => {
+                    ui.horizontal(|ui| {
+                        let pressed = row.iter().filter(|b| widgets::button(ui, b.title(), std::mem::take(&mut first_button), true).clicked());
+                        pressed.last().map(|b| (b.name.clone(), Value::Null))
+                    })
+                    .inner
+                }
+                _ => {
+                    let current = values.get(&p.name).cloned().unwrap_or_else(|| p.default_value());
+                    field(ui, Id::new(("plugin_control", salt, &p.name)), p, &current).map(|v| (p.name.clone(), v))
+                }
+            };
+            if hit.is_some() {
+                changed = hit;
+            }
+            ui.end_row();
+        }
+    });
+    changed
+}
+
+/// One parameter's field, named for screen readers; the new value when it changed.
+fn field(ui: &mut Ui, id: Id, p: &Param, current: &Value) -> Option<Value> {
+    let name = p.title();
     match p.kind {
-        ParamKind::Text => widgets::text_field(ui, id, current.as_str().unwrap_or_default(), FIELD_W, "").map(Value::String),
-        ParamKind::Number => match widgets::number_field(ui, id, Lead::None, current.as_f64(), "", FIELD_W, 1.0)? {
-            FieldEdit::Set(v) | FieldEdit::Scrub(v, _) => p.coerce(&json!(v)).ok(),
+        ParamKind::Text => widgets::text_field_named(ui, id, current.as_str().unwrap_or_default(), FIELD_W, name).map(Value::String),
+        ParamKind::Number => match widgets::number_field(ui, id, Lead::Named(name), current.as_f64(), "", FIELD_W, 1.0)? {
+            FieldEdit::Set(v) | FieldEdit::Scrub(v, true) => p.coerce(&json!(v)).ok(),
+            FieldEdit::Scrub(_, false) => None,
         },
         ParamKind::Boolean => {
             let on = current.as_bool().unwrap_or(false);
-            widgets::checkbox(ui, on, "").then_some(Value::Bool(!on))
+            widgets::checkbox(ui, on, name).then_some(Value::Bool(!on))
         }
         ParamKind::Select => {
-            let resp = widgets::dropdown(ui, current.as_str().unwrap_or_default(), FIELD_W, None);
+            let value = current.as_str().unwrap_or_default();
+            let resp = widgets::dropdown(ui, value, FIELD_W, None);
+            crate::a11y::combo(&resp, name, value, crate::a11y::menu_open(&resp));
             let mut picked = None;
             crate::right::menu_popup(&resp).show(|ui| {
                 for o in &p.options {
@@ -224,5 +292,28 @@ fn field(ui: &mut Ui, form: &PluginForm, p: &Param, current: &Value) -> Option<V
             });
             picked
         }
+        ParamKind::List => {
+            let value = current.as_str();
+            ui.vertical(|ui| {
+                p.options
+                    .iter()
+                    .filter(|o| widgets::radio(ui, value == Some(o.as_str()), o) && value != Some(o.as_str()))
+                    .last()
+                    .map(|o| Value::String(o.clone()))
+            })
+            .inner
+        }
+        // shortcut: a swatch and a hex field, no colour picker popover; hook the picker up when
+        // plugins need more than hex.
+        ParamKind::Color => {
+            let hex = current.as_str().unwrap_or_default();
+            ui.horizontal(|ui| {
+                let color = figcraft_color::Color::from_hex(hex).unwrap_or(figcraft_color::Color::BLACK);
+                widgets::swatch(ui, &figcraft_color::Paint::solid(color), widgets::FIELD_H);
+                widgets::text_field_named(ui, id, hex, FIELD_W - widgets::FIELD_H - 8.0, name).and_then(|s| p.coerce(&json!(s)).ok())
+            })
+            .inner
+        }
+        ParamKind::Button | ParamKind::Note => None,
     }
 }

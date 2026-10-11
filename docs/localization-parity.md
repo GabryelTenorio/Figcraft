@@ -24,7 +24,7 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
   a missing translation shows English, never a raw key. One English text that needs two
   translations takes a context (`"Fill|sizing"`).
 - **Strings:** 1,280 UI keys in `en.toml` (35 with plural forms; ~110 are labels from engine and
-  document data, such as tool names, blend modes and Dev Mode properties) plus 498 command labels
+  document data, such as tool names, blend modes and Dev Mode properties) plus 501 command labels
   and 29 menu wordings by command id. Command ids, the CLI, MCP and the control channel stay
   English. Accessibility names come from the same strings.
 - **Language preference:** Preferences ▸ Language (System, English, Español), applied at once
@@ -49,9 +49,9 @@ supported by both apps (CJK, Arabic and Devanagari shaping, IME); Figma has no v
 
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Hours to full |
 |---|---|---|---|---|---|---|---|
-| English | en | 1,807 / 1,807 (100%, source) | yes | Latin | yes (source) | full | 0 |
+| English | en | 1,810 / 1,810 (100%, source) | yes | Latin | yes (source) | full | 0 |
 | Simplified Chinese (Mandarin) | zh-Hans | 0 (0%) | no | CJK text, IME and font fallback work in documents; UI font needs CJK coverage | no | none | 4–7 |
-| Spanish | es | 1,807 / 1,807 (100%, draft) | yes | Latin | no | draft | 1–2 (es-419 differences, after native review) |
+| Spanish | es | 1,810 / 1,810 (100%, draft) | yes | Latin | no | draft | 1–2 (es-419 differences, after native review) |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping works in documents; UI font fallback to check | no | none | 4–7 |
 | Arabic | ar | 0 (0%) | no | Bidi, shaping and RTL names work; the UI does not mirror | no | none | 9–15 |
 | French | fr | 0 (0%) | no | Latin | no | none | 3–5 |
@@ -77,5 +77,5 @@ languages, so their users expect them), and a native review of the Spanish draft
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-11 | major | Localization layer landed (gap 5): catalogs per language baked in at build time, English text as keys and fallback, `{named}` placeholders and one/other plurals, command labels by command id, Preferences ▸ Language (System follows the OS or the browser) applied live, `pref.language`, and a catalog check; English catalog (1,280 UI keys) and a complete Spanish draft (1,807 entries with command labels) waiting for native review; localization 10% → 20%, 60–100 h → 45–75 h |
+| 2026-10-11 | major | Localization layer landed (gap 5): catalogs per language baked in at build time, English text as keys and fallback, `{named}` placeholders and one/other plurals, command labels by command id, Preferences ▸ Language (System follows the OS or the browser) applied live, `pref.language`, and a catalog check; English catalog (1,280 UI keys) and a complete Spanish draft (1,810 entries with command labels) waiting for native review; localization 10% → 20%, 60–100 h → 45–75 h |
 | 2026-10-10 | major | Created: English only, string counts measured from source, Figma's eight UI languages from its help center |

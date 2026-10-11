@@ -28,3 +28,6 @@ egui_extras = { workspace = true }
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"
+
+[dev-dependencies]
+wat = { workspace = true }

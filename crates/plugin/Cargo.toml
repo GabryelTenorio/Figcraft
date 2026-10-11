@@ -9,6 +9,7 @@ description = "FigCraft plugins: the plugin manifest and the WebAssembly sandbox
 workspace = true
 
 [dependencies]
+figcraft-color = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

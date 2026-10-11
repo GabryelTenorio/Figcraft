@@ -1,21 +1,26 @@
 //! Plugins: WebAssembly modules that act on the document through the same commands as the menus,
 //! CLI and MCP server, inside the sandbox of `figcraft-plugin`. This module is the policy: which
 //! commands a plugin may call (its manifest's permissions, and never files, other documents, the
-//! undo history, dialogs or plugins), one undo step per run, and the installed-plugin list kept in
-//! the preferences. See `docs/plugins.md`.
+//! undo history, dialogs or plugins), one undo step per run or panel callback, the panel a plugin
+//! keeps open, its settings and the installed-plugin list kept in the preferences. See
+//! `docs/plugins.md`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use figcraft_plugin::{Limits, PluginError};
+use figcraft_plugin::{Instance, Limits, PluginError, RunOutput, UiChange};
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::cmd::{CommandSpec, find_command};
 use crate::params::{get, num, string};
 use crate::{EngineError, Result, Session, bad, spec};
 
-pub use figcraft_plugin::{Access, MANIFEST_FILE, Manifest, Param, ParamKind};
+pub use figcraft_plugin::{Access, MANIFEST_FILE, Manifest, Panel, Param, ParamKind};
+
+/// What one plugin may keep in its settings (keys and JSON values, in bytes), and its longest key.
+const MAX_SETTINGS_BYTES: usize = 64 * 1024;
+const MAX_SETTING_KEY: usize = 128;
 
 /// An installed plugin (in the preferences).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -33,12 +38,41 @@ pub(crate) fn persisted<S: Serializer>(list: &[InstalledPlugin], s: S) -> std::r
 }
 
 /// Per-session plugin state.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Runtime {
     /// Modules of plugins imported without a manifest file, by plugin id.
     modules: HashMap<String, Arc<Vec<u8>>>,
     /// The last run (plugin id, command id, params): "Run last plugin".
     pub last: Option<(String, String, Value)>,
+    /// The plugin panel open now.
+    // shortcut: one panel at a time (another plugin's panel replaces it); keep a list when
+    // plugins need panels side by side.
+    pub panel: Option<OpenPanel>,
+}
+
+/// A plugin's open panel: the running module (its memory lasts from one callback to the next),
+/// the panel it showed and the values entered.
+#[derive(Debug)]
+pub struct OpenPanel {
+    pub manifest: Manifest,
+    /// The command that opened it, its parameters and its undo step's name.
+    pub command: String,
+    params: Value,
+    label: String,
+    pub panel: Panel,
+    pub values: Map<String, Value>,
+    instance: Instance,
+}
+
+impl OpenPanel {
+    /// The panel's title: its own, else the plugin's name.
+    pub fn title(&self) -> &str {
+        if self.panel.title.is_empty() { &self.manifest.name } else { &self.panel.title }
+    }
+
+    fn describe(&self) -> Value {
+        json!({"plugin": self.manifest.id, "command": self.command, "title": self.title(), "controls": self.panel.controls, "values": self.values})
+    }
 }
 
 /// Command prefixes no plugin may call, whatever its permissions: files and the app (plugins get
@@ -122,6 +156,38 @@ impl figcraft_plugin::Host for EngineHost<'_> {
 
     fn log(&mut self, line: &str) {
         log::info!("plugin {}: {line}", self.manifest.id);
+    }
+
+    fn setting(&mut self, key: &str) -> Option<String> {
+        Some(self.s.prefs.plugin_settings.get(&self.manifest.id)?.get(key)?.to_string())
+    }
+
+    fn set_setting(&mut self, key: &str, value: Option<&str>) -> std::result::Result<(), String> {
+        let (all, id) = (&mut self.s.prefs.plugin_settings, &self.manifest.id);
+        let Some(text) = value else {
+            if let Some(mine) = all.get_mut(id) {
+                mine.remove(key);
+                if mine.is_empty() {
+                    all.remove(id);
+                }
+            }
+            return Ok(());
+        };
+        if key.is_empty() || key.chars().count() > MAX_SETTING_KEY || key.chars().any(char::is_control) {
+            return Err(format!("a setting's key must be 1–{MAX_SETTING_KEY} characters without control characters"));
+        }
+        let too_big = || format!("a plugin's settings are limited to {} KB", MAX_SETTINGS_BYTES / 1024);
+        if key.len() + text.len() > MAX_SETTINGS_BYTES {
+            return Err(too_big());
+        }
+        let v: Value = serde_json::from_str(text).map_err(|e| format!("a setting must be JSON: {e}"))?;
+        let others: usize =
+            all.get(id).map_or(0, |mine| mine.iter().filter(|(k, _)| k.as_str() != key).map(|(k, v)| k.len() + v.to_string().len()).sum());
+        if others + key.len() + v.to_string().len() > MAX_SETTINGS_BYTES {
+            return Err(too_big());
+        }
+        all.entry(id.clone()).or_default().insert(key.to_string(), v);
+        Ok(())
     }
 }
 
@@ -253,7 +319,11 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let id = string(p, "id").ok_or_else(|| bad(cmd, "`id` required"))?;
     installed(s, cmd, &id)?;
     s.prefs.plugins.retain(|x| x.manifest.id != id);
+    s.prefs.plugin_settings.remove(&id);
     s.plugins.modules.remove(&id);
+    if s.plugins.panel.as_ref().is_some_and(|o| o.manifest.id == id) {
+        s.plugins.panel = None;
+    }
     if s.plugins.last.as_ref().is_some_and(|(last, ..)| *last == id) {
         s.plugins.last = None;
     }
@@ -274,15 +344,112 @@ pub fn run(s: &mut Session, id: &str, command: Option<&str>, params: &Value, fue
     if let Some(f) = fuel {
         limits.fuel = (f.max(1000.0) as u64).min(limits.fuel);
     }
-    let input = json!({"api": figcraft_plugin::API_VERSION, "command": c.id, "params": params, "selection": s.selection()}).to_string();
-    s.plugins.last = Some((m.id.clone(), c.id.clone(), params));
-    let label = if m.commands.len() > 1 { format!("{}: {}", m.name, c.label) } else { m.name.clone() };
-    let out = s.grouped(&label, |s| {
+    // The API the plugin was written for: a v1 plugin gets the input it always got.
+    let input = json!({"api": m.api, "command": c.id, "params": params, "selection": s.selection()}).to_string();
+    s.plugins.last = Some((m.id.clone(), c.id.clone(), params.clone()));
+    let label = if m.commands.len() > 1 { format!("{}: {}", m.name, c.label.trim_end_matches(['…', '.'])) } else { m.name.clone() };
+    let mut instance = Instance::new(&wasm, &limits).map_err(|e| plugin_error(&m.name, e))?;
+    let mut out = call_plugin(s, m, &label, &mut instance, &input).map_err(|(e, _)| e)?;
+    match out.ui.take() {
+        Some(UiChange::Show(panel)) => {
+            let values = panel.values(&Map::new());
+            s.plugins.panel = Some(OpenPanel { manifest: m.clone(), command: c.id.clone(), params, label, panel, values, instance });
+        }
+        Some(UiChange::Close) => close_panel(s, &m.id),
+        None => {}
+    }
+    Ok(report(s, &m.id, &c.id, out))
+}
+
+/// Call the plugin with `input` as one undo step (none when it changed nothing), rolled back when
+/// it fails. On failure, also whether the module is still fit for more calls: it returned an
+/// error itself rather than trapping or running out of fuel or memory.
+fn call_plugin(
+    s: &mut Session,
+    m: &Manifest,
+    label: &str,
+    instance: &mut Instance,
+    input: &str,
+) -> std::result::Result<RunOutput, (EngineError, bool)> {
+    let mut usable = false;
+    s.grouped(label, |s| {
         let mut host = EngineHost { s, manifest: m };
-        figcraft_plugin::run(&wasm, &input, &limits, &mut host).map_err(|e| plugin_error(&m.name, e))
-    })?;
+        instance.call(input, &mut host).map_err(|e| {
+            usable = matches!(e, PluginError::Failed(_));
+            plugin_error(&m.name, e)
+        })
+    })
+    .map_err(|e| (e, usable))
+}
+
+/// What `plugin.run` and `plugin.event` return.
+fn report(s: &Session, id: &str, command: &str, out: RunOutput) -> Value {
     let output = serde_json::from_str::<Value>(&out.output).unwrap_or(Value::String(out.output));
-    Ok(json!({"plugin": m.id, "command": c.id, "output": output, "logs": out.logs, "calls": out.calls, "fuel": out.fuel}))
+    let panel = s.plugins.panel.as_ref().filter(|o| o.manifest.id == id).map(OpenPanel::describe);
+    json!({"plugin": id, "command": command, "output": output, "logs": out.logs, "calls": out.calls, "fuel": out.fuel, "panel": panel})
+}
+
+/// Close plugin `id`'s panel, if it has one open.
+fn close_panel(s: &mut Session, id: &str) {
+    if s.plugins.panel.as_ref().is_some_and(|o| o.manifest.id == id) {
+        s.plugins.panel = None;
+    }
+}
+
+fn ui(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = string(p, "id");
+    let open = s.plugins.panel.as_ref().filter(|o| id.as_ref().is_none_or(|id| *id == o.manifest.id));
+    Ok(open.map_or(Value::Null, OpenPanel::describe))
+}
+
+/// A button press or a changed value in a plugin's panel: the plugin is called back with the
+/// event and every value, as one undo step.
+fn event(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "plugin.event";
+    let id = string(p, "id").ok_or_else(|| bad(cmd, "`id` required (the plugin whose panel is open)"))?;
+    let control = string(p, "control").ok_or_else(|| bad(cmd, "`control` required (a control's name)"))?;
+    let open = s.plugins.panel.as_ref().filter(|o| o.manifest.id == id).ok_or_else(|| bad(cmd, format!("`{id}` has no panel open")))?;
+    let c = open
+        .panel
+        .control(&control)
+        .filter(|c| c.kind != ParamKind::Note)
+        .ok_or_else(|| bad(cmd, format!("the panel has no control `{control}`")))?;
+    let field = c.is_field();
+    let value = if field { c.coerce(get(p, "value").unwrap_or(&Value::Null)).map_err(|e| bad(cmd, e))? } else { Value::Null };
+    let Some(mut open) = s.plugins.panel.take() else { return Err(bad(cmd, "no panel is open")) };
+    if field {
+        open.values.insert(control.clone(), value.clone());
+    }
+    let command = open.command.clone();
+    let event = json!({"control": control, "value": value});
+    let input = json!({"api": open.manifest.api, "command": open.command, "params": open.params, "selection": s.selection(), "event": event, "values": open.values});
+    let mut out = match call_plugin(s, &open.manifest, &open.label, &mut open.instance, &input.to_string()) {
+        Ok(out) => out,
+        Err((e, usable)) => {
+            // A plugin that returned an error keeps its panel; one that crashed loses it.
+            if usable {
+                s.plugins.panel = Some(open);
+            }
+            return Err(e);
+        }
+    };
+    match out.ui.take() {
+        Some(UiChange::Show(panel)) => {
+            open.values = panel.values(&open.values);
+            open.panel = panel;
+            s.plugins.panel = Some(open);
+        }
+        Some(UiChange::Close) => {}
+        None => s.plugins.panel = Some(open),
+    }
+    Ok(report(s, &id, &command, out))
+}
+
+fn close(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = string(p, "id").ok_or_else(|| bad("plugin.close", "`id` required"))?;
+    let closed = s.plugins.panel.as_ref().is_some_and(|o| o.manifest.id == id);
+    close_panel(s, &id);
+    Ok(json!({"closed": closed}))
 }
 
 fn run_cmd(s: &mut Session, p: &Value) -> Result<Value> {
@@ -317,10 +484,19 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "plugin.run",
             "Run plugin",
-            "{id, command? (default: the first), params? (the command's parameters), fuel? (lower instruction budget)} one undo step → {output, logs, calls, fuel}",
+            "{id, command? (default: the first), params? (the command's parameters), fuel? (lower instruction budget)} one undo step → {output, logs, calls, fuel, panel}",
             false,
             run_cmd
         ),
+        spec!("plugin.ui", "Plugin panel", "{id?} → the open plugin panel {plugin, command, title, controls, values}, or null", false, ui),
+        spec!(
+            "plugin.event",
+            "Use plugin panel control",
+            "{id, control, value? (a field's new value)} presses a button or sets a field in the plugin's open panel; the plugin is called back as one undo step → like plugin.run",
+            false,
+            event
+        ),
+        spec!("plugin.close", "Close plugin panel", "{id} → {closed}", false, close),
         spec!("plugins.runLast", "Run last plugin", "{}", false, run_last),
         spec!("plugins.manage", "Manage plugins…", "{}  opens the plugins window; returns the list like `plugin.list`", false, manage),
     ]
