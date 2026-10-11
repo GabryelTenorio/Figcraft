@@ -1665,6 +1665,7 @@ dependencies = [
  "figcraft-engine",
  "figcraft-geom",
  "figcraft-layout",
+ "figcraft-pathops",
  "figcraft-render",
  "figcraft-text",
  "image",

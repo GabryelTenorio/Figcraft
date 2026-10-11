@@ -53,7 +53,7 @@ interaction feel not yet compared.
 | Move, hand (Space), zoom (hold Z, Alt out, drag area) | done | |
 | Frame (presets panel, swap orientation), section, slice | done | |
 | Rectangle, ellipse (arc handles and Design panel arc fields), polygon, star, line, arrow; Shift/Alt | done | |
-| Pen: vector networks, branch, close, bend; pencil | done | no pen pressure |
+| Pen: vector networks, branch, close, bend; pencil | done | pen pressure on Windows and from browser styluses only |
 | Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: clicked where the result is, double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | |
@@ -61,7 +61,7 @@ interaction feel not yet compared.
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
 | Text on a path (Figma Draw) | done | put on from the Design panel or `text.onPath`, not by clicking a path with the Text tool; the path is edited by resizing only |
-| Brushes (Figma Draw) | missing | |
+| Stretch and scatter brushes (Figma Draw) | done | eight presets drawn in code; the Pencil's brush is set by `tool.pencilBrush`, not from the toolbar |
 | Image crop handles | done | |
 
 ## Canvas

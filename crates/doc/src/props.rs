@@ -81,6 +81,59 @@ pub struct StrokeProps {
     /// Variable width: how the width changes along the path (`None` = uniform).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_profile: Option<WidthProfile>,
+    /// A brush the stroke is drawn with instead of a plain band (`None`: plain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brush: Option<Brush>,
+}
+
+/// A brush stroke: the stroke drawn with a built-in brush shape (`preset`, an id of
+/// `figcraft_pathops::brush::PRESETS`), stretched along the path or scattered along it every
+/// `spacing` stroke weights with repeatable jitter from `seed`. A width profile scales it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Brush {
+    pub preset: String,
+    /// Scatter: distance between copies, in stroke weights.
+    pub spacing: f64,
+    /// Scatter: how much copies vary in size, 0..1.
+    pub size_jitter: f64,
+    /// Scatter: how far copies turn from the path's direction, 0..1 (1: up to half a turn).
+    pub rotation_jitter: f64,
+    /// Scatter: how far copies stray from the path, in stroke weights, 0..4.
+    pub scatter: f64,
+    pub seed: u32,
+}
+
+impl Default for Brush {
+    fn default() -> Self {
+        Self { preset: String::new(), spacing: 1.5, size_jitter: 0.0, rotation_jitter: 0.0, scatter: 0.0, seed: 0 }
+    }
+}
+
+impl Brush {
+    /// A brush of `preset` with default settings.
+    pub fn new(preset: impl Into<String>) -> Self {
+        Self { preset: preset.into(), ..Self::default() }
+    }
+
+    /// Every value in range (NaN: the default).
+    pub fn sanitized(&self) -> Self {
+        let c = |v: f64, lo: f64, hi: f64, d: f64| if v.is_finite() { v.clamp(lo, hi) } else { d };
+        Self {
+            preset: self.preset.clone(),
+            spacing: c(self.spacing, 0.1, 100.0, 1.5),
+            size_jitter: c(self.size_jitter, 0.0, 1.0, 0.0),
+            rotation_jitter: c(self.rotation_jitter, 0.0, 1.0, 0.0),
+            scatter: c(self.scatter, 0.0, 4.0, 0.0),
+            seed: self.seed,
+        }
+    }
+
+    /// How much wider than the stroke weight the brush can paint (larger copies, strays).
+    pub fn reach_factor(&self) -> f64 {
+        let b = self.sanitized();
+        1.0 + b.size_jitter + 2.0 * b.scatter
+    }
 }
 
 impl Default for StrokeProps {
@@ -95,6 +148,7 @@ impl Default for StrokeProps {
             miter_limit: 4.0,
             dashes: Vec::new(),
             width_profile: None,
+            brush: None,
         }
     }
 }
@@ -105,9 +159,10 @@ impl StrokeProps {
         self.width_profile.as_ref().filter(|p| !p.points.is_empty())
     }
 
-    /// The widest the stroke gets anywhere along the path (the weight, scaled by a width profile).
+    /// The widest the stroke gets anywhere along the path (the weight, scaled by a width profile
+    /// and widened by a brush's reach).
     pub fn max_weight(&self) -> f64 {
-        self.profile().map_or(self.weight, |p| self.weight * p.max_scale())
+        self.profile().map_or(self.weight, |p| self.weight * p.max_scale()) * self.brush.as_ref().map_or(1.0, Brush::reach_factor)
     }
 }
 

@@ -224,6 +224,13 @@ pub fn specs() -> Vec<CommandSpec> {
             width_profile
         ),
         spec!(
+            "stroke.brush",
+            "Brush",
+            "{ids?, preset (taper|ink|ribbon|bristle: stretched along the path; dots|stars|confetti|leaves: scattered along it | null: plain), spacing? (× weight), sizeJitter? (0-1), rotationJitter? (0-1), scatter? (0-4 × weight), seed?}  layers without a stroke get a black one",
+            true,
+            stroke_brush
+        ),
+        spec!(
             "effect.add",
             "Add effect",
             "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture|glass), effect? {..}}",
@@ -985,6 +992,22 @@ fn width_profile(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = s.doc_mut()?;
     for i in ids {
         super::props::apply(cmd, doc, i, &props)?;
+    }
+    ok()
+}
+
+fn stroke_brush(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "stroke.brush";
+    let v = if get(p, "preset").is_none_or(Value::is_null) { Value::Null } else { p.clone() };
+    let brush = super::props::brush_of(&v).ok_or_else(|| bad(cmd, super::props::BRUSH_HELP))?;
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    for i in ids {
+        let n = doc.get_mut(i)?;
+        if brush.is_some() && n.strokes.is_empty() {
+            n.strokes.push(figcraft_color::Paint::solid(figcraft_color::Color::BLACK));
+        }
+        n.stroke.brush = brush.clone();
     }
     ok()
 }
