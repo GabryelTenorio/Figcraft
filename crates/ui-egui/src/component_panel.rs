@@ -17,6 +17,7 @@ use figcraft_engine::components::{
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::i18n::{tr, tr_noop, trn};
 use crate::icons::{self, Icon};
 use crate::right::{menu_item, menu_popup, row};
 use crate::theme::{COMPONENT, Tokens, semibold};
@@ -57,8 +58,8 @@ pub fn instance_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
 /// A component's description: a multi-line field, saved when it loses focus.
 fn description_ui(app: &mut FigApp, ui: &mut Ui, id: NodeId, description: &str) {
     widgets::separator(ui);
-    widgets::sublabels(ui, "Description", None);
-    if let Some(new) = widgets::multiline_field(ui, Id::new(("comp_desc", id)), description, "Describe how and when to use this component", 3) {
+    widgets::sublabels(ui, tr("Description"), None);
+    if let Some(new) = widgets::multiline_field(ui, Id::new(("comp_desc", id)), description, tr("Describe how and when to use this component"), 3) {
         app.run("node.set", json!({"id": id, "props": {"description": new.chars().take(10_000).collect::<String>()}}));
     }
     ui.add_space(8.0);
@@ -131,7 +132,7 @@ fn slot_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, nam
     let comps = local_components(app, ui, doc);
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
-        ui.label(egui::RichText::new("Slot").font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(tr("Slot")).font(semibold(11.0)).color(t.text));
     });
     row(ui, 32.0, |ui| {
         prop_label(ui, name, Icon::Slot);
@@ -146,17 +147,16 @@ fn slot_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, prefer
     let t = Tokens::get(ui.ctx());
     let edited = slot_edited(doc, slot);
     let label = match (edited, doc.node(slot).map_or(0, |n| n.children.len())) {
-        (false, 0) => "Empty".to_string(),
-        (false, _) => "Default content".to_string(),
-        (true, 1) => "1 layer".to_string(),
-        (true, k) => format!("{k} layers"),
+        (false, 0) => tr("Empty").to_string(),
+        (false, _) => tr("Default content").to_string(),
+        (true, k) => trn("{n} layers", k, &[]),
     };
-    let resp = widgets::dropdown(ui, &label, w, Some(Icon::Slot)).on_hover_text("Add content to this slot");
+    let resp = widgets::dropdown(ui, &label, w, Some(Icon::Slot)).on_hover_text(tr("Add content to this slot"));
     menu_popup(&resp).width(w.max(200.0)).show(|ui| {
         let insert = |app: &mut FigApp, c: NodeId| app.run("instance.slotInsert", json!({"id": slot, "component": c.0}));
         let heading = |ui: &mut Ui, text: &str| ui.label(egui::RichText::new(text).font(semibold(11.0)).color(t.text_secondary));
         if !preferred.is_empty() {
-            heading(ui, "Preferred");
+            heading(ui, tr("Preferred"));
             for c in preferred.iter().filter(|c| doc.contains(**c)) {
                 let name = doc.node(*c).map(|n| n.name.clone()).unwrap_or_default();
                 if menu_item(ui, &name, "") {
@@ -165,7 +165,7 @@ fn slot_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, prefer
                 }
             }
         }
-        heading(ui, "All components");
+        heading(ui, tr("All components"));
         egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
             // Never a component the slot is part of.
             for (c, name) in comps.iter().filter(|(c, _)| !doc.is_ancestor(*c, slot)) {
@@ -175,11 +175,11 @@ fn slot_fill(app: &mut FigApp, ui: &mut Ui, doc: &Document, slot: NodeId, prefer
                 }
             }
         });
-        if menu_item(ui, "Select slot", "") {
+        if menu_item(ui, tr("Select slot"), "") {
             app.run("select.set", json!({"ids": [slot.0]}));
             ui.close();
         }
-        if edited && menu_item(ui, "Reset slot", "") {
+        if edited && menu_item(ui, tr("Reset slot"), "") {
             app.run("instance.resetSlot", json!({"id": slot.0}));
             ui.close();
         }
@@ -209,18 +209,18 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
     widgets::separator(ui);
     let existing: Vec<String> = defs.keys().cloned().chain(variants.iter().map(|(k, _)| k.clone())).collect();
     let fresh = (1..).map(|k| format!("Property {k}")).find(|n| !existing.contains(n)).unwrap_or_else(|| "Property".into());
-    let plus = header_with_plus(ui, "Properties", "Create component property");
+    let plus = header_with_plus(ui, tr("Properties"), tr("Create component property"));
     menu_popup(&plus).width(180.0).show(|ui| {
         let swap_default = comps.iter().map(|(c, _)| *c).find(|c| *c != owner && first != Some(*c));
         let items: [(&str, &str, Value); 4] = [
-            ("Variant", "variant", json!("Default")),
-            ("Boolean", "boolean", json!(true)),
-            ("Text", "text", json!("Text")),
-            ("Instance swap", "instanceSwap", swap_default.map(|c| json!(c.0)).unwrap_or(Value::Null)),
+            (tr("Variant"), "variant", json!("Default")),
+            (tr("Boolean"), "boolean", json!(true)),
+            (tr("Text"), "text", json!("Text")),
+            (tr("Instance swap"), "instanceSwap", swap_default.map(|c| json!(c.0)).unwrap_or(Value::Null)),
         ];
         for (label, ty, default) in items {
             if ty == "instanceSwap" && default.is_null() {
-                ui.label(egui::RichText::new("Instance swap (no other component)").color(t.text_tertiary));
+                ui.label(egui::RichText::new(tr("Instance swap (no other component)")).color(t.text_tertiary));
                 continue;
             }
             if menu_item(ui, label, "") {
@@ -230,18 +230,18 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
         }
     });
     if defs.is_empty() && variants.is_empty() {
-        row(ui, 28.0, |ui| widgets::label(ui, "Add properties to make instances configurable", t.text_tertiary));
+        row(ui, 28.0, |ui| widgets::label(ui, tr("Add properties to make instances configurable"), t.text_tertiary));
     }
     // Variant properties: name, values (the matrix), add value, delete.
     for (k, vals) in &variants {
         row(ui, 32.0, |ui| {
             let (ir, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
             icons::paint(ui.painter(), ir, Icon::ComponentSet, COMPONENT);
-            if let Some(nn) = widgets::text_field(ui, Id::new(("vprop_name", owner, k.as_str())), k, 110.0, "Name") {
+            if let Some(nn) = widgets::text_field(ui, Id::new(("vprop_name", owner, k.as_str())), k, 110.0, tr("Name")) {
                 app.run("component.editProperty", json!({"id": owner, "name": k, "newName": nn}));
             }
             let def = vals.first().cloned().unwrap_or_default();
-            let resp = widgets::dropdown(ui, &def, 70.0, None).on_hover_text("Default value (the first variant)");
+            let resp = widgets::dropdown(ui, &def, 70.0, None).on_hover_text(tr("Default value (the first variant)"));
             menu_popup(&resp).show(|ui| {
                 for v in vals {
                     if menu_item(ui, v, "") {
@@ -250,7 +250,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                     }
                 }
             });
-            if icons::button(ui, Icon::Minus, 22.0, false, "Delete property").clicked() {
+            if icons::button(ui, Icon::Minus, 22.0, false, tr("Delete property")).clicked() {
                 app.run("component.deleteProperty", json!({"id": owner, "name": k}));
             }
         });
@@ -268,7 +268,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                         app.run("component.editProperty", json!({"id": owner, "name": k, "value": v, "newValue": nv}));
                     }
                 }
-                if last && icons::button(ui, Icon::Plus, 22.0, false, "Add variant with a new value").clicked() {
+                if last && icons::button(ui, Icon::Plus, 22.0, false, tr("Add variant with a new value")).clicked() {
                     let nv = (vals.len() + 1..).map(|n| format!("Value {n}")).find(|n| !vals.contains(n)).unwrap_or_default();
                     app.run("component.addVariant", json!({"id": owner, "property": k, "value": nv}));
                 }
@@ -284,22 +284,22 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
         row(ui, 32.0, |ui| {
             let (ir, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
             icons::paint(ui.painter(), ir, type_icon(d), COMPONENT);
-            if let Some(nn) = widgets::text_field(ui, Id::new(("prop_name", owner, k.as_str())), k, 96.0, "Name") {
+            if let Some(nn) = widgets::text_field(ui, Id::new(("prop_name", owner, k.as_str())), k, 96.0, tr("Name")) {
                 app.run("component.editProperty", json!({"id": owner, "name": k, "newName": nn}));
             }
             match d {
                 PropDef::Boolean { default } => {
-                    if widgets::checkbox(ui, *default, if *default { "True" } else { "False" }) {
+                    if widgets::checkbox(ui, *default, if *default { tr("True") } else { tr("False") }) {
                         app.run("component.editProperty", json!({"id": owner, "name": k, "default": !default}));
                     }
                 }
                 PropDef::Text { default } => {
-                    if let Some(v) = widgets::text_field(ui, Id::new(("prop_def", owner, k.as_str())), default, 84.0, "Default") {
+                    if let Some(v) = widgets::text_field(ui, Id::new(("prop_def", owner, k.as_str())), default, 84.0, tr("Default")) {
                         app.run("component.editProperty", json!({"id": owner, "name": k, "default": v}));
                     }
                 }
                 PropDef::InstanceSwap { default, .. } => {
-                    let label = doc.node(*default).map(|n| n.name.clone()).unwrap_or_else(|| "Missing".into());
+                    let label = doc.node(*default).map(|n| n.name.clone()).unwrap_or_else(|| tr("Missing").into());
                     let resp = widgets::dropdown(ui, &label, 84.0, None);
                     menu_popup(&resp).show(|ui| {
                         for (c, name) in comps.iter() {
@@ -313,7 +313,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
                 PropDef::Variant { .. } | PropDef::Slot { .. } => {}
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::button(ui, Icon::Minus, 22.0, false, "Delete property").clicked() {
+                if icons::button(ui, Icon::Minus, 22.0, false, tr("Delete property")).clicked() {
                     app.run("component.deleteProperty", json!({"id": owner, "name": k}));
                 }
             });
@@ -321,16 +321,15 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
         // An instance swap or slot property's preferred components, on a row of their own.
         if let PropDef::Slot { preferred } | PropDef::InstanceSwap { preferred, .. } = d {
             let tip = if matches!(d, PropDef::Slot { .. }) {
-                "Offered first when filling the slot (any content is allowed)"
+                tr("Offered first when filling the slot (any content is allowed)")
             } else {
-                "Offered first when swapping the instance (any component is allowed)"
+                tr("Offered first when swapping the instance (any component is allowed)")
             };
             row(ui, 30.0, |ui| {
                 ui.add_space(22.0);
                 let label = match preferred.len() {
-                    0 => "No preferred components".to_string(),
-                    1 => "1 preferred component".to_string(),
-                    k => format!("{k} preferred components"),
+                    0 => tr("No preferred components").to_string(),
+                    k => trn("{n} preferred components", k, &[]),
                 };
                 let w = (ui.available_width() - 8.0).max(60.0);
                 let resp = widgets::dropdown(ui, &label, w, None).on_hover_text(tip);
@@ -350,7 +349,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
     }
     if is_set {
         row(ui, 32.0, |ui| {
-            if widgets::dropdown(ui, "Add variant", 120.0, Some(Icon::Plus)).clicked() {
+            if widgets::dropdown(ui, tr("Add variant"), 120.0, Some(Icon::Plus)).clicked() {
                 app.run("component.addVariant", json!({"id": owner}));
             }
         });
@@ -362,19 +361,20 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     let t = Tokens::get(ui.ctx());
     let Some(comp) = owning_component(doc, n.id) else { return };
     let defs = prop_defs(doc, comp);
-    let mut fields: Vec<(&str, &str, &str)> = vec![("visible", "Visibility", "boolean")];
+    // The English label also names a new property (document content); it shows translated.
+    let mut fields: Vec<(&str, &str, &str)> = vec![("visible", tr_noop("Visibility"), "boolean")];
     if n.kind.text().is_some() {
-        fields.push(("characters", "Text", "text"));
+        fields.push(("characters", tr_noop("Text"), "text"));
     }
     if matches!(n.kind, NodeKind::Instance { .. }) {
-        fields.push(("mainComponent", "Instance", "instanceSwap"));
+        fields.push(("mainComponent", tr_noop("Instance"), "instanceSwap"));
     }
     if matches!(n.kind, NodeKind::Frame) {
-        fields.push(("slot", "Slot", "slot"));
+        fields.push(("slot", tr_noop("Slot"), "slot"));
     }
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
-        ui.label(egui::RichText::new("Component property").font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(tr("Component property")).font(semibold(11.0)).color(t.text));
     });
     for (field, label, ty) in fields {
         let matching: Vec<&String> = defs
@@ -400,9 +400,9 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                 _ => Icon::Instance,
             };
             icons::paint(ui.painter(), ir, icon, if bound.is_some() { COMPONENT } else { t.icon_secondary });
-            widgets::label(ui, label, t.text_secondary);
-            let shown = bound.clone().unwrap_or_else(|| "Not bound".into());
-            let resp = widgets::dropdown(ui, &shown, 120.0, None).on_hover_text("Apply a component property");
+            widgets::label(ui, tr(label), t.text_secondary);
+            let shown = bound.clone().unwrap_or_else(|| tr("Not bound").into());
+            let resp = widgets::dropdown(ui, &shown, 120.0, None).on_hover_text(tr("Apply a component property"));
             menu_popup(&resp).width(180.0).show(|ui| {
                 for k in &matching {
                     if menu_item(ui, k, "") {
@@ -411,12 +411,12 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                     }
                 }
                 if ty == "slot" {
-                    if bound.is_none() && menu_item(ui, "Make slot", "") {
+                    if bound.is_none() && menu_item(ui, tr("Make slot"), "") {
                         // Named after the frame.
                         app.run("component.makeSlot", json!({"id": n.id}));
                         ui.close();
                     }
-                } else if menu_item(ui, "Create property…", "") {
+                } else if menu_item(ui, tr("Create property…"), "") {
                     let existing: Vec<String> = defs.keys().cloned().collect();
                     let name = (1..)
                         .map(|k| if k == 1 { label.to_string() } else { format!("{label} {k}") })
@@ -426,11 +426,11 @@ fn bind_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
                     ui.close();
                 }
                 if ty == "slot" {
-                    if bound.is_some() && menu_item(ui, "Remove slot", "") {
+                    if bound.is_some() && menu_item(ui, tr("Remove slot"), "") {
                         app.run("component.removeSlot", json!({"id": n.id}));
                         ui.close();
                     }
-                } else if bound.is_some() && menu_item(ui, "Detach property", "") {
+                } else if bound.is_some() && menu_item(ui, tr("Detach property"), "") {
                     app.run("component.bindProperty", json!({"layer": n.id, "property": null, "field": field}));
                     ui.close();
                 }
@@ -448,9 +448,9 @@ fn overrides_ui(app: &mut FigApp, ui: &mut Ui, n: &Node) {
     }
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
-        ui.label(egui::RichText::new("Overrides").font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(tr("Overrides")).font(semibold(11.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::button(ui, Icon::Reset, 24.0, false, "Reset all overrides on this layer").clicked() {
+            if icons::button(ui, Icon::Reset, 24.0, false, tr("Reset all overrides on this layer")).clicked() {
                 app.run("component.resetOverride", json!({"id": n.id}));
             }
         });
@@ -459,7 +459,7 @@ fn overrides_ui(app: &mut FigApp, ui: &mut Ui, n: &Node) {
         row(ui, 26.0, |ui| {
             widgets::label(ui, &group_label(&g), t.text_secondary);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icons::button(ui, Icon::Close, 20.0, false, "Reset this override").clicked() {
+                if icons::button(ui, Icon::Close, 20.0, false, tr("Reset this override")).clicked() {
                     app.run("component.resetOverride", json!({"id": n.id, "group": g}));
                 }
             });
@@ -469,20 +469,20 @@ fn overrides_ui(app: &mut FigApp, ui: &mut Ui, n: &Node) {
 
 fn group_label(g: &str) -> String {
     match g {
-        "fills" => "Fill",
-        "strokes" => "Stroke",
-        "effects" => "Effects",
-        "opacity" => "Opacity & blend",
-        "visible" => "Visibility",
-        "name" => "Layer name",
-        "corners" => "Corner radius",
-        "characters" => "Text content",
-        "textStyle" => "Text style",
-        "size" => "Size",
-        "position" => "Position",
-        "component" => "Swapped instance",
-        "props" => "Instance properties",
-        "slot" => "Slot content",
+        "fills" => tr("Fill"),
+        "strokes" => tr("Stroke"),
+        "effects" => tr("Effects"),
+        "opacity" => tr("Opacity & blend"),
+        "visible" => tr("Visibility"),
+        "name" => tr("Layer name"),
+        "corners" => tr("Corner radius"),
+        "characters" => tr("Text content"),
+        "textStyle" => tr("Text style"),
+        "size" => tr("Size"),
+        "position" => tr("Position"),
+        "component" => tr("Swapped instance"),
+        "props" => tr("Instance properties"),
+        "slot" => tr("Slot content"),
         other => other,
     }
     .to_string()
@@ -495,40 +495,40 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     let id = n.id;
     let missing = !doc.contains(*component);
     let set = variant_set(doc, *component);
-    let comp_name = set.or(Some(*component)).and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| "Main component deleted".into());
+    let comp_name = set.or(Some(*component)).and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| tr("Main component deleted").into());
     let comps = local_components(app, ui, doc);
     let nested = inside_instance(doc, id);
     widgets::separator(ui);
     row(ui, 36.0, |ui| {
-        ui.label(egui::RichText::new(if nested { "Nested instance" } else { "Instance" }).font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(if nested { tr("Nested instance") } else { tr("Instance") }).font(semibold(11.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let more = icons::button(ui, Icon::Dots, 24.0, false, "More instance actions");
+            let more = icons::button(ui, Icon::Dots, 24.0, false, tr("More instance actions"));
             menu_popup(&more).width(220.0).show(|ui| {
-                if !missing && menu_item(ui, "Go to main component", "") {
+                if !missing && menu_item(ui, tr("Go to main component"), "") {
                     app.run("component.goToMain", json!({"id": id}));
                     ui.close();
                 }
-                if !missing && menu_item(ui, "Push changes to main component", "") {
+                if !missing && menu_item(ui, tr("Push changes to main component"), "") {
                     app.run("component.pushChanges", json!({"id": id}));
                     ui.close();
                 }
-                if missing && !nested && menu_item(ui, "Restore main component", "") {
+                if missing && !nested && menu_item(ui, tr("Restore main component"), "") {
                     app.run("component.restoreMain", json!({"id": id}));
                     ui.close();
                 }
-                if menu_item(ui, "Reset all changes", "") {
+                if menu_item(ui, tr("Reset all changes"), "") {
                     app.run("component.resetInstance", json!({"ids": [id]}));
                     ui.close();
                 }
-                if !nested && menu_item(ui, "Detach instance", "Alt+Cmd+B") {
+                if !nested && menu_item(ui, tr("Detach instance"), "Alt+Cmd+B") {
                     app.run("component.detach", json!({"ids": [id]}));
                     ui.close();
                 }
             });
-            if !nested && icons::button(ui, Icon::Detach, 24.0, false, crate::shortcuts::tip("Detach instance", "component.detach")).clicked() {
+            if !nested && icons::button(ui, Icon::Detach, 24.0, false, crate::shortcuts::tip(tr("Detach instance"), "component.detach")).clicked() {
                 app.run("component.detach", json!({"ids": [id]}));
             }
-            if icons::button(ui, Icon::Reset, 24.0, false, "Reset all changes").clicked() {
+            if icons::button(ui, Icon::Reset, 24.0, false, tr("Reset all changes")).clicked() {
                 app.run("component.resetInstance", json!({"ids": [id]}));
             }
         });
@@ -536,7 +536,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     // Main component with a swap menu, and "go to main".
     row(ui, 32.0, |ui| {
         let w = (ui.available_width() - 32.0).max(80.0);
-        let resp = widgets::dropdown(ui, &comp_name, w, Some(Icon::Instance)).on_hover_text("Swap instance");
+        let resp = widgets::dropdown(ui, &comp_name, w, Some(Icon::Instance)).on_hover_text(tr("Swap instance"));
         menu_popup(&resp).width(w.max(200.0)).show(|ui| {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 let mut page = None;
@@ -556,10 +556,10 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
             });
         });
         if missing {
-            if icons::button(ui, Icon::Component, 24.0, false, "Restore main component").clicked() {
+            if icons::button(ui, Icon::Component, 24.0, false, tr("Restore main component")).clicked() {
                 app.run("component.restoreMain", json!({"id": id}));
             }
-        } else if icons::button(ui, Icon::Component, 24.0, false, "Go to main component").clicked() {
+        } else if icons::button(ui, Icon::Component, 24.0, false, tr("Go to main component")).clicked() {
             app.run("component.goToMain", json!({"id": id}));
         }
     });
@@ -582,7 +582,7 @@ fn instance_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node) {
     // A nested instance inside a main component can expose its properties on the main's instances.
     if nested_in_main(doc, id) {
         row(ui, 32.0, |ui| {
-            if widgets::checkbox(ui, n.exposed, "Expose properties to instances") {
+            if widgets::checkbox(ui, n.exposed, tr("Expose properties to instances")) {
                 app.run("component.exposeInstance", json!({"id": id, "exposed": !n.exposed}));
             }
         });
@@ -665,7 +665,7 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                 }
                 PropDef::InstanceSwap { preferred, .. } => {
                     let cur = figcraft_engine::params::id_of(&v);
-                    let label = cur.and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| "None".into());
+                    let label = cur.and_then(|c| doc.node(c)).map(|c| c.name.clone()).unwrap_or_else(|| tr("None").into());
                     let resp = widgets::dropdown(ui, &label, w, Some(Icon::Instance));
                     menu_popup(&resp).width(200.0).show(|ui| {
                         let t = Tokens::get(ui.ctx());
@@ -681,11 +681,11 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
                         };
                         let preferred: Vec<(NodeId, String)> = preferred.iter().filter_map(|c| doc.node(*c).map(|n| (*c, n.name.clone()))).collect();
                         if !preferred.is_empty() {
-                            heading(ui, "Preferred");
+                            heading(ui, tr("Preferred"));
                             for (c, name) in &preferred {
                                 pick(ui, *c, name);
                             }
-                            heading(ui, "All components");
+                            heading(ui, tr("All components"));
                         }
                         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                             for (c, name) in comps {

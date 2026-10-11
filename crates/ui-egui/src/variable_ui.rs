@@ -14,6 +14,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, BindEvent, FieldEdit, Lead};
@@ -281,7 +282,7 @@ pub fn variable_button(ui: &mut Ui, rect: Rect, id: Id) -> bool {
     }
     let t = Tokens::get(ui.ctx());
     let b = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
-    let resp = ui.interact(b, id, Sense::click()).tip("Apply variable");
+    let resp = ui.interact(b, id, Sense::click()).tip(tr("Apply variable"));
     if resp.hovered() {
         ui.painter().rect_filled(b, CornerRadius::same(4), t.hover);
     }
@@ -332,10 +333,10 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
         egui::Frame::NONE.fill(t.menu).corner_radius(CornerRadius::same(10)).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
             ui.set_width(240.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Variables").font(semibold(11.0)).color(t.menu_text));
+                ui.label(egui::RichText::new(tr("Variables")).font(semibold(11.0)).color(t.menu_text));
             });
             ui.add_space(4.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search").font(regular(11.0)).desired_width(224.0));
+            let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text(tr("Search")).font(regular(11.0)).desired_width(224.0));
             if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
                 r.request_focus();
             }
@@ -352,18 +353,23 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
                 }
             });
             if groups.is_empty() {
-                let kind = match p.kind {
-                    Some(VariableType::Color) => "colour ",
-                    Some(VariableType::Number) => "number ",
-                    Some(VariableType::String) => "string ",
-                    Some(VariableType::Boolean) => "boolean ",
-                    None => "",
+                // Whole sentences per type: languages place the type differently.
+                let (fit, none) = match p.kind {
+                    Some(VariableType::Color) => {
+                        (tr("No colour variables fit here."), tr("No colour variables yet. Create them in Local variables."))
+                    }
+                    Some(VariableType::Number) => {
+                        (tr("No number variables fit here."), tr("No number variables yet. Create them in Local variables."))
+                    }
+                    Some(VariableType::String) => {
+                        (tr("No string variables fit here."), tr("No string variables yet. Create them in Local variables."))
+                    }
+                    Some(VariableType::Boolean) => {
+                        (tr("No boolean variables fit here."), tr("No boolean variables yet. Create them in Local variables."))
+                    }
+                    None => (tr("No variables fit here."), tr("No variables yet. Create them in Local variables.")),
                 };
-                let msg = if groups_any_kind(&doc, &libs, p.kind) {
-                    format!("No {kind}variables fit here.")
-                } else {
-                    format!("No {kind}variables yet. Create them in Local variables.")
-                };
+                let msg = if groups_any_kind(&doc, &libs, p.kind) { fit } else { none };
                 ui.label(egui::RichText::new(msg).font(regular(11.0)).color(t.menu_dim));
             }
         });

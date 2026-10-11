@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, trf, trn};
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets;
@@ -114,14 +115,14 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
 
     // Header: title, save, close.
     let (head, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
-    ui.painter().text(pos2(head.min.x + 16.0, head.center().y), Align2::LEFT_CENTER, "Version history", semibold(13.0), t.text);
+    ui.painter().text(pos2(head.min.x + 16.0, head.center().y), Align2::LEFT_CENTER, tr("Version history"), semibold(13.0), t.text);
     let mut bar =
         ui.new_child(egui::UiBuilder::new().max_rect(head.shrink2(vec2(12.0, 12.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    if icons::button(&mut bar, Icon::Close, 24.0, false, "Close version history").clicked() {
+    if icons::button(&mut bar, Icon::Close, 24.0, false, tr("Close version history")).clicked() {
         action = Some(Action::Close);
     }
     let new_open = app.ui.versions.form.as_ref().is_some_and(|f| f.id.is_none() && !f.branch);
-    let tip = format!("Save version  {}", crate::toolbar::pretty_shortcut("Alt+Cmd+S"));
+    let tip = trf("Save version  {key}", &[("key", &crate::toolbar::pretty_shortcut("Alt+Cmd+S"))]);
     if icons::button(&mut bar, Icon::Plus, 24.0, new_open, &tip).clicked() {
         action = Some(Action::New);
     }
@@ -129,7 +130,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
 
     if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.is_none() && !f.branch) {
         ui.add_space(12.0);
-        if let Some(a) = form(ui, f, "Save", 16.0) {
+        if let Some(a) = form(ui, f, tr("Save"), 16.0) {
             action = Some(a);
         }
         ui.add_space(12.0);
@@ -156,11 +157,11 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         .map(|m| m.branches.iter().map(|b| BranchRow { id: b.id.clone(), name: b.name.clone(), time: b.time, state: b.state }).collect())
         .unwrap_or_default();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        if widgets::section_header(ui, "Branches", &[(Icon::Plus, "Create branch")], false).is_some() {
+        if widgets::section_header(ui, tr("Branches"), &[(Icon::Plus, tr("Create branch"))], false).is_some() {
             action = Some(Action::NewBranch);
         }
         if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.branch) {
-            if let Some(a) = form(ui, f, "Create", 16.0) {
+            if let Some(a) = form(ui, f, tr("Create"), 16.0) {
                 action = Some(a);
             }
             ui.add_space(8.0);
@@ -174,7 +175,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         if branches.is_empty() {
             widgets::note(
                 ui,
-                "No branches. A branch is a copy of the file to try changes in, then review and merge.",
+                tr("No branches. A branch is a copy of the file to try changes in, then review and merge."),
                 Tokens::get(ui.ctx()).text_secondary,
             );
         }
@@ -208,7 +209,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             let a = if app.ui.versions.confirm_delete.as_deref() == Some(row.id.as_str()) {
                 inline_row(ui, i == last, |ui| confirm_row(ui, row))
             } else if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.as_deref() == Some(row.id.as_str())) {
-                inline_row(ui, i == last, |ui| form(ui, f, "Save", TEXT_X))
+                inline_row(ui, i == last, |ui| form(ui, f, tr("Save"), TEXT_X))
             } else {
                 version_row(ui, row, i == last, previewing.as_deref() == Some(row.id.as_str()))
             };
@@ -223,7 +224,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
                 ui.add_space(16.0);
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new("No saved versions yet. Save a version to mark a point in your work you can come back to.")
+                        egui::RichText::new(tr("No saved versions yet. Save a version to mark a point in your work you can come back to."))
                             .font(regular(11.0))
                             .color(t.text_secondary),
                     )
@@ -271,7 +272,7 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
         Action::ReviewBranch(id) => crate::branch_ui::open(app, Some(&id)),
         Action::ArchiveBranch(id) => {
             if app.run("branch.archive", json!({"id": id})).is_some() {
-                app.toast("Branch archived");
+                app.toast(tr("Branch archived"));
             }
         }
         Action::CancelForm => st.form = None,
@@ -301,12 +302,12 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
         }
         Action::Restore(id) => {
             if app.run("version.restore", json!({"id": id})).is_some() {
-                app.toast(format!("Restored “{}”", name_of(&id)));
+                app.toast(trf("Restored “{name}”", &[("name", &name_of(&id))]));
             }
         }
         Action::Duplicate(id) => {
             if app.run("version.duplicate", json!({"id": id})).is_some() {
-                app.toast(format!("Opened “{}” in a new tab", name_of(&id)));
+                app.toast(trf("Opened “{name}” in a new tab", &[("name", &name_of(&id))]));
             }
         }
     }
@@ -324,7 +325,7 @@ fn form(ui: &mut Ui, f: &mut Form, submit: &str, indent: f32) -> Option<Action> 
         ui.vertical(|ui| {
             ui.set_width(ui.available_width() - 16.0);
             let w = ui.available_width() - 16.0;
-            let hint = if f.branch { "Branch name" } else { "Title" };
+            let hint = if f.branch { tr("Branch name") } else { tr("Title") };
             let title = field(ui, &mut |ui| {
                 ui.add(egui::TextEdit::singleline(&mut f.name).hint_text(hint).font(regular(11.0)).frame(egui::Frame::NONE).desired_width(w))
             });
@@ -339,7 +340,7 @@ fn form(ui: &mut Ui, f: &mut Form, submit: &str, indent: f32) -> Option<Action> 
                 field(ui, &mut |ui| {
                     ui.add(
                         egui::TextEdit::multiline(&mut f.description)
-                            .hint_text("Describe what changed")
+                            .hint_text(tr("Describe what changed"))
                             .font(regular(11.0))
                             .frame(egui::Frame::NONE)
                             .desired_rows(3)
@@ -397,8 +398,8 @@ fn current_row(ui: &mut Ui, more: bool, active: bool) -> bool {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
     }
     timeline(ui, r, r.center().y, false, more, true);
-    ui.painter().text(pos2(r.min.x + TEXT_X, r.center().y), Align2::LEFT_CENTER, "Current version", semibold(11.0), t.text);
-    !active && resp.on_hover_text("Back to the current version").clicked()
+    ui.painter().text(pos2(r.min.x + TEXT_X, r.center().y), Align2::LEFT_CENTER, tr("Current version"), semibold(11.0), t.text);
+    !active && resp.on_hover_text(tr("Back to the current version")).clicked()
 }
 
 fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<Action> {
@@ -439,13 +440,13 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<A
         }
         icons::paint(ui.painter(), br.shrink(5.0), Icon::Dots, t.icon);
     }
-    let more = more.tip("More");
+    let more = more.tip(tr("More"));
     let mut menu = |ui: &mut Ui| {
         for (label, a) in [
-            ("Restore this version", Action::Restore(row.id.clone())),
-            ("Rename", Action::Edit(row.id.clone())),
-            ("Duplicate", Action::Duplicate(row.id.clone())),
-            ("Delete", Action::AskDelete(row.id.clone())),
+            (tr("Restore this version"), Action::Restore(row.id.clone())),
+            (tr("Rename"), Action::Edit(row.id.clone())),
+            (tr("Duplicate"), Action::Duplicate(row.id.clone())),
+            (tr("Delete"), Action::AskDelete(row.id.clone())),
         ] {
             if crate::right::menu_item(ui, label, "") {
                 out = Some(a);
@@ -467,17 +468,17 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<A
 fn branch_row(ui: &mut Ui, b: &BranchRow) -> Option<Action> {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
-    let resp = resp.tip("Open branch");
-    crate::a11y::list_item(&resp, &format!("Branch {}", b.name), false);
+    let resp = resp.tip(tr("Open branch"));
+    crate::a11y::list_item(&resp, &trf("Branch {name}", &[("name", &b.name)]), false);
     let hovered = ui.rect_contains_pointer(r);
     if hovered {
         ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
     }
     let active = b.state == BranchState::Active;
     let state = match b.state {
-        BranchState::Active => "Active",
-        BranchState::Merged => "Merged",
-        BranchState::Archived => "Archived",
+        BranchState::Active => tr("Active"),
+        BranchState::Merged => tr("Merged"),
+        BranchState::Archived => tr("Archived"),
     };
     let clip = Rect::from_min_max(pos2(r.min.x + 16.0, r.min.y), pos2(r.max.x - 40.0, r.max.y));
     let p = ui.painter().with_clip_rect(clip);
@@ -494,11 +495,11 @@ fn branch_row(ui: &mut Ui, b: &BranchRow) -> Option<Action> {
         }
         icons::paint(ui.painter(), br.shrink(5.0), Icon::Dots, t.icon);
     }
-    let more = more.tip("More");
+    let more = more.tip(tr("More"));
     let mut menu = |ui: &mut Ui| {
-        let mut items = vec![("Open", Action::OpenBranch(b.id.clone())), ("Review and merge", Action::ReviewBranch(b.id.clone()))];
+        let mut items = vec![(tr("Open"), Action::OpenBranch(b.id.clone())), (tr("Review and merge"), Action::ReviewBranch(b.id.clone()))];
         if active {
-            items.push(("Archive", Action::ArchiveBranch(b.id.clone())));
+            items.push((tr("Archive"), Action::ArchiveBranch(b.id.clone())));
         }
         for (label, a) in items {
             if crate::right::menu_item(ui, label, "") {
@@ -525,13 +526,13 @@ pub fn preview_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
         let mut action = None;
         icons::paint(ui.painter(), Rect::from_center_size(ui.cursor().min + vec2(7.0, 12.0), vec2(14.0, 14.0)), Icon::Clock, t.icon_secondary);
         ui.add_space(20.0);
-        ui.label(egui::RichText::new(format!("Viewing “{name}”")).font(semibold(11.0)).color(t.text));
+        ui.label(egui::RichText::new(trf("Viewing “{name}”", &[("name", &name)])).font(semibold(11.0)).color(t.text));
         ui.label(egui::RichText::new(crate::comments::ago_long(time)).font(regular(11.0)).color(t.text_secondary));
         ui.add_space(4.0);
-        if widgets::button(ui, "Back to current", false, true).clicked() {
+        if widgets::button(ui, tr("Back to current"), false, true).clicked() {
             action = Some(false);
         }
-        if widgets::button(ui, "Restore this version", true, true).clicked() {
+        if widgets::button(ui, tr("Restore this version"), true, true).clicked() {
             action = Some(true);
         }
         action
@@ -539,7 +540,7 @@ pub fn preview_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
     match action {
         Some(true) => {
             if app.run("version.restore", json!({"id": id})).is_some() {
-                app.toast(format!("Restored “{name}”"));
+                app.toast(trf("Restored “{name}”", &[("name", &name)]));
             }
         }
         Some(false) => {
@@ -559,9 +560,9 @@ fn autosave_group(ui: &mut Ui, n: usize, open: bool, last: bool) -> bool {
     timeline(ui, r, r.center().y, true, !last, false);
     let chevron = Rect::from_center_size(pos2(r.min.x + TEXT_X + 6.0, r.center().y), vec2(12.0, 12.0));
     icons::paint(ui.painter(), chevron, if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
-    let label = format!("{n} autosave versions");
+    let label = trn("{n} autosave versions", n, &[]);
     ui.painter().text(pos2(chevron.max.x + 6.0, r.center().y), Align2::LEFT_CENTER, label, regular(11.0), t.text_secondary);
-    resp.on_hover_text(if open { "Fold autosaves" } else { "Show autosaves" }).clicked()
+    resp.on_hover_text(if open { tr("Fold autosaves") } else { tr("Show autosaves") }).clicked()
 }
 
 /// A row holding a form (rename, delete confirmation), with the timeline running past it.
@@ -580,10 +581,13 @@ fn confirm_row(ui: &mut Ui, row: &Row) -> Option<Action> {
     let mut out = None;
     egui::Frame::NONE.inner_margin(egui::Margin { left: TEXT_X as i8, right: 16, top: 4, bottom: 0 }).show(ui, |ui| {
         ui.add(
-            egui::Label::new(egui::RichText::new(format!("Delete “{}”? This can't be undone.", row.name)).font(regular(11.0)).color(t.text)).wrap(),
+            egui::Label::new(
+                egui::RichText::new(trf("Delete “{name}”? This can't be undone.", &[("name", &row.name)])).font(regular(11.0)).color(t.text),
+            )
+            .wrap(),
         );
         ui.add_space(8.0);
-        out = buttons(ui, "Delete", true).map(|delete| if delete { Action::Delete(row.id.clone()) } else { Action::CancelDelete });
+        out = buttons(ui, tr("Delete"), true).map(|delete| if delete { Action::Delete(row.id.clone()) } else { Action::CancelDelete });
     });
     out
 }
@@ -595,7 +599,7 @@ fn buttons(ui: &mut Ui, primary: &str, enabled: bool) -> Option<bool> {
     ui.allocate_ui_with_layout(size, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let ok = widgets::button(ui, primary, true, enabled).clicked();
-        let cancel = widgets::button(ui, "Cancel", false, true).clicked();
+        let cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         if ok { Some(true) } else { cancel.then_some(false) }
     })
     .inner

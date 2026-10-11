@@ -13,6 +13,8 @@ pub struct Desktop {
     pub prefs: Option<Prefs>,
     /// The system's reduce-motion setting (read in the background at startup).
     reduce_motion: Arc<AtomicBool>,
+    /// The system's interface language (read at startup).
+    language: Option<String>,
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -44,7 +46,34 @@ impl Desktop {
         let reduce_motion = Arc::new(AtomicBool::new(false));
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
-        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion }
+        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language() }
+    }
+}
+
+/// The system's preferred interface language as a tag ("es-ES", "es_ES.UTF-8"): Windows' language
+/// list, macOS's AppleLanguages, the locale variables elsewhere.
+fn system_language() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::System::UserProfile::GlobalizationPreferences::Languages()
+            .and_then(|l| l.GetAt(0))
+            .map(|s| s.to_string())
+            .inspect_err(|e| log::info!("language: can't read the system languages: {e}"))
+            .ok()
+    }
+    // `defaults` prints a list: ( "es-ES", en ).
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("defaults").args(["read", "-g", "AppleLanguages"]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).split(['(', ',', ')']).map(|s| s.trim().trim_matches('"').to_string()).find(|s| !s.is_empty())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty() && v != "C" && v != "POSIX")
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        None
     }
 }
 
@@ -150,8 +179,14 @@ impl Services for Desktop {
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
     }
+    fn emergency_save(&mut self, session: &Session) {
+        emergency_save(session);
+    }
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)
+    }
+    fn system_language(&self) -> Option<String> {
+        self.language.clone()
     }
 }
 

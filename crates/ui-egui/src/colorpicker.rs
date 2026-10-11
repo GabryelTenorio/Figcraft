@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, doc_c32, regular, semibold};
 use crate::widgets;
@@ -386,7 +387,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             // Header.
             let (hr, _) = ui.allocate_exact_size(vec2(240.0, 40.0), Sense::hover());
-            ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Custom", semibold(11.0), t.text);
+            ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("Custom"), semibold(11.0), t.text);
             let cr = Rect::from_center_size(pos2(hr.max.x - 20.0, hr.center().y), vec2(24.0, 24.0));
             let cresp = ui.interact(cr, Id::new("cp_close"), Sense::click());
             icons::paint(ui.painter(), cr.shrink(6.0), Icon::Close, t.icon);
@@ -396,13 +397,13 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             // Paint type.
             if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. }) {
                 let kinds = [
-                    (Icon::Fill, "Solid"),
-                    (Icon::LayoutH, "Linear"),
-                    (Icon::Ellipse, "Radial"),
-                    (Icon::Rotate, "Angular"),
-                    (Icon::Instance, "Diamond"),
-                    (Icon::Image, "Image"),
-                    (Icon::ViewGrid, "Pattern"),
+                    (Icon::Fill, tr("Solid")),
+                    (Icon::LayoutH, tr("Linear")),
+                    (Icon::Ellipse, tr("Radial")),
+                    (Icon::Rotate, tr("Angular")),
+                    (Icon::Instance, tr("Diamond")),
+                    (Icon::Image, tr("Image")),
+                    (Icon::ViewGrid, tr("Pattern")),
                 ];
                 let active = match &paint.kind {
                     PaintKind::Solid { .. } => 0,
@@ -423,7 +424,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             0 => PaintKind::Solid { color: base.with_alpha(1.0) },
                             5 => {
                                 // Pick an image file.
-                                match app.services.pick_open("Choose image", &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
+                                match app.services.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
                                     Some(p) => match std::fs::read(&p) {
                                         Ok(bytes) => {
                                             let hash = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes));
@@ -440,7 +441,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             6 => match pattern_sources(app, &target).first() {
                                 Some((id, _)) => Paint::pattern(id.0).kind,
                                 None => {
-                                    app.toast("Add a layer or component to tile first".to_string());
+                                    app.toast(tr("Add a layer or component to tile first").to_string());
                                     paint.kind.clone()
                                 }
                             },
@@ -527,20 +528,20 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 edit_color = g.stops.get(sel).map(|s| s.color);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    if ui.small_button("Remove stop").clicked() && g.stops.len() > 2 {
+                    if ui.small_button(tr("Remove stop")).clicked() && g.stops.len() > 2 {
                         g.stops.remove(sel);
                         ui.data_mut(|d| d.insert_temp(sel_stop_id, 0usize));
                         paint.kind = PaintKind::Gradient(g.clone());
                         write(app, &target, &paint, false);
                     }
-                    if ui.small_button("Flip").clicked() {
+                    if ui.small_button(tr("Flip")).clicked() {
                         for s in &mut g.stops {
                             s.position = 1.0 - s.position;
                         }
                         paint.kind = PaintKind::Gradient(g.clone());
                         write(app, &target, &paint, false);
                     }
-                    if ui.small_button("Rotate 90°").clicked() {
+                    if ui.small_button(tr("Rotate 90°")).clicked() {
                         let (fx, fy) = g.from;
                         let rot = |(x, y): (f64, f64)| (fx - (y - fy), fy + (x - fx));
                         g.to = rot(g.to);
@@ -561,7 +562,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             let sw = Rect::from_center_size(pos2(r.min.x + 13.0, r.center().y), vec2(14.0, 14.0));
                             if let Some(c) = stop {
                                 widgets::paint_swatch(ui.painter(), sw, &Paint::solid(c));
-                                let text = format!("Stop {}  {}", sel + 1, c.to_hex());
+                                let text = trf("Stop {n}  {hex}", &[("n", &(sel + 1)), ("hex", &c.to_hex())]);
                                 ui.painter().text(pos2(sw.max.x + 8.0, r.center().y), Align2::LEFT_CENTER, text, regular(11.0), t.text);
                             }
                         });
@@ -572,13 +573,13 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 let mut img = img.clone();
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    let resp = widgets::dropdown(ui, &format!("{:?}", img.scale_mode), 100.0, None);
+                    let resp = widgets::dropdown(ui, tr(&format!("{:?}", img.scale_mode)), 100.0, None);
                     crate::right::menu_popup(&resp).show(|ui| {
                         for (l, m) in [
-                            ("Fill", ImageScaleMode::Fill),
-                            ("Fit", ImageScaleMode::Fit),
-                            ("Crop", ImageScaleMode::Crop),
-                            ("Tile", ImageScaleMode::Tile),
+                            (tr("Fill"), ImageScaleMode::Fill),
+                            (tr("Fit"), ImageScaleMode::Fit),
+                            (tr("Crop"), ImageScaleMode::Crop),
+                            (tr("Tile"), ImageScaleMode::Tile),
                         ] {
                             if crate::right::menu_item(ui, l, "") {
                                 img.scale_mode = m;
@@ -588,7 +589,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             }
                         }
                     });
-                    if icons::button(ui, Icon::Rotate, 24.0, false, "Rotate 90°").clicked() {
+                    if icons::button(ui, Icon::Rotate, 24.0, false, tr("Rotate 90°")).clicked() {
                         img.rotation = (img.rotation + 1) % 4;
                         paint.kind = PaintKind::Image(img.clone());
                         write(app, &target, &paint, false);
@@ -596,19 +597,19 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 });
                 image_presets(app, ui, &target, &mut paint, img.filters);
                 for (label, val) in [
-                    ("Exposure", img.filters.exposure),
-                    ("Contrast", img.filters.contrast),
-                    ("Saturation", img.filters.saturation),
-                    ("Temperature", img.filters.temperature),
-                    ("Tint", img.filters.tint),
-                    ("Highlights", img.filters.highlights),
-                    ("Shadows", img.filters.shadows),
+                    (tr_noop("Exposure"), img.filters.exposure),
+                    (tr_noop("Contrast"), img.filters.contrast),
+                    (tr_noop("Saturation"), img.filters.saturation),
+                    (tr_noop("Temperature"), img.filters.temperature),
+                    (tr_noop("Tint"), img.filters.tint),
+                    (tr_noop("Highlights"), img.filters.highlights),
+                    (tr_noop("Shadows"), img.filters.shadows),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
                         // Labels share a column so the sliders line up.
                         let (lr, _) = ui.allocate_exact_size(vec2(72.0, 18.0), Sense::hover());
-                        ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, label, regular(11.0), t.text);
+                        ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, tr(label), regular(11.0), t.text);
                         let mut v = val;
                         let r = ui.add(egui::Slider::new(&mut v, -1.0..=1.0).show_value(false));
                         if r.changed() {
@@ -651,7 +652,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     Icon::Eyedropper,
                     24.0,
                     false,
-                    "Pick color (I)",
+                    tr("Pick color (I)"),
                 )
                 .clicked()
                 {
@@ -711,7 +712,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             if !doc_colors.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    widgets::label(ui, "On this page", t.text_secondary);
+                    widgets::label(ui, tr("On this page"), t.text_secondary);
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(16.0);
@@ -727,7 +728,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             if !recent.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    widgets::label(ui, "Recent", t.text_secondary);
+                    widgets::label(ui, tr("Recent"), t.text_secondary);
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(16.0);
@@ -792,12 +793,12 @@ fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint:
     use widgets::{FieldEdit, Lead};
     // Some(live): changed, as part of a drag when live.
     let mut changed: Option<bool> = None;
-    let name = app.session.doc().ok().and_then(|d| d.node(NodeId(pt.source)).map(|n| n.name.clone())).unwrap_or_else(|| "Missing layer".into());
+    let name = app.session.doc().ok().and_then(|d| d.node(NodeId(pt.source)).map(|n| n.name.clone())).unwrap_or_else(|| tr("Missing layer").into());
     let sources = pattern_sources(app, target);
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         let resp = widgets::elided_dropdown(ui, &name, 208.0);
-        crate::a11y::combo(&resp, "Pattern source", &name, crate::a11y::menu_open(&resp));
+        crate::a11y::combo(&resp, tr("Pattern source"), &name, crate::a11y::menu_open(&resp));
         crate::right::menu_popup(&resp).show(|ui| {
             for (id, label) in &sources {
                 if crate::right::menu_check(ui, id.0 == pt.source, label, "") {
@@ -810,10 +811,11 @@ fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint:
     });
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        let tiles = [("Grid", PatternTile::Grid), ("Horizontal hex", PatternTile::HorizontalHex), ("Vertical hex", PatternTile::VerticalHex)];
-        let label = tiles.iter().find(|t| t.1 == pt.tile).map_or("Grid", |t| t.0);
+        let tiles =
+            [(tr("Grid"), PatternTile::Grid), (tr("Horizontal hex"), PatternTile::HorizontalHex), (tr("Vertical hex"), PatternTile::VerticalHex)];
+        let label = tiles.iter().find(|t| t.1 == pt.tile).map_or(tr("Grid"), |t| t.0);
         let resp = widgets::dropdown(ui, label, 120.0, Some(Icon::ViewGrid));
-        crate::a11y::combo(&resp, "Tile type", label, crate::a11y::menu_open(&resp));
+        crate::a11y::combo(&resp, tr("Tile type"), label, crate::a11y::menu_open(&resp));
         crate::right::menu_popup(&resp).show(|ui| {
             for (l, v) in tiles {
                 if crate::right::menu_check(ui, v == pt.tile, l, "") {
@@ -823,10 +825,10 @@ fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint:
                 }
             }
         });
-        let aligns = [("Start", PatternAlign::Start), ("Center", PatternAlign::Center), ("End", PatternAlign::End)];
-        let label = aligns.iter().find(|a| a.1 == pt.align).map_or("Start", |a| a.0);
+        let aligns = [(tr("Start"), PatternAlign::Start), (tr("Center"), PatternAlign::Center), (tr("End"), PatternAlign::End)];
+        let label = aligns.iter().find(|a| a.1 == pt.align).map_or(tr("Start"), |a| a.0);
         let resp = widgets::dropdown(ui, label, 80.0, None);
-        crate::a11y::combo(&resp, "Pattern alignment", label, crate::a11y::menu_open(&resp));
+        crate::a11y::combo(&resp, tr("Pattern alignment"), label, crate::a11y::menu_open(&resp));
         crate::right::menu_popup(&resp).show(|ui| {
             for (l, v) in aligns {
                 if crate::right::menu_check(ui, v == pt.align, l, "") {
@@ -852,16 +854,16 @@ fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint:
             Some(FieldEdit::Scrub(v, end)) => Some((v, !end)),
             None => None,
         };
-        if let Some((v, live)) = field(ui, "cp_pattern_scale", Lead::Icon(Icon::Scale, "Pattern scale"), pt.scale * 100.0, "%") {
+        if let Some((v, live)) = field(ui, "cp_pattern_scale", Lead::Icon(Icon::Scale, tr("Pattern scale")), pt.scale * 100.0, "%") {
             let (lo, hi) = PatternPaint::SCALE_RANGE;
             pt.scale = (v / 100.0).clamp(lo, hi);
             changed = Some(live);
         }
-        if let Some((v, live)) = field(ui, "cp_pattern_gap_x", Lead::Icon(Icon::PaddingH, "Horizontal spacing"), pt.spacing.0, "") {
+        if let Some((v, live)) = field(ui, "cp_pattern_gap_x", Lead::Icon(Icon::PaddingH, tr("Horizontal spacing")), pt.spacing.0, "") {
             pt.spacing.0 = v.clamp(0.0, PatternPaint::MAX_SPACING);
             changed = Some(live);
         }
-        if let Some((v, live)) = field(ui, "cp_pattern_gap_y", Lead::Icon(Icon::PaddingV, "Vertical spacing"), pt.spacing.1, "") {
+        if let Some((v, live)) = field(ui, "cp_pattern_gap_y", Lead::Icon(Icon::PaddingV, tr("Vertical spacing")), pt.spacing.1, "") {
             pt.spacing.1 = v.clamp(0.0, PatternPaint::MAX_SPACING);
             changed = Some(live);
         }
@@ -887,7 +889,7 @@ fn saved_preset_row(ui: &mut Ui, name: &str) -> Option<PresetAction> {
     let w = ui.available_width().max(180.0);
     let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::click());
     let del = Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), vec2(20.0, 20.0));
-    let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).tip("Delete preset");
+    let del_resp = ui.interact(del, ui.id().with(("cp_preset_del", name)), Sense::click()).tip(tr("Delete preset"));
     let hot = resp.hovered() || del_resp.hovered();
     if hot {
         ui.painter().rect_filled(r, CornerRadius::same(5), crate::theme::ACCENT);
@@ -914,20 +916,20 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
     let built_in = ImageFilters::PRESETS.iter().filter(|(id, ..)| *id != "reset");
     let current = built_in
         .clone()
-        .map(|(_, label, f)| (label.to_string(), *f))
+        .map(|(_, label, f)| (tr(label).to_string(), *f))
         .chain(saved.iter().cloned())
         .find(|(_, f)| *f == filters)
         .map(|(name, _)| name)
-        .unwrap_or_else(|| if filters.is_identity() { "No preset".into() } else { "Custom".into() });
+        .unwrap_or_else(|| if filters.is_identity() { tr("No preset").into() } else { tr("Custom").into() });
     let name_id = Id::new("cp_preset_name");
     let mut naming: Option<String> = ui.data(|d| d.get_temp(name_id));
     let mut action = None;
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        let resp = widgets::dropdown(ui, &current, 152.0, None).on_hover_text("Adjustment presets");
+        let resp = widgets::dropdown(ui, &current, 152.0, None).on_hover_text(tr("Adjustment presets"));
         crate::right::menu_popup(&resp).show(|ui| {
             for (id, label, _) in built_in {
-                if crate::right::menu_item(ui, label, "") {
+                if crate::right::menu_item(ui, tr(label), "") {
                     action = Some(PresetAction::Apply(id.to_string()));
                     ui.close();
                 }
@@ -942,12 +944,12 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
             if !saved.is_empty() {
                 ui.separator();
             }
-            if crate::right::menu_item(ui, "Save as preset…", "") {
+            if crate::right::menu_item(ui, tr("Save as preset…"), "") {
                 naming = Some(format!("Preset {}", saved.len() + 1));
                 ui.close();
             }
         });
-        if widgets::button(ui, "Reset", false, !filters.is_identity()).on_hover_text("Reset adjustments").clicked() {
+        if widgets::button(ui, tr("Reset"), false, !filters.is_identity()).on_hover_text(tr("Reset adjustments")).clicked() {
             action = Some(PresetAction::Apply("reset".into()));
         }
     });
@@ -960,7 +962,7 @@ fn image_presets(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &m
                 r.request_focus();
             }
             save = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            save |= widgets::button(ui, "Save", true, !name.trim().is_empty()).clicked();
+            save |= widgets::button(ui, tr("Save"), true, !name.trim().is_empty()).clicked();
         });
         if save && !name.trim().is_empty() {
             app.run("image.savePreset", json!({"name": name.trim(), "filters": filters}));

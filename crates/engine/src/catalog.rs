@@ -21,6 +21,7 @@ pub const SEP: &str = "-";
 pub static MENU: &[MenuItem] = &[
     // File
     m!("File", "New design file", "file.new"),
+    m!("File", "New window", "window.new"),
     m!("File", "Open…", "file.open"),
     m!("File", "Import from file…", "file.import"),
     m!("File", "Place image…", "file.placeImage"),

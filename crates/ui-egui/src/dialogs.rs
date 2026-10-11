@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::export_panel::{export_layers, save_one, suggested_name};
+use crate::i18n::{self, tr, tr_noop, trf, trn};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 
@@ -41,9 +42,9 @@ impl AboutTab {
 
     pub fn label(self) -> &'static str {
         match self {
-            AboutTab::About => "About",
-            AboutTab::Contributors => "Contributors",
-            AboutTab::Models => "Models",
+            AboutTab::About => tr("About"),
+            AboutTab::Contributors => tr("Contributors"),
+            AboutTab::Models => tr("Models"),
         }
     }
 }
@@ -81,23 +82,27 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
         icons::paint(ui.painter(), r.shrink(10.0), Icon::Logo, Color32::WHITE);
         ui.vertical(|ui| {
             ui.label(RichText::new("FigCraft").font(semibold(18.0)));
-            ui.label(RichText::new(format!("Version {VERSION}")).color(t.text_secondary));
+            ui.label(RichText::new(trf("Version {version}", &[("version", &VERSION)])).color(t.text_secondary));
         });
     });
     ui.add_space(12.0);
-    ui.label("Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.");
+    ui.label(tr(
+        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.",
+    ));
     ui.add_space(8.0);
     ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
-    ui.hyperlink_to("Join us on Discord", "https://discord.gg/artcraft");
+    ui.hyperlink_to(tr("Join us on Discord"), "https://discord.gg/artcraft");
     ui.add_space(8.0);
-    ui.label(RichText::new("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.").color(t.text_secondary).font(regular(11.0)));
+    ui.label(
+        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.")).color(t.text_secondary).font(regular(11.0)),
+    );
 }
 
 pub fn show(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     if app.ui.about {
         let mut open = true;
-        window("About FigCraft", ctx).open(&mut open).show(ctx, |ui| {
+        window(tr("About FigCraft"), ctx).open(&mut open).show(ctx, |ui| {
             ui.set_width(ABOUT_WIDTH);
             tab_strip(ui, &t, &AboutTab::ALL, AboutTab::label, &mut app.ui.about_tab);
             ui.add_space(12.0);
@@ -113,45 +118,49 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     }
     if app.ui.preferences {
         let mut open = true;
-        window("Preferences", ctx).open(&mut open).show(ctx, |ui| {
+        window(tr("Preferences"), ctx).open(&mut open).show(ctx, |ui| {
             ui.set_width(360.0);
             let prefs = app.session.prefs.clone();
             let mut toggles = vec![];
             for (label, val, cmd) in [
-                ("Keep tool selected after use", prefs.keep_tool, "pref.keepTool"),
-                ("Highlight layers on hover", prefs.highlight_on_hover, "pref.highlightHover"),
-                ("Rename duplicated layers", prefs.rename_duplicates, "pref.renameDuplicates"),
-                ("Show dimensions on objects", prefs.show_dimensions, "pref.showDimensions"),
-                ("Use number keys for opacity", prefs.number_keys_opacity, "pref.numberKeysOpacity"),
-                ("Reduce motion", prefs.reduce_motion, "pref.reduceMotion"),
+                (tr("Keep tool selected after use"), prefs.keep_tool, "pref.keepTool"),
+                (tr("Highlight layers on hover"), prefs.highlight_on_hover, "pref.highlightHover"),
+                (tr("Rename duplicated layers"), prefs.rename_duplicates, "pref.renameDuplicates"),
+                (tr("Show dimensions on objects"), prefs.show_dimensions, "pref.showDimensions"),
+                (tr("Use number keys for opacity"), prefs.number_keys_opacity, "pref.numberKeysOpacity"),
+                (tr("Reduce motion"), prefs.reduce_motion, "pref.reduceMotion"),
             ] {
                 if crate::widgets::checkbox(ui, val, label) {
                     toggles.push(cmd);
                 }
             }
             if app.services.reduce_motion() {
-                crate::widgets::label(ui, "Your system asks for reduced motion: animations stay off.", t.text_secondary);
+                crate::widgets::label(ui, tr("Your system asks for reduced motion: animations stay off."), t.text_secondary);
             }
             for c in toggles {
                 app.run(c, json!({}));
             }
             // Where the app registers itself as the opener of invite links (Windows).
             if let Some(on) = app.session.invite_links_on() {
-                if crate::widgets::checkbox(ui, on, "Open invite links in FigCraft") {
+                if crate::widgets::checkbox(ui, on, tr("Open invite links in FigCraft")) {
                     app.run("collab.registerLinks", json!({"on": !on}));
                 }
-                crate::widgets::label(ui, "figcraft:// links from a browser, chat or email open this app and join the session.", t.text_secondary);
+                crate::widgets::label(
+                    ui,
+                    tr("figcraft:// links from a browser, chat or email open this app and join the session."),
+                    t.text_secondary,
+                );
             }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label("Your name in comments");
-                if let Some(name) = crate::widgets::text_field(ui, egui::Id::new("pref_user_name"), &prefs.user_name, 160.0, "You") {
+                ui.label(tr("Your name in comments"));
+                if let Some(name) = crate::widgets::text_field(ui, egui::Id::new("pref_user_name"), &prefs.user_name, 160.0, tr("You")) {
                     app.run("pref.userName", json!({"name": name}));
                 }
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label("Nudge amount");
+                ui.label(tr("Nudge amount"));
                 let mut small = prefs.nudge_small;
                 let mut big = prefs.nudge_big;
                 let a = ui.add(egui::DragValue::new(&mut small).range(0.1..=100.0));
@@ -162,13 +171,29 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.label("Theme");
-                for (l, c) in [("Light", "view.themeLight"), ("Dark", "view.themeDark"), ("System", "view.themeSystem")] {
-                    if ui.selectable_label(app.session.prefs.theme.eq_ignore_ascii_case(l), l).clicked() {
+                ui.label(tr("Theme"));
+                for (l, c) in [(tr_noop("Light"), "view.themeLight"), (tr_noop("Dark"), "view.themeDark"), (tr_noop("System"), "view.themeSystem")] {
+                    if ui.selectable_label(app.session.prefs.theme.eq_ignore_ascii_case(l), tr(l)).clicked() {
                         app.run(c, json!({}));
                     }
                 }
             });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(tr("Language"));
+                // Each language by its own name; System follows the OS (the browser on the web).
+                let langs = i18n::languages().iter().map(|l| (l.code, l.name));
+                for (code, name) in [("system", tr("System"))].into_iter().chain(langs) {
+                    if ui.selectable_label(app.session.prefs.language.eq_ignore_ascii_case(code), name).clicked() {
+                        app.run("pref.language", json!({"language": code}));
+                        ui.ctx().request_repaint();
+                    }
+                }
+            });
+            if let Some(lang) = i18n::current().filter(|l| l.draft) {
+                let note = trf("{language}: draft translation, waiting for a native speaker's review.", &[("language", &lang.name)]);
+                crate::widgets::label(ui, &note, t.text_secondary);
+            }
         });
         if !open {
             app.ui.preferences = false;
@@ -178,19 +203,24 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     if let Some((mut find, mut replace)) = app.ui.find.clone() {
         let mut open = true;
         let mut action = None;
-        egui::Window::new("Find and replace").open(&mut open).anchor(Align2::LEFT_TOP, vec2(260.0, 120.0)).resizable(false).show(ctx, |ui| {
-            ui.set_width(280.0);
-            ui.add(egui::TextEdit::singleline(&mut find).hint_text("Find").desired_width(260.0));
-            ui.add(egui::TextEdit::singleline(&mut replace).hint_text("Replace with").desired_width(260.0));
-            ui.horizontal(|ui| {
-                if ui.button("Find").clicked() {
-                    action = Some(false);
-                }
-                if ui.button("Replace all").clicked() {
-                    action = Some(true);
-                }
+        egui::Window::new(tr("Find and replace"))
+            .id(egui::Id::new("Find and replace"))
+            .open(&mut open)
+            .anchor(Align2::LEFT_TOP, vec2(260.0, 120.0))
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.set_width(280.0);
+                ui.add(egui::TextEdit::singleline(&mut find).hint_text(tr("Find")).desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut replace).hint_text(tr("Replace with")).desired_width(260.0));
+                ui.horizontal(|ui| {
+                    if ui.button(tr("Find")).clicked() {
+                        action = Some(false);
+                    }
+                    if ui.button(tr("Replace all")).clicked() {
+                        action = Some(true);
+                    }
+                });
             });
-        });
         if let Some(rep) = action
             && !find.is_empty()
         {
@@ -201,7 +231,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             };
             if let Some(v) = r {
                 let n = v["matches"].as_array().map(|a| a.len()).unwrap_or(0);
-                app.toast(format!("{n} match{}", if n == 1 { "" } else { "es" }));
+                app.toast(trn("{n} matches", n, &[]));
             }
         }
         app.ui.find = if open { Some((find, replace)) } else { None };
@@ -216,6 +246,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     crate::plugins_ui::show(app, ctx);
     crate::live::join_dialog(app, ctx);
     crate::live::publish_dialog(app, ctx);
+    crate::windows::confirm_close(app, ctx);
 }
 
 /// File ▸ Color profile: pick sRGB or Display P3, then keep the colours' appearance (convert the
@@ -229,42 +260,42 @@ fn color_profile_dialog(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     let mut open = true;
     let mut apply = None;
-    window("Color profile", ctx).open(&mut open).show(ctx, |ui| {
+    window(tr("Color profile"), ctx).open(&mut open).show(ctx, |ui| {
         ui.set_width(340.0);
-        ui.label(RichText::new("Color values in this file are in this color space.").color(t.text_secondary).font(regular(11.0)));
+        ui.label(RichText::new(tr("Color values in this file are in this color space.")).color(t.text_secondary).font(regular(11.0)));
         ui.add_space(8.0);
         for p in ColorProfile::ALL {
-            let label = if p == current { format!("{} (current)", p.label()) } else { p.label().to_string() };
+            let label = if p == current { trf("{profile} (current)", &[("profile", &p.label())]) } else { p.label().to_string() };
             if crate::widgets::radio(ui, chosen == p, &label) {
                 chosen = p;
             }
         }
         ui.add_space(8.0);
         if chosen == current {
-            ui.label(RichText::new("Choose another profile to change it.").color(t.text_secondary).font(regular(11.0)));
+            ui.label(RichText::new(tr("Choose another profile to change it.")).color(t.text_secondary).font(regular(11.0)));
             return;
         }
         ui.label(
-            RichText::new(format!(
-                "Keep appearance converts every color value to {} so colors look the same. Keep values leaves the numbers as they are, so colors shift.",
-                chosen.label()
+            RichText::new(trf(
+                "Keep appearance converts every color value to {profile} so colors look the same. Keep values leaves the numbers as they are, so colors shift.",
+                &[("profile", &chosen.label())],
             ))
             .font(regular(11.0)),
         );
         if !chosen.is_srgb() {
             ui.add_space(4.0);
             ui.label(
-                RichText::new("The canvas previews colors in sRGB; exported PNG, JPG and WebP files are tagged Display P3.")
+                RichText::new(tr("The canvas previews colors in sRGB; exported PNG, JPG and WebP files are tagged Display P3."))
                     .color(t.text_secondary)
                     .font(regular(11.0)),
             );
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            if crate::widgets::button(ui, "Keep appearance", true, true).clicked() {
+            if crate::widgets::button(ui, tr("Keep appearance"), true, true).clicked() {
                 apply = Some(true);
             }
-            if crate::widgets::button(ui, "Keep values", false, true).clicked() {
+            if crate::widgets::button(ui, tr("Keep values"), false, true).clicked() {
                 apply = Some(false);
             }
         });
@@ -311,23 +342,23 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
         preset(1.0, ExportFormat::Pdf),
     ];
     let mut choice = None;
-    window("Export", ctx).open(&mut open).show(ctx, |ui| {
+    window(tr("Export"), ctx).open(&mut open).show(ctx, |ui| {
         ui.set_width(320.0);
         let caption = |ui: &mut egui::Ui, s: &str| {
             ui.label(RichText::new(s).font(regular(11.0)).color(t.text_secondary));
         };
         if !jobs.is_empty() {
-            caption(ui, "With the layers' export settings");
+            caption(ui, tr("With the layers' export settings"));
             const SHOWN: usize = 6;
             for j in jobs.iter().take(SHOWN) {
                 ui.label(RichText::new(&j.file).font(regular(12.0)).color(t.text));
             }
             if jobs.len() > SHOWN {
-                caption(ui, &format!("and {} more", jobs.len() - SHOWN));
+                caption(ui, &trn("and {n} more", jobs.len() - SHOWN, &[]));
             }
             ui.add_space(6.0);
             let layers = jobs.iter().map(|j| j.id).collect::<std::collections::BTreeSet<_>>().len();
-            let label = format!("Export {layers} layer{}", if layers == 1 { "" } else { "s" });
+            let label = trn("Export {n} layers", layers, &[]);
             if crate::widgets::button(ui, &label, true, true).clicked() {
                 choice = Some(ExportChoice::Layers);
             }
@@ -336,7 +367,7 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
             ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.border));
             ui.add_space(10.0);
         }
-        caption(ui, &format!("{} layer{} as one file", ids.len(), if ids.len() == 1 { "" } else { "s" }));
+        caption(ui, &trn("{n} layers as one file", ids.len(), &[]));
         ui.add_space(4.0);
         for p in &presets {
             let label = if p.format.is_raster() { format!("{} @{}", p.format.label(), p.size.label()) } else { p.format.label().to_string() };
@@ -351,7 +382,7 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
         }
         // The PDF preset's print options.
         ui.add_space(6.0);
-        caption(ui, "PDF print options");
+        caption(ui, tr("PDF print options"));
         if let Some(next) = crate::export_panel::print_options(ui, egui::Id::new("export_dialog_print"), &print) {
             app.ui.pdf_print = next;
         }
@@ -360,7 +391,7 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
     match choice {
         Some(ExportChoice::Layers) => export_layers(app, &with_settings),
         Some(ExportChoice::Once(s)) if !ids.is_empty() => save_one(app, &ids, &s, &suggested_name(&doc, &ids, &s, "Export")),
-        Some(ExportChoice::Once(_)) => app.toast("Nothing to export"),
+        Some(ExportChoice::Once(_)) => app.toast(tr("Nothing to export")),
         None => {}
     }
     if close {

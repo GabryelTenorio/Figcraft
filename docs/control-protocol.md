@@ -23,6 +23,13 @@ not JSON gets `{"id": null, "ok": false, "error": "bad JSON: …"}`. The impleme
 
 Coordinates are page units, y down. `x`/`y` in `node.set`/`node.create` are parent-relative.
 
+**Windows.** The desktop app can show files in several windows (`window.new`). Every method takes
+an optional `window` (an id from `window.list`; `0` is the main window) and then runs in that
+window, with its tabs, panels and canvas: `engine.execute` acts on the file it shows,
+`ui.screenshot` captures it, `ui.input` reaches it. Without `window`, a request goes to the window
+last in front (the one the user clicked last, or the last `window.new` / `window.focus`). An
+unknown id is an error.
+
 ## Methods
 
 ### `engine.execute {command, params?}`
@@ -196,7 +203,7 @@ focus view shows, or `null`) and `annotationFilter`).
 
 ### `ui.screenshot {path}`
 
-PNG of the whole window, UI included (needs a visible window; an idle one draws the frame to
+PNG of the whole window (`window` picks one), UI included (needs a visible window; an idle one draws the frame to
 capture). Returns `{path, width, height}`, or an error after 60 s when the window doesn't deliver.
 
 ### `ui.render {path, scale?, ids?}`
@@ -204,9 +211,31 @@ capture). Returns `{path, width, height}`, or an error after 60 s when the windo
 PNG of the document without UI chrome (works without a window). Without `ids` it exports the
 selection, else the page's top-level layers. Returns the export result.
 
+### `window.new {path?, index?}`
+
+Open a window: with open file `index` moved into it (from whichever window has it), the file at
+`path`, or a new file. Returns `{window}` (its id); it comes to the front. The browser build and a
+running screen reader keep one window (only the main window has an accessibility tree): the file
+opens as a tab there and the reply is an error saying so. The `window.new` command does the same
+for menus, the Actions palette and `engine.execute`.
+
+### `window.list {}`
+
+Every window: `[{id, main, title, files, active, focused}]` (`files` are its tabs' names, `active`
+the one it shows, `focused` the window requests go to). `ui.inspect` reports it as `windows`, plus
+`window` (the window it ran in).
+
+### `window.focus {id}`
+
+Bring a window to the front; requests without `window` go to it from now on. The `window.focus`
+command does the same.
+
+Closing a window closes its files, asking first when one has unsaved changes; the main window
+closing while others are open takes over one of them, and closing the last window quits.
+
 ### `app.quit {}`
 
-Close the app.
+Close the app (every window, without asking about unsaved changes).
 
 ## Example session (shell)
 

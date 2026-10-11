@@ -217,6 +217,23 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Dev Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),
+        // Several windows: the desktop app opens and focuses them (no-ops headless and in the browser).
+        spec!(
+            "window.new",
+            "New window",
+            "{path?, index?}  a new window with a new file, the file at `path`, or open file `index` moved into it",
+            false,
+            |s, p| {
+                let index = if num(p, "index").is_some() { Some(req_index("window.new", p, "index")?) } else { None };
+                s.request_ui("window.new", json!({"path": string(p, "path"), "index": index}));
+                ok()
+            }
+        ),
+        spec!("window.focus", "Bring window to front", "{id}  a window id (control channel `window.list`)", false, |s, p| {
+            let id = req_index("window.focus", p, "id")?;
+            s.request_ui("window.focus", json!({"id": id}));
+            ok()
+        }),
         spec!("view.nextRegion", "Focus next region", "{}", false, |s, _| region(s, 1)),
         spec!("view.previousRegion", "Focus previous region", "{}", false, |s, _| region(s, -1)),
         spec!("view.themeLight", "Light theme", "{}", false, |s, _| {
@@ -247,6 +264,18 @@ pub fn specs() -> Vec<CommandSpec> {
             let name: String = name.trim().chars().filter(|c| !c.is_control()).take(64).collect();
             s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
             Ok(json!({"name": s.prefs.user_name}))
+        }),
+        spec!("pref.language", "Interface language", "{language: system|en|es|… (a language code; no catalog: English)}", false, |s, p| {
+            let lang = req_string("pref.language", p, "language")?;
+            let lang = lang.trim();
+            // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
+            let tag = lang.len() <= 35
+                && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
+            if !tag {
+                return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+            }
+            s.prefs.language = lang.to_string();
+            Ok(json!({"language": s.prefs.language}))
         }),
         spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
         spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),

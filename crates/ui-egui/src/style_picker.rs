@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::FigApp;
 use crate::a11y::Tip;
 use crate::colorpicker::PickerTarget;
+use crate::i18n::{tr, trf};
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets;
@@ -88,10 +89,10 @@ impl StyleSlot {
 
     fn title(self) -> &'static str {
         match self {
-            StyleSlot::Fill | StyleSlot::Stroke => "Color styles",
-            StyleSlot::Effect => "Effect styles",
-            StyleSlot::Grid => "Grid styles",
-            StyleSlot::Text => "Text styles",
+            StyleSlot::Fill | StyleSlot::Stroke => tr("Color styles"),
+            StyleSlot::Effect => tr("Effect styles"),
+            StyleSlot::Grid => tr("Grid styles"),
+            StyleSlot::Text => tr("Text styles"),
         }
     }
 
@@ -203,8 +204,8 @@ pub fn text_link(app: &FigApp, doc: &Document, ids: &[NodeId]) -> Option<Option<
 pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot: StyleSlot) {
     let t = Tokens::get(ui.ctx());
     let (name, mixed) = match link_of(app, doc, ids, slot) {
-        Some(Some(id)) => (doc.style(&id).map_or_else(|| "Missing style".to_string(), |st| st.name.clone()), false),
-        None if slot == StyleSlot::Text => ("Mixed".to_string(), true),
+        Some(Some(id)) => (doc.style(&id).map_or_else(|| tr("Missing style").to_string(), |st| st.name.clone()), false),
+        None if slot == StyleSlot::Text => (tr("Mixed").to_string(), true),
         _ => return,
     };
     let mut open_it = false;
@@ -218,9 +219,9 @@ pub fn chip(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], slot:
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(14.0, 14.0)), icon, t.icon_secondary);
         let col = if mixed { t.text_secondary } else { t.text };
         crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 26.0, r.center().y), &name, regular(11.0), col, r.width() - 32.0);
-        let tip = if mixed { "The selection uses several text styles: click to apply one" } else { "Change style" };
+        let tip = if mixed { tr("The selection uses several text styles: click to apply one") } else { tr("Change style") };
         open_it = resp.on_hover_text(tip).clicked();
-        let detach = if mixed { "Detach styles" } else { "Detach style" };
+        let detach = if mixed { tr("Detach styles") } else { tr("Detach style") };
         if icons::button(ui, Icon::Detach, 24.0, false, detach).clicked() {
             app.run("style.detach", json!({"ids": ids, "which": slot.key()}));
         }
@@ -424,7 +425,7 @@ fn style_row(ui: &mut Ui, s: &Style, key: Key, slot: StyleSlot, applied: bool, e
         }
     }
     if hovered && editable {
-        if menu_icon(ui, edit_r, Icon::Adjust, "Edit style", false).clicked() {
+        if menu_icon(ui, edit_r, Icon::Adjust, tr("Edit style"), false).clicked() {
             out.act = Some(Act::Edit(s.id.clone()));
             return;
         }
@@ -517,21 +518,21 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
         x -= 26.0;
         r
     };
-    let create_tip = if slot == StyleSlot::Text { "Create style from the selected text" } else { "Create style" };
+    let create_tip = if slot == StyleSlot::Text { tr("Create style from the selected text") } else { tr("Create style") };
     if menu_icon(ui, slot_rect(), Icon::Plus, create_tip, false).clicked() {
         out.act = Some(Act::Create);
     }
-    if link != Some(None) && menu_icon(ui, slot_rect(), Icon::Detach, "Detach style", false).clicked() {
+    if link != Some(None) && menu_icon(ui, slot_rect(), Icon::Detach, tr("Detach style"), false).clicked() {
         out.act = Some(Act::Detach);
     }
     if slot.has_grid() {
-        let (icon, tip) = if grid { (Icon::ViewList, "Show as list") } else { (Icon::ViewGrid, "Show as grid") };
+        let (icon, tip) = if grid { (Icon::ViewList, tr("Show as list")) } else { (Icon::ViewGrid, tr("Show as grid")) };
         if menu_icon(ui, slot_rect(), icon, tip, false).clicked() {
             out.act = Some(Act::ToggleView);
         }
     }
     ui.add_space(4.0);
-    let r = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text("Search").font(regular(11.0)).desired_width(W));
+    let r = ui.add(egui::TextEdit::singleline(&mut p.query).hint_text(tr("Search")).font(regular(11.0)).desired_width(W));
     if !r.has_focus() && !crate::a11y::field_focused(ui.ctx()) {
         r.request_focus();
     }
@@ -555,9 +556,9 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
         if sources.iter().all(|(_, l)| l.is_empty()) {
             let any = library::local_styles(doc).any(|s| slot.holds(&s.kind));
             let hint = match (any, slot) {
-                (true, _) => "No matching styles",
-                (false, StyleSlot::Text) => "No text styles yet. Click + to create one from the selected text.",
-                (false, _) => "No styles yet. Click + to create one from the selection.",
+                (true, _) => tr("No matching styles"),
+                (false, StyleSlot::Text) => tr("No text styles yet. Click + to create one from the selected text."),
+                (false, _) => tr("No styles yet. Click + to create one from the selection."),
             };
             caption(ui, hint);
         }
@@ -568,7 +569,7 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
             } else if list.is_empty() {
                 continue;
             } else if sources.len() > 1 {
-                caption(ui, "This file");
+                caption(ui, tr("This file"));
             }
             let lib_id = lib.map(|l| l.manifest.id.clone());
             for (f, styles) in by_folder(list.iter().copied()) {
@@ -611,7 +612,7 @@ fn listing(app: &FigApp, ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut 
         }
         if !colors.is_empty() {
             ui.add_space(6.0);
-            caption(ui, "Color variables");
+            caption(ui, tr("Color variables"));
         }
         for (lib, c, vars) in &colors {
             crate::variable_ui::group_caption(ui, *lib, c);
@@ -644,9 +645,9 @@ fn property_row(ui: &mut Ui, label: &str, paint: Option<&Paint>, slot: StyleSlot
 /// A layout grid's summary ("Columns 12", "Grid 8").
 fn grid_label(g: &figcraft_doc::LayoutGrid) -> String {
     match g.kind {
-        GridKind::Grid => format!("Grid {}", g.size),
-        GridKind::Columns => format!("Columns {}", g.count),
-        GridKind::Rows => format!("Rows {}", g.count),
+        GridKind::Grid => trf("Grid {size}", &[("size", &g.size)]),
+        GridKind::Columns => trf("Columns {count}", &[("count", &g.count)]),
+        GridKind::Rows => trf("Rows {count}", &[("count", &g.count)]),
     }
 }
 
@@ -672,23 +673,23 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
     // The dropdowns' menus open outside the dark scope (they're regular popups).
     let (family_resp, style_resp) = crate::theme::on_dark(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
-        let family_resp = widgets::elided_dropdown(ui, &def.font_family, W).on_hover_text("Font");
+        let family_resp = widgets::elided_dropdown(ui, &def.font_family, W).on_hover_text(tr("Font"));
         let mut style_resp = None;
         ui.horizontal(|ui| {
-            style_resp = Some(widgets::elided_dropdown(ui, &def.font_style, half).on_hover_text("Font style"));
+            style_resp = Some(widgets::elided_dropdown(ui, &def.font_style, half).on_hover_text(tr("Font style")));
             if let Some(widgets::FieldEdit::Set(v) | widgets::FieldEdit::Scrub(v, true)) =
-                widgets::number_field(ui, Id::new(("ts_size", id)), widgets::Lead::Text("Size"), Some(def.font_size), "", half, 1.0)
+                widgets::number_field(ui, Id::new(("ts_size", id)), widgets::Lead::Text(tr("Size")), Some(def.font_size), "", half, 1.0)
             {
                 set(out, &|d| d.font_size = v.clamp(1.0, 5000.0));
             }
         });
         ui.horizontal(|ui| {
-            if let Some(v) = widgets::text_field(ui, Id::new(("ts_lh", id)), &def.line_height.label(), half, "Line height")
+            if let Some(v) = widgets::text_field(ui, Id::new(("ts_lh", id)), &def.line_height.label(), half, tr("Line height"))
                 && let Some(lh) = crate::typography::parse_line_height(&v, Some(def.line_height)).and_then(|v| serde_json::from_value(v).ok())
             {
                 set(out, &|d| d.line_height = lh);
             }
-            if let Some(v) = widgets::text_field(ui, Id::new(("ts_ls", id)), &def.letter_spacing.label(), half, "Letter spacing")
+            if let Some(v) = widgets::text_field(ui, Id::new(("ts_ls", id)), &def.letter_spacing.label(), half, tr("Letter spacing"))
                 && let Some(ls) = crate::typography::parse_letter_spacing(&v, Some(def.letter_spacing)).and_then(|v| serde_json::from_value(v).ok())
             {
                 set(out, &|d| d.letter_spacing = ls);
@@ -735,12 +736,12 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
         return;
     };
     let (hr, _) = ui.allocate_exact_size(vec2(W, 24.0), Sense::hover());
-    if menu_icon(ui, Rect::from_min_size(hr.min, vec2(24.0, 24.0)), Icon::ChevronLeft, "Back to styles", false).clicked() {
+    if menu_icon(ui, Rect::from_min_size(hr.min, vec2(24.0, 24.0)), Icon::ChevronLeft, tr("Back to styles"), false).clicked() {
         out.act = Some(Act::Back);
     }
-    ui.painter().text(pos2(hr.min.x + 30.0, hr.center().y), Align2::LEFT_CENTER, "Edit style", semibold(11.0), t.menu_text);
+    ui.painter().text(pos2(hr.min.x + 30.0, hr.center().y), Align2::LEFT_CENTER, tr("Edit style"), semibold(11.0), t.menu_text);
     ui.add_space(6.0);
-    caption(ui, "Name");
+    caption(ui, tr("Name"));
     let r = ui.add(egui::TextEdit::singleline(&mut e.name).font(regular(11.0)).desired_width(W));
     if e.focus {
         r.request_focus();
@@ -751,18 +752,18 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
         e.focus = false;
     }
     ui.add_space(6.0);
-    caption(ui, "Description");
+    caption(ui, tr("Description"));
     ui.add(egui::TextEdit::multiline(&mut e.description).font(regular(11.0)).desired_width(W).desired_rows(2));
     ui.add_space(8.0);
-    caption(ui, "Properties");
+    caption(ui, tr("Properties"));
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         match &style.kind {
-            StyleKind::Paint { paints } if paints.is_empty() => caption(ui, "No paints"),
+            StyleKind::Paint { paints } if paints.is_empty() => caption(ui, tr("No paints")),
             StyleKind::Paint { paints } => {
                 // Top of the list paints on top: show in reverse like the Fill section.
                 for (i, paint) in paints.iter().enumerate().rev() {
-                    let label = format!("{}  {:.0}%", paint.label(), paint.opacity * 100.0);
+                    let label = format!("{}  {:.0}%", tr(&paint.label()), paint.opacity * 100.0);
                     if property_row(ui, &label, Some(paint), slot) {
                         out.act = Some(Act::EditPaint(style.id.clone(), i));
                     }
@@ -770,7 +771,7 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
             }
             StyleKind::Effect { effects } => {
                 for fx in effects.iter().rev() {
-                    property_row(ui, fx.label(), None, slot);
+                    property_row(ui, tr(fx.label()), None, slot);
                 }
             }
             StyleKind::Grid { grids } => {
@@ -783,10 +784,11 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if has_selection && menu_button(ui, "Update from selection").on_hover_text("Take the values from the first selected layer").clicked() {
+        if has_selection && menu_button(ui, tr("Update from selection")).on_hover_text(tr("Take the values from the first selected layer")).clicked()
+        {
             out.act = Some(Act::UpdateFromSelection(style.id.clone()));
         }
-        if menu_button(ui, "Delete").on_hover_text("Delete the style (layers keep their values)").clicked() {
+        if menu_button(ui, tr("Delete")).on_hover_text(tr("Delete the style (layers keep their values)")).clicked() {
             out.act = Some(Act::Delete(style.id.clone()));
         }
     });

@@ -5,13 +5,14 @@ use egui::{Align2, CornerRadius, Id, Sense, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, PAD};
 
 pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    widgets::section_header(ui, "Frame", &[], false);
+    widgets::section_header(ui, tr("Frame"), &[], false);
     let w = ui.available_width();
     let mut cats: Vec<&str> = Vec::new();
     for (c, ..) in figcraft_engine::cmd::create::FRAME_PRESETS {
@@ -34,7 +35,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             if open { Icon::Chevron } else { Icon::ChevronRight },
             t.icon_secondary,
         );
-        ui.painter().text(pos2(r.min.x + PAD + 16.0, r.center().y), Align2::LEFT_CENTER, cat, semibold(11.0), t.text);
+        ui.painter().text(pos2(r.min.x + PAD + 16.0, r.center().y), Align2::LEFT_CENTER, tr(cat), semibold(11.0), t.text);
         if resp.clicked() {
             ui.data_mut(|d| d.insert_temp(open_id, !open));
         }

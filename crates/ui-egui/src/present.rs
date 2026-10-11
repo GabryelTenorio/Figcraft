@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
@@ -155,13 +156,13 @@ impl PresentScale {
 
     pub fn label(self, device: bool) -> &'static str {
         match (self, device) {
-            (PresentScale::Fit, false) => "Fit to window",
-            (PresentScale::FitWidth, _) => "Fit width",
-            (PresentScale::Fill, false) => "Fill window",
-            (PresentScale::Actual, false) => "Actual size (100%)",
-            (PresentScale::Fit, true) => "Fit device to window",
-            (PresentScale::Fill, true) => "Zoom device to fill window",
-            (PresentScale::Actual, true) => "Device at 100%",
+            (PresentScale::Fit, false) => tr("Fit to window"),
+            (PresentScale::FitWidth, _) => tr("Fit width"),
+            (PresentScale::Fill, false) => tr("Fill window"),
+            (PresentScale::Actual, false) => tr("Actual size (100%)"),
+            (PresentScale::Fit, true) => tr("Fit device to window"),
+            (PresentScale::Fill, true) => tr("Zoom device to fill window"),
+            (PresentScale::Actual, true) => tr("Device at 100%"),
         }
     }
 
@@ -1562,8 +1563,8 @@ fn inspect_panel(app: &mut FigApp, ui: &mut Ui, pres: &Presenter) {
     let found = pres.inspected.zip(pres.doc.as_ref()).and_then(|(id, doc)| doc.node(id).map(|n| (id, doc, n.name.clone())));
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let Some((id, doc, name)) = found else {
-            widgets::section_header(ui, "Inspect", &[], false);
-            crate::right::row(ui, 32.0, |ui| widgets::label(ui, "Hover a layer to see its properties", t.text_secondary));
+            widgets::section_header(ui, tr("Inspect"), &[], false);
+            crate::right::row(ui, 32.0, |ui| widgets::label(ui, tr("Hover a layer to see its properties"), t.text_secondary));
             return;
         };
         widgets::section_header(ui, &name, &[], false);
@@ -1641,7 +1642,7 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
     let typing = ds.text_edit.is_some() || crate::a11y::field_focused(ctx);
     let chrome = Chrome { pane: true, bar_h: 36.0, pad: 12.0, round: style.visuals.window_corner_radius.nw, keys: !typing };
     let mut action = None;
-    egui::Window::new("Prototype preview")
+    egui::Window::new(tr("Prototype preview"))
         .id(pane_id())
         .title_bar(false)
         .collapsible(false)
@@ -1809,7 +1810,7 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
         if !chrome.pane {
             return Some(BarAction::Close);
         }
-        ui.painter().text(area.center(), Align2::CENTER_CENTER, "Select a frame to preview it", regular(12.0), Color32::from_gray(170));
+        ui.painter().text(area.center(), Align2::CENTER_CENTER, tr("Select a frame to preview it"), regular(12.0), Color32::from_gray(170));
         return action;
     }
     // Scroll animation (Scroll to).
@@ -1900,26 +1901,31 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     let settings = page_settings(doc, p.current);
     let device = settings.device();
     let mut action = None;
-    // Right: the buttons, right to left.
+    // Right: the buttons, right to left (English labels key their ids; shown translated).
     let buttons: &[(BarAction, &str, Icon)] = if chrome.pane {
-        &[(BarAction::Close, "Close preview", Icon::Close), (BarAction::Present, "Present", Icon::Play), (BarAction::Restart, "Restart", Icon::Reset)]
+        &[
+            (BarAction::Close, tr_noop("Close preview"), Icon::Close),
+            (BarAction::Present, tr_noop("Present"), Icon::Play),
+            (BarAction::Restart, tr_noop("Restart"), Icon::Reset),
+        ]
     } else {
         &[
-            (BarAction::Close, "Close", Icon::Close),
-            (BarAction::Restart, "Restart", Icon::Reset),
-            (BarAction::Options, "Options", Icon::Dots),
-            (BarAction::Comments, "Comments", Icon::Comment),
-            (BarAction::Inspect, "Inspect", Icon::Code),
+            (BarAction::Close, tr_noop("Close"), Icon::Close),
+            (BarAction::Restart, tr_noop("Restart"), Icon::Reset),
+            (BarAction::Options, tr_noop("Options"), Icon::Dots),
+            (BarAction::Comments, tr_noop("Comments"), Icon::Comment),
+            (BarAction::Inspect, tr_noop("Inspect"), Icon::Code),
         ]
     };
     let mut x = bar.max.x - if chrome.pane { 6.0 } else { 8.0 };
     for (act, label, icon) in buttons {
-        let w = if chrome.pane { 24.0 } else { ui.painter().layout_no_wrap(label.to_string(), regular(11.5), text).size().x + 16.0 };
+        let shown = tr(label);
+        let w = if chrome.pane { 24.0 } else { ui.painter().layout_no_wrap(shown.to_string(), regular(11.5), text).size().x + 16.0 };
         let br = Rect::from_min_size(pos2(x - w, bar.center().y - 12.0), vec2(w, 24.0));
         x = br.min.x - if chrome.pane { 2.0 } else { 4.0 };
         let mut resp = ui.interact(br, ui.id().with(("pbar", *label)), Sense::click());
         if chrome.pane {
-            resp = resp.tip(*label);
+            resp = resp.tip(shown);
         }
         let on = (*act == BarAction::Comments && p.view.comments) || (*act == BarAction::Inspect && p.view.inspect);
         if on {
@@ -1928,15 +1934,15 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
             ui.painter().rect_filled(br, CornerRadius::same(5), hover);
         }
         if *act == BarAction::Comments {
-            resp = resp.tip("Show comments (Shift+C)");
+            resp = resp.tip(tr("Show comments (Shift+C)"));
         }
         if *act == BarAction::Inspect {
-            resp = resp.tip("Inspect the layer under the pointer: size, colours, typography");
+            resp = resp.tip(tr("Inspect the layer under the pointer: size, colours, typography"));
         }
         if chrome.pane {
             icons::paint(ui.painter(), br.shrink(5.0), *icon, t.icon);
         } else {
-            ui.painter().text(br.center(), Align2::CENTER_CENTER, *label, regular(11.5), text);
+            ui.painter().text(br.center(), Align2::CENTER_CENTER, shown, regular(11.5), text);
         }
         if *act == BarAction::Options {
             let menu = crate::right::menu_popup(&resp).width(220.0).show(|ui| options_menu(p, ui, device, settings.responsive, now));
@@ -1952,8 +1958,8 @@ fn top_bar(p: &mut Presenter, ui: &mut Ui, bar: Rect, now: f64, chrome: Chrome) 
     // flow with its description.
     let playing = flows.iter().find(|f| f.start == p.start);
     if !flows.is_empty() {
-        let label = format!("{}  ▾", playing.map_or("Flows", |f| f.name.as_str()));
-        let tip = playing.map(|f| f.description.trim()).filter(|d| !d.is_empty()).unwrap_or("Flows").to_string();
+        let label = format!("{}  ▾", playing.map_or(tr("Flows"), |f| f.name.as_str()));
+        let tip = playing.map(|f| f.description.trim()).filter(|d| !d.is_empty()).unwrap_or(tr("Flows")).to_string();
         let galley = left.layout_no_wrap(label, semibold(11.5), text);
         let fr = Rect::from_min_size(pos2(lx, bar.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
         let resp = ui.interact(fr.intersect(left.clip_rect()), ui.id().with("pflows"), Sense::click()).tip(tip);
@@ -1993,7 +1999,7 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsi
     let mut action = None;
     let on_device = device.is_some();
     // Without a device, responsive is one of the sizes: the frame fills the window at 100%.
-    if !on_device && menu_check(ui, responsive, "Responsive", "") {
+    if !on_device && menu_check(ui, responsive, tr("Responsive"), "") {
         action = Some(BarAction::Responsive(true));
         ui.close();
     }
@@ -2006,14 +2012,14 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsi
             ui.close();
         }
     }
-    if (on_device || !responsive) && menu_check(ui, false, "Next size option", "Z") {
+    if (on_device || !responsive) && menu_check(ui, false, tr("Next size option"), "Z") {
         p.set_scale(p.view.scale.next(on_device));
         ui.close();
     }
     ui.separator();
     // On a device: the frame takes the screen's size, or keeps its own (clipped or scrolling).
     if on_device {
-        for (on, label) in [(true, "Responsive"), (false, "Fixed size")] {
+        for (on, label) in [(true, tr("Responsive")), (false, tr("Fixed size"))] {
             if menu_check(ui, responsive == on, label, "") {
                 action = (responsive != on).then_some(BarAction::Responsive(on));
                 ui.close();
@@ -2021,15 +2027,15 @@ fn options_menu(p: &mut Presenter, ui: &mut Ui, device: Option<Device>, responsi
         }
         ui.separator();
     }
-    if device.is_some_and(|d| !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, "Show device frame", "") {
+    if device.is_some_and(|d| !d.colors.is_empty()) && menu_check(ui, p.view.device_frame, tr("Show device frame"), "") {
         p.view.device_frame = !p.view.device_frame;
         ui.close();
     }
-    if menu_check(ui, p.view.hotspot_hints, "Show hotspot hints", "") {
+    if menu_check(ui, p.view.hotspot_hints, tr("Show hotspot hints"), "") {
         p.view.hotspot_hints = !p.view.hotspot_hints;
         ui.close();
     }
-    if menu_check(ui, false, "Restart", "R") {
+    if menu_check(ui, false, tr("Restart"), "R") {
         p.restart(p.start, now);
         ui.close();
     }

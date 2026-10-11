@@ -484,6 +484,9 @@ pub struct Prefs {
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
     pub theme: String,
+    /// The interface language: a language code ("en", "es") or "system" (the OS or browser
+    /// language). Languages without a catalog show English.
+    pub language: String,
     /// The name comments are signed with (and whose comments count as yours).
     pub user_name: String,
     /// Reduce motion: the interface's own animations are off (the system's setting turns them off
@@ -515,6 +518,7 @@ impl Default for Prefs {
             number_keys_opacity: true,
             show_dimensions: true,
             theme: "light".into(),
+            language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
             invite_links: None,

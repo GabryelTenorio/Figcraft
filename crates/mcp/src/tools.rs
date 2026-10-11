@@ -216,13 +216,13 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "screenshot",
             "Screenshot",
-            "Look at the design: renders the given layers (or the whole current page, with its background) to PNG and returns it as image content, plus its size and the scale used. The image is scaled down to fit `maxSize` pixels. With `window: true` and an attached app, captures the app window including the UI instead.",
+            "Look at the design: renders the given layers (or the whole current page, with its background) to PNG and returns it as image content, plus its size and the scale used. The image is scaled down to fit `maxSize` pixels. With `window: true` (or a window id from `inspect_ui`'s `windows`) and an attached app, captures that app window including the UI instead.",
             obj(
                 json!({
                     "ids": ids_schema("Layers to render (default: the whole current page)"),
                     "scale": num("Requested scale (default 1; reduced to fit maxSize)"),
                     "maxSize": int("Largest side in pixels (default 1600)"),
-                    "window": boolean("Capture the app window (attached app only; headless renders the page)"),
+                    "window": {"description": "Capture the app window: true for the one in front, or a window id (attached app only; headless renders the page)", "anyOf": [{"type": "boolean"}, {"type": "integer"}]},
                 }),
                 &[],
             ),
@@ -292,7 +292,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_ui",
             "Inspect UI",
-            "UI state: current tool, view (zoom, centre), status, panels and timings when attached to the app; headless reports the session status.",
+            "UI state: current tool, view (zoom, centre), status, panels, timings and the app's windows (`windows`: id, title, files) when attached to the app; headless reports the session status.",
             empty(),
             true,
         ),
@@ -680,9 +680,12 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
 }
 
 fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, String> {
-    let window = matches!(a.get("window"), Some(Value::Bool(true)));
-    if window && b.has_ui() {
-        let bytes = b.screenshot_png()?;
+    let id = a.get("window").and_then(Value::as_u64);
+    if (id.is_some() || matches!(a.get("window"), Some(Value::Bool(true)))) && b.has_ui() {
+        let bytes = match id {
+            Some(id) => b.window_png(id)?,
+            None => b.screenshot_png()?,
+        };
         let (w, h) = png_info(&bytes);
         return Ok(ToolResult::image(&bytes, "image/png", &json!({"source": "window", "width": w, "height": h})));
     }

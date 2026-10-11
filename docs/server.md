@@ -20,6 +20,10 @@ cargo build --release -p figcraft-server
 target/release/figcraft-server --listen 0.0.0.0:47900 --data /srv/figcraft
 ```
 
+Releases also ship it ready-built for Linux (`figcraft-server-<version>-linux-x86_64.tar.gz` and
+`-linux-aarch64`). To run it for others on a rented server, see
+[Deploy on a Linux server](#deploy-on-a-linux-server).
+
 - `--listen` defaults to `127.0.0.1:47900`: only this machine can connect. `0.0.0.0:47900` (or an
   interface's address) lets the network in; put it behind a TLS reverse proxy before you expose
   it beyond a trusted network (see below).
@@ -27,10 +31,12 @@ target/release/figcraft-server --listen 0.0.0.0:47900 --data /srv/figcraft
   time uses a directory: a second one refuses to start.
 - Logs go to standard output (`RUST_LOG=debug` for more). They name files, link ids and addresses,
   never keys or tokens.
-- Stop it like any service (Ctrl+C, `systemctl stop`, `kill`). Every change it accepted is on disk
-  before anyone is told about it, so nothing confirmed is lost; a file's log is folded into a new
-  snapshot the next time everyone leaves it. Apps that were in a file keep editing and reconnect
-  once the server is back (for about a minute and a half), as the same participants.
+- Stop it like any service (Ctrl+C, `systemctl stop`, `docker stop`, `kill`): on SIGTERM, SIGINT
+  or SIGHUP (Ctrl+C or closing the console on Windows) it saves and compacts the open files and
+  tells everyone it is restarting. Every change it accepted is on disk before anyone is told about
+  it, so even a hard kill loses nothing confirmed (a file's log is then folded into a new snapshot
+  the next time everyone leaves it). Apps that were in a file keep editing and reconnect once the
+  server is back (for about a minute and a half), as the same participants.
 
 ## Publishing a file
 
@@ -169,27 +175,164 @@ the server still knows them, else they are told what couldn't be kept).
 ## Behind a reverse proxy (TLS)
 
 The server speaks plain WebSocket (`ws://`); TLS comes from a reverse proxy in front of it, which
-gives browsers the `wss://` they need on an `https://` page.
+gives people `wss://` links (and browsers the `wss://` they need on an `https://` page).
 
 - Run the server on the loopback interface (`listen = "127.0.0.1:47900"`), and set
   `public_url` to the address people use, for example `wss://figcraft.example.com/`. Links and
   the publish address then name the proxy.
-- **Caddy**: a site block for your host name whose only directive is a `reverse_proxy` to
-  `127.0.0.1:47900`. Caddy obtains the certificate and passes WebSocket upgrades through on its
-  own.
-- **nginx**: a `server` block listening on 443 with your certificate, and a `location` that
-  passes requests to `http://127.0.0.1:47900` over HTTP/1.1 with the `Upgrade` and `Connection`
-  request headers forwarded (that is what lets the WebSocket upgrade through). Raise the proxy's
-  read timeout above the server's 45-second idle limit or leave its default (60 s): apps ping
-  every 15 seconds.
+- **Caddy** ([`packaging/server/Caddyfile`](../packaging/server/Caddyfile)): a site block for
+  your host name with a `reverse_proxy` to `127.0.0.1:47900`. Caddy obtains the certificate and
+  passes WebSocket upgrades through on its own.
+- **nginx** ([`packaging/server/nginx.conf`](../packaging/server/nginx.conf)): a `server` block
+  on 443 with your certificate that passes requests to `http://127.0.0.1:47900` over HTTP/1.1
+  with the `Upgrade` and `Connection` headers forwarded (that is what lets the WebSocket upgrade
+  through), and a read timeout above the server's 45-second idle limit (apps ping every 15
+  seconds).
 - **Under a path**: the server answers on any path, so the proxy can forward a prefix such as
   `/figcraft/` unchanged; set `public_url = "wss://example.com/figcraft/"`.
 - Tokens never travel in the WebSocket request (the client sends them inside its first message),
   so the proxy's access logs don't record them.
 
-The desktop app has no TLS of its own yet: it can't open `wss://` links. Inside a trusted network
-or a VPN, let it reach the server's `ws://` address directly (keep the port closed to the
-internet), and use `wss://` links from the browser build.
+The desktop app, `figcraft-cli` (and so agents through MCP) and the browser build all open
+`wss://` links. The desktop app and the CLI check the certificate against Mozilla's list of root
+authorities built into them (not the operating system's store), so a certificate from a public
+authority such as Let's Encrypt just works. For a certificate from a private authority (or a
+self-signed one, such as Caddy's `tls internal`), set the environment variable `FIGCRAFT_CA_FILE`
+to that authority's certificate (a PEM file) before starting the app: it is trusted in addition
+to the built-in list. There is no way to skip the check: a certificate that has expired, is for
+another name or comes from an unknown authority is refused, and the app says which.
+
+## Deploy on a Linux server
+
+Hosting for people outside your network: a small Linux server (1 CPU and 1 GB of memory are
+plenty for a team), a DNS name pointing at it (`figcraft.example.com` below: use yours), the
+server behind Caddy or nginx for TLS, and systemd keeping it running. The commands are for Debian
+and Ubuntu; other distributions differ only in how packages are installed.
+
+**1. Install the binary**, from the latest release (x86_64 or aarch64), checked against the
+release's `SHA256SUMS.txt`:
+
+```sh
+VERSION=$(curl -fsSL https://api.github.com/repos/storytold/figcraft/releases/latest | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+NAME="figcraft-server-$VERSION-linux-$(uname -m)"
+curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/$NAME.tar.gz"
+curl -fLO "https://github.com/storytold/figcraft/releases/download/v$VERSION/SHA256SUMS.txt"
+sha256sum --ignore-missing -c SHA256SUMS.txt
+tar -xzf "$NAME.tar.gz" && cd "$NAME"
+sudo install -m 755 figcraft-server /usr/local/bin/
+```
+
+or from source (it needs a C compiler for the TLS library; the example files are then in
+`packaging/server/`):
+
+```sh
+sudo apt install -y build-essential git curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . "$HOME/.cargo/env"
+git clone https://github.com/storytold/figcraft && cd figcraft
+cargo build --release --locked -p figcraft-server
+sudo install -m 755 target/release/figcraft-server /usr/local/bin/
+cd packaging/server
+```
+
+**2. A user of its own, its data directory and its settings:**
+
+```sh
+sudo useradd --system --home-dir /var/lib/figcraft-server --shell /usr/sbin/nologin figcraft
+sudo install -d -o figcraft -g figcraft -m 700 /var/lib/figcraft-server
+sudo install -d -m 755 /etc/figcraft-server
+sudo tee /etc/figcraft-server/server.toml >/dev/null <<'EOF'
+listen = "127.0.0.1:47900"
+data = "/var/lib/figcraft-server"
+public_url = "wss://figcraft.example.com/"
+EOF
+```
+
+**3. Run it with systemd.** [`figcraft-server.service`](../packaging/server/figcraft-server.service)
+runs it as that user, restarts it if it fails, stops it gracefully, and locks it down: no new
+privileges, a read-only system with only the data directory writable, no capabilities, private
+`/tmp` and devices, and a system-call filter.
+
+```sh
+sudo cp figcraft-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now figcraft-server
+systemctl status figcraft-server        # logs: journalctl -u figcraft-server
+```
+
+**4. TLS in front of it.** Point the DNS name's A (and AAAA) record at the server first, then set
+`HOST` to it. Either **Caddy** (simplest: it gets and renews the certificate itself; packaged in
+Debian 12+ and Ubuntu 24.04+):
+
+```sh
+HOST=figcraft.example.com
+sudo apt install -y caddy
+sed "s/figcraft.example.com/$HOST/" Caddyfile | sudo tee /etc/caddy/Caddyfile >/dev/null
+sudo systemctl reload caddy
+```
+
+or **nginx** with a certificate from Let's Encrypt (certbot renews it):
+
+```sh
+HOST=figcraft.example.com
+sudo apt install -y nginx certbot python3-certbot-nginx
+sudo certbot certonly --nginx -d "$HOST"
+sed "s/figcraft.example.com/$HOST/g" nginx.conf | sudo tee /etc/nginx/conf.d/figcraft.conf >/dev/null
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**5. Firewall: only SSH, 80 and 443.** Port 80 answers certificate challenges and redirects to
+https; the server's own port stays closed (it listens on the loopback interface anyway).
+
+```sh
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+**6. Publish and share.** Print the publish address (`wss://figcraft.example.com/?key=…`) and use
+it in the app's **Share ▸ Publish to server…** (see [Publishing a file](#publishing-a-file)):
+
+```sh
+sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml key
+```
+
+The other commands ([Managing files and links](#managing-files-and-links)) run the same way, as
+the `figcraft` user with `--config /etc/figcraft-server/server.toml`.
+
+**In Docker instead of systemd.** [`packaging/server/Dockerfile`](../packaging/server/Dockerfile)
+builds a small image (the binary on a distroless base, no shell) that runs as an unprivileged
+user, keeps its files in the `/data` volume and stops gracefully on `docker stop`. Build it from
+the repository root, give it a settings file with your `public_url`, and publish its port on the
+loopback interface only (ports Docker publishes bypass `ufw`), with the proxy from step 4 in front:
+
+```sh
+docker build -f packaging/server/Dockerfile -t figcraft-server .
+sudo install -d /etc/figcraft-server
+printf 'listen = "0.0.0.0:47900"\ndata = "/data"\npublic_url = "wss://figcraft.example.com/"\n' | sudo tee /etc/figcraft-server/server.toml
+docker run -d --name figcraft-server --restart unless-stopped -p 127.0.0.1:47900:47900 \
+  -v figcraft-data:/data -v /etc/figcraft-server/server.toml:/etc/figcraft-server/server.toml:ro figcraft-server
+docker exec figcraft-server /usr/local/bin/figcraft-server --config /etc/figcraft-server/server.toml key
+```
+
+**Upgrading.** Install the new binary as in step 1, then restart: the restart is graceful and apps
+reconnect on their own. An app speaking another protocol version is refused with a message saying
+so: upgrade apps and server together when the release notes say the protocol changed.
+
+```sh
+sudo systemctl restart figcraft-server
+```
+
+With Docker: rebuild the image, then `docker rm -f figcraft-server` and the `docker run` above
+again (the volume keeps the files).
+
+**Backups.** See [Backups](#backups); with systemd, for example:
+
+```sh
+sudo systemctl stop figcraft-server
+sudo tar -C /var/lib -czf "figcraft-backup-$(date +%F).tar.gz" figcraft-server
+sudo systemctl start figcraft-server
+```
 
 ## Security
 
@@ -199,7 +342,7 @@ internet), and use `wss://` links from the browser build.
   refused by the server whatever the client does.
 - **Transport**: plain `ws://` on the server's port; anyone on the network path can read traffic
   (presence, changes, tokens) unless TLS terminates in front of it. Use a reverse proxy for
-  anything beyond a trusted network.
+  anything beyond a trusted network ([Deploy on a Linux server](#deploy-on-a-linux-server)).
 - **Limits**: the transport's (message sizes, 100 messages a second per connection, idle and
   handshake timeouts, `max_connections`) and the collaboration core's (layers, changes per batch,
   `max_people`), plus `max_files`, `max_file_mb` and `max_links`. Every message is decoded

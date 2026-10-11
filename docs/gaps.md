@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (gamut warnings and soft-proof sRGB; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -18,7 +18,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 2 | Multiplayer and sharing are a preview, without accounts (**beta blocker**) | Feature | 45–90 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
-| 5 | No localization layer; English only | Localization | 60–100 | [localization-parity](localization-parity.md) |
+| 5 | Localization: English and a Spanish draft only (the layer landed 2026-10-11) | Localization | 45–75 | [localization-parity](localization-parity.md) |
 | 6 | Plugins: no distribution or widgets; Figma's plugins don't run | Ecosystem | 15–40 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
@@ -31,7 +31,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
 | 16 | Dev Mode: dev resources links, editor extension (code connect and Dev Mode plugins landed) | Feature | 1–3 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching: per-branch version history, finer merges of list properties (branches landed 2026-10-11) | Feature | 1–3 | [collaboration-parity](collaboration-parity.md) |
-| 18 | Display P3 on screen; one window only | Hardware | 5–11 | [hardware-parity](hardware-parity.md) |
+| 18 | Display P3 on screen: blocked upstream (egui-wgpu picks an 8-bit sRGB surface); gamut warning and soft-proof sRGB landed, as did several windows | Hardware | 4–8 | [hardware-parity](hardware-parity.md) |
 | 19 | AI features | AI | 30–60 | [target-app-parity](target-app-parity.md) |
 | 20 | Mobile apps (view, mirror, comment) | Platforms | 20–40 | [hardware-parity](hardware-parity.md) |
 | 21 | Menu items without a command: none left (landed 2026-10-11) | Feature | — | [parity-checklist](parity-checklist.md) |
@@ -56,8 +56,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ### 2. Multiplayer and sharing are a preview, without accounts
 - **Missing:** accounts, teams and projects, per-person permissions, spotlight, cursor chat, audio,
-  shared comments and version history, TLS in the desktop app. Comments and versions are local to
-  the file.
+  shared comments and version history. Comments and versions are local to the file.
 - **Evidence:** the core landed in #103 (`crates/collab`: client-scoped ids, change sets, server
   ordering and validation, client reconciliation, binary messages, randomized convergence tests over
   real commands), and live sessions run over the network (`crates/collab-net`: hosting from the
@@ -67,13 +66,13 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   styles, variables and comments that several people create at once all kept; a standalone
   `figcraft-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
   confirmed), takes files published from the app and hands out share links that let people edit
-  or only view (`docs/server.md`). But there are no accounts (a link is the access), and the
-  desktop app speaks only plain `ws://` (TLS comes from a reverse proxy, which only the browser
-  can use so far) (`docs/collab-protocol.md`).
+  or only view; the desktop app and the browser reach it over `wss://` through a TLS reverse
+  proxy, and releases ship it with a deployment guide (`docs/server.md`). But there are no
+  accounts (a link is the access) (`docs/collab-protocol.md`).
 - **Impact:** Figma's defining feature; most teams use it every day. Solo designers can work
   without it.
-- **Estimate:** 45–90 h: accounts, teams and per-person permissions, TLS in the desktop app,
-  shared comments and versions (numbers from before the server landed; re-measured next).
+- **Estimate:** 45–90 h: accounts, teams and per-person permissions, shared comments and versions
+  (numbers from before the server landed; re-measured next).
 
 ### 3. Nothing checked against real Figma files
 - **Missing:** a corpus of real documents (design systems, app screens, prototypes) imported and
@@ -95,15 +94,18 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Impact:** Figma users notice the feel within minutes; it decides whether they stay.
 - **Estimate:** 40–60 h. Detail in [`ui-parity.md`](ui-parity.md).
 
-### 5. No localization layer; English only
-- **Missing:** externalized strings and catalogs. Figma ships English, Japanese, Korean, French,
-  German, Spanish (Spain and Latin America) and Portuguese (Brazil).
-- **Evidence (measured from source):** ~800 distinct capitalised UI string literals in
-  `crates/ui-egui/src` and 435 command labels, all inline; no catalog files.
+### 5. Localization: English and a Spanish draft only
+- **Missing:** Figma's other UI languages (Japanese, Korean, French, German, Portuguese (Brazil)), a
+  native review of the Spanish draft, localized engine messages and number formatting.
+- **Evidence (measured from source):** the layer landed 2026-10-11: catalogs in
+  `crates/ui-egui/locales/` (1,280 UI keys plus 501 command labels), Preferences ▸ Language,
+  `pref.language`; `en.toml` is complete and `es.toml` is a complete machine draft. Engine error
+  messages and Dev Mode values stay English.
 - **Impact:** keeps out non-English designers, including Figma's large Japanese and Korean user
   bases.
-- **Estimate:** 15–25 h for the layer and string extraction, then 3–5 h per language plus native
-  review; 60–100 h for the 11 key languages. Detail in [`localization-parity.md`](localization-parity.md).
+- **Estimate:** 3–7 h per language plus native review, 4–6 h for engine messages and numbers;
+  45–75 h for the 11 key languages. Detail in [`localization-parity.md`](localization-parity.md);
+  how to add one in [`translating.md`](translating.md).
 
 ### 6. Plugins: no distribution or widgets; Figma's plugins don't run
 - **Landed (#101):** sandboxed WebAssembly plugins (wasmi, metered, memory cap, no WASI, also in
@@ -240,18 +242,15 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   sides conflicts as a whole; branches of a file in a live session are refused.
 - **Estimate:** 1–3 h.
 
-### 18. Display P3 on screen; one window only
-- **Landed (2026-10-11):** the colour picker of a Display P3 file warns when a colour is outside
-  sRGB, and View ▸ Soft-proof sRGB (`view.proofSrgb`) stripes the canvas pixels sRGB can't show.
+### 18. Display P3 on screen (several windows landed)
+- **Landed (2026-10-11):** several windows: File ▸ New window, a tab's Open in new window or a tab
+  dragged off the strip; each window has its own tabs, panels and canvas and draws only when it
+  needs to; closing one asks about unsaved changes; `window.new`, `window.list`, `window.focus` and
+  `window` on any control request.
 - **Missing:** wide-gamut colour on the canvas (egui draws sRGB, so P3 colours outside sRGB clip on
-  screen; exports keep them); several windows (Figma's desktop app opens files in separate
-  windows).
-- **Blocked upstream:** wgpu 30 can present a Display P3 or extended-range sRGB surface (Metal, DX12,
-  Vulkan and WebGPU canvases, through `SurfaceColorSpace`), but eframe/egui-wgpu 0.36 pick an 8-bit
-  sRGB surface (`Rgba8Unorm`/`Bgra8Unorm`, default colour space) with no option to change it, and
-  egui's renderer writes sRGB-encoded colours, so the whole UI would shift on a P3 surface. Needs
-  both exposed upstream (or a patched egui-wgpu), then a canvas texture in P3 or extended range.
-- **Estimate:** 5–11 h.
+  screen; exports keep them); a screen-reader tree in windows other than the main one (eframe 0.36
+  gives only the main window one); window positions restored at the next start.
+- **Estimate:** 4–8 h.
 
 ### 19. AI features
 - **Missing:** Figma AI (first draft, rename layers, remove background, image generation and
@@ -286,6 +285,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Display P3 honest minimum (gap 18): the colour picker of a Display P3 file warns when a colour is outside sRGB (Outside sRGB, with what the canvas and exports do), and View ▸ Soft-proof sRGB (`view.proofSrgb`) stripes the canvas pixels sRGB can't show. Why the canvas still shows sRGB: wgpu 30 can present Display P3 or extended-range sRGB surfaces (Metal, DX12, Vulkan, WebGPU canvases), but eframe/egui-wgpu 0.36 configure an 8-bit sRGB surface with no option for the format or colour space, and egui's renderer writes sRGB-encoded UI colours; showing P3 needs those two upstream (or a patched egui-wgpu). Hardware 13–27 h → 12–26 h; gap 18 6–12 h → 5–11 h; percentages, feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~362–696 h |
+| 2026-10-11 | minor | Several windows (gap 18): File ▸ New window, a tab's Open in new window or a tab dragged off the tab strip opens files in another window with its own tabs, panels and canvas, sharing the files, preferences, libraries and clipboard; each window draws only when it needs to (idle: ~0% CPU), closing one closes its files after asking about unsaved changes (the main window too, which takes over another window instead of quitting; the last window quits), and the control channel and MCP open, list, focus and capture windows (`window.new`, `window.list`, `window.focus`, `window` on any request); the screen-reader tree covers the main window only (eframe 0.36), so with a screen reader running files stay tabs; one window in the browser. Hardware 55% → 60%, 13–27 h → 10–21 h; gap 18 6–12 h → 4–8 h (P3 on screen left); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~360–691 h |
+| 2026-10-11 | minor | Localization layer landed (gap 5): per-language catalogs baked in at build time with English text as keys and fallback, placeholders and plurals, command labels by id, Preferences ▸ Language (System follows the OS or the browser) applied live and `pref.language`; English catalog and a complete Spanish draft awaiting native review. Localization 10% → 20%, 60–100 h → 45–75 h; ready for real work unchanged (~47%); full parity ~363–697 h → ~348–672 h |
+| 2026-10-11 | minor | Hosting `figcraft-server`: the desktop app and `figcraft-cli` open `wss://` links (rustls with Mozilla's root certificates, always verified; `FIGCRAFT_CA_FILE` adds a private authority), releases ship the server for Linux x86_64 and aarch64, it stops gracefully on SIGTERM or Ctrl+C, and `docs/server.md` has a deployment guide (systemd unit, Caddy, nginx, Docker); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Plugin panels and settings landed (gap 6, ABI v2; v1 plugins unchanged): a plugin shows a panel of notes, fields (text, number, checkbox, menu, list, colour) and buttons drawn with FigCraft's widgets; a button or a changed value calls it back with every value (same limits per callback, one undo step per callback that edits, rolled back on failure), its module staying loaded while the panel is open; `plugin.ui` / `plugin.event` / `plugin.close` drive panels headless; per-plugin settings (64 KB) kept with the preferences; the Swatch grid example gained a palette panel that remembers the last palette. Plugins & widgets breadth 35% → 45%, ready 20% → 28%, 25–55 h → 15–40 h; ecosystem 20% → 28%; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~373–712 h → ~363–697 h |
 | 2026-10-11 | minor | Canvas fixes (gap 13 closed): boolean groups are clicked where their result is (a click in a subtracted hole reaches what's behind; with the group or an operand selected its operands are hit, so each can still be picked), a layer dragged inside a group stays in the group (frames and auto layout still take other drops), View ▸ Frame outlines and View ▸ Slices draw on the canvas, and the idle tests wait for the render thread instead of counting frames. Shapes & vector 1–3 h → 1–2 h (vector QA with real files left); percentages, feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~378–722 h → ~375–717 h |

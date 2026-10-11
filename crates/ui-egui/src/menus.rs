@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y;
+use crate::i18n::{self, tr, tr_noop, trf};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular};
 use crate::toolbar::pretty_shortcut;
@@ -88,14 +89,14 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             if let (Some(first), Ok(doc)) = (ids.first(), app.session.doc()) {
                 let css = figcraft_engine::codegen::code_for(doc, *first, figcraft_engine::codegen::CodeLang::Css);
                 app.services.clipboard_set_text(&css);
-                app.toast("Copied as CSS");
+                app.toast(tr("Copied as CSS"));
             }
         }
         "edit.copyAsSvg" => {
             let ids = app.session.selection();
             if let Some(svg) = app.session.doc().ok().and_then(|d| figcraft_svg_export(d, &ids)) {
                 app.services.clipboard_set_text(&svg);
-                app.toast("Copied as SVG");
+                app.toast(tr("Copied as SVG"));
             }
         }
         "edit.copyAsPng" => {
@@ -108,7 +109,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
                 figcraft_render::to_srgb(&mut pix, profile);
                 let rgba = figcraft_render::to_rgba8(&pix);
                 app.services.clipboard_set_png(pix.width(), pix.height(), &rgba);
-                app.toast("Copied as PNG");
+                app.toast(tr("Copied as PNG"));
             }
         }
         "edit.copyAsText" => {
@@ -120,7 +121,7 @@ pub fn invoke(app: &mut FigApp, id: &str) {
                 .filter_map(|i| doc.and_then(|d| d.node(*i)).and_then(|n| n.kind.text().map(|t| t.characters.clone())))
                 .collect();
             app.services.clipboard_set_text(&text.join("\n"));
-            app.toast("Copied as text");
+            app.toast(tr("Copied as text"));
         }
         "edit.copyLink" => {
             let ids = app.session.selection();
@@ -145,7 +146,10 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "edit.paste" => paste(app, None),
         "file.close" if app.session.ds().is_ok_and(|d| d.is_dirty() && d.branch_of.is_none()) => {
             let save = pretty_shortcut(crate::shortcuts::shortcut("file.save").unwrap_or(""));
-            app.toast(format!("Unsaved changes: save first ({save}), or close the tab with {}-click to discard", pretty_shortcut("Alt")));
+            app.toast(trf(
+                "Unsaved changes: save first ({save}), or close the tab with {alt}-click to discard",
+                &[("save", &save), ("alt", &pretty_shortcut("Alt"))],
+            ));
         }
         _ => {
             app.run(id, json!({}));
@@ -184,13 +188,14 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
             }
             last_sep = false;
             if m.id == "file.openRecent" {
-                if recent_menu(app, ui, prefix, m.label, &t) {
+                if recent_menu(app, ui, prefix, m.label, &i18n::menu_item(m.id, m.label), &t) {
                     return true;
                 }
                 continue;
             }
-            let enabled = available(m.id);
-            if item(ui, m.label, crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
+            // One window in the browser.
+            let enabled = available(m.id) && !(m.id == "window.new" && ui.ctx().embed_viewports());
+            if item(ui, &i18n::menu_item(m.id, m.label), crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
                 clicked = Some(m.id);
             }
         } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
@@ -199,7 +204,7 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                 subs.push(sub.clone());
                 last_sep = false;
                 let full = format!("{prefix}/{sub}");
-                if submenu(ui, prefix, &full, &sub, &t, |ui| menu_level(app, ui, &full).then_some(())).is_some() {
+                if submenu(ui, prefix, &full, tr(&sub), &t, |ui| menu_level(app, ui, &full).then_some(())).is_some() {
                     return true;
                 }
             }
@@ -212,10 +217,10 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
     false
 }
 
-/// File ▸ Open recent: the recent files (greyed when the file is gone) and Clear recent. Returns
-/// whether an item ran.
-fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, label: &str, t: &Tokens) -> bool {
-    let picked = submenu(ui, prefix, &format!("{prefix}/{label}"), label, t, |ui| {
+/// File ▸ Open recent: the recent files (greyed when the file is gone) and Clear recent. `key` is
+/// the menu's English label, `label` the one shown. Returns whether an item ran.
+fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, key: &str, label: &str, t: &Tokens) -> bool {
+    let picked = submenu(ui, prefix, &format!("{prefix}/{key}"), label, t, |ui| {
         let recents = &app.session.prefs.recent_files;
         let mut picked = None;
         for (i, p) in recents.iter().enumerate() {
@@ -229,7 +234,7 @@ fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, label: &str, t: &Tok
         if !recents.is_empty() {
             separator(ui);
         }
-        if item(ui, "Clear recent", "", !recents.is_empty(), false, t) && !recents.is_empty() {
+        if item(ui, tr("Clear recent"), "", !recents.is_empty(), false, t) && !recents.is_empty() {
             picked = Some(json!({"clear": true}));
         }
         picked
@@ -272,11 +277,30 @@ fn menu_frame<R>(ui: &mut Ui, t: &Tokens, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner_margin(egui::Margin::same(8))
         .shadow(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(60) })
         .show(ui, |ui| {
-            ui.set_width(240.0);
+            // As wide as its widest row asked for (labels run longer in some languages).
+            let w = ui.data(|d| d.get_temp::<f32>(width_key(ui))).unwrap_or(0.0).max(MENU_W);
+            ui.set_width(w);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             add(ui)
         })
         .inner
+}
+
+/// A menu's narrowest width.
+const MENU_W: f32 = 240.0;
+
+/// Where a menu remembers the width its rows need (its frame's ui), per language.
+fn width_key(ui: &Ui) -> Id {
+    ui.id().with(("menu_w", i18n::current().map(|l| l.code)))
+}
+
+/// A row needs `w`: the menu widens to it from the next frame on.
+fn need_width(ui: &Ui, w: f32) {
+    let key = width_key(ui);
+    if ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) < w {
+        ui.data_mut(|d| d.insert_temp(key, w));
+        ui.ctx().request_repaint();
+    }
 }
 
 pub(crate) fn item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checked: bool, t: &Tokens) -> bool {
@@ -301,16 +325,14 @@ fn indented_item(ui: &mut Ui, label: &str, shortcut: &str, enabled: bool, checke
     if checked {
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, col);
     }
+    let galley = ui.painter().layout_no_wrap(label.to_string(), regular(12.0), col);
+    let keys = (!shortcut.is_empty())
+        .then(|| ui.painter().layout_no_wrap(pretty_shortcut(shortcut), regular(12.0), if hov { t.menu_text } else { t.menu_dim }));
+    need_width(ui, 28.0 + indent + galley.size().x + keys.as_ref().map_or(8.0, |k| 16.0 + k.size().x + 10.0));
     let text_rect = Rect::from_min_max(pos2(r.min.x + 28.0 + indent, r.min.y), pos2(r.max.x - 8.0, r.max.y));
-    ui.painter().with_clip_rect(text_rect).text(pos2(text_rect.min.x, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), col);
-    if !shortcut.is_empty() {
-        ui.painter().text(
-            pos2(r.max.x - 10.0, r.center().y),
-            Align2::RIGHT_CENTER,
-            pretty_shortcut(shortcut),
-            regular(12.0),
-            if hov { t.menu_text } else { t.menu_dim },
-        );
+    ui.painter().with_clip_rect(text_rect).galley(pos2(text_rect.min.x, r.center().y - galley.size().y / 2.0), galley, col);
+    if let Some(k) = keys {
+        ui.painter().galley(pos2(r.max.x - 10.0 - k.size().x, r.center().y - k.size().y / 2.0), k, col);
     }
     resp.clicked()
 }
@@ -323,7 +345,9 @@ fn submenu_item(ui: &mut Ui, label: &str, t: &Tokens) -> egui::Response {
     if resp.hovered() || resp.has_focus() {
         ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
     }
-    ui.painter().text(pos2(r.min.x + 28.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.menu_text);
+    let galley = ui.painter().layout_no_wrap(label.to_string(), regular(12.0), t.menu_text);
+    need_width(ui, 28.0 + galley.size().x + 28.0);
+    ui.painter().galley(pos2(r.min.x + 28.0, r.center().y - galley.size().y / 2.0), galley, t.menu_text);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(12.0, 12.0)), Icon::ChevronRight, t.menu_text);
     resp
 }
@@ -343,7 +367,19 @@ fn over_menu(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.pointer.interact_pos()).and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.order == egui::Order::Foreground)
 }
 
-const TOP_MENUS: &[&str] = &["File", "Edit", "View", "Object", "Text", "Arrange", "Vector", "Plugins", "Preferences", "Libraries", "Help"];
+const TOP_MENUS: &[&str] = &[
+    tr_noop("File"),
+    tr_noop("Edit"),
+    tr_noop("View"),
+    tr_noop("Object"),
+    tr_noop("Text"),
+    tr_noop("Arrange"),
+    tr_noop("Vector"),
+    tr_noop("Plugins"),
+    tr_noop("Preferences"),
+    tr_noop("Libraries"),
+    tr_noop("Help"),
+];
 
 pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
     let t = Tokens::get(ctx);
@@ -354,10 +390,10 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
             menu_frame(ui, &t, |ui| {
                 // Quick actions search row.
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
-                a11y::menu_item(&resp, "Actions…", crate::shortcuts::shortcut("app.actions").unwrap_or(""), None);
+                a11y::menu_item(&resp, tr("Actions…"), crate::shortcuts::shortcut("app.actions").unwrap_or(""), None);
                 ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(5), Color32::from_white_alpha(18));
                 icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 16.0, r.center().y), vec2(14.0, 14.0)), Icon::Search, t.menu_dim);
-                ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, "Actions…", regular(12.0), t.menu_dim);
+                ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, tr("Actions…"), regular(12.0), t.menu_dim);
                 ui.painter().text(
                     pos2(r.max.x - 10.0, r.center().y),
                     Align2::RIGHT_CENTER,
@@ -371,7 +407,7 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 }
                 ui.add_space(6.0);
                 for top in TOP_MENUS {
-                    let resp = submenu_item(ui, top, &t);
+                    let resp = submenu_item(ui, tr(top), &t);
                     if resp.hovered() || resp.has_focus() {
                         ui.data_mut(|d| d.insert_temp(Id::new("main_open"), top.to_string()));
                     }
@@ -411,53 +447,53 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                         .filter(|n| matches!(n.kind, figcraft_doc::NodeKind::Section { .. }))
                         .map(|n| n.hides_contents())
                         .collect();
-                    (!secs.is_empty()).then(|| if secs.iter().all(|h| *h) { "Show section contents" } else { "Hide section contents" })
+                    (!secs.is_empty()).then(|| if secs.iter().all(|h| *h) { tr("Show section contents") } else { tr("Hide section contents") })
                 });
                 let mut entries: Vec<(&str, &str)> = if has_sel {
                     vec![
-                        ("Copy", "edit.copy"),
-                        ("Paste here", "edit.paste"),
-                        ("Paste to replace", "edit.pasteReplace"),
+                        (tr("Copy"), "edit.copy"),
+                        (tr("Paste here"), "edit.paste"),
+                        (tr("Paste to replace"), "edit.pasteReplace"),
                         ("-", ""),
-                        ("Bring to front", "arrange.front"),
-                        ("Bring forward", "arrange.forward"),
-                        ("Send backward", "arrange.backward"),
-                        ("Send to back", "arrange.back"),
+                        (tr("Bring to front"), "arrange.front"),
+                        (tr("Bring forward"), "arrange.forward"),
+                        (tr("Send backward"), "arrange.backward"),
+                        (tr("Send to back"), "arrange.back"),
                         ("-", ""),
-                        ("Group selection", "object.group"),
-                        ("Frame selection", "object.frameSelection"),
-                        ("Wrap in new section", "object.wrapInSection"),
-                        ("Ungroup", "object.ungroup"),
-                        ("Flatten", "vector.flatten"),
-                        ("Outline stroke", "vector.outlineStroke"),
-                        ("Use as mask", "object.mask"),
+                        (tr("Group selection"), "object.group"),
+                        (tr("Frame selection"), "object.frameSelection"),
+                        (tr("Wrap in new section"), "object.wrapInSection"),
+                        (tr("Ungroup"), "object.ungroup"),
+                        (tr("Flatten"), "vector.flatten"),
+                        (tr("Outline stroke"), "vector.outlineStroke"),
+                        (tr("Use as mask"), "object.mask"),
                         ("-", ""),
-                        ("Add auto layout", "layout.add"),
-                        ("Create component", "component.create"),
-                        ("Detach instance", "component.detach"),
+                        (tr("Add auto layout"), "layout.add"),
+                        (tr("Create component"), "component.create"),
+                        (tr("Detach instance"), "component.detach"),
                         ("-", ""),
-                        ("Show/Hide", "object.toggleVisible"),
-                        ("Lock/Unlock", "object.toggleLock"),
+                        (tr("Show/Hide"), "object.toggleVisible"),
+                        (tr("Lock/Unlock"), "object.toggleLock"),
                         ("-", ""),
-                        ("Flip horizontal", "object.flipH"),
-                        ("Flip vertical", "object.flipV"),
+                        (tr("Flip horizontal"), "object.flipH"),
+                        (tr("Flip vertical"), "object.flipV"),
                         ("-", ""),
-                        ("Copy as CSS", "edit.copyAsCss"),
-                        ("Copy as SVG", "edit.copyAsSvg"),
-                        ("Copy as PNG", "edit.copyAsPng"),
+                        (tr("Copy as CSS"), "edit.copyAsCss"),
+                        (tr("Copy as SVG"), "edit.copyAsSvg"),
+                        (tr("Copy as PNG"), "edit.copyAsPng"),
                         ("-", ""),
-                        ("Delete", "edit.delete"),
+                        (tr("Delete"), "edit.delete"),
                     ]
                 } else {
                     vec![
-                        ("Paste here", "edit.paste"),
+                        (tr("Paste here"), "edit.paste"),
                         ("-", ""),
-                        ("Select all", "select.all"),
+                        (tr("Select all"), "select.all"),
                         ("-", ""),
-                        ("Show/Hide UI", "view.toggleUi"),
-                        ("Zoom to fit", "view.zoomFit"),
-                        ("Rulers", "view.rulers"),
-                        ("Pixel grid", "view.pixelGrid"),
+                        (tr("Show/Hide UI"), "view.toggleUi"),
+                        (tr("Zoom to fit"), "view.zoomFit"),
+                        (tr("Rulers"), "view.rulers"),
+                        (tr("Pixel grid"), "view.pixelGrid"),
                     ]
                 };
                 if let Some(label) = section_toggle
@@ -527,7 +563,7 @@ fn select_layer_menu(app: &mut FigApp, ui: &mut Ui, pos: egui::Pos2, t: &Tokens)
         return false;
     }
     let sel = ds.selection.clone();
-    let resp = submenu_item(ui, "Select layer", t);
+    let resp = submenu_item(ui, tr("Select layer"), t);
     if resp.hovered() {
         ui.data_mut(|d| d.insert_temp(select_layer_id(), true));
     }
@@ -574,7 +610,7 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                     ui.set_width(520.0);
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut q)
-                            .hint_text("Search actions, layers and tools")
+                            .hint_text(tr("Search actions, layers and tools"))
                             .desired_width(500.0)
                             .font(regular(14.0))
                             .frame(egui::Frame::NONE.inner_margin(egui::Margin::same(8))),
@@ -582,14 +618,15 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                     r.request_focus();
                     ui.add_space(4.0);
                     let ql = q.to_lowercase();
-                    let mut hits: Vec<(&str, &str, &str)> = figcraft_engine::all_commands()
-                        .iter()
-                        .filter(|c| ql.is_empty() || c.label.to_lowercase().contains(&ql) || c.id.to_lowercase().contains(&ql))
-                        .map(|c| (c.id, c.label, crate::shortcuts::shortcut(c.id).unwrap_or("")))
-                        .collect();
-                    for m in MENU.iter().filter(|m| UI_COMMANDS.contains(&m.id)) {
-                        if ql.is_empty() || m.label.to_lowercase().contains(&ql) {
-                            hits.push((m.id, m.label, crate::shortcuts::shortcut(m.id).unwrap_or("")));
+                    // Labels match in the UI language and in English.
+                    let matches =
+                        |label: &str, english: &str, id: &str| ql.is_empty() || [label, english, id].iter().any(|s| s.to_lowercase().contains(&ql));
+                    let mut hits: Vec<(&str, std::borrow::Cow<str>, &str)> = Vec::new();
+                    let menu_items = MENU.iter().filter(|m| UI_COMMANDS.contains(&m.id)).map(|m| (m.id, m.label));
+                    for (id, english) in figcraft_engine::all_commands().iter().map(|c| (c.id, c.label)).chain(menu_items) {
+                        let label = i18n::command(id, english);
+                        if matches(&label, english, id) {
+                            hits.push((id, label, crate::shortcuts::shortcut(id).unwrap_or("")));
                         }
                     }
                     hits.sort_by_key(|h| (!h.1.to_lowercase().starts_with(&ql), h.1.len()));
@@ -603,7 +640,7 @@ fn palette(app: &mut FigApp, ctx: &egui::Context) {
                                 ui.painter().rect_filled(r, CornerRadius::same(5), if resp.hovered() { ACCENT } else { t.hover });
                             }
                             let col = if resp.hovered() { Color32::WHITE } else { t.text };
-                            ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, *label, regular(12.0), col);
+                            ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, label.as_ref(), regular(12.0), col);
                             ui.painter().text(
                                 pos2(r.max.x - 10.0, r.center().y),
                                 Align2::RIGHT_CENTER,

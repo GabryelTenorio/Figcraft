@@ -64,7 +64,7 @@ pub fn start(cfg: &Config) -> Result<Running, String> {
         cfg.data.display(),
         public.url()
     );
-    if addr.ip().is_loopback() {
+    if addr.ip().is_loopback() && cfg.public_url.is_none() {
         log::info!("only this machine can connect: listen on 0.0.0.0:{} (or behind a reverse proxy) to share", addr.port());
     }
     Ok(Running { hosting })

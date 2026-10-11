@@ -28,7 +28,7 @@ use crate::invite::{Endpoint, Invite};
 pub use crate::join::GuestConfig;
 use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
 use crate::manage;
-use crate::net::{Duplex, NetLimits, config, dial, shutdown};
+use crate::net::{Duplex, NetLimits, config, open, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
 /// What [`Guest::publish`] uploads, and where.
@@ -168,8 +168,7 @@ fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published
 }
 
 fn connect(cfg: &GuestConfig) -> Result<Conn, String> {
-    let stream = dial(&cfg.invite.server.host, cfg.connect_timeout, &cfg.limits)?;
-    let (rd, wr, sock) = Duplex::split(stream).map_err(|e| e.to_string())?;
+    let (rd, wr, sock) = open(&cfg.invite.server, cfg.connect_timeout, &cfg.limits)?;
     let (reader, _) = tungstenite::client::client_with_config(cfg.invite.endpoint(), rd, Some(config(cfg.limits.max_server_message)))
         .map_err(|e| format!("{} doesn't answer as a FigCraft session: {e}", cfg.invite.server.display()))?;
     let writer = WebSocket::from_raw_socket(wr, WsRole::Client, Some(config(cfg.limits.max_client_message)));

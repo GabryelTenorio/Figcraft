@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::list_drag::ListDrag;
 use crate::proto_panel::{action_fields, action_of, action_summary, targets_for, value_json};
@@ -90,17 +91,17 @@ const INDENT: f32 = 12.0;
 
 /// The kinds an action can be, as its menus list them (a separator before each in `GROUPS`).
 const ACTIONS: [&str; 11] = [
-    "Navigate to",
-    "Change to",
-    "Back",
-    "Scroll to",
-    "Open link",
-    "Open overlay",
-    "Swap overlay",
-    "Close overlay",
-    "Set variable",
-    "Set variable mode",
-    "Conditional",
+    tr_noop("Navigate to"),
+    tr_noop("Change to"),
+    tr_noop("Back"),
+    tr_noop("Scroll to"),
+    tr_noop("Open link"),
+    tr_noop("Open overlay"),
+    tr_noop("Swap overlay"),
+    tr_noop("Close overlay"),
+    tr_noop("Set variable"),
+    tr_noop("Set variable mode"),
+    tr_noop("Conditional"),
 ];
 const GROUPS: [usize; 5] = [2, 4, 5, 8, 10];
 
@@ -111,7 +112,7 @@ fn action_menu(ui: &mut Ui) -> Option<&'static str> {
         if GROUPS.contains(&i) {
             ui.separator();
         }
-        if menu_item(ui, l, "") {
+        if menu_item(ui, tr(l), "") {
             picked = Some(*l);
         }
     }
@@ -121,10 +122,10 @@ fn action_menu(ui: &mut Ui) -> Option<&'static str> {
 /// Why an action of kind `label` can't be made here.
 fn unavailable(label: &str) -> &'static str {
     match label {
-        "Change to" => "Change to needs a layer inside a variant",
-        "Set variable" => "Create a variable first",
-        "Set variable mode" => "Create a variable collection first",
-        _ => "There's no destination for that action",
+        "Change to" => tr("Change to needs a layer inside a variant"),
+        "Set variable" => tr("Create a variable first"),
+        "Set variable mode" => tr("Create a variable collection first"),
+        _ => tr("There's no destination for that action"),
     }
 }
 
@@ -201,7 +202,7 @@ fn link_button(ui: &mut Ui, icon: Icon, label: &str) -> egui::Response {
 
 fn add_action_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, path: Vec<usize>) {
     row(ui, 28.0, |ui| {
-        let resp = link_button(ui, Icon::Plus, "Add action");
+        let resp = link_button(ui, Icon::Plus, tr("Add action"));
         menu_popup(&resp).width(200.0).show(|ui| {
             if let Some(l) = action_menu(ui) {
                 match action_of(l, cx.doc, cx.page, cx.node, None) {
@@ -229,7 +230,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
     let header = row_rect(ui, 32.0, |ui| {
         if !single {
             let (r, resp) = ui.allocate_exact_size(vec2(12.0, FIELD_H), Sense::click());
-            let resp = resp.tip(if open { "Close" } else { "Open" });
+            let resp = resp.tip(if open { tr("Close") } else { tr("Open") });
             icons::paint(
                 ui.painter(),
                 Rect::from_center_size(r.center(), vec2(12.0, 12.0)),
@@ -244,7 +245,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
         }
         let w = ui.available_width() - if single { 0.0 } else { 32.0 };
         if open {
-            let resp = widgets::dropdown(ui, a.label(), w, None);
+            let resp = widgets::dropdown(ui, tr(a.label()), w, None);
             menu_popup(&resp).show(|ui| {
                 if let Some(l) = action_menu(ui) {
                     match action_of(l, cx.doc, cx.page, cx.node, Some(a)) {
@@ -268,13 +269,13 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
             }
         }
         if !single {
-            let resp = icons::button(ui, Icon::Dots, 24.0, false, "More");
+            let resp = icons::button(ui, Icon::Dots, 24.0, false, tr("More"));
             menu_popup(&resp).width(180.0).show(|ui| {
                 let mut moved = None;
-                if i > 0 && menu_item(ui, "Move up", "") {
+                if i > 0 && menu_item(ui, tr("Move up"), "") {
                     moved = Some(i - 1);
                 }
-                if i + 1 < count && menu_item(ui, "Move down", "") {
+                if i + 1 < count && menu_item(ui, tr("Move down"), "") {
                     moved = Some(i + 1);
                 }
                 if let Some(to) = moved
@@ -289,7 +290,7 @@ fn action_item(app: &mut FigApp, ui: &mut Ui, cx: &Cx, a: &Action, path: Vec<usi
                     if count > 1 {
                         ui.separator();
                     }
-                    if menu_item(ui, "Remove", "") {
+                    if menu_item(ui, tr("Remove"), "") {
                         if run_at(app, &slot, "proto.action.remove", json!({})).is_some() {
                             set_open(ui.ctx(), cx, slot.path.get(..slot.path.len().saturating_sub(2)).unwrap_or_default().to_vec());
                         }
@@ -315,9 +316,9 @@ fn conditional_blocks(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, block
     let t = Tokens::get(ui.ctx());
     for (b, block) in blocks.iter().enumerate() {
         let label = match (&block.condition, b) {
-            (Some(_), 0) => "If",
-            (Some(_), _) => "Else if",
-            (None, _) => "Else",
+            (Some(_), 0) => tr("If"),
+            (Some(_), _) => tr("Else if"),
+            (None, _) => tr("Else"),
         };
         block_header(app, ui, slot, b, label, block.condition.as_ref());
         if let Some(c) = &block.condition {
@@ -332,10 +333,10 @@ fn conditional_blocks(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, block
     }
     let has_else = blocks.last().is_some_and(|b| b.condition.is_none());
     row(ui, 28.0, |ui| {
-        if link_button(ui, Icon::Plus, "Else if").on_hover_text("Add another condition").clicked() {
+        if link_button(ui, Icon::Plus, tr("Else if")).on_hover_text(tr("Add another condition")).clicked() {
             run_at(app, slot, "proto.conditional.addBlock", json!({}));
         }
-        if !has_else && link_button(ui, Icon::Plus, "Else").on_hover_text("Add actions for when no condition holds").clicked() {
+        if !has_else && link_button(ui, Icon::Plus, tr("Else")).on_hover_text(tr("Add actions for when no condition holds")).clicked() {
             run_at(app, slot, "proto.conditional.addBlock", json!({"else": true}));
         }
     });
@@ -357,15 +358,15 @@ fn block_header(app: &mut FigApp, ui: &mut Ui, slot: &Slot, b: usize, label: &st
             let builder = simple(c).is_some();
             let text = !builder || ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
             let tip = match (builder, text) {
-                (false, _) => "This condition is edited as an expression",
-                (true, true) => "Edit with the builder",
-                (true, false) => "Edit as an expression",
+                (false, _) => tr("This condition is edited as an expression"),
+                (true, true) => tr("Edit with the builder"),
+                (true, false) => tr("Edit as an expression"),
             };
             if icons::button(ui, Icon::Code, 24.0, text, tip).clicked() && builder {
                 ui.data_mut(|d| d.insert_temp(id, !text));
             }
         }
-        let what = if cond.is_some() { "Remove this condition and its actions" } else { "Remove the else and its actions" };
+        let what = if cond.is_some() { tr("Remove this condition and its actions") } else { tr("Remove the else and its actions") };
         if icons::button(ui, Icon::Minus, 24.0, false, what).clicked() {
             run_at(app, slot, "proto.conditional.removeBlock", json!({ "block": b }));
         }
@@ -449,7 +450,7 @@ fn condition_editor(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, b: usiz
         Some(s) => builder_row(app, ui, cx, slot, b, &s),
         None => {
             let id = slot.id("proto_cond_expr").with(b);
-            if let Some(e) = expr_field(ui, id, vars, Some(c), "e.g. count >= 3 and not done", |e| e.check_condition(vars), None::<fn(&mut Ui)>) {
+            if let Some(e) = expr_field(ui, id, vars, Some(c), tr("e.g. count >= 3 and not done"), |e| e.check_condition(vars), None::<fn(&mut Ui)>) {
                 set_condition(app, slot, b, &e);
             }
         }
@@ -465,7 +466,7 @@ fn builder_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, b: usize, s:
         let op_w = 48.0;
         let side = ((w - op_w - 16.0) / 2.0).max(40.0);
         // The variable tested, from the variable picker.
-        let name = var.map_or("Missing variable", |v| v.name.as_str());
+        let name = var.map_or(tr("Missing variable"), |v| v.name.as_str());
         let shown = widgets::elide(ui, name, side - 48.0);
         let resp = widgets::dropdown(ui, &shown, side, Some(Icon::Variable)).on_hover_text(name);
         if resp.clicked() {
@@ -486,7 +487,7 @@ fn builder_row(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, b: usize, s:
             Rhs::Nothing => {}
             Rhs::Variable(other) => {
                 let (rect, _) = ui.allocate_exact_size(vec2(side, FIELD_H), Sense::hover());
-                let name = vars.get(other).map_or("Missing variable", |v| v.name.as_str());
+                let name = vars.get(other).map_or(tr("Missing variable"), |v| v.name.as_str());
                 match widgets::bound_field(ui, slot.id("proto_cond_rhs_var").with(b), Lead::None, rect, name) {
                     Some(BindEvent::Open(at)) => crate::variable_ui::open_proto(ui, VarSlot { slot: slot.clone(), part: VarPart::Rhs(b) }, kind, at),
                     Some(BindEvent::Detach) => {
@@ -538,7 +539,7 @@ fn literal_field(ui: &mut Ui, id: Id, cur: &VariableValue, w: f32) -> Option<Var
                 .filter(|n| n.to_hex() != hex)
                 .map(VariableValue::Color)
         }
-        VariableValue::String(s) => widgets::text_field(ui, id, s, w, "Text").filter(|n| n != s).map(VariableValue::String),
+        VariableValue::String(s) => widgets::text_field(ui, id, s, w, tr("Text")).filter(|n| n != s).map(VariableValue::String),
         VariableValue::Alias(_) => None,
     }
 }
@@ -548,9 +549,9 @@ fn literal_field(ui: &mut Ui, id: Id, cur: &VariableValue, w: f32) -> Option<Var
 fn set_variable_fields(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, variable: &str, value: &Value, expr: Option<&Expr>) {
     let vars = &cx.doc.variables;
     let var = vars.get(variable);
-    widgets::sublabels(ui, "Variable", None);
+    widgets::sublabels(ui, tr("Variable"), None);
     row(ui, 32.0, |ui| {
-        let name = var.map_or("Choose variable", |v| v.name.as_str());
+        let name = var.map_or(tr("Choose variable"), |v| v.name.as_str());
         let w = ui.available_width();
         let shown = widgets::elide(ui, name, w - 48.0);
         let resp = widgets::dropdown(ui, &shown, w, Some(Icon::Variable));
@@ -564,10 +565,10 @@ fn set_variable_fields(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, vari
     // The toggle between a fixed value and an expression ends the value's row.
     let toggle = |ui: &mut Ui| {
         let on = expr.is_some();
-        let tip = if on { "Use a fixed value" } else { "Use an expression, e.g. count + 1" };
+        let tip = if on { tr("Use a fixed value") } else { tr("Use an expression, e.g. count + 1") };
         icons::button(ui, Icon::Code, 24.0, on, tip).clicked()
     };
-    widgets::sublabels(ui, if expr.is_some() { "Expression" } else { "Value" }, None);
+    widgets::sublabels(ui, if expr.is_some() { tr("Expression") } else { tr("Value") }, None);
     let mut toggled = false;
     match expr {
         Some(e) => {
@@ -576,7 +577,7 @@ fn set_variable_fields(app: &mut FigApp, ui: &mut Ui, cx: &Cx, slot: &Slot, vari
                 slot.id("proto_set_expr"),
                 vars,
                 Some(e),
-                "e.g. count + 1",
+                tr("e.g. count + 1"),
                 |e| e.check_value(vars, var.kind),
                 Some(|ui: &mut Ui| {
                     toggled = toggle(ui);

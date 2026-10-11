@@ -15,24 +15,28 @@ pub use crate::limits::NetLimits;
 
 use tungstenite::protocol::WebSocketConfig;
 
+use crate::invite::Endpoint;
+use crate::tls::{self, Tls};
+
 /// tungstenite's settings for messages up to `max` bytes.
 pub fn config(max: usize) -> WebSocketConfig {
     WebSocketConfig::default().max_message_size(Some(max)).max_frame_size(Some(max))
 }
 
 /// One side (read or write) of a connection: reads from its own handle, writes whole buffers
-/// under the connection's write lock.
+/// under the connection's write lock; through the connection's TLS session when it has one.
 pub struct Duplex {
     read: TcpStream,
     write: Arc<Mutex<TcpStream>>,
+    tls: Option<Tls>,
 }
 
 impl Duplex {
     /// Two handles on `stream` (for the reader and the writer) and one to shut it down with.
-    pub fn split(stream: TcpStream) -> io::Result<(Duplex, Duplex, TcpStream)> {
+    pub fn split(stream: TcpStream, tls: Option<Tls>) -> io::Result<(Duplex, Duplex, TcpStream)> {
         let write = Arc::new(Mutex::new(stream.try_clone()?));
-        let a = Duplex { read: stream.try_clone()?, write: write.clone() };
-        let b = Duplex { read: stream.try_clone()?, write };
+        let a = Duplex { read: stream.try_clone()?, write: write.clone(), tls: tls.clone() };
+        let b = Duplex { read: stream.try_clone()?, write, tls };
         Ok((a, b, stream))
     }
 }
@@ -47,12 +51,18 @@ impl Duplex {
 
 impl Read for Duplex {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.read.read(buf)
+        match &self.tls {
+            Some(t) => tls::read(t, &mut self.read, &self.write, buf),
+            None => self.read.read(buf),
+        }
     }
 }
 
 impl Write for Duplex {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(t) = &self.tls {
+            return tls::write(t, &self.write, buf);
+        }
         self.write.lock().unwrap_or_else(PoisonError::into_inner).write_all(buf)?;
         Ok(buf.len())
     }
@@ -66,9 +76,17 @@ pub fn shutdown(s: &TcpStream) {
     let _ = s.shutdown(Shutdown::Both);
 }
 
+/// Connect to `server` (through TLS for `wss://`): the reader's and the writer's handles, and the
+/// socket to shut it down with.
+pub fn open(server: &Endpoint, timeout: Duration, limits: &NetLimits) -> Result<(Duplex, Duplex, TcpStream), String> {
+    let stream = dial(&server.host, timeout, limits)?;
+    let tls = if server.secure { Some(tls::handshake(&stream, &server.host)?) } else { None };
+    Duplex::split(stream, tls).map_err(|e| e.to_string())
+}
+
 /// Connect to `host` (`name:port`), trying each of its addresses within `timeout`, with Nagle off
 /// and reads and writes bounded by `limits`' hello and write timeouts.
-pub fn dial(host: &str, timeout: Duration, limits: &NetLimits) -> Result<TcpStream, String> {
+fn dial(host: &str, timeout: Duration, limits: &NetLimits) -> Result<TcpStream, String> {
     use std::net::ToSocketAddrs;
     let addrs = host.to_socket_addrs().map_err(|e| format!("can't find {host}: {e}"))?;
     let mut last = format!("can't find {host}");

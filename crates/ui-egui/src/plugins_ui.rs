@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::FigApp;
 use crate::dialogs::{floating, window};
+use crate::i18n::{tr, trf};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, FieldEdit, Lead};
 
@@ -48,9 +49,9 @@ fn run(app: &mut FigApp, cmd: &str, params: Value) {
 
 /// Plugins ▸ Development ▸ Import plugin from manifest…: pick a `figcraft-plugin.json`.
 pub fn import_dialog(app: &mut FigApp) {
-    let Some(p) = app.services.pick_open("Import plugin from manifest", &["json"]) else { return };
+    let Some(p) = app.services.pick_open(tr("Import plugin from manifest"), &["json"]) else { return };
     if let Some(v) = app.run("plugin.import", json!({"path": p.to_string_lossy()})) {
-        app.toast(format!("Imported {}", v["name"].as_str().unwrap_or("the plugin")));
+        app.toast(trf("Imported {name}", &[("name", &v["name"].as_str().unwrap_or(tr("the plugin")))]));
     }
 }
 
@@ -127,11 +128,11 @@ fn manage_window(app: &mut FigApp, ctx: &Context) {
     let mut open = true;
     let mut remove = None;
     let mut import = false;
-    window("Plugins", ctx).open(&mut open).show(ctx, |ui| {
+    window(tr("Plugins"), ctx).id(Id::new("Plugins")).open(&mut open).show(ctx, |ui| {
         ui.set_width(380.0);
         let plugins = &app.session.prefs.plugins;
         if plugins.is_empty() {
-            widgets::label(ui, "No plugins yet. Import a development plugin from its figcraft-plugin.json.", t.text_secondary);
+            widgets::label(ui, tr("No plugins yet. Import a development plugin from its figcraft-plugin.json."), t.text_secondary);
         }
         for (i, p) in plugins.iter().enumerate() {
             if i > 0 {
@@ -143,13 +144,13 @@ fn manage_window(app: &mut FigApp, ctx: &Context) {
                     ui.label(RichText::new(&p.manifest.name).font(semibold(12.0)).color(t.text));
                     widgets::label(ui, &summary(p), t.text_secondary);
                 });
-                if widgets::button(ui, "Remove", false, true).clicked() {
+                if widgets::button(ui, tr("Remove"), false, true).clicked() {
                     remove = Some(p.manifest.id.clone());
                 }
             });
         }
         ui.add_space(12.0);
-        if widgets::button(ui, "Import plugin from manifest…", true, true).clicked() {
+        if widgets::button(ui, tr("Import plugin from manifest…"), true, true).clicked() {
             import = true;
         }
     });
@@ -166,8 +167,8 @@ fn manage_window(app: &mut FigApp, ctx: &Context) {
 fn summary(p: &InstalledPlugin) -> String {
     let m = &p.manifest;
     let access = match m.permissions.access {
-        Access::Read => "reads the document",
-        Access::Write => "can edit the document",
+        Access::Read => tr("reads the document"),
+        Access::Write => tr("can edit the document"),
     };
     let mut parts: Vec<String> = Vec::new();
     if !m.version.is_empty() {
@@ -175,8 +176,8 @@ fn summary(p: &InstalledPlugin) -> String {
     }
     parts.push(access.to_string());
     parts.push(match &p.path {
-        Some(path) => format!("development: {path}"),
-        None => "this session only".into(),
+        Some(path) => trf("development: {path}", &[("path", path)]),
+        None => tr("this session only").into(),
     });
     parts.join(" · ")
 }
@@ -207,8 +208,8 @@ fn form_window(app: &mut FigApp, ctx: &Context) {
         }
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            submit = widgets::button(ui, "Run", true, true).clicked();
-            cancel = widgets::button(ui, "Cancel", false, true).clicked();
+            submit = widgets::button(ui, tr("Run"), true, true).clicked();
+            cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
     app.ui.plugin_form = (open && !submit && !cancel).then_some(form.clone());

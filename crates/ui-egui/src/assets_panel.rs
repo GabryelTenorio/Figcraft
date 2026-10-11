@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, trf, trn};
 use crate::icons::{self, Icon};
 use crate::theme::{COMPONENT, Tokens, regular, semibold};
 
@@ -203,7 +204,7 @@ fn build_listing(app: &FigApp, doc: &Document, q: &str, key: (u64, String, u64))
                     lib.doc.styles.iter().filter(|s| m.style(&s.id).is_some_and(|x| x.published) && matches(&s.name, q)).map(StyleRow::of).collect();
                 sec.doc = Some(lib.doc.clone());
             }
-            Some(Ok(lib)) => sec.error = Some(format!("The file now holds another library (\"{}\")", lib.manifest.name)),
+            Some(Ok(lib)) => sec.error = Some(trf("The file now holds another library (\"{name}\")", &[("name", &lib.manifest.name)])),
             Some(Err(e)) => sec.error = Some(e.to_string()),
             None => {}
         }
@@ -259,7 +260,7 @@ fn search_row(app: &mut FigApp, ui: &mut Ui, w: f32) -> String {
             .id(Id::new("asset_filter_field"))
             .frame(egui::Frame::NONE)
             .font(regular(11.0))
-            .hint_text("Search assets")
+            .hint_text(tr("Search assets"))
             .desired_width(te_rect.width()),
     );
     if r.has_focus() {
@@ -270,7 +271,7 @@ fn search_row(app: &mut FigApp, ui: &mut Ui, w: f32) -> String {
     }
     ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
     let br = Rect::from_center_size(pos2(fr.max.x - 26.0, field.center().y), vec2(24.0, 24.0));
-    let bresp = ui.interact(br, Id::new("asset_libraries_btn"), Sense::click()).tip("Libraries");
+    let bresp = ui.interact(br, Id::new("asset_libraries_btn"), Sense::click()).tip(tr("Libraries"));
     if bresp.hovered() {
         ui.painter().rect_filled(br, CornerRadius::same(5), t.hover);
     }
@@ -287,20 +288,17 @@ fn updates_banner(app: &mut FigApp, ui: &mut Ui, w: f32, count: usize) {
     let (row, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
     let r = Rect::from_min_max(pos2(row.min.x + 12.0, row.min.y + 4.0), pos2(row.max.x - 12.0, row.max.y - 4.0));
     ui.painter().rect_filled(r, CornerRadius::same(6), t.selected_row);
-    let what = if count == 1 {
-        "1 component or style has a newer version".to_string()
-    } else {
-        format!("{count} components and styles have newer versions")
-    };
+    let what = trn("{n} components and styles have newer versions", count, &[]);
     ui.interact(r, Id::new("asset_updates"), Sense::hover()).on_hover_text(what);
-    ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, "Library updates available", semibold(11.0), t.text);
+    ui.painter().text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, tr("Library updates available"), semibold(11.0), t.text);
     let mut child =
         ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.max.x - 70.0, r.min.y + 6.0), pos2(r.max.x - 6.0, r.max.y))));
-    if crate::widgets::button(&mut child, "Update", true, true).clicked()
+    if crate::widgets::button(&mut child, tr("Update"), true, true).clicked()
         && let Some(v) = app.run("library.acceptUpdates", json!({}))
     {
         let (c, s) = (v["components"].as_u64().unwrap_or(0), v["styles"].as_u64().unwrap_or(0));
-        app.toast(format!("Updated {c} component{} and {s} style{}", if c == 1 { "" } else { "s" }, if s == 1 { "" } else { "s" }));
+        let (c, s) = (trn("{n} components", c as usize, &[]), trn("{n} styles", s as usize, &[]));
+        app.toast(trf("Updated {components} and {styles}", &[("components", &c), ("styles", &s)]));
     }
 }
 
@@ -325,7 +323,7 @@ fn library_title(ui: &mut Ui, w: f32, name: &str, open: bool) -> bool {
         t.text,
         hr.max.x - chevron.max.x - 6.0 - PAD,
     );
-    resp.on_hover_text(if open { "Library: click to collapse" } else { "Library: click to expand" }).clicked()
+    resp.on_hover_text(if open { tr("Library: click to collapse") } else { tr("Library: click to expand") }).clicked()
 }
 
 /// Secondary text, wrapped to the panel.
@@ -383,9 +381,9 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, want
             }
             let label = Rect::from_min_size(pos2(x, r.max.y + 2.0), vec2(tile, TILE_LABEL - 4.0));
             crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.name, regular(11.0), t.text, tile);
-            let resp = resp.on_hover_text(format!(
-                "{}\nDrag onto the canvas, or click to place in the middle of the view.\nHold Alt (Option) while dropping onto an instance to swap it.",
-                item.name
+            let resp = resp.on_hover_text(trf(
+                "{name}\nDrag onto the canvas, or click to place in the middle of the view.\nHold Alt (Option) while dropping onto an instance to swap it.",
+                &[("name", &item.name)],
             ));
             if resp.drag_started() {
                 *act = Some(Act::Drag(AssetDrag { src: src.clone(), component: item.id, set: item.set }));
@@ -421,7 +419,7 @@ fn style_rows(ui: &mut Ui, w: f32, src: &Source, list: &[StyleRow], act: &mut Op
             icons::paint(ui.painter(), icon_rect, i, t.icon_secondary);
         }
         crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 40.0, r.center().y), &s.name, regular(11.0), t.text, w - 40.0 - PAD);
-        if resp.on_hover_text(format!("{}\nClick to apply to the selection", s.name)).clicked() {
+        if resp.on_hover_text(trf("{name}\nClick to apply to the selection", &[("name", &s.name)])).clicked() {
             *act = Some(Act::Style(src.clone(), s.id.clone()));
         }
     }
@@ -514,21 +512,21 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let collapsed: HashSet<String> = ui.data(|d| d.get_temp(collapsed_id)).unwrap_or_default();
     let mut act = None;
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        title(ui, w, "Local components");
+        title(ui, w, tr("Local components"));
         if listing.local.is_empty() {
             if q.is_empty() {
                 let keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("component.create").unwrap_or(""));
-                hint(ui, &format!("No components yet. Select layers and press {keys}."));
+                hint(ui, &trf("No components yet. Select layers and press {keys}.", &[("keys", &keys)]));
             } else {
-                hint(ui, "No matching components");
+                hint(ui, tr("No matching components"));
             }
         }
         tiles(ui, w, &Source::Local, &listing.local, &thumbs, &mut wanted, &mut act);
         crate::widgets::separator(ui);
         ui.add_space(4.0);
-        title(ui, w, "Local styles");
+        title(ui, w, tr("Local styles"));
         if listing.local_styles.is_empty() {
-            hint(ui, if q.is_empty() { "No styles yet." } else { "No matching styles" });
+            hint(ui, if q.is_empty() { tr("No styles yet.") } else { tr("No matching styles") });
         }
         style_rows(ui, w, &Source::Local, &listing.local_styles, &mut act);
         for sec in &listing.libraries {
@@ -542,11 +540,11 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 continue;
             }
             if let Some(e) = &sec.error {
-                hint(ui, &format!("Can't read this library: {e}"));
+                hint(ui, &trf("Can't read this library: {e}", &[("e", e)]));
                 continue;
             }
             if sec.doc.is_none() {
-                hint(ui, "Reading the library…");
+                hint(ui, tr("Reading the library…"));
                 continue;
             }
             let src = Source::Library(sec.id.clone());
@@ -590,7 +588,7 @@ fn place(app: &mut FigApp, src: &Source, id: NodeId, x: f64, y: f64) {
 
 fn apply_style(app: &mut FigApp, src: &Source, style: &str) {
     if app.session.selection().is_empty() {
-        app.toast("Select layers to apply the style to");
+        app.toast(tr("Select layers to apply the style to"));
         return;
     }
     match src {
@@ -697,12 +695,12 @@ fn libraries_view(app: &mut FigApp, ui: &mut Ui) {
     let w = ui.available_width();
     let (hr, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     let back = Rect::from_center_size(pos2(hr.min.x + 24.0, hr.center().y), vec2(24.0, 24.0));
-    let bresp = ui.interact(back, Id::new("asset_libraries_back"), Sense::click()).tip("Back to assets");
+    let bresp = ui.interact(back, Id::new("asset_libraries_back"), Sense::click()).tip(tr("Back to assets"));
     if bresp.hovered() {
         ui.painter().rect_filled(back, CornerRadius::same(5), t.hover);
     }
     icons::paint(ui.painter(), back.shrink(5.0), Icon::ChevronLeft, t.icon);
-    ui.painter().text(pos2(back.max.x + 6.0, hr.center().y), Align2::LEFT_CENTER, "Libraries", semibold(12.0), t.text);
+    ui.painter().text(pos2(back.max.x + 6.0, hr.center().y), Align2::LEFT_CENTER, tr("Libraries"), semibold(12.0), t.text);
     if bresp.clicked() {
         app.ui.libraries = false;
         return;
@@ -719,7 +717,7 @@ fn libraries_view(app: &mut FigApp, ui: &mut Ui) {
 fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let form_id = Id::new("asset_publish_form");
     let mut form: PublishForm = ui.data(|d| d.get_temp(form_id)).unwrap_or_default();
-    title(ui, w, "This file");
+    title(ui, w, tr("This file"));
     let m = doc.published.as_ref().map(|p| &p.manifest);
     // A file on a server publishes its library there (a live file doesn't keep a local one).
     let server = app.session.server_link();
@@ -728,15 +726,15 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         _ => None,
     });
     let status = match (&server, on_server, m) {
-        (Some(_), Some(v), _) => format!("{} · version {v} on the server", doc.name),
-        (Some(_), None, _) => format!("{} · on a server", doc.name),
-        (None, _, Some(m)) => format!("{} · published version {}", doc.name, m.version),
-        (None, _, None) => format!("{} · not published", doc.name),
+        (Some(_), Some(v), _) => trf("{name} · version {v} on the server", &[("name", &doc.name), ("v", &v)]),
+        (Some(_), None, _) => trf("{name} · on a server", &[("name", &doc.name)]),
+        (None, _, Some(m)) => trf("{name} · published version {v}", &[("name", &doc.name), ("v", &m.version)]),
+        (None, _, None) => trf("{name} · not published", &[("name", &doc.name)]),
     };
     hint(ui, &status);
     let all = library::publishable(doc);
     if all.is_empty() {
-        hint(ui, "Create components, styles or variables to publish them as a library.");
+        hint(ui, tr("Create components, styles or variables to publish them as a library."));
         return;
     }
     let def = library::default_selection(doc, m);
@@ -755,7 +753,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         on
     };
     if !all.components.is_empty() {
-        crate::widgets::sublabels(ui, "Components", None);
+        crate::widgets::sublabels(ui, tr("Components"), None);
         for c in &all.components {
             let name = doc.node(*c).map(|n| n.name.as_str()).unwrap_or_default();
             if check(ui, format!("c{}", c.0), def.components.contains(c), name) {
@@ -764,7 +762,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         }
     }
     if !all.styles.is_empty() {
-        crate::widgets::sublabels(ui, "Styles", None);
+        crate::widgets::sublabels(ui, tr("Styles"), None);
         for s in &all.styles {
             let name = doc.style(s).map(|x| x.name.as_str()).unwrap_or_default();
             if check(ui, format!("s{s}"), def.styles.contains(s), name) {
@@ -773,7 +771,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         }
     }
     if !all.collections.is_empty() {
-        crate::widgets::sublabels(ui, "Variable collections", None);
+        crate::widgets::sublabels(ui, tr("Variable collections"), None);
         for c in &all.collections {
             let name = doc.variables.collection(c).map(|x| x.name.as_str()).unwrap_or_default();
             if check(ui, format!("v{c}"), def.collections.contains(c), name) {
@@ -785,7 +783,9 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let description = form.description.clone().unwrap_or_else(|| m.map(|m| m.description.clone()).unwrap_or_default());
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        if let Some(d) = crate::widgets::text_field(ui, Id::new("asset_publish_description"), &description, w - PAD * 2.0, "Description (optional)") {
+        if let Some(d) =
+            crate::widgets::text_field(ui, Id::new("asset_publish_description"), &description, w - PAD * 2.0, tr("Description (optional)"))
+        {
             form.description = Some(d);
         }
     });
@@ -795,9 +795,9 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     ui.horizontal(|ui| {
         ui.add_space(PAD);
         if server.is_some() {
-            to_server = crate::widgets::button(ui, "Publish to server", true, any).clicked();
+            to_server = crate::widgets::button(ui, tr("Publish to server"), true, any).clicked();
         } else {
-            publish = crate::widgets::button(ui, if m.is_some() { "Publish changes" } else { "Publish" }, true, any).clicked();
+            publish = crate::widgets::button(ui, if m.is_some() { tr("Publish changes") } else { tr("Publish") }, true, any).clicked();
         }
     });
     ui.add_space(12.0);
@@ -806,7 +806,9 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         None if app.session.live.can_host() => {
             hint(
                 ui,
-                "To share this library with your team, publish the file to a server (Share ▸ Publish to server…), then publish the library there.",
+                tr(
+                    "To share this library with your team, publish the file to a server (Share ▸ Publish to server…), then publish the library there.",
+                ),
             );
         }
         None => {}
@@ -815,7 +817,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         let description = form.description.clone().unwrap_or_else(|| description.clone());
         if let Some(r) = app.run("library.publishToServer", json!({"description": description, "include": include})) {
             form = PublishForm::default();
-            app.toast(format!("Published version {} to the server", r["version"].as_u64().unwrap_or(0)));
+            app.toast(trf("Published version {v} to the server", &[("v", &r["version"].as_u64().unwrap_or(0))]));
         }
     }
     if publish {
@@ -827,9 +829,9 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
             let saved = app.session.ds().is_ok_and(|d| d.path.is_some() && !d.is_dirty());
             let v = r["version"].as_u64().unwrap_or(0);
             app.toast(if saved {
-                format!("Published version {v}")
+                trf("Published version {v}", &[("v", &v)])
             } else {
-                format!("Published version {v}: save the file so other files can use it")
+                trf("Published version {v}: save the file so other files can use it", &[("v", &v)])
             });
         }
     }
@@ -843,7 +845,7 @@ fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
     let mut ask = false;
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        ask = crate::widgets::button(ui, "Show usage", false, true).clicked();
+        ask = crate::widgets::button(ui, tr("Show usage"), false, true).clicked();
     });
     if ask && let Some(v) = app.run("library.usage", json!({})) {
         ui.data_mut(|d| d.insert_temp(usage_id, Arc::new(v)));
@@ -854,14 +856,15 @@ fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
     };
     let files = v["files"].as_array().map_or(0, Vec::len);
     let instances = v["instances"].as_u64().unwrap_or(0);
-    let plural = |n: u64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-    hint(ui, &format!("Used in {} · {}", plural(files as u64, "file", "files"), plural(instances, "instance", "instances")));
+    let files_n = |n: u64| trn("{n} files", n as usize, &[]);
+    let instances_n = |n: u64| trn("{n} instances", n as usize, &[]);
+    hint(ui, &trf("Used in {files} · {instances}", &[("files", &files_n(files as u64)), ("instances", &instances_n(instances))]));
     let t = Tokens::get(ui.ctx());
     for c in v["components"].as_array().into_iter().flatten().take(USAGE_ROWS) {
-        let name = c["name"].as_str().unwrap_or("(no longer published)");
+        let name = c["name"].as_str().unwrap_or(tr("(no longer published)"));
         let (n, f) = (c["instances"].as_u64().unwrap_or(0), c["files"].as_u64().unwrap_or(0));
         let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
-        let right = format!("{} in {}", plural(n, "instance", "instances"), plural(f, "file", "files"));
+        let right = trf("{instances} in {files}", &[("instances", &instances_n(n)), ("files", &files_n(f))]);
         let rg = ui.painter().layout_no_wrap(right, regular(10.0), t.text_secondary);
         ui.painter().galley(pos2(r.max.x - PAD - rg.size().x, r.center().y - rg.size().y / 2.0), rg.clone(), t.text_secondary);
         crate::bidi::paint_name(ui.painter(), pos2(r.min.x + PAD, r.center().y), name, regular(11.0), t.text, w - PAD * 3.0 - rg.size().x);
@@ -871,9 +874,9 @@ fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
 
 fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let t = Tokens::get(ui.ctx());
-    title(ui, w, "Libraries in this file");
+    title(ui, w, tr("Libraries in this file"));
     if doc.libraries.enabled.is_empty() {
-        hint(ui, "No libraries yet. Add a .figcraft file that was published as a library, or paste a team library's link.");
+        hint(ui, tr("No libraries yet. Add a .figcraft file that was published as a library, or paste a team library's link."));
     }
     let (mut remove, mut swap) = (None, None);
     let swappable = doc.libraries.enabled.len() > 1;
@@ -885,12 +888,23 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
                 let n = m.components.iter().filter(|a| a.published).count();
                 let s = m.styles.iter().filter(|a| a.published).count();
                 let v = m.variables.iter().filter(|a| a.published).count();
-                (format!("Version {} · {n} components · {s} styles · {v} variables", m.version), t.text_secondary)
+                (
+                    trf(
+                        "Version {v} · {components} · {styles} · {variables}",
+                        &[
+                            ("v", &m.version),
+                            ("components", &trn("{n} components", n, &[])),
+                            ("styles", &trn("{n} styles", s, &[])),
+                            ("variables", &trn("{n} variables", v, &[])),
+                        ],
+                    ),
+                    t.text_secondary,
+                )
             }
-            Some(Ok(_)) => ("The file now holds another library".into(), t.danger),
+            Some(Ok(_)) => (tr("The file now holds another library").into(), t.danger),
             Some(Err(e)) => (e.to_string(), t.danger),
-            None if is_server_link(&l.path) => ("Fetching from the server…".into(), t.text_secondary),
-            None => ("Not read yet".into(), t.text_secondary),
+            None if is_server_link(&l.path) => (tr("Fetching from the server…").into(), t.text_secondary),
+            None => (tr("Not read yet").into(), t.text_secondary),
         };
         let text_w = w - PAD - if swappable { 72.0 } else { 44.0 };
         let name = ui.painter().layout_no_wrap(l.name.clone(), semibold(11.0), t.text);
@@ -900,7 +914,7 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         ui.painter().with_clip_rect(clip).galley(pos2(r.min.x + PAD, r.min.y + 23.0), line, t.text_secondary);
         ui.interact(clip, Id::new(("asset_lib_row", &l.id)), Sense::hover()).on_hover_text(shown_path(&l.path));
         let x = Rect::from_center_size(pos2(r.max.x - 24.0, r.center().y), vec2(24.0, 24.0));
-        let xr = ui.interact(x, Id::new(("asset_lib_remove", &l.id)), Sense::click()).tip("Remove library from this file");
+        let xr = ui.interact(x, Id::new(("asset_lib_remove", &l.id)), Sense::click()).tip(tr("Remove library from this file"));
         if xr.hovered() {
             ui.painter().rect_filled(x, CornerRadius::same(5), t.hover);
         }
@@ -912,14 +926,14 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
             let sw = Rect::from_center_size(pos2(r.max.x - 52.0, r.center().y), vec2(24.0, 24.0));
             let sr = ui
                 .interact(sw, Id::new(("asset_lib_swap", &l.id)), Sense::click())
-                .tip("Swap library: use another library's assets of the same names");
+                .tip(tr("Swap library: use another library's assets of the same names"));
             if sr.hovered() {
                 ui.painter().rect_filled(sw, CornerRadius::same(5), t.hover);
             }
             icons::paint(ui.painter(), sw.shrink(6.0), Icon::Swap, t.icon);
             crate::right::menu_popup(&sr).show(|ui| {
                 for other in doc.libraries.enabled.iter().filter(|o| o.id != l.id) {
-                    if crate::right::menu_item(ui, &format!("Swap to {}", other.name), "") {
+                    if crate::right::menu_item(ui, &trf("Swap to {name}", &[("name", &other.name)]), "") {
                         swap = Some((l.id.clone(), other.id.clone()));
                         ui.close();
                     }
@@ -931,16 +945,16 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let mut add = false;
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        add = crate::widgets::button(ui, "Add library file…", false, true).clicked();
+        add = crate::widgets::button(ui, tr("Add library file…"), false, true).clicked();
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        let pasted = crate::widgets::text_field(ui, Id::new("asset_add_link"), "", w - PAD * 2.0, "Paste a team library link (a view link)");
+        let pasted = crate::widgets::text_field(ui, Id::new("asset_add_link"), "", w - PAD * 2.0, tr("Paste a team library link (a view link)"));
         if let Some(link) = pasted.map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
             && let Some(r) = app.run("library.add", json!({"path": link}))
         {
-            app.toast(format!("Added the library \"{}\"", r["name"].as_str().unwrap_or_default()));
+            app.toast(trf("Added the library \"{name}\"", &[("name", &r["name"].as_str().unwrap_or_default())]));
         }
     });
     if let Some(id) = remove {
@@ -952,15 +966,15 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         let moved = ["components", "styles", "variables"].iter().map(|k| r[*k].as_u64().unwrap_or(0)).sum::<u64>();
         let missed = r["unmatched"].as_array().map_or(0, Vec::len);
         app.toast(if missed == 0 {
-            format!("Swapped {moved} asset{}", if moved == 1 { "" } else { "s" })
+            trn("Swapped {n} assets", moved as usize, &[])
         } else {
-            format!("Swapped {moved} asset{}; {missed} had no match and still use the old library", if moved == 1 { "" } else { "s" })
+            trn("Swapped {n} assets; {missed} had no match and still use the old library", moved as usize, &[("missed", &missed)])
         });
     }
-    if add && let Some(p) = app.services.pick_open("Add library", &["figcraft"]) {
+    if add && let Some(p) = app.services.pick_open(tr("Add library"), &["figcraft"]) {
         let path = p.to_string_lossy().to_string();
         if let Some(r) = app.run("library.add", json!({"path": path})) {
-            app.toast(format!("Added the library \"{}\"", r["name"].as_str().unwrap_or_default()));
+            app.toast(trf("Added the library \"{name}\"", &[("name", &r["name"].as_str().unwrap_or_default())]));
         }
     }
 }

@@ -86,4 +86,8 @@ impl Services for WebServices {
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.as_ref().is_some_and(web_sys::MediaQueryList::matches)
     }
+    /// The browser's language (`navigator.language`).
+    fn system_language(&self) -> Option<String> {
+        web_sys::window().and_then(|w| w.navigator().language())
+    }
 }

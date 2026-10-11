@@ -251,6 +251,49 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
+  server:
+    name: Server Linux ${{ matrix.arch }}
+    needs: version
+    # The headless collaboration server (docs/server.md): figcraft-server-<v>-linux-<arch>.tar.gz
+    # with the binary, licences, docs/server.md and the deployment examples. Same runners as the
+    # app, so the same glibc floor; no craft-fonts (the server draws no text).
+    # shortcut: Linux only (where servers run); add macOS/Windows archives, signed like figcraft-cli,
+    # when people host there.
+    runs-on: ${{ matrix.runner }}
+    # No `environment: release`: this job reads no secrets, so a branch dry run can run it.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm }
+    env:
+      FIGCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      FIGCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-server-${{ matrix.arch }}
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo run --locked -q -p xtask -- version set "$FIGCRAFT_VERSION"
+      - name: Build and package (tar.gz)
+        run: packaging/server/package.sh
+      - name: Check the archive
+        run: |
+          tar -tzf "dist/release/figcraft-server-$FIGCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz" | tee "$RUNNER_TEMP/server-contents.txt"
+          for f in '/figcraft-server$' '/figcraft-server\.service$' '/Caddyfile$' '/nginx\.conf$' '/server\.md$' '/LICENSE-MIT$'; do
+            grep -E "$f" "$RUNNER_TEMP/server-contents.txt"
+          done
+          ldd target/release/figcraft-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-server-linux-${{ matrix.arch }}
+          path: dist/release/*.tar.gz
+          if-no-files-found: error
+
   flatpak:
     name: Flatpak ${{ matrix.arch }}
     needs: [version, linux]
@@ -460,7 +503,7 @@ jobs:
 
   release:
     name: Draft GitHub Release
-    needs: [version, macos, windows, linux, linux-riscv64, flatpak, freebsd, web]
+    needs: [version, macos, windows, linux, linux-riscv64, flatpak, freebsd, web, server]
     runs-on: ubuntu-latest
     environment: release
     permissions:

@@ -4,6 +4,7 @@ use egui::{Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2
 use serde_json::json;
 
 use crate::FigApp;
+use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 
@@ -18,25 +19,26 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         icons::paint(ui.painter(), Rect::from_min_size(pos2(left.min.x + 16.0, y), vec2(20.0, 20.0)), Icon::Logo, ACCENT);
         ui.painter().text(pos2(left.min.x + 44.0, y + 10.0), Align2::LEFT_CENTER, "FigCraft", semibold(14.0), t.text);
         y += 48.0;
-        for (icon, label) in [(Icon::Home, "Recents"), (Icon::Page, "Drafts"), (Icon::Assets, "Community")] {
+        for (icon, label) in [(Icon::Home, tr_noop("Recents")), (Icon::Page, tr_noop("Drafts")), (Icon::Assets, tr_noop("Community"))] {
             let r = Rect::from_min_size(pos2(left.min.x + 8.0, y), vec2(224.0, 32.0));
             if label == "Recents" {
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.selected_row);
             }
             icons::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 10.0, r.center().y - 8.0), vec2(16.0, 16.0)), icon, t.icon);
-            ui.painter().text(pos2(r.min.x + 36.0, r.center().y), Align2::LEFT_CENTER, label, regular(12.0), t.text);
+            ui.painter().text(pos2(r.min.x + 36.0, r.center().y), Align2::LEFT_CENTER, tr(label), regular(12.0), t.text);
             y += 34.0;
         }
         let main = Rect::from_min_max(pos2(left.max.x + 40.0, rect.min.y + 24.0), rect.max - vec2(40.0, 24.0));
-        ui.painter().text(main.min, Align2::LEFT_TOP, "Recents", semibold(18.0), t.text);
+        ui.painter().text(main.min, Align2::LEFT_TOP, tr("Recents"), semibold(18.0), t.text);
         // Action cards.
         let mut x = main.min.x;
         let cy = main.min.y + 48.0;
         let mut new_file = false;
         let mut open = false;
-        for (icon, title, sub) in
-            [(Icon::Plus, "New design file", "Start from a blank canvas"), (Icon::Page, "Open file", "Open .figcraft, .svg or images")]
-        {
+        for (icon, title, sub) in [
+            (Icon::Plus, tr_noop("New design file"), tr_noop("Start from a blank canvas")),
+            (Icon::Page, tr_noop("Open file"), tr_noop("Open .figcraft, .svg or images")),
+        ] {
             let r = Rect::from_min_size(pos2(x, cy), vec2(260.0, 72.0));
             let resp = ui.interact(r, ui.id().with(("card", title)), Sense::click());
             ui.painter().rect_filled(r, CornerRadius::same(8), if resp.hovered() { t.hover } else { t.panel });
@@ -44,8 +46,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             let ir = Rect::from_min_size(pos2(r.min.x + 16.0, r.center().y - 16.0), vec2(32.0, 32.0));
             ui.painter().rect_filled(ir, CornerRadius::same(6), ACCENT);
             icons::paint(ui.painter(), ir.shrink(8.0), icon, egui::Color32::WHITE);
-            ui.painter().text(pos2(r.min.x + 60.0, r.center().y - 8.0), Align2::LEFT_CENTER, title, semibold(12.0), t.text);
-            ui.painter().text(pos2(r.min.x + 60.0, r.center().y + 9.0), Align2::LEFT_CENTER, sub, regular(11.0), t.text_secondary);
+            ui.painter().text(pos2(r.min.x + 60.0, r.center().y - 8.0), Align2::LEFT_CENTER, tr(title), semibold(12.0), t.text);
+            ui.painter().text(pos2(r.min.x + 60.0, r.center().y + 9.0), Align2::LEFT_CENTER, tr(sub), regular(11.0), t.text_secondary);
             if resp.clicked() {
                 if title.starts_with("New") {
                     new_file = true;
@@ -64,7 +66,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         }
         // Open documents and recent files.
         let mut y = cy + 108.0;
-        ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, "Open files", semibold(12.0), t.text_secondary);
+        ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, tr("Open files"), semibold(12.0), t.text_secondary);
         y += 28.0;
         let mut switch = None;
         for (i, d) in app.session.docs.iter().enumerate() {
@@ -90,7 +92,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         y += 16.0;
         let recents = app.session.prefs.recent_files.clone();
         if !recents.is_empty() {
-            ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, "Recent files", semibold(12.0), t.text_secondary);
+            ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, tr("Recent files"), semibold(12.0), t.text_secondary);
             y += 28.0;
             let mut open_path = None;
             for p in recents.iter().take(12) {
