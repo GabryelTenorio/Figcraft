@@ -163,6 +163,9 @@ pub trait Services {
     }
     /// After a panic in a frame: keep recovery copies of unsaved files.
     fn emergency_save(&mut self, _session: &Session) {}
+    /// Keep the preferences now (the installed plugins or their settings changed), as the app
+    /// does when it quits.
+    fn save_prefs(&mut self, _prefs: &figcraft_engine::Prefs) {}
     /// The OS or browser language as a tag ("es-ES"), for the "system" language preference.
     fn system_language(&self) -> Option<String> {
         None
@@ -437,7 +440,12 @@ pub struct FigApp {
     pub windows: windows::Windows,
     /// `window.new` / `window.focus` asked for by commands, for the end of the frame.
     window_requests: Vec<figcraft_engine::UiRequest>,
+    /// Commands waiting for a server ([`FigApp::run_background`]) and what to do with their results.
+    waiting: Vec<(String, Done)>,
 }
+
+/// What to do with the result of a command run in the background.
+pub type Done = Box<dyn FnOnce(&mut FigApp, &egui::Context, Value)>;
 
 impl FigApp {
     pub fn new(session: Session, services: Box<dyn Services>) -> Self {
@@ -457,23 +465,55 @@ impl FigApp {
             frame_stats: frame_stats::FrameStats::default(),
             windows: windows::Windows::default(),
             window_requests: Vec::new(),
+            waiting: Vec::new(),
         }
     }
 
     /// Run a command, surfacing errors as a toast. Returns the result.
     pub fn run(&mut self, id: &str, params: Value) -> Option<Value> {
-        match self.session.execute(id, &params) {
-            Ok(v) => {
-                self.handle_ui_requests();
-                Some(v)
-            }
-            Err(e) => {
-                self.handle_ui_requests();
-                let msg = e.to_string();
-                log::warn!("{id}: {msg}");
-                self.toast(msg.clone());
-                self.ui.last_error = Some(msg);
-                None
+        let r = self.session.execute(id, &params);
+        self.handle_ui_requests();
+        r.map_err(|e| self.failed(id, &e)).ok()
+    }
+
+    /// Show command `id`'s error.
+    fn failed(&mut self, id: &str, e: &figcraft_engine::EngineError) {
+        let msg = e.to_string();
+        log::warn!("{id}: {msg}");
+        self.toast(msg.clone());
+        self.ui.last_error = Some(msg);
+    }
+
+    /// Run a command that may talk to a server without waiting for it (the engine's
+    /// [`start_background`](Session::start_background)): `done` gets the result, at once or when
+    /// the answer arrives (the network wakes the window then); errors show as with [`run`](Self::run).
+    /// [`Session::waiting_for`] tells the panels to show that it's on its way.
+    pub fn run_background(&mut self, ctx: &egui::Context, id: &str, params: Value, done: Done) {
+        self.waiting.retain(|(c, _)| c != id);
+        let r = self.session.start_background(id, params);
+        self.handle_ui_requests();
+        match r {
+            Ok(Some(v)) => done(self, ctx, v),
+            Ok(None) => self.waiting.push((id.to_string(), done)),
+            Err(e) => self.failed(id, &e),
+        }
+    }
+
+    /// Stop waiting for command `id` (Cancel, or its window closed): its answer is dropped.
+    pub fn cancel_background(&mut self, id: &str) {
+        self.session.cancel_background(id);
+        self.waiting.retain(|(c, _)| c != id);
+    }
+
+    /// Hand the results of background commands that finished to what's waiting for them.
+    fn background_done(&mut self, ctx: &egui::Context) {
+        while let Some((id, r)) = self.session.take_background_done() {
+            self.handle_ui_requests();
+            let done = self.waiting.iter().position(|(c, _)| *c == id).map(|i| self.waiting.remove(i).1);
+            match (r, done) {
+                (Ok(v), Some(done)) => done(self, ctx, v),
+                (Ok(_), None) => {}
+                (Err(e), _) => self.failed(&id, &e),
             }
         }
     }
@@ -775,10 +815,11 @@ impl FigApp {
             return;
         }
         // What happened in a live session (the network woke us for it).
-        if self.session.live_poll()
-            && let Some(m) = self.session.message.take()
-        {
-            self.toast(m);
+        if self.session.live_poll() {
+            if let Some(m) = self.session.message.take() {
+                self.toast(m);
+            }
+            self.background_done(&ctx);
         }
         windows::begin(self, &ctx);
         let (files, prefs) = (self.session.docs.len(), self.session.prefs.clone());
@@ -788,6 +829,10 @@ impl FigApp {
             windows::repaint_others(self, &ctx);
         }
         windows::show(self, &ctx);
+        // Plugins installed, removed or set up are kept at once: a crash doesn't lose them.
+        if std::mem::take(&mut self.session.plugins.unsaved) {
+            self.services.save_prefs(&self.session.prefs);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;

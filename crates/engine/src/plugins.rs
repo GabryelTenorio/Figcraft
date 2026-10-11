@@ -55,6 +55,9 @@ pub struct Runtime {
     pub install_dir: Option<std::path::PathBuf>,
     /// The plugin directory listed last (Plugins ▸ Manage plugins ▸ Browse shows it).
     pub directory: Option<crate::plugin_directory::Listing>,
+    /// The installed plugins or their settings changed since the app last saved the preferences
+    /// (it saves them at once, so a crash keeps them).
+    pub unsaved: bool,
 }
 
 impl Runtime {
@@ -195,11 +198,13 @@ impl figcraft_plugin::Host for EngineHost<'_> {
     fn set_setting(&mut self, key: &str, value: Option<&str>) -> std::result::Result<(), String> {
         let (all, id) = (&mut self.s.prefs.plugin_settings, &self.manifest.id);
         let Some(text) = value else {
-            if let Some(mine) = all.get_mut(id) {
-                mine.remove(key);
+            if let Some(mine) = all.get_mut(id)
+                && mine.remove(key).is_some()
+            {
                 if mine.is_empty() {
                     all.remove(id);
                 }
+                self.s.plugins.unsaved = true;
             }
             return Ok(());
         };
@@ -216,7 +221,9 @@ impl figcraft_plugin::Host for EngineHost<'_> {
         if others + key.len() + v.to_string().len() > MAX_SETTINGS_BYTES {
             return Err(too_big());
         }
-        all.entry(id.clone()).or_default().insert(key.to_string(), v);
+        if all.entry(id.clone()).or_default().insert(key.to_string(), v.clone()).as_ref() != Some(&v) {
+            self.s.plugins.unsaved = true;
+        }
         Ok(())
     }
 }
@@ -347,6 +354,7 @@ pub(crate) fn register(s: &mut Session, entry: InstalledPlugin, wasm: Vec<u8>) -
         s.plugins.modules.remove(&id);
     }
     close_panel(s, &id);
+    s.plugins.unsaved = true;
     let list = &mut s.prefs.plugins;
     match list.iter_mut().find(|x| x.manifest.id == id) {
         Some(slot) => {
@@ -367,6 +375,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     crate::plugin_directory::delete_installed(s, &p);
     s.prefs.plugins.retain(|x| x.manifest.id != id);
     s.prefs.plugin_settings.remove(&id);
+    s.plugins.unsaved = true;
     s.plugins.modules.remove(&id);
     close_panel(s, &id);
     if s.plugins.last.as_ref().is_some_and(|(last, ..)| *last == id) {

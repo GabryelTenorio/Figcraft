@@ -97,6 +97,11 @@ which other files use without anyone copying the library file around.
 - **Swapping.** `library.swap` (the swap button by an enabled library) moves a file's instances,
   styles and variables from one library to another's of the same names, keeping overrides.
 
+The app never waits for the server: publishing, adding a library by its link and **Show usage**
+send their requests on a thread of their own, show that they're on their way (with **Cancel**) and
+finish when the answer arrives, acting on the file they started in. Scripts, the CLI and the MCP
+server run the same commands and wait for the answer.
+
 The browser build can't use team libraries yet (it has no library support of its own).
 
 ## Plugin directory

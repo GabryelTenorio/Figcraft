@@ -10,6 +10,7 @@
 pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
+pub mod background;
 pub mod booleans;
 pub mod branches;
 pub mod catalog;
@@ -77,6 +78,10 @@ pub enum EngineError {
     NoNode(NodeId),
     #[error("{0}")]
     Other(String),
+    /// A command run in the background sent a request to a server and runs again with the answer
+    /// ([`background`]); never returned to other callers.
+    #[error("waiting for the server")]
+    Waiting,
     /// A bug: the command panicked. The document was rolled back.
     #[error("internal error in `{cmd}`: {msg} (the document was left as it was before; please report this bug)")]
     Internal { cmd: String, msg: String },
@@ -622,6 +627,8 @@ pub struct Session {
     pub plugins: plugins::Runtime,
     /// The live session (collaboration): status, peers, presence.
     pub live: live::Live,
+    /// Commands the UI runs without waiting on a server ([`Session::start_background`]).
+    pub background: background::Background,
 }
 
 impl Default for Session {
@@ -654,6 +661,7 @@ impl Session {
             libraries: library::Cache::default(),
             plugins: plugins::Runtime::default(),
             live: live::Live::default(),
+            background: background::Background::default(),
         }
     }
 

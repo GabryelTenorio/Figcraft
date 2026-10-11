@@ -180,8 +180,11 @@ fn settings_persist_across_runs_per_plugin_and_are_capped() {
     let wasm = w.build(&steps);
     install(&mut s, v2("org.test.a"), &wasm);
     install(&mut s, v2("org.test.b"), &wasm);
+    assert!(std::mem::take(&mut s.plugins.unsaved), "installing asks the app to save the preferences at once");
     assert_eq!(ex(&mut s, "plugin.run", json!({"id": "org.test.a"}))["output"]["command"], "run", "nothing stored yet: it stores");
+    assert!(std::mem::take(&mut s.plugins.unsaved), "a changed setting is saved at once too");
     assert_eq!(ex(&mut s, "plugin.run", json!({"id": "org.test.a"}))["output"], json!({"name": "Ocean"}), "the next run reads it back");
+    assert!(!s.plugins.unsaved, "storing the same value again changes nothing");
     assert_eq!(ex(&mut s, "plugin.run", json!({"id": "org.test.b"}))["output"]["command"], "run", "plugins don't see each other's settings");
     // Saved with the preferences and read back.
     let saved = serde_json::to_value(&s.prefs).unwrap();
@@ -191,6 +194,7 @@ fn settings_persist_across_runs_per_plugin_and_are_capped() {
     // Removing a plugin forgets its settings.
     ex(&mut s, "plugin.remove", json!({"id": "org.test.b"}));
     assert!(!s.prefs.plugin_settings.contains_key("org.test.b"));
+    assert!(s.plugins.unsaved);
 
     // 64 KB per plugin; keys and values are checked.
     let big = format!("\"{}\"", "x".repeat(30_000));

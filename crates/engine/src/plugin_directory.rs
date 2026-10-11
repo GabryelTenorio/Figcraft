@@ -7,7 +7,8 @@
 //! download must match the SHA-256 the directory lists before anything else is read: then the
 //! bundle is decoded within a size cap, its manifest and module are checked like an imported
 //! plugin's (the module compiled, never run) and it runs in the same sandbox with its manifest's
-//! permissions. Nothing here reaches the network except these commands.
+//! permissions. Nothing here reaches the network except these commands (the UI runs them without
+//! waiting: [`crate::background`]).
 
 use std::cmp::Ordering;
 
@@ -19,6 +20,7 @@ use figcraft_plugin::bundle::{Asset, Bundle, MAX_ASSETS, check_asset_name, compa
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
+use crate::live::{NetReply, NetRequest};
 use crate::params::{get, string};
 use crate::plugins::{InstalledPlugin, MANIFEST_FILE, Manifest, installed, register};
 use crate::{EngineError, Result, Session, bad, spec};
@@ -68,10 +70,10 @@ fn server(s: &Session, cmd: &str, p: &Value) -> Result<String> {
 
 /// One request to the directory at `server`; a refusal is an error.
 fn request(s: &mut Session, server: &str, req: PluginReq) -> Result<PluginReply> {
-    let link = s.live.link().ok_or_else(|| EngineError::Other(NO_DIRECTORY.into()))?;
-    match link.plugins(server, req).map_err(EngineError::Other)? {
-        PluginReply::Failed { reason } => Err(EngineError::Other(reason)),
-        r => Ok(r),
+    match s.net(NetRequest::Plugins { server: server.to_string(), req })?.0 {
+        NetReply::Plugins(Ok(PluginReply::Failed { reason }) | Err(reason)) => Err(EngineError::Other(reason)),
+        NetReply::Plugins(Ok(r)) => Ok(r),
+        _ => Err(EngineError::Other("the server answered something else".into())),
     }
 }
 

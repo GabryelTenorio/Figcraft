@@ -31,6 +31,9 @@ permissions its manifest asks for, and nothing more.
 - **Plugins ▸ Development ▸ Import plugin from manifest…** picks a `figcraft-plugin.json`. The
   plugin is kept in the preferences and its module is read again on every run, so a rebuilt
   development plugin runs its new code without importing it again.
+- The desktop app saves the preferences the moment a plugin is imported, installed, updated or
+  removed, or changes its settings (a temporary file renamed over the old one), so a crash or a
+  killed app never loses them; it doesn't wait until it quits.
 - The installed plugins head the **Plugins** menu: a plugin with one command is an item, one with
   several a submenu. A command with parameters (an ellipsis after its name) first opens a small form
   with a field per parameter, drawn with FigCraft's own widgets; **Run** runs it.
@@ -129,7 +132,11 @@ The list shows each plugin's latest version, author (as the publisher typed it),
 access it asks for; the search filters it. **Install** opens a confirmation that lists what the
 plugin asks permission to do (read or edit the document, the commands it may call, whether it draws
 a widget), the server it comes from and its SHA-256; only its **Install** button downloads and
-installs it. The download must match the SHA-256 the directory lists, and the bundle is then
+installs it. The app never waits for the server: while the listing or the download is on its way,
+Browse shows "Fetching from the server…" and the confirmation "Installing…", each with **Cancel**,
+and the rest of the app keeps working (closing the window cancels too). The window is drawn again
+only when the answer arrives. Scripts, the CLI, the control channel and the MCP server get their
+answer from the same commands as before, waiting for it. The download must match the SHA-256 the directory lists, and the bundle is then
 checked like an imported plugin (manifest, plugin API version, the module compiled but not run,
 asset names) before anything is written. A plugin installed this way runs in the same sandbox,
 with the same limits and its manifest's permissions, as any other.

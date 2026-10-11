@@ -232,7 +232,13 @@ enum Manage {
     Import,
     Browse(String),
     Confirm(String),
+    /// Stop waiting for the directory's listing.
+    StopBrowsing,
 }
+
+/// The directory requests the window sends without waiting (the server answers later).
+const LIST: &str = "plugin.directory.list";
+const INSTALL: &str = "plugin.directory.install";
 
 /// Width of the Manage plugins window, and of a plugin's text beside its button.
 const MANAGE_W: f32 = 400.0;
@@ -261,12 +267,20 @@ fn manage_window(app: &mut FigApp, ctx: &Context) {
         Some(Manage::Import) => import_dialog(app),
         Some(Manage::Browse(server)) => {
             app.ui.plugins_manage.confirm = None;
-            app.run("plugin.directory.list", json!({"server": server}));
+            app.cancel_background(INSTALL);
+            app.run_background(ctx, LIST, json!({"server": server}), Box::new(|_, _, _| {}));
         }
         Some(Manage::Confirm(id)) => app.ui.plugins_manage.confirm = Some(id),
+        Some(Manage::StopBrowsing) => app.cancel_background(LIST),
         None => {}
     }
-    if open && app.ui.plugins_manage.confirm.is_some() {
+    if !open {
+        // Closing the window stops waiting for its server.
+        app.cancel_background(LIST);
+        app.cancel_background(INSTALL);
+        app.ui.plugins_manage.confirm = None;
+    }
+    if app.ui.plugins_manage.confirm.is_some() {
         confirm_window(app, ctx, &t);
     }
 }
@@ -306,6 +320,7 @@ fn installed_tab(app: &FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
 fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
     let mut asked = None;
     let mut server = app.ui.plugins_manage.server.clone().or_else(|| app.session.prefs.plugin_directory.clone()).unwrap_or_default();
+    let loading = app.session.waiting_for(LIST);
     ui.horizontal(|ui| {
         // The field commits on Enter (which also browses) or when Browse takes the focus.
         let mut enter = false;
@@ -316,10 +331,19 @@ fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
             server = s.clone();
             app.ui.plugins_manage.server = Some(s);
         }
-        if (widgets::button(ui, tr("Browse"), true, true).clicked() || enter) && !server.trim().is_empty() {
+        if loading {
+            if widgets::button(ui, tr("Cancel"), false, true).clicked() {
+                asked = Some(Manage::StopBrowsing);
+            }
+        } else if (widgets::button(ui, tr("Browse"), true, true).clicked() || enter) && !server.trim().is_empty() {
             asked = Some(Manage::Browse(server.trim().to_string()));
         }
     });
+    if loading {
+        ui.add_space(8.0);
+        widgets::label(ui, tr("Fetching from the server…"), t.text_secondary);
+        return asked;
+    }
     let Some(listing) = app.session.plugins.directory.as_ref() else {
         ui.add_space(8.0);
         widgets::label(ui, tr("Enter the address of a figcraft-server and press Browse to see the plugins it offers."), t.text_secondary);
@@ -339,6 +363,8 @@ fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
     if shown.is_empty() {
         widgets::label(ui, &trf("No plugins on {server}.", &[("server", &listing.server)]), t.text_secondary);
     }
+    // One install at a time: the rows wait for it.
+    let installing = app.session.waiting_for(INSTALL);
     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
         for (i, e) in shown.iter().enumerate() {
             if i > 0 {
@@ -359,7 +385,7 @@ fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
                     Some(_) => (tr("Remove"), false, Manage::Remove),
                 };
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    if widgets::button(ui, label, primary, true).clicked() {
+                    if widgets::button(ui, label, primary, !installing).clicked() {
                         asked = Some(ask(e.id.clone()));
                     }
                 });
@@ -402,6 +428,7 @@ fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
         return;
     };
     let update = installed_version(&app.session, &e.id).is_some();
+    let installing = app.session.waiting_for(INSTALL);
     let title = if update { tr("Update plugin") } else { tr("Install plugin") };
     let (mut open, mut install, mut cancel) = (true, false, false);
     window(title, ctx).id(Id::new("plugin_install_confirm")).open(&mut open).show(ctx, |ui| {
@@ -432,20 +459,32 @@ fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
         widgets::label(ui, &trf("SHA-256: {sha}…", &[("sha", &e.sha256.get(..16).unwrap_or_default())]), t.text_secondary);
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            install = widgets::button(ui, if update { tr("Update") } else { tr("Install") }, true, true).clicked();
+            if installing {
+                widgets::label(ui, tr("Installing…"), t.text_secondary);
+            } else {
+                install = widgets::button(ui, if update { tr("Update") } else { tr("Install") }, true, true).clicked();
+            }
             cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
-    if !open || cancel || install {
+    if !open || cancel {
+        app.cancel_background(INSTALL);
         app.ui.plugins_manage.confirm = None;
     }
-    if install
-        && let Some(v) =
-            app.run("plugin.directory.install", json!({"id": e.id, "version": e.version, "sha256": e.sha256, "server": server, "confirm": true}))
-    {
-        let name = v["name"].as_str().unwrap_or(tr("the plugin")).to_string();
-        let args: &[(&str, &dyn std::fmt::Display)] = &[("name", &name)];
-        app.toast(if update { trf("Updated {name}", args) } else { trf("Installed {name}", args) });
+    if install {
+        // The window stays open (Installing…) until the download is in; an error leaves it open.
+        let params = json!({"id": e.id, "version": e.version, "sha256": e.sha256, "server": server, "confirm": true});
+        app.run_background(
+            ctx,
+            INSTALL,
+            params,
+            Box::new(move |app, _, v| {
+                app.ui.plugins_manage.confirm = None;
+                let name = v["name"].as_str().unwrap_or(tr("the plugin")).to_string();
+                let args: &[(&str, &dyn std::fmt::Display)] = &[("name", &name)];
+                app.toast(if update { trf("Updated {name}", args) } else { trf("Installed {name}", args) });
+            }),
+        );
     }
 }
 

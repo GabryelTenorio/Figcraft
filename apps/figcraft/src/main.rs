@@ -19,6 +19,8 @@ mod services;
 mod args_tests;
 #[cfg(test)]
 mod recovery_tests;
+#[cfg(test)]
+mod services_tests;
 
 use std::sync::{Arc, Mutex};
 

@@ -1,6 +1,6 @@
 //! Desktop services: native file dialogs, clipboard, URLs, persisted preferences.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 
 pub struct Desktop {
     clipboard: Option<arboard::Clipboard>,
+    /// Where the preferences live ([`config_dir`]).
+    dir: Option<PathBuf>,
     pub prefs: Option<Prefs>,
     /// The system's reduce-motion setting (read in the background at startup).
     reduce_motion: Arc<AtomicBool>,
@@ -31,10 +33,13 @@ pub fn config_dir() -> Option<PathBuf> {
 
 impl Desktop {
     pub fn load(recovery: crate::recovery::Shared) -> Self {
-        let state: Value = config_dir()
-            .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(json!({}));
+        Self::load_from(config_dir(), recovery)
+    }
+
+    /// With the preferences kept in `dir`.
+    pub fn load_from(dir: Option<PathBuf>, recovery: crate::recovery::Shared) -> Self {
+        let state: Value =
+            dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(STATE)).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
         let prefs = state.get("prefs").and_then(|p| serde_json::from_value::<Prefs>(p.clone()).ok()).map(|mut p| {
             // Recent files lived next to the preferences before they moved into them.
             if p.recent_files.is_empty()
@@ -48,7 +53,7 @@ impl Desktop {
         let reduce_motion = Arc::new(AtomicBool::new(false));
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
-        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language(), recovery }
+        Self { clipboard: arboard::Clipboard::new().ok(), dir, prefs, reduce_motion, language: system_language(), recovery }
     }
 }
 
@@ -126,13 +131,24 @@ fn command_says(program: &str, args: &[&str], want: &str) -> bool {
         .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == want)
 }
 
+/// The preferences' file in the config folder.
+const STATE: &str = "state.json";
+
 pub fn save_state(app: &FigApp) {
-    let Some(dir) = config_dir() else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    let v = json!({"prefs": app.session.prefs});
+    if let Some(dir) = config_dir() {
+        write_prefs(&dir, &app.session.prefs);
+    }
+}
+
+/// Write `prefs` to `dir` atomically (a temporary file renamed over the old one: a crash leaves
+/// either version whole).
+fn write_prefs(dir: &Path, prefs: &Prefs) {
     let tmp = dir.join("state.json.tmp");
-    if std::fs::write(&tmp, v.to_string()).is_ok() {
-        let _ = std::fs::rename(&tmp, dir.join("state.json"));
+    let written = std::fs::create_dir_all(dir)
+        .and_then(|()| std::fs::write(&tmp, json!({"prefs": prefs}).to_string()))
+        .and_then(|()| std::fs::rename(&tmp, dir.join(STATE)));
+    if let Err(e) = written {
+        log::warn!("preferences: couldn't save them in {}: {e}", dir.display());
     }
 }
 
@@ -170,6 +186,11 @@ impl Services for Desktop {
     }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
+    }
+    fn save_prefs(&mut self, prefs: &Prefs) {
+        if let Some(dir) = &self.dir {
+            write_prefs(dir, prefs);
+        }
     }
     fn emergency_save(&mut self, session: &Session) {
         if let Some(r) = crate::recovery::lock(&self.recovery).as_mut() {

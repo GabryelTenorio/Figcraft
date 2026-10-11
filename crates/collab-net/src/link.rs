@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use figcraft_collab::message::{Access, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
-use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo};
+use figcraft_engine::live::{
+    Bind, Event, HostOptions, LiveLink, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo,
+};
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
 use crate::host::{Host, HostConfig};
@@ -35,7 +37,7 @@ pub struct NetLink {
     inbox: Option<Inbox>,
     /// Tweaks for joining (tests shorten the reconnect pauses).
     guest: fn(GuestConfig) -> GuestConfig,
-    /// Answers to library requests sent in the background (outlives sessions).
+    /// Answers to requests sent in the background (outlives sessions).
     libraries: Inbox,
     /// Background library requests are out.
     fetching: Arc<AtomicBool>,
@@ -163,10 +165,7 @@ impl LiveLink for NetLink {
     }
 
     fn upload(&mut self, o: PublishOptions) -> Result<Published, String> {
-        let (server, query) = Endpoint::parse(&o.server)?;
-        let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
-        let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
-        upload_file(&server, &key, &o.name, &o.doc, &self.limits, CONNECT).map(|(_, published)| published)
+        upload(o, &self.limits)
     }
 
     fn library(&mut self, link: &str, req: LibraryReq) -> Result<LibraryReply, String> {
@@ -174,9 +173,24 @@ impl LiveLink for NetLink {
     }
 
     fn plugins(&mut self, server: &str, req: PluginReq) -> Result<PluginReply, String> {
-        let (server, query) = Endpoint::parse(server)?;
-        let key = query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v).unwrap_or_default();
-        manage::plugins(&server, key.trim(), req, &self.limits, CONNECT)
+        plugins(server, req, &self.limits)
+    }
+
+    fn background(&mut self, job: u64, req: NetRequest) -> bool {
+        let (inbox, limits) = (self.libraries.clone(), self.limits);
+        let (failed, failure) = (inbox.clone(), req.failure());
+        let spawned = std::thread::Builder::new().name("server-request".into()).spawn(move || {
+            let reply = match req {
+                NetRequest::Plugins { server, req } => NetReply::Plugins(plugins(&server, req, &limits)),
+                NetRequest::Library { link, req } => NetReply::Library(manage::library(&link, req, &limits, CONNECT)),
+                NetRequest::Upload(o) => NetReply::Upload(upload(o, &limits)),
+            };
+            inbox.push(Event::Net { job, reply: Box::new(reply) });
+        });
+        if let Err(e) = spawned {
+            failed.push(Event::Net { job, reply: Box::new(failure(format!("can't start a thread for the request: {e}"))) });
+        }
+        true
     }
 
     fn library_background(&mut self, jobs: Vec<(String, LibraryReq)>) {
@@ -227,6 +241,21 @@ impl LiveLink for NetLink {
         out.extend(self.inbox.as_ref().map(Inbox::drain).unwrap_or_default());
         out
     }
+}
+
+/// Keep `o.doc` on a server as a new file (see [`LiveLink::upload`]).
+fn upload(o: PublishOptions, limits: &NetLimits) -> Result<Published, String> {
+    let (server, query) = Endpoint::parse(&o.server)?;
+    let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
+    let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
+    upload_file(&server, &key, &o.name, &o.doc, limits, CONNECT).map(|(_, published)| published)
+}
+
+/// One request to the plugin directory at `server` (its key in the address's query, if any).
+fn plugins(server: &str, req: PluginReq, limits: &NetLimits) -> Result<PluginReply, String> {
+    let (server, query) = Endpoint::parse(server)?;
+    let key = query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v).unwrap_or_default();
+    manage::plugins(&server, key.trim(), req, limits, CONNECT)
 }
 
 impl Drop for NetLink {

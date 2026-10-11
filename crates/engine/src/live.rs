@@ -193,6 +193,63 @@ pub enum Event {
         link: String,
         reply: std::result::Result<LibraryReply, String>,
     },
+    /// The answer to request `job` sent in the background ([`LiveLink::background`]).
+    Net {
+        job: u64,
+        reply: Box<NetReply>,
+    },
+}
+
+/// A request to a server outside a live session: its plugin directory, a team library, or keeping
+/// a file there.
+#[derive(Clone, Debug)]
+pub enum NetRequest {
+    /// To the plugin directory of the server at `server` (`ws://host:port/`, with `?key=…` to
+    /// publish).
+    Plugins { server: String, req: PluginReq },
+    /// About the team library of the file behind share link `link`.
+    Library { link: String, req: LibraryReq },
+    /// Keep a file on a server without joining it ([`LiveLink::upload`]).
+    Upload(PublishOptions),
+}
+
+impl NetRequest {
+    /// What a session without the network says.
+    pub(crate) fn unavailable(&self) -> &'static str {
+        match self {
+            NetRequest::Plugins { .. } => crate::plugin_directory::NO_DIRECTORY,
+            NetRequest::Library { .. } | NetRequest::Upload(_) => NO_TEAM_LIBRARIES,
+        }
+    }
+
+    /// How to answer that this request failed (and why).
+    pub fn failure(&self) -> fn(String) -> NetReply {
+        match self {
+            NetRequest::Plugins { .. } => |why| NetReply::Plugins(Err(why)),
+            NetRequest::Library { .. } => |why| NetReply::Library(Err(why)),
+            NetRequest::Upload(_) => |why| NetReply::Upload(Err(why)),
+        }
+    }
+
+    /// The answer to this request stands for `other` when a command runs again: the same kind of
+    /// request to the same place (what it carries may differ: a usage report, a fresh timestamp).
+    pub(crate) fn stands_for(&self, other: &NetRequest) -> bool {
+        use std::mem::discriminant;
+        match (self, other) {
+            (NetRequest::Plugins { server: a, req: x }, NetRequest::Plugins { server: b, req: y }) => a == b && discriminant(x) == discriminant(y),
+            (NetRequest::Library { link: a, req: x }, NetRequest::Library { link: b, req: y }) => a == b && discriminant(x) == discriminant(y),
+            (NetRequest::Upload(a), NetRequest::Upload(b)) => a.server == b.server,
+            _ => false,
+        }
+    }
+}
+
+/// The answer to a [`NetRequest`] (an error: the server couldn't be reached or refused).
+#[derive(Clone, Debug, PartialEq)]
+pub enum NetReply {
+    Plugins(std::result::Result<PluginReply, String>),
+    Library(std::result::Result<LibraryReply, String>),
+    Upload(std::result::Result<Published, String>),
 }
 
 /// Which network interface a hosted session listens on.
@@ -271,6 +328,19 @@ pub trait LiveLink: Send {
     /// reached). Errors never echo the key.
     fn plugins(&mut self, _server: &str, _req: PluginReq) -> std::result::Result<PluginReply, String> {
         Err(crate::plugin_directory::NO_DIRECTORY.into())
+    }
+    /// Send `req` and wait for the answer (through the methods above).
+    fn request(&mut self, req: NetRequest) -> NetReply {
+        match req {
+            NetRequest::Plugins { server, req } => NetReply::Plugins(self.plugins(&server, req)),
+            NetRequest::Library { link, req } => NetReply::Library(self.library(&link, req)),
+            NetRequest::Upload(o) => NetReply::Upload(self.upload(o)),
+        }
+    }
+    /// Send `req` on a thread of its own and return at once: the answer arrives as [`Event::Net`]
+    /// with `job` (a failure to send too). False when this link can't, and nothing was sent.
+    fn background(&mut self, _job: u64, _req: NetRequest) -> bool {
+        false
     }
     /// End the current session (stop hosting or leave).
     fn leave(&mut self);
@@ -634,6 +704,7 @@ impl Session {
                 live.published = Some(p);
             }
             Event::Library { link, reply } => self.library_answer(&link, reply),
+            Event::Net { job, reply } => self.background_answer(job, *reply),
         }
     }
 

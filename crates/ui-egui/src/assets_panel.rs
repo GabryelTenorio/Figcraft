@@ -46,6 +46,10 @@ const SERVER_REFRESH: f64 = 30.0;
 /// Components listed in a team library's usage.
 const USAGE_ROWS: usize = 8;
 const PAD: f32 = 16.0;
+/// The team library commands the panel runs without waiting for the server.
+const TO_SERVER: &str = "library.publishToServer";
+const USAGE: &str = "library.usage";
+const ADD: &str = "library.add";
 
 /// Where an asset comes from: this file or an enabled library (its id).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -858,7 +862,12 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let (mut publish, mut to_server) = (false, false);
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        if server.is_some() {
+        if server.is_some() && app.session.waiting_for(TO_SERVER) {
+            crate::widgets::label(ui, tr("Publishing…"), Tokens::get(ui.ctx()).text_secondary);
+            if crate::widgets::button(ui, tr("Cancel"), false, true).clicked() {
+                app.cancel_background(TO_SERVER);
+            }
+        } else if server.is_some() {
             to_server = crate::widgets::button(ui, tr("Publish to server"), true, any).clicked();
         } else {
             publish = crate::widgets::button(ui, if m.is_some() { tr("Publish changes") } else { tr("Publish") }, true, any).clicked();
@@ -877,42 +886,55 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         }
         None => {}
     }
-    if to_server {
-        let description = form.description.clone().unwrap_or_else(|| description.clone());
-        if let Some(r) = app.run("library.publishToServer", json!({"description": description, "include": include})) {
-            form = PublishForm::default();
-            app.toast(trf("Published version {v} to the server", &[("v", &r["version"].as_u64().unwrap_or(0))]));
-        }
-    }
-    if publish {
-        let description = form.description.clone().unwrap_or(description);
-        if let Some(r) = app.run("library.publish", json!({"description": description, "include": include})) {
-            form = PublishForm::default();
-            // Other files read the saved file.
-            app.save();
-            let saved = app.session.ds().is_ok_and(|d| d.path.is_some() && !d.is_dirty());
-            let v = r["version"].as_u64().unwrap_or(0);
-            app.toast(if saved {
-                trf("Published version {v}", &[("v", &v)])
-            } else {
-                trf("Published version {v}: save the file so other files can use it", &[("v", &v)])
-            });
-        }
+    let params = (publish || to_server).then(|| json!({"description": form.description.clone().unwrap_or(description), "include": include}));
+    if publish && let Some(r) = params.clone().and_then(|p| app.run("library.publish", p)) {
+        form = PublishForm::default();
+        // Other files read the saved file.
+        app.save();
+        let saved = app.session.ds().is_ok_and(|d| d.path.is_some() && !d.is_dirty());
+        let v = r["version"].as_u64().unwrap_or(0);
+        app.toast(if saved {
+            trf("Published version {v}", &[("v", &v)])
+        } else {
+            trf("Published version {v}: save the file so other files can use it", &[("v", &v)])
+        });
     }
     ui.data_mut(|d| d.insert_temp(form_id, form));
+    // After the form is kept: a publish that finishes at once clears it.
+    if to_server && let Some(params) = params {
+        let done: crate::Done = Box::new(move |app, ctx, r| {
+            ctx.data_mut(|d| d.remove::<PublishForm>(form_id));
+            app.toast(trf("Published version {v} to the server", &[("v", &r["version"].as_u64().unwrap_or(0))]));
+        });
+        app.run_background(&ui.ctx().clone(), TO_SERVER, params, done);
+    }
 }
 
 /// How other files use this file's library on its server (asked for with a button: it is a
 /// request to the server).
 fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
     let usage_id = Id::new(("asset_library_usage", link));
-    let mut ask = false;
+    let loading = app.session.waiting_for(USAGE);
+    let (mut ask, mut stop) = (false, false);
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        ask = crate::widgets::button(ui, tr("Show usage"), false, true).clicked();
+        if loading {
+            stop = crate::widgets::button(ui, tr("Cancel"), false, true).clicked();
+        } else {
+            ask = crate::widgets::button(ui, tr("Show usage"), false, true).clicked();
+        }
     });
-    if ask && let Some(v) = app.run("library.usage", json!({})) {
-        ui.data_mut(|d| d.insert_temp(usage_id, Arc::new(v)));
+    if loading {
+        hint(ui, tr("Fetching from the server…"));
+    }
+    if stop {
+        app.cancel_background(USAGE);
+    }
+    if ask {
+        let done: crate::Done = Box::new(move |_, ctx, v| {
+            ctx.data_mut(|d| d.insert_temp(usage_id, Arc::new(v)));
+        });
+        app.run_background(&ui.ctx().clone(), USAGE, json!({}), done);
     }
     let Some(v) = ui.data(|d| d.get_temp::<Arc<Value>>(usage_id)) else {
         ui.add_space(8.0);
@@ -1012,15 +1034,24 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         add = crate::widgets::button(ui, tr("Add library file…"), false, true).clicked();
     });
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_space(PAD);
-        let pasted = crate::widgets::text_field(ui, Id::new("asset_add_link"), "", w - PAD * 2.0, tr("Paste a team library link (a view link)"));
-        if let Some(link) = pasted.map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
-            && let Some(r) = app.run("library.add", json!({"path": link}))
-        {
-            app.toast(trf("Added the library \"{name}\"", &[("name", &r["name"].as_str().unwrap_or_default())]));
-        }
-    });
+    let pasted = ui
+        .horizontal(|ui| {
+            ui.add_space(PAD);
+            crate::widgets::text_field(ui, Id::new("asset_add_link"), "", w - PAD * 2.0, tr("Paste a team library link (a view link)"))
+        })
+        .inner;
+    if let Some(link) = pasted.map(|l| l.trim().to_string()).filter(|l| !l.is_empty()) {
+        app.run_background(&ui.ctx().clone(), ADD, json!({"path": link}), Box::new(|app, _, r| added(app, &r)));
+    }
+    if app.session.waiting_for(ADD) {
+        hint(ui, tr("Fetching from the server…"));
+        ui.horizontal(|ui| {
+            ui.add_space(PAD);
+            if crate::widgets::button(ui, tr("Cancel"), false, true).clicked() {
+                app.cancel_background(ADD);
+            }
+        });
+    }
     if let Some(id) = remove {
         app.run("library.remove", json!({"id": id}));
     }
@@ -1035,12 +1066,17 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
             trn("Swapped {n} assets; {missed} had no match and still use the old library", moved as usize, &[("missed", &missed)])
         });
     }
-    if add && let Some(p) = app.services.pick_open(tr("Add library"), &["figcraft"]) {
-        let path = p.to_string_lossy().to_string();
-        if let Some(r) = app.run("library.add", json!({"path": path})) {
-            app.toast(trf("Added the library \"{name}\"", &[("name", &r["name"].as_str().unwrap_or_default())]));
-        }
+    if add
+        && let Some(p) = app.services.pick_open(tr("Add library"), &["figcraft"])
+        && let Some(r) = app.run(ADD, json!({"path": p.to_string_lossy()}))
+    {
+        added(app, &r);
     }
+}
+
+/// "Added the library …" after `library.add` answered `r`.
+fn added(app: &mut FigApp, r: &Value) {
+    app.toast(trf("Added the library \"{name}\"", &[("name", &r["name"].as_str().unwrap_or_default())]));
 }
 
 /// Tests: the components whose thumbnails are cached (for this file's assets).

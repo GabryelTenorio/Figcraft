@@ -13,7 +13,7 @@ use figcraft_collab::message::{LibraryReply, LibraryReq};
 use super::CommandSpec;
 use crate::library::*;
 use crate::library_server::{archive, is_server_link, read_archive, shown_path};
-use crate::live::PublishOptions;
+use crate::live::{NetReply, NetRequest, PublishOptions};
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
@@ -361,8 +361,10 @@ fn publish_to_server(s: &mut Session, p: &Value) -> Result<Value> {
         // The server's address with its key: the file is kept there first.
         Some(server) if key.is_some() || (server.contains("key=") && !server.contains("token=")) => {
             let opts = PublishOptions { server, key, name: doc.name.clone(), me: String::new(), doc: doc.clone() };
-            let net = s.live.link().ok_or_else(|| EngineError::Other(crate::live::NO_TEAM_LIBRARIES.into()))?;
-            let file = net.upload(opts).map_err(|e| bad(cmd, e))?;
+            let file = match s.net(NetRequest::Upload(opts))?.0 {
+                NetReply::Upload(r) => r.map_err(|e| bad(cmd, e))?,
+                _ => return Err(EngineError::Other("the server answered something else".into())),
+            };
             let edit = file.edit.clone();
             kept = Some(file);
             edit
@@ -386,10 +388,13 @@ fn publish_to_server(s: &mut Session, p: &Value) -> Result<Value> {
         (Err(_), Some(own)) if current.is_none() && !sel.is_empty() => (**own).clone(),
         (Err(e), _) => return Err(e),
     };
-    match s.library_request(&link, LibraryReq::Publish { archive: archive(&lib)? })? {
-        LibraryReply::Published { .. } => {}
-        other => return Err(unexpected(&other)),
-    }
+    let lib = match s.library_exchange(&link, LibraryReq::Publish { archive: archive(&lib)? })? {
+        // Run again in the background: what the server keeps is what went out then (a new copy
+        // differs at least in its time).
+        (LibraryReply::Published { .. }, Some(LibraryReq::Publish { archive })) => read_archive(&archive).map_err(EngineError::Other)?,
+        (LibraryReply::Published { .. }, _) => lib,
+        (other, _) => return Err(unexpected(&other)),
+    };
     let mut out = published_json(&sel, &lib);
     s.libraries.insert(&link, Ok(Arc::new(lib)));
     if let Some(f) = kept {

@@ -6,9 +6,10 @@
 //! link takes the place of a library file's path in [`LibraryLink::path`], so everything else
 //! (the Assets panel, placing components, updates with overrides kept) works as for library files.
 //! The engine never opens a socket: requests go through the app's [`LiveLink`](crate::live::LiveLink).
-//! A command that needs a library it hasn't fetched yet waits for the server; the Assets panel
-//! refreshes in the background ([`Session::refresh_server_libraries`]) and keeps the last library
-//! fetched while the server can't be reached.
+//! A command that needs a library it hasn't fetched yet waits for the server (the UI runs such
+//! commands without waiting: [`crate::background`]); the Assets panel refreshes in the background
+//! ([`Session::refresh_server_libraries`]) and keeps the last library fetched while the server
+//! can't be reached.
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use figcraft_collab::message::{LibraryReply, LibraryReq, Usage};
 use figcraft_doc::{Document, NodeId, NodeKind, PublishedLibrary};
 
-use crate::live::NO_TEAM_LIBRARIES;
+use crate::live::{NetReply, NetRequest};
 use crate::{EngineError, Result, Session};
 
 /// What a server library that hasn't been fetched yet says.
@@ -95,16 +96,26 @@ impl Session {
         self.live_doc(uid).then(|| info.link.clone())
     }
 
-    /// One request about the team library behind share link `link`, waiting for the server (a
-    /// refusal is an error).
-    // shortcut: commands wait on the calling thread (at most the 5 s connect timeout when the server
-    // is down; the panel's checks run in the background); queue them on the link if that shows.
-    pub(crate) fn library_request(&mut self, link: &str, req: LibraryReq) -> Result<LibraryReply> {
-        let net = self.live.link().ok_or_else(|| EngineError::Other(NO_TEAM_LIBRARIES.into()))?;
-        match net.library(link, req).map_err(EngineError::Other)? {
-            LibraryReply::Failed { reason } => Err(EngineError::Other(reason)),
-            r => Ok(r),
+    /// One request about the team library behind share link `link` (a refusal is an error), with
+    /// the request answered when a command running in the background got its answer earlier
+    /// ([`crate::background`]). Callers outside the background wait for the server (at most the
+    /// connect timeout when it can't be reached).
+    pub(crate) fn library_exchange(&mut self, link: &str, req: LibraryReq) -> Result<(LibraryReply, Option<LibraryReq>)> {
+        let (reply, sent) = self.net(NetRequest::Library { link: link.to_string(), req })?;
+        let sent = match sent {
+            Some(NetRequest::Library { req, .. }) => Some(req),
+            _ => None,
+        };
+        match reply {
+            NetReply::Library(Ok(LibraryReply::Failed { reason }) | Err(reason)) => Err(EngineError::Other(reason)),
+            NetReply::Library(Ok(r)) => Ok((r, sent)),
+            _ => Err(EngineError::Other("the server answered something else".into())),
         }
+    }
+
+    /// [`library_exchange`](Self::library_exchange) without the request.
+    pub(crate) fn library_request(&mut self, link: &str, req: LibraryReq) -> Result<LibraryReply> {
+        self.library_exchange(link, req).map(|(r, _)| r)
     }
 
     /// The published library at `path`: a library file (read again when it changed), or a server
@@ -129,9 +140,11 @@ impl Session {
             let id = d.libraries.enabled.iter().find(|l| l.path == path).map(|l| l.id.clone()).unwrap_or_default();
             usage(d, &id)
         });
-        let reply = match self.live.link() {
-            Some(net) => net.library(path, LibraryReq::Fetch { have, usage }),
-            None => Err(NO_TEAM_LIBRARIES.into()),
+        let reply = match self.net(NetRequest::Library { link: path.to_string(), req: LibraryReq::Fetch { have, usage } }) {
+            Ok((NetReply::Library(r), _)) => r,
+            Ok(_) => Err("the server answered something else".into()),
+            Err(EngineError::Waiting) => return Err(EngineError::Waiting),
+            Err(e) => Err(e.to_string()),
         };
         self.take_library(path, reply).map_err(EngineError::Other)
     }
