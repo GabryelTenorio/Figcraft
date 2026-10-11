@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -25,6 +25,7 @@ interaction feel not yet compared.
 | Keyboard shortcuts panel | done | docked, tabbed by group, searchable, per-platform keycaps |
 | Several windows | partial | File ▸ New window, Open in new window on a tab, a tab dragged off the strip; screen-reader tree in the main window only; positions not restored |
 | Multiplayer avatars, Share button | missing | waits for multiplayer |
+| Blend mode menus: the layer's (Design panel) and each paint's (colour picker) | done | Pass through and Normal are distinct (Normal isolates a group's or frame's children); paints have no pass-through; plus darker drawn exactly on the canvas |
 
 ## Selection and transform
 
@@ -61,7 +62,7 @@ interaction feel not yet compared.
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: clicked where the result is, double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | |
 | Text: point, auto height, fixed; caret, words, lines, IME | done | carets step over whole emoji and accented letters; CJK words by script run (no dictionary); vertical trim in Type settings; no spell check |
-| Eyedropper (I) | done | |
+| Eyedropper (I) | done | picks the colour seen under the pointer (opaque) into the selection's fill and the recent colours, one undo step (`fx_behaviour_tests`) |
 | Comment (C), Shift+C to show/hide | done | local only |
 | Text on a path (Figma Draw) | done | put on from the Design panel or `text.onPath`, not by clicking a path with the Text tool; the path is edited by resizing only |
 | Stretch and scatter brushes (Figma Draw) | done | eight presets drawn in code; the Pencil's brush is set by `tool.pencilBrush`, not from the toolbar |
@@ -102,6 +103,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Paint and effects behaviour suite: the blend menu's Normal sets Normal (it set pass-through), a blend menu for each paint in the colour picker, the eyedropper's rules covered by tests |
 | 2026-10-11 | minor | Frames, groups, sections and masks: drawing a frame or section around layers takes them, sections stay out of frames, section resizing leaves contents in place, masked-out areas don't take clicks, a mask group's box follows the mask, X/Y of layers in groups are measured in the frame |
 | 2026-10-11 | minor | Layers panel keyboard: F2 renames (also from a row with the keyboard, which gets it back), Shift+F10 opens the context menu at the focused row or below the canvas selection, F8 draws a selection box the arrows move and size; stroke weights bind to variables side by side |
 | 2026-10-11 | minor | Selection and transform behaviour suite and fixes: Alt shrinks, groups and mixed rotations scale each layer along its own axes, several layers flip together, whole-pixel resizes, small layers move from inside, locked layers stay put, marquees from a top-level frame's background, equal spacing snapping, Cmd/Ctrl ignores constraints while resizing a frame |

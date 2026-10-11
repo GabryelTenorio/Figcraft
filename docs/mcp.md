@@ -103,6 +103,18 @@ Or in a project's `.mcp.json`:
   tools, `color` may also be a hex string and gradients can be written
   `{"type": "linearGradient", "stops": ["#7048E8", "#1098AD"]}`; the server converts them to the
   engine's paint JSON.
+- **Blend modes**: `blend` on a layer (`node.set`) or a paint (`fill.set` / `stroke.set`) is a
+  menu label or CSS keyword (`"Normal"`, `"pass through"`, `"multiply"`, `"plusDarker"`, ...;
+  `normal` is Normal). Groups and frames start as pass-through: their children blend with what is
+  behind them, through clipping too (SVG exports put a clipping frame's clip on what it holds, since
+  a clipped group would isolate it); Normal blends the children among themselves first (SVG
+  `isolation:isolate`, a PDF isolated group). Plus darker is exact in renders and pixel exports;
+  PDF has no such mode (multiply) and SVG writes the CSS `plus-darker` keyword. Inspecting a layer
+  reports a paint's `blend` when it isn't normal.
+- **Drop shadows** hide behind what their layer covers, its fills (translucent and 0% ones too)
+  and strokes, unless the effect has `showBehind: true`; groups, and layers whose pixels a layer
+  blur or texture moves, hide them behind their pixels instead. SVG exports cut them out the same
+  way, with filter regions as large as the effects reach.
 - **Colour profile**: colour values are in the file's profile, sRGB (default) or Display P3
   (`inspect_document` reports `colorProfile`). `file.colorProfile {profile: srgb|displayP3,
   convert?}` changes it: `convert` (default true) converts every colour value so colours keep their

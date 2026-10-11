@@ -459,6 +459,19 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     }
                 });
             }
+            // The paint's own blend mode, with the paints and layers under it.
+            if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. }) {
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    let resp = widgets::dropdown(ui, tr(paint.blend.label()), 208.0, Some(Icon::Blend)).on_hover_text(tr("Blend mode"));
+                    crate::right::menu_popup(&resp).width(200.0).show(|ui| {
+                        if let Some(b) = crate::right::blend_menu(ui, false) {
+                            paint.blend = b;
+                            write(app, &target, &paint, false);
+                        }
+                    });
+                });
+            }
             // Gradient stops.
             let mut edit_color: Option<Color> = match &paint.kind {
                 PaintKind::Solid { color } => Some(color.with_alpha(color.a * paint.opacity)),

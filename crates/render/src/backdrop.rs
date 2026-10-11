@@ -27,9 +27,12 @@ pub struct Under<'a> {
     /// Where this surface's top-left pixel lands on `pix`.
     pub at: (i32, i32),
     pub opacity: f32,
-    pub blend: tiny_skia::BlendMode,
+    pub blend: figcraft_color::BlendMode,
     /// What this surface is clipped by when composited, in its own pixels.
     pub clip: Option<&'a Mask>,
+    /// The surface started as a copy of `pix` there and goes back in its place through `clip`
+    /// (a clipping frame's children: clipping doesn't isolate them), instead of over it.
+    pub replaces: bool,
     /// The surface under `pix`, if `pix` is itself an isolated surface.
     pub below: Option<&'a Under<'a>>,
 }
@@ -37,7 +40,7 @@ pub struct Under<'a> {
 impl<'a> Under<'a> {
     /// A surface drawn at `at` onto `pix` (itself over `below`), as is.
     pub fn new(pix: &'a Pixmap, at: (i32, i32), below: Option<&'a Under<'a>>) -> Self {
-        Under { pix, at, opacity: 1.0, blend: tiny_skia::BlendMode::SourceOver, clip: None, below }
+        Under { pix, at, opacity: 1.0, blend: figcraft_color::BlendMode::Normal, clip: None, replaces: false, below }
     }
 }
 
@@ -60,16 +63,51 @@ fn clip_at(p: &mut Pixmap, m: &Mask, x: i32, y: i32) {
 /// The backdrop of the `w` × `h` pixel rectangle at `(x, y)` of `pix`: what is drawn on `pix` so
 /// far, over everything under it.
 pub fn backdrop(pix: &Pixmap, under: Option<&Under>, x: i32, y: i32, w: u32, h: u32) -> Option<Pixmap> {
+    onto(copy_rect(pix, x, y, w, h)?, under, x, y)
+}
+
+/// The `w` × `h` pixels of `pix` at `(x, y)` (transparent past its edges).
+fn copy_rect(pix: &Pixmap, x: i32, y: i32, w: u32, h: u32) -> Option<Pixmap> {
     let mut part = Pixmap::new(w, h)?;
     let copy = PixmapPaint { blend_mode: tiny_skia::BlendMode::Source, ..Default::default() };
     part.draw_pixmap(x.checked_neg()?, y.checked_neg()?, pix.as_ref(), &copy, Transform::identity(), None);
+    Some(part)
+}
+
+/// `part`, the pixels at `(x, y)` of a surface, composited onto the surfaces `under` it.
+fn onto(mut part: Pixmap, under: Option<&Under>, x: i32, y: i32) -> Option<Pixmap> {
     let Some(u) = under else { return Some(part) };
-    let mut out = backdrop(u.pix, u.below, x.checked_add(u.at.0)?, y.checked_add(u.at.1)?, w, h)?;
+    let (w, h) = (part.width(), part.height());
+    let (ux, uy) = (x.checked_add(u.at.0)?, y.checked_add(u.at.1)?);
+    if u.replaces {
+        // `part` takes the place of `u.pix`'s pixels through the clip, then goes where they go.
+        let mut merged = copy_rect(u.pix, ux, uy, w, h)?;
+        replace(&mut merged, (0, 0), &part, u.clip.map(|m| (m, (x, y))));
+        return onto(merged, u.below, ux, uy);
+    }
+    let mut out = backdrop(u.pix, u.below, ux, uy, w, h)?;
     if let Some(m) = u.clip {
         clip_at(&mut part, m, x, y);
     }
-    out.draw_pixmap(0, 0, part.as_ref(), &PixmapPaint { opacity: u.opacity, blend_mode: u.blend, ..Default::default() }, Transform::identity(), None);
+    crate::paint::composite(&mut out, (0, 0), &part, u.opacity, u.blend);
     Some(out)
+}
+
+/// Put `src` in place of the pixels of `dst` at `at`, through `clip` (a mask and where `src`'s
+/// top-left lies on it): `dst` keeps what the clip leaves out, and pixels past either edge are
+/// dropped.
+pub(crate) fn replace(dst: &mut Pixmap, at: (i32, i32), src: &Pixmap, clip: Option<(&Mask, (i32, i32))>) {
+    fx::overlap_rows(dst, at, src, |dp, sp, r, c0| {
+        let Some((m, (mx, my))) = clip else { return dp.copy_from_slice(sp) };
+        let (mw, mh, my) = (i64::from(m.width()), i64::from(m.height()), r + i64::from(my));
+        for (c, (d, s)) in (c0..).zip(dp.chunks_exact_mut(4).zip(sp.chunks_exact(4))) {
+            let mx = c + i64::from(mx);
+            let k = if mx >= 0 && my >= 0 && mx < mw && my < mh { u32::from(m.data().get((my * mw + mx) as usize).copied().unwrap_or(0)) } else { 0 };
+            for (d, s) in d.iter_mut().zip(s) {
+                *d = ((u32::from(*d) * (255 - k) + u32::from(*s) * k + 127) / 255) as u8;
+            }
+        }
+    });
 }
 
 /// Whether a node has a visible background blur or glass.

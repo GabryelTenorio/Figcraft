@@ -1253,6 +1253,8 @@ mod frame_tests;
 #[cfg(test)]
 mod frames_behaviour_tests;
 #[cfg(test)]
+mod fx_behaviour_tests;
+#[cfg(test)]
 mod gesture_preview_tests;
 #[cfg(test)]
 mod html_codegen_tests;

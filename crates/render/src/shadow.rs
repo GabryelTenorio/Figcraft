@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use figcraft_doc::{Document, Node, NodeKind, SPREAD_MITER_LIMIT, Shadow};
+use figcraft_doc::{Document, EffectKind, Node, NodeKind, SPREAD_MITER_LIMIT, Shadow};
 use figcraft_geom::{Affine, BezPath};
 use tiny_skia::{FillRule, Pixmap, PixmapPaint, Transform};
 
@@ -29,7 +29,18 @@ pub type Outline = (BezPath, FillRule);
 /// (when a fill shows) and its stroke area. `None` when the layer's pixels aren't those outlines:
 /// groups, frames that don't clip their children or show no fill, text with a stroke.
 pub fn silhouette(doc: &Document, n: &Node) -> Option<Vec<Outline>> {
-    let has_fill = n.fills.iter().any(|f| f.visible && f.opacity > 0.0);
+    outlines(doc, n, |f| f.visible && f.opacity > 0.0)
+}
+
+/// The area a node's paints cover, in local space: the outline of its visible fills (translucent
+/// or at 0% too) and its stroke area; what hides its drop shadows unless they show behind
+/// transparent areas. `None` where [`silhouette`] is.
+pub fn cover(doc: &Document, n: &Node) -> Option<Vec<Outline>> {
+    outlines(doc, n, |f| f.visible)
+}
+
+fn outlines(doc: &Document, n: &Node, fill_counts: fn(&figcraft_color::Paint) -> bool) -> Option<Vec<Outline>> {
+    let has_fill = n.fills.iter().any(fill_counts);
     let is_bool = matches!(n.kind, NodeKind::BooleanOp { .. });
     let is_text = matches!(n.kind, NodeKind::Text(_));
     let kids = !is_bool && n.children.iter().any(|c| doc.node(*c).is_some_and(|c| c.visible));
@@ -142,17 +153,44 @@ pub struct Caster<'a> {
     pub xf: Affine,
     /// Device pixels per document unit.
     pub scale: f64,
-    /// See [`silhouette`]; needed only for spread.
-    pub silhouette: Option<&'a [Outline]>,
+    /// See [`silhouette`]; only when a shadow spreads.
+    pub silhouette: Option<Vec<Outline>>,
+    /// The node's [`cover`] in the layer's pixels; only when a shadow hides behind the layer.
+    pub cover: Option<Pixmap>,
+}
+
+fn drop_shadows(n: &Node) -> impl Iterator<Item = &Shadow> {
+    n.effects.iter().filter(|e| e.visible).filter_map(|e| if let EffectKind::DropShadow(s) = &e.kind { Some(s) } else { None })
+}
+
+/// What hides node `n`'s drop shadows that don't show behind transparent areas: its [`cover`],
+/// or `None` when its pixels do that (layers that aren't one outline; effects that move the
+/// pixels past the paints) or no shadow hides.
+pub fn hiding_cover(doc: &Document, n: &Node) -> Option<Vec<Outline>> {
+    let moved = n.effects.iter().any(|e| matches!(e.kind, EffectKind::LayerBlur(_) | EffectKind::Texture(_)) && e.reach() > 0.0);
+    if moved || !drop_shadows(n).any(|s| !s.show_behind) {
+        return None;
+    }
+    cover(doc, n)
+}
+
+impl<'a> Caster<'a> {
+    /// What casts node `n`'s drop shadows from its `layer` (local → pixels through `xf`).
+    pub fn new(doc: &Document, n: &Node, layer: &'a Pixmap, xf: Affine, scale: f64) -> Self {
+        let silhouette = if drop_shadows(n).any(|s| s.spread != 0.0) { silhouette(doc, n) } else { None };
+        let cover = hiding_cover(doc, n).and_then(|c| spread_alpha(&c, 0.0, xf, layer.width(), layer.height()));
+        Caster { layer, xf, scale, silhouette, cover }
+    }
 }
 
 /// A drop shadow in the layer's pixels: offset, spread, blurred, tinted and (unless it shows
-/// behind the layer) hidden behind the layer's own pixels.
+/// behind the layer) hidden behind the layer: behind what its paints cover, translucent parts
+/// included, or (layers that aren't one outline) behind its pixels.
 pub fn drop_shadow(c: &Caster, s: &Shadow) -> Option<Pixmap> {
     let (w, h) = (c.layer.width(), c.layer.height());
     let (dx, dy) = (s.offset.0 * c.scale, s.offset.1 * c.scale);
     let spread = if s.spread.is_finite() { s.spread } else { 0.0 };
-    let mut sh = match c.silhouette {
+    let mut sh = match c.silhouette.as_deref() {
         Some(sil) if spread != 0.0 && dx.is_finite() && dy.is_finite() => spread_alpha(sil, spread, Affine::translate((dx, dy)) * c.xf, w, h)?,
         _ => {
             let mut base = c.layer.clone();
@@ -165,7 +203,7 @@ pub fn drop_shadow(c: &Caster, s: &Shadow) -> Option<Pixmap> {
     fx::blur(&mut sh, s.radius / 2.0 * c.scale);
     fx::tint(&mut sh, color4(s.color));
     if !s.show_behind {
-        fx::mask_by(&mut sh, c.layer, true);
+        fx::mask_by(&mut sh, c.cover.as_ref().unwrap_or(c.layer), true);
     }
     Some(sh)
 }

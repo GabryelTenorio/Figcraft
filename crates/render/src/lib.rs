@@ -404,6 +404,8 @@ mod boolean_cache_tests;
 #[cfg(test)]
 mod effect_order_tests;
 #[cfg(test)]
+mod effects_behaviour_tests;
+#[cfg(test)]
 mod gif_tests;
 #[cfg(test)]
 mod grain_tests;
@@ -411,6 +413,8 @@ mod grain_tests;
 mod image_profile_tests;
 #[cfg(test)]
 mod lod_tests;
+#[cfg(test)]
+mod paint_behaviour_tests;
 #[cfg(test)]
 mod progressive_tests;
 #[cfg(test)]

@@ -8,8 +8,7 @@
 //! - Text below [`GREEK_PX`] (its largest font size on screen) is *greeked*: one bar per line,
 //!   across the line's glyphs, at about the ink density of text.
 //!
-//! - Small axis-aligned rectangles with solid fills are splatted instead of filled as paths, and
-//!   rectangular clipping layers are composited without a full blending pipeline.
+//! - Small axis-aligned rectangles with solid fills are splatted instead of filled as paths.
 //!
 //! Only views at [`MAX_SCALE`] or below are approximated: 1:1 and closer previews are exact, and
 //! so are exports, thumbnails and every other render. Whatever LOD can't approximate faithfully
@@ -334,45 +333,6 @@ pub fn splat(pix: &mut Pixmap, r: Rect, color: [f32; 4]) {
         }
         for d in pixels {
             mix(d, cy);
-        }
-    }
-}
-
-/// Composite premultiplied `src` over `dst` with its top-left at `(x, y)` (source-over, the
-/// pixels outside `dst` dropped): what `draw_pixmap` does for a plain layer, without its pipeline
-/// set-up, which dominates for the many small layers of a zoomed-out page.
-pub fn blit_over(dst: &mut Pixmap, x: i32, y: i32, src: &Pixmap) {
-    let (dw, dh) = (i64::from(dst.width()), i64::from(dst.height()));
-    let (sw, sh) = (i64::from(src.width()), i64::from(src.height()));
-    let (x, y) = (i64::from(x), i64::from(y));
-    // The overlap, in source columns and rows.
-    let (c0, c1) = ((-x).max(0), sw.min(dw - x));
-    let (r0, r1) = ((-y).max(0), sh.min(dh - y));
-    if c1 <= c0 || r1 <= r0 {
-        return;
-    }
-    let (sstride, dstride) = (sw as usize * 4, dw as usize * 4);
-    let (c0, c1) = (c0 as usize * 4, c1 as usize * 4);
-    let dx = (x * 4) as isize;
-    let s = src.data();
-    let d = dst.data_mut();
-    for r in r0..r1 {
-        let srow = r as usize * sstride;
-        let drow = (r + y) as usize * dstride;
-        let (Some(sp), Some(dp)) = (s.get(srow + c0..srow + c1), d.get_mut((drow + c0).wrapping_add_signed(dx)..(drow + c1).wrapping_add_signed(dx)))
-        else {
-            continue;
-        };
-        for (sp, dp) in sp.chunks_exact(4).zip(dp.chunks_exact_mut(4)) {
-            let a = sp[3];
-            if a == 255 {
-                dp.copy_from_slice(sp);
-            } else if a > 0 {
-                let keep = 255 - u32::from(a);
-                for (d, s) in dp.iter_mut().zip(sp) {
-                    *d = (u32::from(*s) + (u32::from(*d) * keep + 127) / 255).min(255) as u8;
-                }
-            }
         }
     }
 }

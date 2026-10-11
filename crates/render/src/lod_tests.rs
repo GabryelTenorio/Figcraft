@@ -9,7 +9,7 @@ use figcraft_doc::{Document, ImageData, NodeId, NodeKind, TextData};
 use figcraft_geom::{Affine, Rect};
 
 use crate::retained_tests::assert_same;
-use crate::{Options, Pixmap, Retained, View, lod, render_node, render_view, render_view_single};
+use crate::{Options, Pixmap, Retained, View, backdrop, lod, render_node, render_view, render_view_single};
 
 fn fonts() {
     static ONCE: Once = Once::new();
@@ -304,6 +304,6 @@ fn splat_and_blit_survive_junk() {
     let src = Pixmap::new(3, 3).unwrap();
     let mut dst = Pixmap::new(4, 4).unwrap();
     for (x, y) in [(-2, -2), (3, 3), (-10, 0), (0, 10), (i32::MIN, i32::MAX), (i32::MAX, i32::MIN)] {
-        lod::blit_over(&mut dst, x, y, &src);
+        backdrop::replace(&mut dst, (x, y), &src, None);
     }
 }

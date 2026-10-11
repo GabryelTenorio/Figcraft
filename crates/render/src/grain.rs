@@ -7,9 +7,7 @@
 
 use figcraft_doc::{Noise, NoiseMode, Texture};
 use figcraft_geom::Affine;
-use tiny_skia::{Pixmap, PixmapPaint, Transform};
-
-use crate::paint::ts_blend;
+use tiny_skia::Pixmap;
 
 /// A well-mixed 64-bit hash of a grain cell.
 fn hash(ix: i64, iy: i64, seed: u32) -> u64 {
@@ -55,8 +53,7 @@ impl Cells {
 /// size across.
 pub fn noise(layer: &mut Pixmap, nz: &Noise, xf: Affine, seed: u32) {
     if let Some(g) = grains(layer, nz, xf, seed) {
-        let paint = PixmapPaint { blend_mode: ts_blend(nz.blend), ..Default::default() };
-        layer.draw_pixmap(0, 0, g.as_ref(), &paint, Transform::identity(), None);
+        crate::paint::composite(layer, (0, 0), &g, 1.0, nz.blend);
     }
 }
 

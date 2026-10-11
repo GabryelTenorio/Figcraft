@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~26 points and ~173–310 h away (one Opus 5.5 agent; ~35–70 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -19,7 +19,7 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~48%** | estimated: weekly areas 69.1% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~173–310 h** one agent | estimated |
-| Remaining to full parity | **~314–606 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~312–604 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
@@ -56,7 +56,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 69%) | 53–103 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 69%) | 51–101 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 55% (`.fig` read best effort, no write) | 8–15 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 13% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links and team libraries; preview) | 49–98 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -76,9 +76,9 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Selection & transform | 97% | 72% | 3–5 | [ui-parity](docs/ui-parity.md) |
 | Layers panel | 98% | 82% | 1–2 | [ui-parity](docs/ui-parity.md) |
 | Shapes & vector | 97% | 68% | 1–3 | [target-app-parity](docs/target-app-parity.md) |
-| Paint | 90% | 67% | 3–6 | [target-app-parity](docs/target-app-parity.md) |
+| Paint | 90% | 71% | 2–5 | [target-app-parity](docs/target-app-parity.md) |
 | Strokes | 95% | 75% | 1–2 | [target-app-parity](docs/target-app-parity.md) |
-| Effects | 100% | 72% | 3–6 | [target-app-parity](docs/target-app-parity.md) |
+| Effects | 100% | 75% | 2–5 | [target-app-parity](docs/target-app-parity.md) |
 | Frames, groups, sections, masks | 97% | 80% | 1–3 | [target-app-parity](docs/target-app-parity.md) |
 | Auto layout & constraints | 98% | 74% | 3–6 | [auto-layout-parity](docs/auto-layout-parity.md) |
 | Text | 87% | 68% | 5–10 | [target-app-parity](docs/target-app-parity.md) |
@@ -128,6 +128,11 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Progress log
 
+- **2026-10-11** · Paint and effects behaviour suite: every documented rule for fills, blend modes,
+  gradients, images, colour models, shadows, blurs and effect exports is a table-driven case. Fixes: Normal
+  groups isolate and clipping frames don't, plus darker is drawn, drop shadows hide behind translucent
+  layers in every export, Fill images reach the box's edges, "Normal" no longer means pass-through.
+  Paint 70%, effects 75%.
 - **2026-10-11** · `.fig` import, best effort (gap 1): `file.open`, `file.import`, drag and drop, the CLI and
   MCP open `.fig` files. A generic kiwi decoder reads each file's own schema, and the decoded nodes map by field name
   onto the REST importer: layers, paints and styles, text runs, vectors as outlines, auto layout, components and
@@ -195,6 +200,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Paint and effects behaviour suite written from the public documentation and its fixes: Normal groups and frames isolate their children and clipping frames don't (canvas, SVG, PDF); plus darker drawn on the canvas and in PNG exports; drop shadows hidden behind what the layer covers unless shown behind transparent areas, SVG included, with filter regions that reach as far as the effects; Fill images cover the box to its edges; "Normal" names Normal in commands and the blend menu. Paint 85%/66% → 87%/70% (breadth from the GIF/TIFF row), 5–9 h → 3–6 h; effects 72% → 75%, 3–6 h → 2–5 h; percentages unchanged at this rounding; full parity ~321–618 h → ~319–616 h |
 | 2026-10-11 | minor | Frames, groups, sections and masks behaviour suite written from the public documentation (15 frame, group and section tests, 6 mask tests) and its fixes: a layer a mask hides can't be clicked there (clicks reach what's behind; Select layer agrees), a mask group's box and exports are the mask's (plus any layers under it), sections stay on the page or in sections (moves, drags, pastes, grouping and new sections in frames refused or kept on the page), drawing a frame or section around layers puts those fully inside it in it, resizing a section leaves its contents where they are (and a frame resized with Cmd/Ctrl held keeps its layers' sizes too), and X/Y of layers in groups are measured in the frame (groups have no coordinate space). Frames, groups, sections, masks 95%/75% → 97%/80%, 2–4 h → 1–3 h; percentages unchanged at this rounding; full parity ~323–621 h → ~322–620 h |
 | 2026-10-11 | minor | Styles and variables behaviour suite written from the public documentation (18 command-level tests) and its fixes: editing a styled fill, stroke, effect or layout grid list (directly, a paint row, an added fill or a bound variable) unlinks that style instead of being overwritten by the next style edit; applying a style replaces variables bound to what it sets; text styles go on text layers only; deleting a variable (or its collection) unbinds the layers using it, which keep their last value, and aliases to it take its values; bindings are type-checked (a colour variable can't drive a width) and number variables fill text content; aliases are checked when a variable is created. Added: duplicate, move (reorder, into a folder) and rename folder for styles, with a Local styles list grouped by type and folder (click to edit, right-click, drag to reorder); duplicate mode, set as default and move column for modes; per-platform code syntax (Web, iOS, Android) used by generated CSS and the variables JSON; font weight, paragraph spacing/indent and text content scopes for number variables. Found missing: variables inside styles. Styles & variables 92%/72% → 94%/76%, 1–2 h → 3–5 h; percentages unchanged at this rounding; full parity ~323–621 h → ~325–624 h |
 | 2026-10-11 | minor | Prototyping behaviour suite written from the public documentation (7 model tests, 12 player tests with 21 gestures) and its fixes: on drag starts only for a drag its animation's way and the animation follows the pointer, key combinations (`Shift+K`) fire (and are recorded and imported), an overlay's after-delay timer starts when it opens, instances of interactive components play their variant's interactions and "Change to" changes the right instance, spring presets are physical springs that play until they settle, smart animate overshoots with spring and back easings, fixed layers draw above scrolling content; added scroll to offsets. Prototyping 88%/70% → 90%/74%, 5–9 h → 3–6 h; mainstream weekly areas 68.1% → 68.4%, mainstream ~46% → ~47%; other percentages unchanged at this rounding; full parity ~320–615 h → ~318–612 h |

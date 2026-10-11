@@ -37,7 +37,9 @@ fn drop_shadow_spread_offsets_the_outline() {
     let svg = export(&d, n);
     assert!(!svg.contains("feMorphology"), "{svg}");
     assert!(svg.contains("stroke-width=\"12\"") && svg.contains("stroke-linejoin=\"miter\"") && svg.contains("stroke-miterlimit=\"4\""), "{svg}");
-    assert!(svg.contains("<feGaussianBlur stdDeviation=\"4\"/>"), "{svg}");
+    assert!(svg.contains("<feGaussianBlur stdDeviation=\"4\" result=\"b\"/>"), "{svg}");
+    // Hidden behind the layer: cut out by an image of its outline.
+    assert!(svg.contains("<feComposite in=\"b\" in2=\"cover\" operator=\"out\"/>"), "{svg}");
     assert!(svg.contains("opacity=\"0.502\""), "{svg}");
 }
 

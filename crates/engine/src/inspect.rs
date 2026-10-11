@@ -250,6 +250,9 @@ fn paints(p: &[figcraft_color::Paint]) -> Value {
                     if x.opacity < 1.0 {
                         v["opacity"] = json!(x.opacity);
                     }
+                    if x.blend != figcraft_color::BlendMode::Normal {
+                        v["blend"] = json!(x.blend);
+                    }
                     if !x.visible {
                         v["visible"] = json!(false);
                     }

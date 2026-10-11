@@ -16,7 +16,7 @@ pub fn ts_blend(b: BlendMode) -> tiny_skia::BlendMode {
         BlendMode::PassThrough | BlendMode::Normal => T::SourceOver,
         BlendMode::Darken => T::Darken,
         BlendMode::Multiply => T::Multiply,
-        // Plus darker: approximate with multiply-ish darken.
+        // Plus darker has no tiny-skia mode: `composite` draws it; elsewhere the nearest one.
         BlendMode::PlusDarker => T::Multiply,
         BlendMode::ColorBurn => T::ColorBurn,
         BlendMode::Lighten => T::Lighten,
@@ -32,6 +32,16 @@ pub fn ts_blend(b: BlendMode) -> tiny_skia::BlendMode {
         BlendMode::Saturation => T::Saturation,
         BlendMode::Color => T::Color,
         BlendMode::Luminosity => T::Luminosity,
+    }
+}
+
+/// Draw `src` (top-left at `at`) onto `dst` at `opacity`, blended by `blend`.
+pub fn composite(dst: &mut Pixmap, at: (i32, i32), src: &Pixmap, opacity: f32, blend: BlendMode) {
+    if blend == BlendMode::PlusDarker {
+        crate::fx::plus_darker(dst, at, src, opacity);
+    } else {
+        let paint = tiny_skia::PixmapPaint { opacity, blend_mode: ts_blend(blend), ..Default::default() };
+        dst.draw_pixmap(at.0, at.1, src.as_ref(), &paint, Transform::identity(), None);
     }
 }
 
@@ -136,7 +146,12 @@ pub fn prepare_at(paint: &Paint, w: f64, h: f64, scale: f64, doc: &Document, tim
             if img.scale_mode == ImageScaleMode::Tile {
                 return Some(Prepared::Pattern { pixmap: pm, mode: SpreadMode::Repeat, quality: FilterQuality::Bicubic, opacity: op, transform });
             }
-            // Fit/Fill/Crop: a transparent 1-px border so Pad spreads transparency, not edge pixels.
+            // An image covering the whole box fills it to its edges (a transparent border would
+            // fade them where the image is scaled up).
+            if covers_box(img, f64::from(pm.width()), f64::from(pm.height()), w, h) {
+                return Some(Prepared::Pattern { pixmap: pm, mode: SpreadMode::Pad, quality: FilterQuality::Bicubic, opacity: op, transform });
+            }
+            // Fit/Crop: a transparent 1-px border so Pad spreads transparency, not edge pixels.
             // A GIF's later frames each show once per loop: not worth caching padded.
             let padded = match moving {
                 Some(_) => Arc::new(crate::images::pad(&pm)?),
@@ -146,6 +161,19 @@ pub fn prepare_at(paint: &Paint, w: f64, h: f64, scale: f64, doc: &Document, tim
             Some(Prepared::Pattern { pixmap: padded, mode: SpreadMode::Pad, quality: FilterQuality::Bicubic, opacity: op, transform })
         }
         PaintKind::Pattern(pt) => crate::pattern::prepare(doc, pt, w, h, scale, time, op),
+    }
+}
+
+/// Whether an image paint covers its whole `w` × `h` box: Fill always, Crop when its frame does.
+fn covers_box(img: &ImagePaint, iw: f64, ih: f64, w: f64, h: f64) -> bool {
+    match img.scale_mode {
+        ImageScaleMode::Fill => true,
+        ImageScaleMode::Crop => {
+            let m = img.effective_crop(iw, ih, w, h);
+            let (x0, y0, x1, y1) = ImagePaint::crop_rect(m);
+            m[1] == 0.0 && m[2] == 0.0 && x0.min(x1) <= 0.0 && y0.min(y1) <= 0.0 && x0.max(x1) >= 1.0 && y0.max(y1) >= 1.0
+        }
+        ImageScaleMode::Fit | ImageScaleMode::Tile => false,
     }
 }
 

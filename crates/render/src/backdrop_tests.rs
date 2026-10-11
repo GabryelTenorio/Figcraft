@@ -142,6 +142,27 @@ fn background_blur_inside_a_faded_group_blends_with_the_group() {
 }
 
 #[test]
+fn background_blur_in_a_clipping_frame_inside_a_faded_group() {
+    // The clipping frame's children are drawn on a copy of the group's pixels: the pane's
+    // backdrop is that copy where the group puts it, at the group's 50% (half the frame), not the
+    // copy at full strength.
+    let (mut d, f, pane) = scene(Holder::ClipFrame);
+    let p = d.first_page().unwrap();
+    let g = d.create(p, NodeKind::Group, "Faded", 0.0, 0.0, 240.0, 160.0).unwrap();
+    d.get_mut(g).unwrap().opacity = 0.5;
+    d.reparent(f, g, None).unwrap();
+    let got = render_node(&d, g, 1.0).unwrap();
+    // The pane draws the blurred half-strength frame over the frame, and the group halves both.
+    let (frame, blurred) = expected_blurred(&d, f, pane, 1.0);
+    let mut want = Pixmap::new(frame.width(), frame.height()).unwrap();
+    want.draw_pixmap(0, 0, frame.as_ref(), &PixmapPaint { opacity: 0.25, ..Default::default() }, Transform::identity(), None);
+    let plus = PixmapPaint { opacity: 0.25, blend_mode: tiny_skia::BlendMode::Plus, ..Default::default() };
+    want.draw_pixmap(0, 0, blurred.as_ref(), &plus, Transform::identity(), None);
+    let diff = max_diff_in_pane(&got, &want, 1.0);
+    assert!(diff <= 3, "differs by {diff}");
+}
+
+#[test]
 fn background_blur_on_the_canvas_matches_the_export() {
     let (d, f, _) = scene(Holder::ClipFrame);
     let p = d.first_page().unwrap();

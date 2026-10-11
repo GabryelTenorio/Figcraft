@@ -205,6 +205,21 @@ pub(crate) fn menu_style(s: &mut egui::Style) {
 /// (else its 600 px default area width) and keeps the size measured; rows ([`menu_row`]) take the
 /// larger of that width and their content, so the menu fits its content. Chain `.width(w)` for a
 /// menu at least `w` wide.
+/// The blend modes as menu items in groups (pass-through only for layers); the one picked.
+pub fn blend_menu(ui: &mut Ui, with_pass_through: bool) -> Option<BlendMode> {
+    let mut picked = None;
+    for b in BlendMode::ALL.into_iter().filter(|b| with_pass_through || *b != BlendMode::PassThrough) {
+        if menu_item(ui, tr(b.label()), "") {
+            picked = Some(b);
+            ui.close();
+        }
+        if matches!(b, BlendMode::Normal | BlendMode::ColorBurn | BlendMode::ColorDodge | BlendMode::HardLight | BlendMode::Exclusion) {
+            ui.separator();
+        }
+    }
+    picked
+}
+
 pub fn menu_popup(anchor: &egui::Response) -> egui::Popup<'static> {
     egui::Popup::menu(anchor).width(anchor.rect.width().max(MENU_MIN_W)).style(menu_style)
 }
@@ -829,14 +844,8 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             let label = blend.map(|b| tr(b.label())).unwrap_or(tr("Mixed"));
             let resp = widgets::dropdown(ui, label, col * 2.0 + 8.0, Some(Icon::Blend));
             menu_popup(&resp).width(200.0).show(|ui| {
-                for b in BlendMode::ALL {
-                    if menu_item(ui, tr(b.label()), "") {
-                        app.set_props(&ids, json!({"blend": b.css()}));
-                        ui.close();
-                    }
-                    if matches!(b, BlendMode::Normal | BlendMode::ColorBurn | BlendMode::ColorDodge | BlendMode::HardLight | BlendMode::Exclusion) {
-                        ui.separator();
-                    }
+                if let Some(b) = blend_menu(ui, true) {
+                    app.set_props(&ids, json!({"blend": b.label()}));
                 }
             });
         });

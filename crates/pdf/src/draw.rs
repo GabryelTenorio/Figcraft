@@ -265,6 +265,10 @@ impl<'a> Exporter<'a> {
         let nb = blend(n.blend);
         if let Some(b) = nb {
             s.push_blend_mode(b);
+        }
+        // A blending layer, or a group set to Normal, composites its content in a group of its own.
+        let isolated = nb.is_some() || n.isolates_children();
+        if isolated {
             s.push_isolated();
         }
         if op < 1.0 {
@@ -277,8 +281,10 @@ impl<'a> Exporter<'a> {
         if op < 1.0 {
             s.pop();
         }
-        if nb.is_some() {
+        if isolated {
             s.pop();
+        }
+        if nb.is_some() {
             s.pop();
         }
     }

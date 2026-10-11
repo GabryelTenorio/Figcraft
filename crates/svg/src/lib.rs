@@ -60,6 +60,15 @@ struct W<'a> {
     opts: &'a SvgOptions,
     /// The mask layer being drawn as a mask's content (drawn like any layer, not skipped).
     mask: Option<NodeId>,
+    /// The clip path of the clipping frames around the layers being written. A clipped group
+    /// isolates what it holds (it is a stacking context), so clips go on what blends instead: a
+    /// layer that isolates anyway, or each paint and child of a plain group.
+    clip: Option<String>,
+}
+
+/// ` clip-path="url(#…)"` for a clip path id (else nothing).
+fn clip_attr(clip: &Option<String>) -> String {
+    clip.as_ref().map(|c| format!(" clip-path=\"url(#{c})\"")).unwrap_or_default()
 }
 
 fn num(v: f64) -> String {
@@ -260,7 +269,7 @@ impl W<'_> {
 
     /// The layer's filter: drop shadows (but those drawn as `exact` geometry: see
     /// [`W::drop_shadows`]) and layer blur.
-    fn filter_for(&mut self, n: &Node, exact: bool) -> Option<String> {
+    fn filter_for(&mut self, n: &Node, exact: bool, xf: Affine) -> Option<String> {
         let fx: Vec<&figcraft_doc::Effect> = n
             .effects
             .iter()
@@ -272,7 +281,30 @@ impl W<'_> {
             return None;
         }
         let fid = self.id("filter");
-        let mut f = format!("<filter id=\"{fid}\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\" color-interpolation-filters=\"sRGB\">");
+        // The region holds everything the layer and its effects paint (a fixed share of the
+        // layer's box cuts off shadows and blurs that reach further).
+        let k = xf.determinant().abs().sqrt();
+        let m = figcraft_render::draw::effect_margin(n) * if k.is_finite() { k } else { 1.0 };
+        let region = self
+            .doc
+            .world_render_bounds(n.id)
+            .map(|b| figcraft_geom::transform_rect_bbox(xf * self.doc.world_transform(n.id).inverse(), b).inflate(m, m))
+            .filter(|r| [r.x0, r.y0, r.x1, r.y1].iter().all(|v| v.is_finite()));
+        let mut f = match region {
+            Some(r) => format!(
+                "<filter id=\"{fid}\" filterUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" color-interpolation-filters=\"sRGB\">",
+                num(r.x0),
+                num(r.y0),
+                num(r.width()),
+                num(r.height())
+            ),
+            None => format!("<filter id=\"{fid}\" x=\"-50%\" y=\"-50%\" width=\"200%\" height=\"200%\" color-interpolation-filters=\"sRGB\">"),
+        };
+        // Shadows that don't show behind transparent areas are cut out where the layer is: by
+        // what its paints cover, or by its pixels (like the renderer).
+        let cover = self.cover_input(n, xf);
+        let knock = if cover.is_some() { "cover" } else { "SourceAlpha" };
+        f.push_str(cover.as_deref().unwrap_or_default());
         let mut merge = Vec::new();
         for (i, e) in fx.iter().enumerate() {
             match &e.kind {
@@ -290,14 +322,19 @@ impl W<'_> {
                     let src = if morph.is_empty() { "SourceAlpha".to_string() } else { format!("s{i}m") };
                     let _ = write!(
                         f,
-                        "{morph}<feOffset in=\"{src}\" dx=\"{}\" dy=\"{}\"/><feGaussianBlur stdDeviation=\"{}\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 {} 0 0 0 0 {} 0 0 0 0 {} 0 0 0 {} 0\" result=\"s{i}\"/>",
+                        "{morph}<feOffset in=\"{src}\" dx=\"{}\" dy=\"{}\"/><feGaussianBlur stdDeviation=\"{}\"/><feColorMatrix type=\"matrix\" values=\"0 0 0 0 {} 0 0 0 0 {} 0 0 0 0 {} 0 0 0 {} 0\" result=\"s{i}\"/>{}",
                         num(s.offset.0),
                         num(s.offset.1),
                         num(s.radius / 2.0),
                         num(f64::from(s.color.r)),
                         num(f64::from(s.color.g)),
                         num(f64::from(s.color.b)),
-                        num(f64::from(s.color.a))
+                        num(f64::from(s.color.a)),
+                        if s.show_behind {
+                            String::new()
+                        } else {
+                            format!("<feComposite in=\"s{i}\" in2=\"{knock}\" operator=\"out\" result=\"s{i}\"/>")
+                        }
                     );
                     merge.push(format!("s{i}"));
                 }
@@ -338,18 +375,28 @@ impl W<'_> {
         let blend = blend_style(n.blend);
         if !blend.is_empty() {
             attrs.push_str(&blend);
-        } else if !grains.is_empty() {
-            // Grains blend with the layer only, like the canvas's isolated layer.
+        } else if !grains.is_empty() || n.isolates_children() {
+            // Grains blend with the layer only, like the canvas's isolated layer; a Normal group
+            // blends its children among themselves first.
             attrs.push_str(" style=\"isolation:isolate\"");
         }
+        let inherited = self.clip.clone();
         let spreads = n.effects.iter().any(|e| e.visible && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0));
         let sil = if spreads { figcraft_render::shadow::silhouette(self.doc, n) } else { None };
         if let Some(sil) = &sil {
-            self.drop_shadows(n, sil, xf);
+            self.drop_shadows(n, sil, xf, &clip_attr(&inherited));
         }
-        if let Some(fid) = self.filter_for(n, sil.is_some()) {
+        if let Some(fid) = self.filter_for(n, sil.is_some(), xf) {
             let _ = write!(attrs, " filter=\"url(#{fid})\"");
         }
+        let leaf = matches!(n.kind, NodeKind::BooleanOp { .. }) || n.children.is_empty();
+        let isolated = n.opacity < 0.999 || attrs.contains(" style=") || attrs.contains(" filter=") || n.effects.iter().any(|e| e.visible);
+        let (paint_clip, kid_clip) = if isolated || leaf {
+            attrs.push_str(&clip_attr(&inherited));
+            (String::new(), None)
+        } else {
+            (clip_attr(&inherited), inherited.clone())
+        };
         let _ = write!(self.body, "<g{attrs}>");
         if backdrop::has_effects(n)
             && let Some(img) = self.backdrop_image(id, None)
@@ -368,7 +415,7 @@ impl W<'_> {
             let fr = if *rule == figcraft_render::FillRule::EvenOdd { " fill-rule=\"evenodd\"" } else { "" };
             for p in &n.fills {
                 if let Some(a) = self.paint_attr(p, w, h) {
-                    let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" {a}{fr}/>", matrix(xf), path_d(path));
+                    let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" {a}{fr}{paint_clip}/>", matrix(xf), path_d(path));
                 }
             }
         }
@@ -381,14 +428,19 @@ impl W<'_> {
             }
         }
         if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.children.is_empty() {
-            let clip = n.clip && n.kind.is_frame_like();
-            if clip && let Some((p, _)) = &outline {
+            let mut kid_clip = kid_clip;
+            if n.clip
+                && n.kind.is_frame_like()
+                && let Some((p, _)) = &outline
+            {
+                // Its own clip, within the clips around it.
                 let cid = self.id("clip");
                 let mut cp = p.clone();
                 cp.apply_affine(xf);
-                let _ = write!(self.defs, "<clipPath id=\"{cid}\"><path d=\"{}\"/></clipPath>", path_d(&cp));
-                let _ = write!(self.body, "<g clip-path=\"url(#{cid})\">");
+                let _ = write!(self.defs, "<clipPath id=\"{cid}\"{}><path d=\"{}\"/></clipPath>", clip_attr(&kid_clip), path_d(&cp));
+                kid_clip = Some(cid);
             }
+            self.clip = kid_clip;
             let kids = n.children.clone();
             for run in self.doc.paint_runs(n) {
                 let Some(&c) = kids.get(run.start) else { continue };
@@ -413,7 +465,9 @@ impl W<'_> {
                         let mid = self.id("mask");
                         let saved = std::mem::take(&mut self.body);
                         let outer = self.mask.replace(c);
+                        let clip = self.clip.take();
                         self.node(c, xf, depth + 1);
+                        self.clip = clip;
                         self.mask = outer;
                         let mask_body = std::mem::replace(&mut self.body, saved);
                         let alpha = if kind == figcraft_doc::MaskType::Alpha { " style=\"mask-type:alpha\"" } else { "" };
@@ -428,9 +482,7 @@ impl W<'_> {
                     self.node(c, xf, depth + 1);
                 }
             }
-            if clip && outline.is_some() {
-                self.body.push_str("</g>");
-            }
+            self.clip = inherited;
         }
         if n.has_visible_stroke() {
             let geom = match &n.kind {
@@ -443,7 +495,7 @@ impl W<'_> {
                 let fr = if even { " fill-rule=\"evenodd\"" } else { "" };
                 for p in &n.strokes {
                     if let Some(a) = self.paint_attr(p, w, h) {
-                        let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" {a}{fr}/>", matrix(xf), path_d(&area));
+                        let _ = write!(self.body, "<path transform=\"{}\" d=\"{}\" {a}{fr}{paint_clip}/>", matrix(xf), path_d(&area));
                     }
                 }
             }
@@ -497,7 +549,7 @@ impl W<'_> {
             return false;
         };
         let back = if backdrop::has_effects(n) { self.backdrop_image(id, Some(n.opacity.clamp(0.0, 1.0))) } else { None };
-        let _ = write!(self.body, "<g{id_attr}{}>{}{img}</g>", blend_style(n.blend), back.unwrap_or_default());
+        let _ = write!(self.body, "<g{id_attr}{}{}>{}{img}</g>", blend_style(n.blend), clip_attr(&self.clip), back.unwrap_or_default());
         true
     }
 
@@ -580,27 +632,72 @@ impl W<'_> {
         format!("<g mask=\"url(#{mid})\">{}</g>", paths(color, None))
     }
 
-    /// A Gaussian blur filter over `region` (page units); `None` for no blur.
-    fn blur_filter(&mut self, radius: f64, region: Rect) -> Option<String> {
-        if !(radius.is_finite() && radius > 0.0) {
+    /// A Gaussian blur filter over `region` (page units), cut out by `cover` (a filter input
+    /// named `cover`, see [`W::cover_input`]); `None` for no blur and no cover.
+    fn blur_filter(&mut self, radius: f64, region: Rect, cover: Option<&str>) -> Option<String> {
+        let blur = radius.is_finite() && radius > 0.0;
+        if !blur && cover.is_none() {
             return None;
         }
         let fid = self.id("filter");
         let _ = write!(
             self.defs,
-            "<filter id=\"{fid}\" filterUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" color-interpolation-filters=\"sRGB\"><feGaussianBlur stdDeviation=\"{}\"/></filter>",
+            "<filter id=\"{fid}\" filterUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" color-interpolation-filters=\"sRGB\">",
             num(region.x0),
             num(region.y0),
             num(region.width()),
             num(region.height()),
-            num(radius / 2.0)
         );
+        if blur {
+            let _ = write!(self.defs, "<feGaussianBlur stdDeviation=\"{}\" result=\"b\"/>", num(radius / 2.0));
+        }
+        if let Some(c) = cover {
+            let _ = write!(self.defs, "{c}<feComposite in=\"{}\" in2=\"cover\" operator=\"out\"/>", if blur { "b" } else { "SourceGraphic" });
+        }
+        self.defs.push_str("</filter>");
         Some(fid)
+    }
+
+    /// The area `n`'s paints cover, as a filter input named `cover` (an image of its outlines
+    /// through `xf`), when its drop shadows hide behind it there (see
+    /// [`shadow::hiding_cover`](figcraft_render::shadow::hiding_cover)).
+    fn cover_input(&self, n: &Node, xf: Affine) -> Option<String> {
+        let cover = figcraft_render::shadow::hiding_cover(self.doc, n)?;
+        let b = cover
+            .iter()
+            .map(|(p, _)| figcraft_geom::transform_rect_bbox(xf, figcraft_geom::Shape::bounding_box(p)))
+            .reduce(|a, b| a.union(b))?
+            .inflate(1.0, 1.0);
+        if !(b.width() > 0.0 && b.height() > 0.0 && [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite())) {
+            return None;
+        }
+        let mut img = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{} {} {} {}\" width=\"{}\" height=\"{}\">",
+            num(b.x0),
+            num(b.y0),
+            num(b.width()),
+            num(b.height()),
+            num(b.width()),
+            num(b.height())
+        );
+        for (p, rule) in &cover {
+            let fr = if *rule == figcraft_render::FillRule::EvenOdd { " fill-rule=\"evenodd\"" } else { "" };
+            let _ = write!(img, "<path transform=\"{}\" d=\"{}\"{fr}/>", matrix(xf), path_d(p));
+        }
+        img.push_str("</svg>");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(img);
+        Some(format!(
+            "<feImage href=\"data:image/svg+xml;base64,{b64}\" x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" result=\"cover\"/>",
+            num(b.x0),
+            num(b.y0),
+            num(b.width()),
+            num(b.height())
+        ))
     }
 
     /// Drop shadows with spread, as geometry under the layer: its silhouette offset by the
     /// spread (exactly, like the renderer), moved, blurred and faded.
-    fn drop_shadows(&mut self, n: &Node, sil: &[Outline], xf: Affine) {
+    fn drop_shadows(&mut self, n: &Node, sil: &[Outline], xf: Affine, clip: &str) {
         for e in n.effects.iter().filter(|e| e.visible) {
             let EffectKind::DropShadow(s) = &e.kind else { continue };
             if s.spread == 0.0 || !(s.offset.0.is_finite() && s.offset.1.is_finite()) {
@@ -613,7 +710,9 @@ impl W<'_> {
                 continue;
             };
             let reach = s.spread.abs() * SPREAD_MITER_LIMIT + s.radius.abs() * 1.5 + 2.0;
-            let filter = self.blur_filter(s.radius, b.inflate(reach, reach)).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
+            let cover = if s.show_behind { None } else { self.cover_input(n, xf) };
+            let filter =
+                self.blur_filter(s.radius, b.inflate(reach, reach), cover.as_deref()).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
             let op = f64::from(s.color.a * n.opacity.clamp(0.0, 1.0));
             let blend = if matches!(s.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
                 String::new()
@@ -621,7 +720,7 @@ impl W<'_> {
                 format!(" style=\"mix-blend-mode:{}\"", s.blend.css())
             };
             let body = self.spread_paths(sil, s.spread, at, &hex(s.color));
-            let _ = write!(self.body, "<g opacity=\"{}\"{blend}><g{filter}>{body}</g></g>", num(op));
+            let _ = write!(self.body, "<g opacity=\"{}\"{blend}{clip}><g{filter}>{body}</g></g>", num(op));
         }
     }
 
@@ -651,7 +750,7 @@ impl W<'_> {
             num(r.height()),
             rect("white")
         );
-        let filter = self.blur_filter(s.radius, r).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
+        let filter = self.blur_filter(s.radius, r, None).map(|f| format!(" filter=\"url(#{f})\"")).unwrap_or_default();
         let _ = write!(
             self.body,
             "<g clip-path=\"url(#{cid})\"><g opacity=\"{}\"{filter}><g mask=\"url(#{mid})\">{}</g></g></g>",
@@ -679,7 +778,7 @@ fn sniff_mime(b: &[u8]) -> &'static str {
 pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<String> {
     let bounds: Rect = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b))?;
     let origin = Affine::translate((-bounds.x0, -bounds.y0));
-    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts, mask: None };
+    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts, mask: None, clip: None };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         w.node(*id, origin * parent_xf, 0);

@@ -153,9 +153,7 @@ impl Exporter<'_> {
         let (w, h) = (view.width, view.height);
         let layer = figcraft_render::render_alone(doc, id, &view, Alone::Plain)?;
         let xf = view.transform() * world;
-        let spreads = n.effects.iter().any(|e| e.visible && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0));
-        let sil = if spreads { shadow::silhouette(doc, n) } else { None };
-        let caster = shadow::Caster { layer: &layer, xf, scale: view.scale, silhouette: sil.as_deref() };
+        let caster = shadow::Caster::new(doc, n, &layer, xf, view.scale);
         let shape = figcraft_render::node_outline(doc, n);
         let mut out = Shadows::default();
         for e in n.effects.iter().filter(|e| e.visible) {

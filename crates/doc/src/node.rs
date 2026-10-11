@@ -684,6 +684,12 @@ impl Node {
         (0..n).filter_map(move |i| self.children.get(if rev { n - 1 - i } else { i }).copied())
     }
 
+    /// Whether this group or frame blends its children among themselves before the result meets
+    /// what is behind it: set to Normal rather than pass-through (with children to blend).
+    pub fn isolates_children(&self) -> bool {
+        self.blend == BlendMode::Normal && self.kind.is_container() && !matches!(self.kind, NodeKind::BooleanOp { .. }) && !self.children.is_empty()
+    }
+
     /// Whether painted strokes are present.
     pub fn has_visible_stroke(&self) -> bool {
         self.strokes.iter().any(|p| p.visible) && self.stroke.weight > 0.0

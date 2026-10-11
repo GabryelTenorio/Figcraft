@@ -11,7 +11,7 @@ use tiny_skia::{FillRule, IntRect, Mask, MaskType, Pixmap, PixmapPaint, Transfor
 
 use crate::backdrop::{self, Under};
 use crate::boolean::{PathCache, locked};
-use crate::paint::{prepare_at, ts_blend};
+use crate::paint::{composite, prepare_at, ts_blend};
 use crate::{blur, grain, lod, shadow};
 
 /// Shared state for one render.
@@ -59,6 +59,19 @@ fn fill_with(pix: &mut Pixmap, path: &tiny_skia::Path, paints: &[Paint], w: f64,
     for p in paints {
         let Some(prep) = prepare_at(p, w, h, scale, ctx.doc, ctx.time) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
+        if p.blend == BlendMode::PlusDarker {
+            // No tiny-skia mode: the paint alone over its pixels, then blended in.
+            let area = path
+                .bounds()
+                .transform(ts_transform(xf))
+                .and_then(|b| int_rect(Rect::new(b.left().into(), b.top().into(), b.right().into(), b.bottom().into()), (pix.width(), pix.height())));
+            let Some(mut alone) = area.and_then(|r| Pixmap::new(r.width(), r.height())) else { continue };
+            let Some(r) = area else { continue };
+            let t = ts_transform(Affine::translate((-f64::from(r.x()), -f64::from(r.y()))) * xf);
+            alone.fill_path(path, &tiny_skia::Paint { blend_mode: tiny_skia::BlendMode::SourceOver, ..paint }, rule, t, None);
+            crate::paint::composite(pix, (r.x(), r.y()), &alone, 1.0, p.blend);
+            continue;
+        }
         pix.fill_path(path, &paint, rule, ts_transform(xf), mask);
     }
 }
@@ -306,7 +319,10 @@ pub fn paint_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
 }
 
 fn needs_layer(n: &Node) -> bool {
-    n.opacity < 0.999 || !matches!(n.blend, BlendMode::Normal | BlendMode::PassThrough) || n.effects.iter().any(|e| e.visible)
+    n.opacity < 0.999
+        || !matches!(n.blend, BlendMode::Normal | BlendMode::PassThrough)
+        || n.effects.iter().any(|e| e.visible)
+        || n.isolates_children()
 }
 
 /// `v` on the whole pixel that only float noise keeps it off: an edge on a pixel boundary comes out
@@ -406,7 +422,7 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         };
         let has_inner = shape.is_some() && n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::InnerShadow(_)));
         // Backdrops further down see this layer composited onto `pix`.
-        let under = Under { opacity: op, blend: ts_blend(n.blend), ..Under::new(pix, (lx, ly), ctx.under) };
+        let under = Under { opacity: op, blend: n.blend, ..Under::new(pix, (lx, ly), ctx.under) };
         draw_content(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth, has_inner.then_some(&inner as &dyn Fn(&mut Pixmap)));
     }
     // Layer blur, noise and texture, in list order, over everything else.
@@ -419,19 +435,15 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         }
     }
     // Drop shadows go under the layer, in effect-list order.
-    let spreads = n.effects.iter().any(|e| e.visible && matches!(&e.kind, EffectKind::DropShadow(s) if s.spread != 0.0));
-    let sil = if spreads { shadow::silhouette(ctx.doc, n) } else { None };
-    let caster = shadow::Caster { layer: &layer, xf: lxf, scale: ctx.scale, silhouette: sil.as_deref() };
+    let caster = shadow::Caster::new(ctx.doc, n, &layer, lxf, ctx.scale);
     for e in n.effects.iter().filter(|e| e.visible) {
         if let EffectKind::DropShadow(s) = &e.kind
             && let Some(sh) = shadow::drop_shadow(&caster, s)
         {
-            let paint = PixmapPaint { opacity: op, blend_mode: ts_blend(s.blend), ..Default::default() };
-            pix.draw_pixmap(lx, ly, sh.as_ref(), &paint, Transform::identity(), None);
+            composite(pix, (lx, ly), &sh, op, s.blend);
         }
     }
-    let paint = PixmapPaint { opacity: op, blend_mode: ts_blend(n.blend), ..Default::default() };
-    pix.draw_pixmap(lx, ly, layer.as_ref(), &paint, Transform::identity(), None);
+    composite(pix, (lx, ly), &layer, op, n.blend);
 }
 
 fn draw_outline(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize) {
@@ -602,7 +614,10 @@ fn draw_children_clipped(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, dept
     let dev = device_rect(xf, n.local_rect());
     let Some(ir) = int_rect(dev, (pw, ph)) else { return };
     let (lx, ly) = (ir.x(), ir.y());
-    let Some(mut layer) = Pixmap::new(ir.width(), ir.height()) else { return };
+    // The layer starts as what lies under it and goes back in its place through the clip:
+    // clipping cuts the children off without isolating them, so their blend modes reach the
+    // layers behind the frame.
+    let Some(mut layer) = pix.clone_rect(ir) else { return };
     let lxf = Affine::translate((-f64::from(lx), -f64::from(ly))) * xf;
     let rect_clip = n.corners.uniform() == Some(0.0) && is_axis_aligned(xf);
     // The clip (a rectangular one is the layer's own box) is known before the children draw, so
@@ -616,22 +631,14 @@ fn draw_children_clipped(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, dept
             Some(m)
         })
     };
-    {
-        let under = Under { clip: mask.as_ref(), ..Under::new(pix, (lx, ly), ctx.under) };
-        draw_children(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth);
-    }
-    if rect_clip {
-        if ctx.lod {
-            lod::blit_over(pix, lx, ly, &layer);
-        } else {
-            pix.draw_pixmap(lx, ly, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-        }
+    if !rect_clip && mask.is_none() {
         return;
     }
-    if let Some(m) = &mask {
-        layer.apply_mask(m);
+    {
+        let under = Under { clip: mask.as_ref(), replaces: true, ..Under::new(pix, (lx, ly), ctx.under) };
+        draw_children(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth);
     }
-    pix.draw_pixmap(lx, ly, layer.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+    backdrop::replace(pix, (lx, ly), &layer, mask.as_ref().map(|m| (m, (0, 0))));
 }
 
 fn is_axis_aligned(xf: Affine) -> bool {
