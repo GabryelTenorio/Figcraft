@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~26 points and ~173–310 h away (one Opus 5.5 agent; ~35–70 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -14,19 +14,19 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | | Value | Kind |
 |---|---|---|
 | Menu/command breadth | **100%** (204 / 204) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
-| Feature breadth | **~80%** (core editor ~91%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
-| Ready for real work | **~49%** | estimated, same doc (written dimension weights and scores) |
+| Feature breadth | **~82%** (core editor ~93%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
+| Ready for real work | **~51%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
-| Mainstream practitioner | **~48%** | estimated: weekly areas 69.1% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
+| Mainstream practitioner | **~49%** | estimated: weekly areas 70.7% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~173–310 h** one agent | estimated |
-| Remaining to full parity | **~312–604 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~310–601 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~49% | ~299–575 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
-| Mainstream practitioner | ~48% | ~134–250 h | core editor depth incl. the `.fig` import's tail (52–103), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~51% | ~299–575 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
+| Mainstream practitioner | ~49% | ~134–250 h | core editor depth incl. the `.fig` import's tail (52–103), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~63–115 h | the `.fig` import's tail so the files people send open well (8–15), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -46,7 +46,7 @@ lines, a typical feature PR 1–2.5 h). Details and what needs a human:
 **Alpha.** Core workflows exist end to end (frames, shapes, vectors, text, auto layout, components
 with variants and overrides, styles, variables, prototyping, Dev Mode, SVG/PNG/JPG/PDF), but
 FigCraft opens `.fig` files only best effort, has only a preview of multiplayer, and nothing has been checked
-against real Figma documents. Ready-for-real-work is ~49%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is unproven on real files, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
+against real Figma documents. Ready-for-real-work is ~51%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is unproven on real files, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
 ~75% **and** reliable `.fig` import: the `.fig` import's tail (8–15 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
 basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
@@ -56,7 +56,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 69%) | 51–101 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 61% (core editor 70%) | 47–95 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 55% (`.fig` read best effort, no write) | 8–15 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 13% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links and team libraries; preview) | 49–98 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -75,7 +75,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Canvas & navigation | 95% | 72% | 3–6 | [ui-parity](docs/ui-parity.md) |
 | Selection & transform | 97% | 72% | 3–5 | [ui-parity](docs/ui-parity.md) |
 | Layers panel | 98% | 82% | 1–2 | [ui-parity](docs/ui-parity.md) |
-| Shapes & vector | 97% | 68% | 1–3 | [target-app-parity](docs/target-app-parity.md) |
+| Shapes & vector | 98% | 72% | 2–4 | [target-app-parity](docs/target-app-parity.md) |
 | Paint | 90% | 71% | 2–5 | [target-app-parity](docs/target-app-parity.md) |
 | Strokes | 95% | 75% | 1–2 | [target-app-parity](docs/target-app-parity.md) |
 | Effects | 100% | 75% | 2–5 | [target-app-parity](docs/target-app-parity.md) |
@@ -200,6 +200,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Shapes and vector behaviour suite written from the public documentation and its fixes: rounded vector points are drawn and exported, a boolean group looks like its top layer (a subtraction like the bottom one), Alt draws lines from the centre, stars keep to 3–60 points, delete and heal follows the curve, Shift-click on a point at a corner of the points' box deselects it, outline stroke keeps the stroke's colour style, opacity and effects, the miter field shows degrees, individual corners only for rectangles and frames, Option/Alt+Shift+F flattens, MCP `key` reaches the edit tools. Added: corner radius and star ratio handles, Count and Ratio fields, cut drags that divide shapes into layers, paint bucket drags. Shapes & vector 97%/68% → 98%/72%, 1–3 h → 2–4 h. Totals recomputed from the area table, which earlier rows had left stale: feature breadth ~80% → ~82% (core ~91% → ~93%), Features (depth) 57% → 61% (core 68% → 69%), 60–115 h → 56–109 h, ready for real work ~49% → ~51%, mainstream ~46% → ~48%; full parity ~321–618 h → ~319–615 h (the selection suite's −3/−5 h hadn't reached the totals) |
 | 2026-10-11 | minor | Paint and effects behaviour suite written from the public documentation and its fixes: Normal groups and frames isolate their children and clipping frames don't (canvas, SVG, PDF); plus darker drawn on the canvas and in PNG exports; drop shadows hidden behind what the layer covers unless shown behind transparent areas, SVG included, with filter regions that reach as far as the effects; Fill images cover the box to its edges; "Normal" names Normal in commands and the blend menu. Paint 85%/66% → 87%/70% (breadth from the GIF/TIFF row), 5–9 h → 3–6 h; effects 72% → 75%, 3–6 h → 2–5 h; percentages unchanged at this rounding; full parity ~321–618 h → ~319–616 h |
 | 2026-10-11 | minor | Frames, groups, sections and masks behaviour suite written from the public documentation (15 frame, group and section tests, 6 mask tests) and its fixes: a layer a mask hides can't be clicked there (clicks reach what's behind; Select layer agrees), a mask group's box and exports are the mask's (plus any layers under it), sections stay on the page or in sections (moves, drags, pastes, grouping and new sections in frames refused or kept on the page), drawing a frame or section around layers puts those fully inside it in it, resizing a section leaves its contents where they are (and a frame resized with Cmd/Ctrl held keeps its layers' sizes too), and X/Y of layers in groups are measured in the frame (groups have no coordinate space). Frames, groups, sections, masks 95%/75% → 97%/80%, 2–4 h → 1–3 h; percentages unchanged at this rounding; full parity ~323–621 h → ~322–620 h |
 | 2026-10-11 | minor | Styles and variables behaviour suite written from the public documentation (18 command-level tests) and its fixes: editing a styled fill, stroke, effect or layout grid list (directly, a paint row, an added fill or a bound variable) unlinks that style instead of being overwritten by the next style edit; applying a style replaces variables bound to what it sets; text styles go on text layers only; deleting a variable (or its collection) unbinds the layers using it, which keep their last value, and aliases to it take its values; bindings are type-checked (a colour variable can't drive a width) and number variables fill text content; aliases are checked when a variable is created. Added: duplicate, move (reorder, into a folder) and rename folder for styles, with a Local styles list grouped by type and folder (click to edit, right-click, drag to reorder); duplicate mode, set as default and move column for modes; per-platform code syntax (Web, iOS, Android) used by generated CSS and the variables JSON; font weight, paragraph spacing/indent and text content scopes for number variables. Found missing: variables inside styles. Styles & variables 92%/72% → 94%/76%, 1–2 h → 3–5 h; percentages unchanged at this rounding; full parity ~323–621 h → ~325–624 h |

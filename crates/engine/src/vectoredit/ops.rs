@@ -331,7 +331,9 @@ pub fn delete_vertices(net: &mut VectorNetwork, idx: &[usize], heal: bool) {
             let o1 = if x.a == vi { (x.b, x.tb) } else { (x.a, x.ta) };
             let o2 = if y.a == vi { (y.b, y.tb) } else { (y.a, y.ta) };
             if o1.0 != o2.0 {
-                healed = Some(Segment { a: o1.0, b: o2.0, ta: o1.1, tb: o2.1 });
+                let curved = !(x.is_straight() && y.is_straight());
+                let (ta, tb) = if curved { heal_handles(net, vi, o1, o2).unwrap_or((o1.1, o2.1)) } else { (o1.1, o2.1) };
+                healed = Some(Segment { a: o1.0, b: o2.0, ta, tb });
             }
         }
         // Remove touching segments (descending) and fix region loops (the healed segment takes
@@ -374,6 +376,38 @@ pub fn delete_vertices(net: &mut VectorNetwork, idx: &[usize], heal: bool) {
     }
     net.sanitize();
     reopen_loops(net);
+}
+
+/// Handles for the curve that heals over deleted point `vi` between `(vertex, handle)` ends `o1`
+/// and `o2`: each end keeps its handle's direction (towards the deleted point when it had none),
+/// and the lengths are chosen so the curve still passes through the deleted point.
+fn heal_handles(net: &VectorNetwork, vi: usize, o1: (usize, (f64, f64)), o2: (usize, (f64, f64))) -> Option<((f64, f64), (f64, f64))> {
+    let p = net.vertices.get(vi)?.point();
+    let (a, b) = (net.vertices.get(o1.0)?.point(), net.vertices.get(o2.0)?.point());
+    let dir = |h: (f64, f64), from: Point| {
+        let h = tvec(h);
+        let d = if h.hypot() > 1e-9 { h } else { p - from };
+        (d.hypot() > 1e-9).then(|| d.normalize())
+    };
+    let (d1, d2) = (dir(o1.1, a)?, dir(o2.1, b)?);
+    let (la, lb) = ((p - a).hypot(), (p - b).hypot());
+    let t = la / (la + lb).max(1e-12);
+    // B(t) with both handles zero, and how much each handle length moves it.
+    let (u, k1, k2) = (1.0 - t, 3.0 * (1.0 - t).powi(2) * t, 3.0 * (1.0 - t) * t * t);
+    let base = (a.to_vec2() * (u.powi(3) + 3.0 * u * u * t) + b.to_vec2() * (3.0 * u * t * t + t.powi(3))).to_point();
+    let r = p - base;
+    let (c1, c2) = (d1 * k1, d2 * k2);
+    let det = c1.cross(c2);
+    let (l1, l2) = if det.abs() > 1e-9 * c1.hypot() * c2.hypot() {
+        (r.cross(c2) / det, c1.cross(r) / det)
+    } else {
+        // Parallel handles: one shared length, the best fit.
+        let c = c1 + c2;
+        let l = r.dot(c) / c.hypot2().max(1e-12);
+        (l, l)
+    };
+    let ok = |l: f64| l.is_finite() && l > 0.0;
+    (ok(l1) && ok(l2)).then_some(((d1.x * l1, d1.y * l1), (d2.x * l2, d2.y * l2)))
 }
 
 /// After a loop was broken open, start it where the break is so it's one continuous chain (the fill
@@ -442,6 +476,101 @@ pub fn cut_vertex(net: &mut VectorNetwork, vi: usize) -> Vec<usize> {
         x.mirror = None;
     }
     reopen_loops(net);
+    out
+}
+
+/// The Cut tool dragged from `a` to `b`: every segment the line crosses is cut where it crosses.
+/// Returns the new ends.
+/// shortcut: crossings within 1% of a segment's ends are skipped; cut those at the point instead.
+pub fn cut_across(net: &mut VectorNetwork, a: Point, b: Point) -> Vec<usize> {
+    use figcraft_geom::kurbo::{Line, PathSeg};
+    if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) || (b - a).hypot() < 1e-9 {
+        return vec![];
+    }
+    let line = Line::new(a, b);
+    let crossings: Vec<(usize, Vec<f64>)> = (0..net.segments.len())
+        .filter_map(|si| {
+            let mut ts: Vec<f64> = PathSeg::Cubic(net.cubic(si)?)
+                .intersect_line(line)
+                .iter()
+                .filter(|h| (0.0..=1.0).contains(&h.line_t) && (0.01..=0.99).contains(&h.segment_t))
+                .map(|h| h.segment_t)
+                .collect();
+            ts.sort_by(f64::total_cmp);
+            ts.dedup_by(|x, y| (*x - *y).abs() < 1e-6);
+            (!ts.is_empty()).then_some((si, ts))
+        })
+        .collect();
+    let mut ends = Vec::new();
+    for (si, ts) in crossings {
+        // From the last crossing back: the segment keeps the part before each cut.
+        let mut end = 1.0;
+        for t in ts.into_iter().rev() {
+            if let Some((x, y)) = cut_segment(net, si, t / end) {
+                ends.extend([x, y]);
+            }
+            end = t;
+        }
+    }
+    ends
+}
+
+/// The connected parts of the network: each part's points, the part holding point 0 first.
+pub fn parts(net: &VectorNetwork) -> Vec<Vec<usize>> {
+    let n = net.vertices.len();
+    let mut root: Vec<usize> = (0..n).collect();
+    fn find(root: &mut [usize], mut v: usize) -> usize {
+        while let Some(&r) = root.get(v) {
+            if r == v {
+                break;
+            }
+            v = r;
+        }
+        v
+    }
+    for s in &net.segments {
+        let (x, y) = (find(&mut root, s.a), find(&mut root, s.b));
+        if let Some(r) = root.get_mut(x) {
+            *r = y;
+        }
+    }
+    let mut out: Vec<(usize, Vec<usize>)> = Vec::new();
+    for v in 0..n {
+        let r = find(&mut root, v);
+        match out.iter_mut().find(|(k, _)| *k == r) {
+            Some((_, part)) => part.push(v),
+            None => out.push((r, vec![v])),
+        }
+    }
+    out.into_iter().map(|(_, p)| p).collect()
+}
+
+/// The part of the network made of points `verts`: their segments, and the pieces of fill loops
+/// running through them (a loop that was cut through stays filled on each side).
+pub fn part(net: &VectorNetwork, verts: &[usize]) -> VectorNetwork {
+    let mut vmap = vec![None; net.vertices.len()];
+    let mut out = VectorNetwork::default();
+    for &v in verts {
+        if let (Some(x), Some(slot)) = (net.vertices.get(v), vmap.get_mut(v)) {
+            *slot = Some(out.vertices.len());
+            out.vertices.push(*x);
+        }
+    }
+    let mut smap = vec![None; net.segments.len()];
+    for (i, s) in net.segments.iter().enumerate() {
+        if let (Some(Some(a)), Some(Some(b)), Some(slot)) = (vmap.get(s.a), vmap.get(s.b), smap.get_mut(i)) {
+            *slot = Some(out.segments.len());
+            out.segments.push(Segment { a: *a, b: *b, ..*s });
+        }
+    }
+    for r in &net.regions {
+        let loops: Vec<Vec<usize>> =
+            r.loops.iter().map(|l| l.iter().filter_map(|i| smap.get(*i).copied().flatten()).collect::<Vec<_>>()).filter(|l| !l.is_empty()).collect();
+        if !loops.is_empty() {
+            out.regions.push(Region { loops, winding: r.winding });
+        }
+    }
+    reopen_loops(&mut out);
     out
 }
 

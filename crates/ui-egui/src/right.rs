@@ -341,7 +341,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
         crate::layout_panel::layout_section(app, ui, &doc, &sel);
         widgets::separator(ui);
     }
-    if vector_edit_none && arc_section(app, ui, &doc, &sel) {
+    if vector_edit_none && (arc_section(app, ui, &doc, &sel) || points_section(app, ui, &doc, &sel)) {
         widgets::separator(ui);
     }
     appearance(app, ui, &doc, &sel);
@@ -712,6 +712,41 @@ fn arc_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) ->
     true
 }
 
+/// The selected polygons' and stars' point count (3 to 60 on stars), and the stars' ratio (the
+/// inner radius as a share of the outer one), as `node.set`'s `pointCount` / `innerRadius`.
+/// Returns whether it showed.
+fn points_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) -> bool {
+    let shapes: Vec<(u32, Option<f64>)> = sel
+        .iter()
+        .filter_map(|i| match doc.node(*i)?.kind {
+            NodeKind::Polygon { count } => Some((count, None)),
+            NodeKind::Star { count, inner_ratio } => Some((count, Some(inner_ratio))),
+            _ => None,
+        })
+        .collect();
+    if shapes.is_empty() || shapes.len() != sel.len() {
+        return false;
+    }
+    let ids = sel.to_vec();
+    let count = shapes.first().map(|s| s.0).filter(|c| shapes.iter().all(|s| s.0 == *c)).map(f64::from);
+    let stars: Vec<f64> = shapes.iter().filter_map(|s| s.1).collect();
+    let ratio = stars.first().map(|r| (r * 1000.0).round() / 10.0).filter(|r| stars.iter().all(|x| ((x * 1000.0).round() / 10.0 - r).abs() < 1e-9));
+    let all_stars = stars.len() == shapes.len();
+    widgets::section_header(ui, tr(if all_stars { "Star" } else { "Polygon" }), &[], false);
+    let col = widgets::col_width(ui.available_width());
+    widgets::sublabels(ui, tr("Count"), all_stars.then_some(tr("Ratio")));
+    row(ui, 32.0, |ui| {
+        let e = widgets::number_field(ui, Id::new("pts_count"), Lead::Icon(Icon::Polygon, tr("Count")), count, "", col, 1.0);
+        app.field(&ids, "pointCount", e, |v| json!(v.round().clamp(3.0, 120.0)));
+        if all_stars {
+            let e = widgets::number_field(ui, Id::new("pts_ratio"), Lead::Icon(Icon::Star, tr("Ratio")), ratio, "%", col, 1.0);
+            app.field(&ids, "innerRadius", e, |v| json!((v / 100.0).clamp(0.001, 1.0)));
+        }
+    });
+    ui.add_space(8.0);
+    true
+}
+
 /// Constraint names as shown (English keys, translated at display).
 fn pretty(s: &str) -> String {
     match s {
@@ -763,6 +798,8 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     let op = common(doc, sel, |n| (f64::from(n.opacity) * 100.0).round());
     let radius_ok = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_corner_radius()));
+    // Only rectangles and frames round each corner on its own.
+    let indep_ok = radius_ok && sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_independent_corners()));
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));
     widgets::sublabels(ui, tr("Opacity"), radius_ok.then_some(tr("Corner radius")));
     row(ui, 32.0, |ui| {
@@ -782,12 +819,12 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             );
             app.field(&ids, "cornerRadius", e, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
-            if icons::button(ui, Icon::IndependentCorners, 24.0, open, tr("Individual corners")).clicked() {
+            if indep_ok && icons::button(ui, Icon::IndependentCorners, 24.0, open, tr("Individual corners")).clicked() {
                 ui.data_mut(|d| d.insert_temp(Id::new("indep_corners"), !open));
             }
         }
     });
-    if radius_ok && ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false) {
+    if indep_ok && ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false) {
         let radii = common(doc, sel, |n| n.corners.radii);
         let keys = [
             ("topLeftRadius", tr("Top left radius")),
@@ -1360,9 +1397,9 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
             }
         });
         if join == Some(StrokeJoin::Miter) {
-            let limit = st.as_ref().map(|s| s.miter_limit);
-            let e = widgets::number_field(ui, Id::new("stroke_miter"), Lead::None, limit, "", half, 0.5);
-            app.field(&ids, "miterLimit", e, |v| json!(v.clamp(1.0, 100.0)));
+            let angle = st.as_ref().map(|s| (s.miter_angle() * 100.0).round() / 100.0);
+            let e = widgets::number_field(ui, Id::new("stroke_miter"), Lead::None, angle, "°", half, 1.0);
+            app.field(&ids, "miterAngle", e, |v| json!(v));
         }
     });
     // End points only mean something on open paths.

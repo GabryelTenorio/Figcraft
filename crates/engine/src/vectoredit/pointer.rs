@@ -34,11 +34,13 @@ pub(crate) enum VGesture {
         independent: bool,
         targets: Arc<Targets>,
     },
-    /// The transform box: a corner or edge scales the points in it.
+    /// The transform box: a corner or edge scales the points in it. `pick`: a Shift-press on the
+    /// point at that corner, which a click (no drag) takes out of the selection instead.
     BoxScale {
         b: PointBox,
         handle: Handle,
         targets: Arc<Targets>,
+        pick: Option<usize>,
     },
     /// The transform box: outside a corner rotates the points about its centre (`angle` so far,
     /// degrees clockwise on screen).
@@ -70,6 +72,15 @@ pub(crate) enum VGesture {
         plan: PenPlan,
         origin: Point,
         out: Option<(f64, f64)>,
+    },
+    /// Cut tool: where the press was (page) and what it was on.
+    Cut {
+        start: Point,
+        hit: Option<VHit>,
+    },
+    /// Paint bucket: the points dragged over so far (local).
+    Paint {
+        stamps: Vec<Point>,
     },
     /// Eraser strokes so far (local points) and the brush radius (local units).
     Erase {
@@ -215,7 +226,7 @@ impl Session {
     }
 
     /// Start a transform box gesture.
-    fn box_down(&mut self, ve: &VectorEdit, bh: BoxHit, ev: &PointerEvent) -> Result<()> {
+    fn box_down(&mut self, ve: &VectorEdit, bh: BoxHit, ev: &PointerEvent, pick: Option<usize>) -> Result<()> {
         let ds = self.ds()?;
         let (doc, page) = (ds.doc.clone(), ds.page);
         let Some(b) = transform::shown_box(&doc, ve) else { return Ok(()) };
@@ -233,7 +244,7 @@ impl Session {
             BoxHit::Handle(handle) => {
                 let targets = Arc::new(point_snap::targets(&doc, page, Some(ve.id), &b.points, &[]));
                 self.begin_interaction("Scale points")?;
-                self.vgesture(VGesture::BoxScale { b, handle, targets });
+                self.vgesture(VGesture::BoxScale { b, handle, targets, pick });
             }
         }
         Ok(())
@@ -321,11 +332,16 @@ impl Session {
         let tool = if ev.cmd && ve.tool == VTool::Move { VTool::Bend } else { ve.tool };
         let id = ve.id;
         let w = doc.world_transform(id);
-        // The transform box (Shift inside it adds to the selection instead).
+        // The transform box (Shift inside it adds to the selection instead; a Shift-click on the
+        // point at one of its corners takes that point out, a Shift-drag scales in proportion).
+        let pick = match h {
+            Some(VHit::Vertex { index }) if ev.shift => Some(index),
+            _ => None,
+        };
         if tool == VTool::Move
             && let Some(bh) = transform::box_hit(&doc, ve, h, ev.p(), ev.zoom).filter(|bh| !(ev.shift && *bh == BoxHit::Inside))
         {
-            self.box_down(ve, bh, ev)?;
+            self.box_down(ve, bh, ev, pick)?;
             return Ok(true);
         }
         match tool {
@@ -460,13 +476,12 @@ impl Session {
                 self.vgesture(VGesture::Pen { plan, origin: ev.p(), out });
             }
             VTool::Paint => {
+                // A drag paints every area it crosses the way the first one went (one undo step).
                 self.begin_interaction("Paint bucket")?;
-                let lp = w.inverse() * ev.p();
-                if self.preview(|doc, _| super::paint(doc, id, lp).map(|_| ())).is_ok() {
-                    self.commit_interaction()?;
-                } else {
-                    self.cancel_interaction()?;
-                }
+                let stamps = vec![w.inverse() * ev.p()];
+                let st = stamps.clone();
+                self.preview(|doc, _| super::paint_all(doc, id, &st).map(|_| ())).ok();
+                self.vgesture(VGesture::Paint { stamps });
             }
             VTool::Eraser => {
                 let scale = w.determinant().abs().sqrt().max(1e-9);
@@ -487,35 +502,10 @@ impl Session {
                 self.tool.overlay.lasso = vec![[ev.x, ev.y]];
                 self.vgesture(VGesture::Lasso { points: vec![ev.p()], base });
             }
+            // A click cuts there when the pointer goes up; a drag cuts across (see `cut_up`).
             VTool::Cut => {
-                let res: Option<Vec<usize>> = match h {
-                    Some(VHit::Vertex { index }) => {
-                        self.begin_interaction("Cut")?;
-                        let mut out = vec![];
-                        self.preview(|doc, _| {
-                            out = edit(doc, id, |net| ops::cut_vertex(net, index))?;
-                            Ok(())
-                        })?;
-                        Some(out)
-                    }
-                    Some(VHit::Segment { seg, t }) => {
-                        self.begin_interaction("Cut")?;
-                        let mut out = vec![];
-                        self.preview(|doc, _| {
-                            out = edit(doc, id, |net| ops::cut_segment(net, seg, t))?.map(|(a, b)| vec![a, b]).unwrap_or_default();
-                            Ok(())
-                        })?;
-                        Some(out)
-                    }
-                    _ => None,
-                };
-                if let Some(ends) = res {
-                    self.commit_interaction()?;
-                    set_state(self, |e| {
-                        e.vertices = ends;
-                        e.segments.clear();
-                    })?;
-                }
+                self.tool.overlay.rubber = Some([ev.x, ev.y, ev.x, ev.y]);
+                self.vgesture(VGesture::Cut { start: ev.p(), hit: h });
             }
         }
         Ok(true)
@@ -641,7 +631,7 @@ impl Session {
                     })
                 })?;
             }
-            VGesture::BoxScale { b, handle, targets } => {
+            VGesture::BoxScale { b, handle, targets, .. } => {
                 // The dragged corner or edge snaps like a resize handle.
                 let (c, guides) = point_snap::snap(&targets, &[ev.p()], None, ev.zoom, (modes.0, false), None);
                 self.tool.overlay.guides = guides;
@@ -717,6 +707,15 @@ impl Session {
                 }
                 self.vgesture(VGesture::Erase { stamps, radius });
             }
+            VGesture::Cut { start, .. } => self.tool.overlay.rubber = Some([start.x, start.y, ev.x, ev.y]),
+            VGesture::Paint { mut stamps } => {
+                if stamps.last().is_none_or(|l| (w * *l - ev.p()).hypot() * ev.zoom >= 2.0) && stamps.len() < 10_000 {
+                    stamps.push(lp);
+                    let st = stamps.clone();
+                    self.preview(|doc, _| super::paint_all(doc, id, &st).map(|_| ())).ok();
+                }
+                self.vgesture(VGesture::Paint { stamps });
+            }
             VGesture::Pen { plan, origin, out, .. } => {
                 let d = to_local(ev.p() - origin);
                 if (ev.p() - origin).hypot() * ev.zoom < 2.0 {
@@ -735,7 +734,32 @@ impl Session {
         Ok(())
     }
 
-    fn vector_up(&mut self, ve: &VectorEdit, _ev: &PointerEvent) -> Result<()> {
+    /// The Cut tool's pointer went up: a click on a point or a segment cuts the path there; a drag
+    /// cuts every path it crosses, parts that come apart moving to layers of their own.
+    fn cut_up(&mut self, ve: &VectorEdit, start: Point, hit: Option<VHit>, ev: &PointerEvent) -> Result<()> {
+        self.tool.overlay.rubber = None;
+        let id = ve.id;
+        self.begin_interaction("Cut")?;
+        if (ev.p() - start).hypot() * ev.zoom >= 3.0 {
+            return if super::cut_across(self, start, ev.p()).is_ok() { self.commit_interaction() } else { self.cancel_interaction() };
+        }
+        let mut ends = vec![];
+        self.preview(|doc, _| {
+            ends = match hit {
+                Some(VHit::Vertex { index }) => edit(doc, id, |net| ops::cut_vertex(net, index))?,
+                Some(VHit::Segment { seg, t }) => edit(doc, id, |net| ops::cut_segment(net, seg, t))?.map(|(a, b)| vec![a, b]).unwrap_or_default(),
+                _ => vec![],
+            };
+            Ok(())
+        })?;
+        self.commit_interaction()?;
+        set_state(self, |e| {
+            e.vertices = ends;
+            e.segments.clear();
+        })
+    }
+
+    fn vector_up(&mut self, ve: &VectorEdit, ev: &PointerEvent) -> Result<()> {
         let g = std::mem::take(&mut self.tool.gesture);
         self.tool.overlay.marquee = None;
         self.tool.overlay.lasso.clear();
@@ -766,13 +790,29 @@ impl Session {
                     self.cancel_interaction()?;
                 }
             }
-            VGesture::Handle { .. }
-            | VGesture::BendSegment { .. }
-            | VGesture::Pen { .. }
-            | VGesture::BoxScale { .. }
-            | VGesture::BoxRotate { .. } => self.commit_interaction()?,
+            VGesture::Handle { .. } | VGesture::BendSegment { .. } | VGesture::Pen { .. } | VGesture::BoxRotate { .. } => {
+                self.commit_interaction()?
+            }
             VGesture::Marquee { .. } | VGesture::Lasso { .. } => {}
-            VGesture::Erase { .. } => self.commit_interaction()?,
+            VGesture::Erase { .. } | VGesture::Paint { .. } => self.commit_interaction()?,
+            VGesture::BoxScale { pick, .. } => {
+                let ds = self.ds()?;
+                let clicked = ds.interaction.as_ref().is_some_and(|it| Arc::ptr_eq(&it.doc, &ds.doc));
+                match pick.filter(|_| clicked) {
+                    Some(v) => {
+                        self.cancel_interaction()?;
+                        set_state(self, |e| {
+                            if let Some(i) = e.vertices.iter().position(|x| *x == v) {
+                                e.vertices.remove(i);
+                            } else {
+                                e.vertices.push(v);
+                            }
+                        })?;
+                    }
+                    None => self.commit_interaction()?,
+                }
+            }
+            VGesture::Cut { start, hit } => self.cut_up(ve, start, hit, ev)?,
             VGesture::Width(g) => self.width_up(g)?,
         }
         if let Ok(ds) = self.ds_mut() {

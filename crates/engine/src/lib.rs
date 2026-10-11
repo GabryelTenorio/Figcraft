@@ -36,6 +36,7 @@ pub mod measure;
 pub mod params;
 pub mod plugins;
 pub mod proto_run;
+pub mod shape_handles;
 pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
@@ -1327,9 +1328,13 @@ mod selection_behaviour_tests;
 #[cfg(test)]
 mod selection_depth_tests;
 #[cfg(test)]
+mod shape_handles_tests;
+#[cfg(test)]
 mod shapebuilder_strokes_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
+#[cfg(test)]
+mod shapes_behaviour_tests;
 #[cfg(test)]
 mod slot_tests;
 #[cfg(test)]
@@ -1362,6 +1367,8 @@ mod variables_behaviour_tests;
 mod variables_editor_tests;
 #[cfg(test)]
 mod variables_io_tests;
+#[cfg(test)]
+mod vector_behaviour_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]

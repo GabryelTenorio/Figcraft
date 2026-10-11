@@ -243,7 +243,7 @@ pub static KEYS: &[Binding] = &[
     k(Text, "text.trackingUp", &["Alt+."]).both(),
     k(Text, "text.trackingDown", &["Alt+,"]).both(),
     // Shape
-    k(Shape, "vector.flatten", &["Cmd+E"]),
+    k(Shape, "vector.flatten", &["Alt+Shift+F", "Cmd+E"]),
     k(Shape, "vector.outlineStroke", &["Alt+Cmd+O"]),
     k(Shape, "bool.union", &["Alt+Shift+U"]),
     k(Shape, "bool.subtract", &["Alt+Shift+S"]),

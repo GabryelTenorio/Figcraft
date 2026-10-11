@@ -703,14 +703,35 @@ pub fn specs() -> Vec<CommandSpec> {
             })?;
             Ok(json!({"ok": true}))
         }),
-        spec!("vector.edit.paint", "Paint bucket", "{x, y} (page point: fills or unfills the closed area under it)", true, |s, p| {
+        spec!(
+            "vector.edit.paint",
+            "Paint bucket",
+            "{x, y} | {points: [[x, y], ...]} (page points: fills or unfills the closed area under the first, and does the same to the areas under the rest, like a drag)",
+            true,
+            |s, p| {
+                let ve = editing(s)?;
+                let pts = match get(p, "points") {
+                    Some(Value::Array(a)) => a.iter().filter_map(|q| Some(Point::new(q.get(0).and_then(f64_of)?, q.get(1).and_then(f64_of)?))).take(10_000).collect(),
+                    _ => vec![Point::new(req_num("vector.edit.paint", p, "x")?, req_num("vector.edit.paint", p, "y")?)],
+                };
+                let inv = s.doc()?.world_transform(ve.id).inverse();
+                let local: Vec<Point> = pts.iter().map(|q| inv * *q).collect();
+                let filled = paint_all(s.doc_mut()?, ve.id, &local)?;
+                Ok(json!({"filled": filled}))
+            }
+        ),
+        spec!(
+            "vector.edit.cut",
+            "Cut path",
+            "{segment, t?} | {vertex} | {from: [x, y], to: [x, y]} (page: cuts every path the line crosses; parts that come apart move to layers of their own)",
+            true,
+            |s, p| {
             let ve = editing(s)?;
-            let lp = local(s, ve.id, p, "vector.edit.paint")?;
-            let filled = paint(s.doc_mut()?, ve.id, lp)?;
-            Ok(json!({"filled": filled}))
-        }),
-        spec!("vector.edit.cut", "Cut path", "{segment, t?} | {vertex}", true, |s, p| {
-            let ve = editing(s)?;
+            let pair = |k: &str| get(p, k).and_then(|q| Some(Point::new(q.get(0).and_then(f64_of)?, q.get(1).and_then(f64_of)?)));
+            if let (Some(a), Some(b)) = (pair("from"), pair("to")) {
+                let layers = cut_across(s, a, b)?;
+                return Ok(json!({"layers": layers}));
+            }
             let ends = if let Some(v) = num(p, "vertex") {
                 let v = if v >= 0.0 { v as usize } else { usize::MAX };
                 edit(s.doc_mut()?, ve.id, |net| ops::cut_vertex(net, v))?
@@ -727,7 +748,8 @@ pub fn specs() -> Vec<CommandSpec> {
                 ve.segments.clear();
             })?;
             Ok(json!({"vertices": ends}))
-        }),
+        }
+        ),
         spec!(
             "vector.edit.erase",
             "Erase",
@@ -811,10 +833,53 @@ pub fn specs() -> Vec<CommandSpec> {
     .collect()
 }
 
-/// The paint bucket on node `id` at local point `lp`. A vector without fills gets the default
-/// fill so the painted area shows.
-pub fn paint(doc: &mut Document, id: NodeId, lp: Point) -> Result<bool> {
-    let filled = edit(doc, id, |net| net.paint(lp))?.ok_or_else(|| bad("vector.edit.paint", "click inside a closed area"))?;
+/// The Cut tool dragged across the edited vector from page point `a` to `b`: the paths the line
+/// crosses are cut there, and every part that comes apart moves to a layer of its own above it
+/// (the part holding the first point stays). Returns the layers, the edited one first.
+pub(crate) fn cut_across(s: &mut Session, a: Point, b: Point) -> Result<Vec<NodeId>> {
+    let id = editing(s)?.id;
+    let doc = s.doc_mut()?;
+    let inv = doc.world_transform(id).inverse();
+    let ends = edit(doc, id, |net| ops::cut_across(net, inv * a, inv * b))?;
+    if ends.is_empty() {
+        return Err(bad("vector.edit.cut", "drag across a path to cut it"));
+    }
+    let net = network(doc, id).cloned().unwrap_or_default();
+    let parts = ops::parts(&net);
+    let mut layers = vec![id];
+    if let [first, rest @ ..] = parts.as_slice()
+        && !rest.is_empty()
+    {
+        let parent = doc.get(id)?.parent.ok_or_else(|| bad("vector.edit.cut", "no parent"))?;
+        let at = doc.index_in_parent(id).map(|i| i + 1);
+        for part in rest.iter().rev() {
+            let copy = doc.duplicate_into(id, parent, at)?;
+            *network_mut(doc, copy)? = ops::part(&net, part);
+            refit(doc, copy)?;
+            layers.insert(1, copy);
+        }
+        *network_mut(doc, id)? = ops::part(&net, first);
+        refit(doc, id)?;
+    }
+    set_state(s, |ve| {
+        ve.vertices.clear();
+        ve.segments.clear();
+    })?;
+    Ok(layers)
+}
+
+/// The paint bucket on node `id` at local points `pts`: the first fills or unfills the closed area
+/// under it, the others get the same (points outside closed areas are skipped). A vector without
+/// fills gets the default fill so the painted area shows.
+pub fn paint_all(doc: &mut Document, id: NodeId, pts: &[Point]) -> Result<bool> {
+    let filled = edit(doc, id, |net| {
+        let mut want = None;
+        for p in pts {
+            want = net.paint_to(*p, want).or(want);
+        }
+        want
+    })?
+    .ok_or_else(|| bad("vector.edit.paint", "click inside a closed area"))?;
     let n = doc.get_mut(id)?;
     if filled && n.fills.iter().all(|f| !f.visible) {
         n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::DEFAULT_SHAPE)];

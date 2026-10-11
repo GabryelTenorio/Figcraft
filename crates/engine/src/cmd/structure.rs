@@ -148,9 +148,10 @@ fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
         _ => Node::new(gid, kind, name, local.width(), local.height()),
     };
     g.transform = Affine::translate((local.x0, local.y0));
-    if let Wrap::Bool(_) = w {
-        // A boolean group takes its look from the bottom-most shape.
-        if let Some(first) = ids.first().and_then(|i| doc.node(*i)) {
+    if let Wrap::Bool(op) = w {
+        // A boolean group looks like its top layer; a subtraction like the bottom one it cuts.
+        let source = if op == BoolOp::Subtract { ids.first() } else { ids.last() };
+        if let Some(first) = source.and_then(|i| doc.node(*i)) {
             g.fills = if first.fills.is_empty() { vec![Paint::solid(Color::DEFAULT_SHAPE)] } else { first.fills.clone() };
             g.strokes = first.strokes.clone();
             g.stroke = first.stroke.clone();
@@ -324,8 +325,10 @@ fn outline_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         let vid = doc.alloc_id();
         let mut v = Node::new(vid, NodeKind::Vector { network: net }, n.name.clone(), bb.width(), bb.height());
         v.transform = n.transform * Affine::translate((bb.x0, bb.y0));
+        // The stroke's paints (and its colour style) fill the outline.
         v.fills = n.strokes.clone();
         v.strokes.clear();
+        v.styles.fill = n.styles.stroke;
         if n.fills.iter().any(|f| f.visible) && closed {
             // Keep the fill as its own layer under the outline, grouped.
             doc.insert(v, parent, idx.map(|x| x + 1))?;
@@ -340,6 +343,9 @@ fn outline_stroke(s: &mut Session, p: &Value) -> Result<Value> {
             }
             return Ok(json!({"ids": out}));
         }
+        // Standing in for the layer, the outline keeps how it is drawn and placed.
+        (v.opacity, v.blend, v.effects, v.styles.effect) = (n.opacity, n.blend, n.effects.clone(), n.styles.effect);
+        (v.constraints, v.child_layout, v.visible, v.locked) = (n.constraints, n.child_layout.clone(), n.visible, n.locked);
         doc.insert(v, parent, idx.map(|x| x + 1))?;
         doc.remove(i)?;
         out.push(vid);

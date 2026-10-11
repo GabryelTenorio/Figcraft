@@ -87,6 +87,19 @@ pub struct Region {
     pub winding: WindingRule,
 }
 
+/// A rounded point as drawn: point `v` moves to `a` (on segment `s1`), segment `s2` starts again
+/// at `b`, and an arc with handles `ta`/`tb` joins them.
+struct Corner {
+    v: usize,
+    s1: usize,
+    s2: usize,
+    s2_at_a: bool,
+    a: Point,
+    b: Point,
+    ta: (f64, f64),
+    tb: (f64, f64),
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct VectorNetwork {
     pub vertices: Vec<Vertex>,
@@ -302,8 +315,91 @@ impl VectorNetwork {
         }
     }
 
+    /// The network with its rounded points drawn in: each point with a corner radius between two
+    /// straight segments becomes an arc (the radius shrinks so the arc fits in half of each
+    /// segment, like a polygon's corners). `None` when no point is rounded.
+    /// shortcut: points next to a curved segment stay sharp; round them by trimming the curve.
+    pub fn rounded(&self) -> Option<VectorNetwork> {
+        if !self.vertices.iter().any(|v| v.radius > 0.0) {
+            return None;
+        }
+        let mut incident: Vec<Vec<(usize, bool)>> = vec![Vec::new(); self.vertices.len()];
+        for (i, s) in self.segments.iter().enumerate() {
+            for (v, at_a) in [(s.a, true), (s.b, false)] {
+                if let Some(l) = incident.get_mut(v) {
+                    l.push((i, at_a));
+                }
+            }
+        }
+        let corners: Vec<Corner> = (0..self.vertices.len()).filter_map(|v| self.corner(v, incident.get(v)?)).collect();
+        let mut out = self.clone();
+        for v in &mut out.vertices {
+            v.radius = 0.0;
+        }
+        for c in corners {
+            if let Some(v) = out.vertices.get_mut(c.v) {
+                (v.x, v.y) = (c.a.x, c.a.y);
+            }
+            out.vertices.push(Vertex::new(c.b.x, c.b.y));
+            let nb = out.vertices.len() - 1;
+            if let Some(s) = out.segments.get_mut(c.s2) {
+                if c.s2_at_a {
+                    s.a = nb;
+                } else {
+                    s.b = nb;
+                }
+            }
+            out.segments.push(Segment { a: c.v, b: nb, ta: c.ta, tb: c.tb });
+            let arc = out.segments.len() - 1;
+            // The arc goes between the two segments wherever a loop walks through the point.
+            for lp in out.regions.iter_mut().flat_map(|r| r.loops.iter_mut()) {
+                let n = lp.len();
+                let between =
+                    |k: usize| matches!((lp.get(k), lp.get((k + 1) % n)), (Some(&x), Some(&y)) if (x, y) == (c.s1, c.s2) || (x, y) == (c.s2, c.s1));
+                if let Some(k) = (0..n).find(|k| between(*k)) {
+                    lp.insert(k + 1, arc);
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// How point `v` (its `incident` segments) is rounded, if it is.
+    fn corner(&self, v: usize, incident: &[(usize, bool)]) -> Option<Corner> {
+        let r = self.vertices.get(v)?.radius;
+        let [(s1, a1), (s2, a2)] = *incident else { return None };
+        let (x, y) = (self.segments.get(s1)?, self.segments.get(s2)?);
+        if !(r > 0.0 && r.is_finite()) || s1 == s2 || !x.is_straight() || !y.is_straight() {
+            return None;
+        }
+        let p = self.vertices.get(v)?.point();
+        let far = |s: &Segment, at_a: bool| self.vertices.get(if at_a { s.b } else { s.a }).map(Vertex::point);
+        let (v1, v2) = (far(x, a1)? - p, far(y, a2)? - p);
+        let (l1, l2) = (v1.hypot(), v2.hypot());
+        if l1 < 1e-9 || l2 < 1e-9 {
+            return None;
+        }
+        let (u1, u2) = (v1 / l1, v2 / l2);
+        let angle = u1.dot(u2).clamp(-1.0, 1.0).acos();
+        if angle < 1e-6 || std::f64::consts::PI - angle < 1e-6 {
+            return None;
+        }
+        let (mut t, max_t, mut r) = (r / (angle / 2.0).tan(), l1.min(l2) / 2.0, r);
+        if t > max_t {
+            r *= max_t / t;
+            t = max_t;
+        }
+        // A cubic arc: handles of 4/3·tan(θ/4)·r along the edges, θ the turn at the point.
+        let k = 4.0 / 3.0 * ((std::f64::consts::PI - angle) / 4.0).tan() * r;
+        let (h1, h2) = (u1 * -k, u2 * -k);
+        Some(Corner { v, s1, s2, s2_at_a: a2, a: p + u1 * t, b: p + u2 * t, ta: (h1.x, h1.y), tb: (h2.x, h2.y) })
+    }
+
     /// The fill path: every region's loops.
     pub fn fill_path(&self) -> BezPath {
+        if let Some(r) = self.rounded() {
+            return r.fill_path();
+        }
         let mut path = BezPath::new();
         for region in &self.regions {
             for lp in &region.loops {
@@ -339,6 +435,9 @@ impl VectorNetwork {
     /// The stroke path: segments chained into maximal open runs (vertices of degree 2 continue a
     /// run); closed loops come out closed.
     pub fn stroke_path(&self) -> BezPath {
+        if let Some(r) = self.rounded() {
+            return r.stroke_path();
+        }
         let mut path = BezPath::new();
         let n = self.segments.len();
         let mut used = vec![false; n];

@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -56,9 +56,10 @@ interaction feel not yet compared.
 |---|---|---|
 | Move, hand (Space), zoom (hold Z, Alt out, drag area) | done | |
 | Frame (presets panel, swap orientation), section, slice | done | |
-| Rectangle, ellipse (arc handles and Design panel arc fields), polygon, star, line, arrow; Shift/Alt | done | |
-| Pen: vector networks, branch, close, bend; pencil | done | pen pressure on Windows and from browser styluses only |
-| Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
+| Rectangle, ellipse (arc handles and Design panel arc fields), polygon, star, line, arrow; Shift/Alt | done | Alt draws lines from the centre too (`shapes_behaviour_tests`) |
+| Corner radius handles (inside each corner of a rectangle or frame, a polygon's or star's top point; Alt: one corner), star ratio handle; Count and Ratio fields | done | handles hide under 48 px on screen; no count handle on the canvas (the Count field instead); corner smoothing rounds rectangles and frames only |
+| Pen: vector networks, branch, close, bend; pencil | done | pen pressure on Windows and from browser styluses only; the Pen outside edit mode closes only on its first point |
+| Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | paint bucket drags across areas; cut drags divide a shape into layers; delete and heal follows the curve; rounded points are drawn; Shift-click deselects a point at a corner of the box (`vector_behaviour_tests`). Not yet: several vectors edited at once, several handles dragged together, a join or cap per point |
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: clicked where the result is, double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | |
 | Text: point, auto height, fixed; caret, words, lines, IME | done | carets step over whole emoji and accented letters; CJK words by script run (no dictionary); vertical trim in Type settings; no spell check |
@@ -103,6 +104,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Shapes and vector behaviour suite and fixes: corner radius and star ratio handles on the canvas, Count and Ratio fields, Alt draws lines from the centre, paint bucket and cut drags, delete and heal along the curve, rounded vector points drawn, Shift-click deselects a point at a box corner, the miter field shows degrees, individual corners only for rectangles and frames |
 | 2026-10-11 | minor | Paint and effects behaviour suite: the blend menu's Normal sets Normal (it set pass-through), a blend menu for each paint in the colour picker, the eyedropper's rules covered by tests |
 | 2026-10-11 | minor | Frames, groups, sections and masks: drawing a frame or section around layers takes them, sections stay out of frames, section resizing leaves contents in place, masked-out areas don't take clicks, a mask group's box follows the mask, X/Y of layers in groups are measured in the frame |
 | 2026-10-11 | minor | Layers panel keyboard: F2 renames (also from a row with the keyboard, which gets it back), Shift+F10 opens the context menu at the focused row or below the canvas selection, F8 draws a selection box the arrows move and size; stroke weights bind to variables side by side |

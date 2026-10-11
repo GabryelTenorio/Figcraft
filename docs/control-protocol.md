@@ -73,7 +73,7 @@ that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-kn
 ### `ui.inspect {}`
 
 UI state: panels and tabs, current tool (`tool`: its id, overlay hints and, for a selected
-ellipse, its arc handles `arcHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
+ellipse, its arc handles `arcHandles`, for a selected rectangle, frame, polygon or star, its corner radius and ratio handles `shapeHandles`; see [mcp.md](mcp.md#measuring-the-scale-tool-arc-handles-and-selecting)), canvas rect, dialogs, view, timings (`frameMs`,
 `renderMs`), frames drawn since start or the last `ui.set {resetFrameStats: true}` (`framesDrawn`;
 an idle window draws none) with the most frequent repaint requests behind them (`repaintCauses`:
 `[{at: "file:line", count}]`, every request made in the frame before each one, delayed ones such as

@@ -288,3 +288,22 @@ fn task_draw_and_type_with_tools() {
     c.ok("key", json!({"key": "Delete"}));
     assert_eq!(c.page_children().len(), 0);
 }
+
+/// Keys in vector edit mode reach the edit tools first, as on the canvas (Delete took the whole
+/// layer and the tool letters were unknown).
+#[test]
+fn task_vector_edit_keys() {
+    let mut c = Client::new();
+    let id = c.create(json!({"type": "rectangle", "x": 0, "y": 0, "width": 100, "height": 100}));
+    c.run("vector.edit.begin", json!({"id": id}));
+    c.ok("key", json!({"key": "X"}));
+    assert_eq!(c.run("vector.edit.state", json!({}))["tool"], "cut");
+    c.ok("key", json!({"key": "V"}));
+    c.run("vector.edit.select", json!({"vertices": [1]}));
+    c.ok("key", json!({"key": "Delete"}));
+    let state = c.run("vector.edit.state", json!({}));
+    assert_eq!(state["network"]["vertices"].as_array().map(Vec::len), Some(3), "Delete removed the point, not the layer");
+    c.ok("key", json!({"key": "Enter"}));
+    assert_eq!(c.page_children().len(), 1);
+    assert!(c.call("run_command", json!({"command": "vector.edit.state", "params": {}}))["isError"] == true, "Enter left edit mode");
+}

@@ -259,12 +259,20 @@ local network, each point's handle mirroring and the width points), `vector.edit
 {mode: none|angle|angleAndLength}`, `vector.edit.smooth {smooth?}`, `vector.edit.bend`,
 `vector.edit.addVertex`, `vector.edit.connect {a, b}`, `vector.edit.pen {x, y, dx?, dy?}` (continues
 from the pen's open end; clicking a point connects or branches), `vector.edit.penEnd`,
-`vector.edit.paint {x, y}` (paint bucket: fills or unfills the closed area under a page point),
-`vector.edit.cut {segment, t} | {vertex}`, `vector.edit.erase {points, radius?}` (the eraser),
+`vector.edit.paint {x, y} | {points}` (paint bucket: fills or unfills the closed area under a page
+point; with `points`, the areas under the rest go the way the first went, like a drag),
+`vector.edit.cut {segment, t} | {vertex} | {from: [x, y], to: [x, y]}` (the last cuts every path the
+page line crosses; parts that come apart move to layers of their own above, listed in `layers`),
+`vector.edit.erase {points, radius?}` (the eraser),
 `vector.edit.lasso {points}`, `vector.edit.delete`,
 `vector.deleteHeal`, `vector.join` / `vector.smoothJoin` (join the selected points while editing),
-`vector.edit.cornerRadius`, `vector.edit.end`. Point indices refer to `network.vertices` in
-`vector.edit.state`; local coordinates are the layer's own.
+`vector.edit.cornerRadius` (rounds the selected points that join two straight segments, drawn and
+exported; `node.set {cornerRadius}` on a vector rounds every point), `vector.edit.end`. Point
+indices refer to `network.vertices` in `vector.edit.state`; local coordinates are the layer's own.
+`vector.deleteHeal` fits the healed curve through where the deleted point was, keeping the
+neighbours' tangents. With `pointer`, the Paint bucket and Cut tools also drag (across areas to
+paint, across paths to divide), one undo step each; `shift` on a selected point at a corner of the
+points' box takes it out of the selection on a click and scales in proportion on a drag.
 
 The selected points' transform box: `vector.edit.bounds` (`{x, y, width, height, corners,
 points}`: the box in the vector's axes, `x`/`y` in the parent's coordinates like the Position
@@ -1062,6 +1070,16 @@ guide, along the frame's axis nearer the ruler's.
   bound to `arcStart` degrees.
   `tool.overlay.arc` holds the readout while dragging (`{handle, label: "Sweep 75%", at}`), and
   `tool.overlay.arc_hover` holds the handle under the pointer.
+- **Corner radius and star ratio handles**: a selected rectangle or frame (at least 48 px on screen)
+  has a handle inside each corner, a polygon or star one inside its top point, and a star a ratio
+  handle on its first inner point; `inspect_ui` lists them under `tool.shapeHandles`
+  (`{handle: {kind: radius, corner} | {kind: ratio}, at}`). Dragging a radius handle along its
+  corner's bisector sets `cornerRadius` (stopping where the corners meet); `alt: true` sets only that
+  corner of a rectangle or frame (`topLeftRadius`…). Dragging the ratio handle sets `innerRadius`.
+  One undo step per drag; `tool.overlay.shape` holds the readout (`{handle, value, at}`).
+  `node.set {pointCount}` keeps stars to 3–60 points; `miterAngle` (degrees, the Design panel's
+  Miter angle) sets the miter limit (`limit = 1 / sin(angle / 2)`); `get_node` reports a join
+  other than miter (`strokeJoin`) or a miter angle other than the default ~28.96° (`miterAngle`).
 - **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
   depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
   / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`

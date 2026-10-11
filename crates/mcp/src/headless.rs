@@ -143,6 +143,11 @@ impl Headless {
                 return Ok(json!({"ok": true, "textEdit": true}));
             }
         }
+        // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter), as
+        // on the canvas.
+        if self.session.tool_key(key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())? {
+            return Ok(json!({"ok": true}));
+        }
         if let Some(bd) = lookup(platform, Context::Canvas, key, m) {
             match bd.id {
                 "select.none" => self.session.escape().map_err(|e| e.to_string())?,

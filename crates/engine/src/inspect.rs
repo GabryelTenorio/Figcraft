@@ -52,6 +52,11 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if !n.stroke.dashes.is_empty() {
                 o.insert("dashes".into(), json!(n.stroke.dashes));
             }
+            if n.stroke.join != StrokeJoin::Miter {
+                o.insert("strokeJoin".into(), json!(n.stroke.join));
+            } else if n.stroke.miter_limit != 4.0 {
+                o.insert("miterAngle".into(), json!((n.stroke.miter_angle() * 100.0).round() / 100.0));
+            }
             if let Some(p) = n.stroke.profile() {
                 let points = crate::cmd::props::width_points_json(Some(p));
                 o.insert("widthProfile".into(), json!({"preset": p.preset().map(|x| x.id()), "points": points}));

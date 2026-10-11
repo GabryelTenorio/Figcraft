@@ -14,6 +14,7 @@ use crate::arc_handles::{ArcHandle, ArcHint};
 use crate::cmd::arrange::move_world;
 use crate::cmd::create::frame_at;
 use crate::cmd::edit::roots;
+use crate::shape_handles::{ShapeHandle, ShapeHint};
 use crate::snap::{Guide, Targets};
 use crate::{Result, Session, textedit};
 
@@ -240,6 +241,10 @@ pub struct Overlay {
     /// (see [`crate::arc_handles`]).
     pub arc_hover: Option<ArcHandle>,
     pub arc: Option<ArcHint>,
+    /// The selected shape's corner radius or star ratio handle under the pointer, and the readout
+    /// while one is dragged (see [`crate::shape_handles`]).
+    pub shape_hover: Option<ShapeHandle>,
+    pub shape: Option<ShapeHint>,
 }
 
 /// The Scale tool's live readout while dragging a handle.
@@ -318,6 +323,11 @@ pub(crate) enum Gesture {
         id: NodeId,
         handle: ArcHandle,
         arc: crate::arc_handles::Arc,
+    },
+    /// Dragging a shape's corner radius or star ratio handle (see [`crate::shape_handles`]).
+    Shape {
+        id: NodeId,
+        handle: ShapeHandle,
     },
     /// Shape builder: regions collected so far (handled in `shapebuilder`).
     ShapeBuild {
@@ -864,7 +874,9 @@ impl Session {
         let mut measure_box = None;
         let arc_hover = if self.arc_handles_shown() { crate::arc_handles::hit(&doc, &sel, ev.p(), ev.zoom).map(|(_, h)| h) } else { None };
         self.tool.overlay.arc_hover = arc_hover;
-        if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() {
+        let shape_hover = if self.arc_handles_shown() { crate::shape_handles::hit(&doc, &sel, ev.p(), ev.zoom).map(|(_, h)| h) } else { None };
+        self.tool.overlay.shape_hover = shape_hover;
+        if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
@@ -929,6 +941,14 @@ impl Session {
             self.tool.gesture = Gesture::Arc { id, handle, arc };
             self.tool.overlay.arc =
                 crate::arc_handles::handle_at(&doc, id, handle, arc, ev.zoom).map(|at| ArcHint { handle, label: arc.label(handle), at });
+            return Ok(());
+        }
+        if self.arc_handles_shown()
+            && let Some((id, handle)) = crate::shape_handles::hit(&doc, &sel, ev.p(), ev.zoom)
+        {
+            self.begin_interaction("Corner radius")?;
+            self.tool.gesture = Gesture::Shape { id, handle };
+            self.tool.overlay.shape = shape_hint(&doc, id, handle, ev.zoom);
             return Ok(());
         }
         if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
@@ -1160,6 +1180,16 @@ impl Session {
                 let (id, handle, arc) = (*id, *handle, *arc);
                 self.tool.gesture = g;
                 return self.arc_drag(ev, id, handle, arc);
+            }
+            Gesture::Shape { id, handle } => {
+                let (id, handle) = (*id, *handle);
+                let doc = self.doc()?.clone();
+                if let Some(props) = crate::shape_handles::drag(&doc, id, handle, ev.p(), ev.alt) {
+                    self.preview(|doc, _| crate::cmd::props::apply("node.set", doc, id, &props))?;
+                }
+                self.tool.overlay.shape = shape_hint(self.doc()?, id, handle, ev.zoom);
+                self.tool.overlay.shape_hover = Some(handle);
+                Ok(())
             }
             Gesture::Pan { sx, sy, cx, cy } => {
                 let ds = self.ds_mut()?;
@@ -1429,6 +1459,8 @@ impl Session {
                     let ang = (v.atan2() / (std::f64::consts::PI / 4.0)).round() * std::f64::consts::PI / 4.0;
                     v = Vec2::from_angle(ang) * v.hypot();
                 }
+                // Alt draws from the centre, as for the other shapes.
+                let (a, v) = if ev.alt { (a - v, v * 2.0) } else { (a, v) };
                 n.width = v.hypot();
                 n.transform = pw.inverse() * Affine::translate(a.to_vec2()) * Affine::rotate(v.atan2());
             } else {
@@ -1460,6 +1492,7 @@ impl Session {
         self.tool.overlay.guides.clear();
         self.tool.overlay.scale = None;
         self.tool.overlay.arc = None;
+        self.tool.overlay.shape = None;
         self.tool.overlay.measure_box = None;
         self.tool.overlay.insert_line = None;
         self.tool.overlay.drop_cell = None;
@@ -1513,7 +1546,7 @@ impl Session {
                     let _ = ev;
                 }
             }
-            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } => {
+            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } | Gesture::Shape { .. } => {
                 // Layers inside an instance keep their main's size and rotation.
                 let ds = self.ds()?;
                 let refused = ds
@@ -1932,10 +1965,10 @@ impl Session {
         Ok(())
     }
 
-    /// Whether the Move tool shows arc handles now (not while another gesture runs, nor in vector
-    /// or text edit mode).
+    /// Whether the Move tool shows arc and shape handles now (not while another gesture runs, nor
+    /// in vector or text edit mode).
     fn arc_handles_shown(&self) -> bool {
-        let arc_drag = matches!(self.tool.gesture, Gesture::Arc { .. });
+        let arc_drag = matches!(self.tool.gesture, Gesture::Arc { .. } | Gesture::Shape { .. });
         self.tool.tool == ToolId::Move
             && (arc_drag || !self.tool.busy())
             && self.ds().is_ok_and(|ds| ds.vector_edit.is_none() && ds.text_edit.is_none())
@@ -1947,10 +1980,22 @@ impl Session {
         self.arc_handles_shown().then(|| crate::arc_handles::handles(&ds.doc, &ds.selection, ds.view.zoom)).flatten()
     }
 
+    /// The selected shape's corner radius and star ratio handles as the canvas shows them now.
+    pub fn shape_handles(&self) -> Vec<(ShapeHandle, [f64; 2])> {
+        let Ok(ds) = self.ds() else { return vec![] };
+        if self.arc_handles_shown() { crate::shape_handles::handles(&ds.doc, &ds.selection, ds.view.zoom) } else { vec![] }
+    }
+
     /// Snapshot of tool state for the UI / inspect.
     pub fn tool_info(&self) -> serde_json::Value {
-        json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay, "arcHandles": self.arc_handles()})
+        let shapes: Vec<serde_json::Value> = self.shape_handles().into_iter().map(|(h, at)| json!({"handle": h, "at": at})).collect();
+        json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay, "arcHandles": self.arc_handles(), "shapeHandles": shapes})
     }
+}
+
+/// The readout of a shape handle drag on `id`.
+fn shape_hint(doc: &Document, id: NodeId, handle: ShapeHandle, zoom: f64) -> Option<ShapeHint> {
+    Some(ShapeHint { handle, value: crate::shape_handles::value(doc, id, handle)?, at: crate::shape_handles::handle_at(doc, id, handle, zoom)? })
 }
 
 #[allow(dead_code)]

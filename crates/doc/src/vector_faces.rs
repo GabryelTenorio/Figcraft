@@ -109,6 +109,12 @@ impl VectorNetwork {
     /// Regions that aren't single faces (e.g. from a converted shape or an import) are first
     /// re-expressed as one region per filled face, so any face can be toggled on its own.
     pub fn paint(&mut self, p: Point) -> Option<bool> {
+        self.paint_to(p, None)
+    }
+
+    /// Like [`Self::paint`], but with `want` the face ends up filled (`Some(true)`) or unfilled
+    /// (`Some(false)`) whatever it was: a paint bucket drag keeps doing what its first click did.
+    pub fn paint_to(&mut self, p: Point, want: Option<bool>) -> Option<bool> {
         let face = self.face_at(p)?;
         let key = |loops: &[Vec<usize>]| -> Vec<Vec<usize>> {
             let mut k: Vec<Vec<usize>> = loops
@@ -129,12 +135,17 @@ impl VectorNetwork {
             self.regions = filled;
         }
         let k = key(&face.loops);
-        if let Some(i) = self.regions.iter().position(|r| key(&r.loops) == k) {
-            self.regions.remove(i);
-            Some(false)
-        } else {
-            self.regions.push(face.region());
-            Some(true)
+        match (self.regions.iter().position(|r| key(&r.loops) == k), want) {
+            (Some(i), None | Some(false)) => {
+                self.regions.remove(i);
+                Some(false)
+            }
+            (Some(_), Some(true)) => Some(true),
+            (None, Some(false)) => Some(false),
+            (None, _) => {
+                self.regions.push(face.region());
+                Some(true)
+            }
         }
     }
 

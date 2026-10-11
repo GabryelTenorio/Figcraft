@@ -887,6 +887,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             };
             size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, handles, label);
             arc_overlay(app, painter, col);
+            shape_overlay(app, painter, col);
             if app.session.tool.tool == ToolId::Scale {
                 // The point that stays put: the dragged pivot, else the anchor.
                 let pivot = scale
@@ -1039,6 +1040,27 @@ fn arc_overlay(app: &FigApp, painter: &egui::Painter, col: Color32) {
     if let Some(hint) = &ov.arc {
         let c = app.to_screen(hint.at[0], hint.at[1]);
         pill(painter, c + vec2(12.0, 12.0), Align2::LEFT_TOP, hint.label.clone(), col);
+    }
+}
+
+/// The selected shape's corner radius handles and a star's ratio handle (the hovered or dragged
+/// one larger) and, while one is dragged, its value beside it.
+fn shape_overlay(app: &FigApp, painter: &egui::Painter, col: Color32) {
+    use figcraft_engine::shape_handles::ShapeHandle;
+    let ov = &app.session.tool.overlay;
+    for (h, [x, y]) in app.session.shape_handles() {
+        let r = if ov.shape_hover == Some(h) { 4.5 } else { 3.5 };
+        let c = app.to_screen(x, y);
+        painter.circle_filled(c, r, Color32::WHITE);
+        painter.circle_stroke(c, r, stroke(col, 1.0));
+    }
+    if let Some(hint) = &ov.shape {
+        let c = app.to_screen(hint.at[0], hint.at[1]);
+        let text = match hint.handle {
+            ShapeHandle::Radius { .. } => format!("{} {}", tr("Radius"), hint.value),
+            ShapeHandle::Ratio => format!("{} {}%", tr("Ratio"), hint.value),
+        };
+        pill(painter, c + vec2(12.0, 12.0), Align2::LEFT_TOP, text, col);
     }
 }
 

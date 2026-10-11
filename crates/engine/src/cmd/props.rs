@@ -14,7 +14,7 @@ pub const STROKE_SIDES: [&str; 4] = ["strokeTopWeight", "strokeRightWeight", "st
 /// Keys `node.set` understands (documented for agents).
 pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), \
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], strokeTopWeight / strokeRightWeight / strokeBottomWeight / strokeLeftWeight (one side; turns on individual strokes), \
-strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
+strokeCap / startCap / endCap, strokeJoin, miterAngle (degrees: sharper joins bevel; or miterLimit as a ratio), dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
 mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap (rows of a horizontal layout, columns of a vertical one), strokesIncluded (the frame's inside stroke takes up space), reverseZ (canvas stacking: true = first on top), \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
@@ -366,6 +366,10 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "endCap" => doc.get_mut(id)?.stroke.cap_end = enum_of(v).ok_or_else(|| bad(cmd, "unknown stroke cap"))?,
             "strokeJoin" => doc.get_mut(id)?.stroke.join = enum_of(v).ok_or_else(|| bad(cmd, "strokeJoin: miter|bevel|round"))?,
             "miterLimit" => doc.get_mut(id)?.stroke.miter_limit = f64_of(v).unwrap_or(4.0).clamp(1.0, 100.0),
+            "miterAngle" => {
+                let deg = f64_of(v).ok_or_else(|| bad(cmd, "`miterAngle` must be degrees"))?;
+                doc.get_mut(id)?.stroke.miter_limit = StrokeProps::miter_limit_for(deg);
+            }
             "dashes" => {
                 let d: Vec<f64> = v.as_array().map(|a| a.iter().filter_map(f64_of).map(|x| x.max(0.0)).collect()).unwrap_or_default();
                 doc.get_mut(id)?.stroke.dashes = d;
@@ -373,8 +377,14 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             "widthProfile" => doc.get_mut(id)?.stroke.width_profile = width_profile_of(v).ok_or_else(|| bad(cmd, WIDTH_PROFILE_HELP))?,
             "brush" | "strokeBrush" => doc.get_mut(id)?.stroke.brush = brush_of(v).ok_or_else(|| bad(cmd, BRUSH_HELP))?,
             "cornerRadius" => {
-                let r = four(v).ok_or_else(|| bad(cmd, "cornerRadius: n or [tl,tr,br,bl]"))?;
-                doc.get_mut(id)?.corners.radii = r.map(|x| x.max(0.0));
+                let r = four(v).ok_or_else(|| bad(cmd, "cornerRadius: n or [tl,tr,br,bl]"))?.map(|x| x.max(0.0));
+                let n = doc.get_mut(id)?;
+                n.corners.radii = r;
+                // A vector's corner radius rounds every point (edit mode then sets them one by one).
+                if let NodeKind::Vector { network } = &mut n.kind {
+                    network.vertices.iter_mut().for_each(|p| p.radius = r[0]);
+                    crate::vectoredit::refit(doc, id)?;
+                }
             }
             "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => {
                 let i = ["topLeftRadius", "topRightRadius", "bottomRightRadius", "bottomLeftRadius"].iter().position(|x| *x == k).unwrap_or(0);
@@ -610,9 +620,11 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "start" | "end" => {}
             "pointCount" => {
-                let c = f64_of(v).unwrap_or(5.0).clamp(3.0, 120.0) as u32;
+                let c = f64_of(v).ok_or_else(|| bad(cmd, "`pointCount` must be a number"))?.round();
                 match &mut doc.get_mut(id)?.kind {
-                    NodeKind::Polygon { count } | NodeKind::Star { count, .. } => *count = c,
+                    // Stars have 3 to 60 points; polygons keep the geometry's 120 (silent).
+                    NodeKind::Star { count, .. } => *count = c.clamp(3.0, 60.0) as u32,
+                    NodeKind::Polygon { count } => *count = c.clamp(3.0, 120.0) as u32,
                     _ => return Err(bad(cmd, "pointCount applies to polygons and stars")),
                 }
             }
@@ -736,7 +748,8 @@ pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
         "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides"
-        | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "widthProfile" | "brush" | "strokeBrush" => "strokes",
+        | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" | "miterLimit" | "miterAngle" | "widthProfile"
+        | "brush" | "strokeBrush" => "strokes",
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",

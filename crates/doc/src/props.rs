@@ -164,6 +164,18 @@ impl StrokeProps {
     pub fn max_weight(&self) -> f64 {
         self.profile().map_or(self.weight, |p| self.weight * p.max_scale()) * self.brush.as_ref().map_or(1.0, Brush::reach_factor)
     }
+
+    /// The miter limit as the angle (degrees) below which joins bevel: limit = 1 / sin(angle / 2),
+    /// so the default limit 4 is ~28.96°.
+    pub fn miter_angle(&self) -> f64 {
+        2.0 * (1.0 / self.miter_limit.clamp(1.0, 100.0)).asin().to_degrees()
+    }
+
+    /// The miter limit for a miter angle in degrees (kept within the limit's 1–100 range).
+    pub fn miter_limit_for(angle: f64) -> f64 {
+        let a = if angle.is_finite() { angle.clamp(1.0, 180.0) } else { 28.955 };
+        (1.0 / (a / 2.0).to_radians().sin()).clamp(1.0, 100.0)
+    }
 }
 
 /// One point of a variable width profile.

@@ -373,6 +373,11 @@ impl NodeKind {
         )
     }
 
+    /// Kinds with a radius per corner (the others round every corner alike).
+    pub fn has_independent_corners(&self) -> bool {
+        self.has_corner_radius() && !matches!(self, NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Vector { .. })
+    }
+
     pub fn text(&self) -> Option<&TextData> {
         match self {
             NodeKind::Text(t) => Some(t),
