@@ -94,6 +94,7 @@ struct JobKey {
     scale: i64,
     size: (u32, u32),
     outline: bool,
+    outlined: Vec<NodeId>,
     skip: Vec<NodeId>,
     solo: Option<NodeId>,
     /// Text lays out anew when fonts arrive (system fonts load in the background).
@@ -271,6 +272,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     };
     // The edited text is drawn live (an IME composition included); the caret is an overlay.
     let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
+    let outlined = if ds.view.outlines_selection { ds.selection.clone() } else { vec![] };
     let key = JobKey {
         doc: Arc::as_ptr(&doc) as usize,
         page: ds.page,
@@ -278,6 +280,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         scale: (scale * 10000.0) as i64,
         size: (w, h),
         outline: ds.view.outlines,
+        outlined: outlined.clone(),
         skip: vec![],
         solo: ds.focused(),
         fonts: figcraft_text::layout_generation(),
@@ -290,6 +293,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         page: ds.page,
         view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
         outline: ds.view.outlines,
+        outlined,
         skip: vec![],
         solo: key.solo,
     };
@@ -748,6 +752,12 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     let operands = figcraft_engine::booleans::outlined_operands(&doc, &sel, ds.vector_edit.as_ref().map(|ve| ve.id));
     for id in operands.iter().filter(|o| !sel.contains(o)) {
         draw_outline(app, painter, &doc, *id, stroke(outline_colour(&doc, *id).gamma_multiply(0.6), 1.0));
+    }
+    // Mask outlines: a mask doesn't draw itself.
+    if view.mask_outlines {
+        for id in doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.is_mask && n.visible)) {
+            draw_outline(app, painter, &doc, id, stroke(ACCENT, 1.0));
+        }
     }
     // Drop target / insertion indicator.
     let ov = &app.session.tool.overlay;

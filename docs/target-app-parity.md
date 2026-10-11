@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -15,7 +15,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 
 | Number | Value | Kind |
 |---|---|---|
-| Menu/command breadth | **98.5%** (200 / 203 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, re-checked from source on 2026-10-10) |
+| Menu/command breadth | **100%** (203 / 203 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, 2026-10-11) |
 | Feature breadth (does each Figma Design feature exist, weighted) | **~79%** (core editor areas 1–16: ~90%) | estimated from the area table below |
 | Ready for real work | **~47%** | estimated (dimension table below: written weights × written per-dimension scores) |
 | Essentials user | **~53%** | estimated ([below](#essentials-user): core features 77.8% × discounts 0.92 × 0.92 × 0.8) |
@@ -65,7 +65,7 @@ multiplicative discounts, as the standard says.
   File, Edit, View, Object, Text, Arrange, Vector, Plugins, Preferences, Libraries, Help), written
   from public documentation and black-box observation (local notes in the gitignored
   `plan/figma/03-menu-tree.md`). It leaves out the Widgets menu and dynamic plugin lists, so the
-  98.5% overstates breadth against the full menu a little.
+  100% overstates breadth against the full menu a little.
 - **From source** (no build; 2026-10-10): 449 command ids registered with `spec!`, 963 `#[test]`
   functions in 177 files, ~108,800 lines of Rust in 13 crates + 3 apps + xtask (before #101–#103, which added the `plugin` and `collab` crates and ~7k lines), 140 key bindings
   and 13 gesture rows in `figcraft_engine::keymap`, 21 files in the SVG import corpus, 0
@@ -94,7 +94,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 
 | # | Area | Weight | Breadth | Ready | Remaining | Hours |
 |---|---|---|---|---|---|---|
-| 1 | Canvas & navigation | 6 | 95% | 72% | Outline mode variants (`view.outlinesSelection`, `view.maskOutlines`), Display P3 on screen, QA at extreme zooms | 3–6 |
+| 1 | Canvas & navigation | 6 | 97% | 72% | Display P3 on screen, QA at extreme zooms (outlines for the selection and mask outlines landed) | 2–5 |
 | 2 | Selection & transform | 8 | 95% | 68% | Handles, measuring and snapping checked tool by tool against Figma; rotated groups and mixed selections | 6–10 |
 | 3 | Layers panel | 5 | 95% | 78% | Keyboard box selection, keyboard rename/context menu, long-list QA | 2–4 |
 | 4 | Shapes & vector | 8 | 97% | 68% | Boolean groups hit-tested by their operands rather than their result; vector QA with real files (live boolean editing, arc fields, shape builder on strokes and open paths and one-sided widths landed) | 1–3 |
@@ -109,7 +109,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 13 | Prototyping | 6 | 88% | 70% | Video triggers and media actions, gamepad triggers, real prototype QA ([prototyping-parity](prototyping-parity.md)) | 5–9 |
 | 14 | Import/export | 6 | 65% | 35% | **`.fig` import** (the blocking gap), `.fig` export, HEIC/TIFF/video import, CMYK output intent ([file-format-parity](file-format-parity.md)) | 30–60 |
 | 15 | Dev Mode / inspect | 2 | 80% | 62% | Code Connect, plugins in Dev Mode, editor integrations ([dev-mode-parity](dev-mode-parity.md)) | 4–8 |
-| 16 | Comments, versions, find, misc | 3 | 80% | 58% | Comments are local only; branching; Open recent | 4–8 |
+| 16 | Comments, versions, find, misc | 3 | 80% | 58% | Comments are local only; branching | 4–8 |
 | 17 | Multiplayer & sharing | 8 | 15% | 5% | Core landed (`crates/collab`: ids, change sets, server ordering, convergence tested); live sessions (preview): WebSocket transport, hosting from the desktop app, joining from the app or the browser, invite links that open the app, cursors, selections and follow, per-person undo, offline resume; a self-hosted `figcraft-server` with persistence and share links to edit or view. Left: accounts and teams, cursor chat, TLS in the desktop app ([collaboration-parity](collaboration-parity.md)) | 45–90 |
 | 18 | Plugins & widgets | 4 | 35% | 20% | Own sandboxed WASM plugins landed (#101: manifest, permissions, menu, Run last, Manage, SDK, 2 examples). Left: plugin UI at run time, settings storage, distribution, widgets; Figma's plugins are JavaScript and don't run (a JS engine would be an owner decision) ([plugins.md](plugins.md)) | 25–55 |
 | 19 | Team libraries & organization | 2 | 40% | 25% | Local library files exist; no shared/cloud library, no library analytics | 10–20 |
@@ -148,7 +148,7 @@ graphic or a simple mockup. Same method, with the core features a casual user to
 
 | Feature | Weight | Depth | Notes |
 |---|---|---|---|
-| Create, open, save and reopen a file; pages | 10 | 85% | home screen, `.figcraft` round trips; Open recent missing |
+| Create, open, save and reopen a file; pages | 10 | 85% | home screen, `.figcraft` round trips, Open recent |
 | Pan and zoom | 10 | 80% | wheel, pinch, Space-drag, zoom shortcuts |
 | Select, move, resize, rotate, align, group, duplicate | 15 | 75% | not yet compared tool by tool |
 | Frames with device presets | 8 | 80% | |
@@ -577,6 +577,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |

@@ -200,6 +200,7 @@ fn a_finished_background_render_wakes_the_ui() {
         page: ds.page,
         view: figcraft_render::View { origin: (0.0, 0.0), scale: 1.0, width: 120, height: 120 },
         outline: false,
+        outlined: vec![],
         skip: vec![],
         solo: None,
     });

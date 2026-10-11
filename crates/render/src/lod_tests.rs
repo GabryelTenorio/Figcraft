@@ -154,7 +154,7 @@ fn exports_never_use_lod() {
     crate::render_nodes_into(&d, &[card], &v, &mut exact);
     assert_eq!(png.data(), exact.data());
     let mut preview = Pixmap::new(v.width, v.height).unwrap();
-    let ctx = crate::draw::Ctx { doc: &d, scale, outline_mode: false, skip: &[], lod: true, under: None };
+    let ctx = crate::draw::Ctx { doc: &d, scale, outline_mode: false, outlined: &[], skip: &[], lod: true, under: None };
     let parent = d.world_transform(p);
     crate::draw::draw_node(&ctx, &mut preview, card, v.transform() * parent, 0);
     assert_ne!(png.data(), preview.data(), "the preview of the same area is approximated");
