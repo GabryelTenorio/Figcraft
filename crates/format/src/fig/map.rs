@@ -37,6 +37,9 @@ pub(super) fn to_rest(msg: &Kv, name: &str) -> (Value, Vec<String>) {
     if !m.components.is_empty() {
         out["components"] = Value::Object(std::mem::take(&mut m.components));
     }
+    if !m.sets.is_empty() {
+        out["componentSets"] = Value::Object(std::mem::take(&mut m.sets));
+    }
     if let Some(vars) = m.variables() {
         out["meta"] = vars;
     }
@@ -159,7 +162,9 @@ struct Mapper<'a> {
     /// Component property definitions: id → (REST name "Name#id", type).
     prop_defs: BTreeMap<String, (String, &'a str)>,
     styles: Obj,
+    /// Descriptions of components and component sets (REST `components` / `componentSets`).
     components: Obj,
+    sets: Obj,
     warnings: Vec<String>,
     count: usize,
 }
@@ -194,7 +199,7 @@ impl<'a> Mapper<'a> {
         }
         let blobs =
             msg.get("blobs").map(Kv::list).unwrap_or_default().iter().map(|b| b.get("bytes").and_then(Kv::bytes).unwrap_or_default()).collect();
-        Self { nodes, kids, blobs, prop_defs, styles: Obj::new(), components: Obj::new(), warnings: Vec::new(), count: 0 }
+        Self { nodes, kids, blobs, prop_defs, styles: Obj::new(), components: Obj::new(), sets: Obj::new(), warnings: Vec::new(), count: 0 }
     }
 
     fn warn(&mut self, w: impl Into<String>) {
@@ -307,6 +312,18 @@ impl<'a> Mapper<'a> {
         match ty {
             "TEXT" => self.text(&mut o, &view),
             "VECTOR" | "STAR" | "REGULAR_POLYGON" => self.geometry(&mut o, &view),
+            "ELLIPSE" => {
+                if let Some(a) = view.get("arcData") {
+                    let arc: Obj =
+                        ["startingAngle", "endingAngle", "innerRadius"].iter().filter_map(|k| Some((k.to_string(), json!(num(a, k)?)))).collect();
+                    o.insert("arcData".into(), Value::Object(arc));
+                }
+            }
+            "BOOLEAN_OPERATION" => {
+                if let Some(op) = view.str("booleanOperation") {
+                    o.insert("booleanOperation".into(), json!(if op == "XOR" { "EXCLUDE" } else { op }));
+                }
+            }
             _ => {}
         }
         if own == "CONNECTOR" {
@@ -791,7 +808,8 @@ impl<'a> Mapper<'a> {
             o.insert("componentPropertyDefinitions".into(), Value::Object(defs));
         }
         if let Some(d) = v.str("symbolDescription").or_else(|| v.str("description")).filter(|d| !d.is_empty()) {
-            self.components.insert(id.to_string(), json!({"description": d}));
+            let into = if o.get("type").and_then(Value::as_str) == Some("COMPONENT_SET") { &mut self.sets } else { &mut self.components };
+            into.insert(id.to_string(), json!({"description": d}));
         }
     }
 
@@ -954,7 +972,8 @@ impl<'a> Mapper<'a> {
         };
         let mut trigger = json!({"type": ty});
         if let Some(t) = ev.and_then(|e| num(e, "transitionTimeout")) {
-            trigger["timeout"] = json!(t * 1000.0);
+            // Seconds as 32-bit floats: whole milliseconds.
+            trigger["timeout"] = json!((t * 1000.0).round());
         }
         if let Some(k) = ev.and_then(|e| e.get("keyTrigger")) {
             let codes: Vec<f64> = k.get("keyCodes").map(Kv::list).unwrap_or_default().iter().filter_map(Kv::f64).collect();
@@ -1577,7 +1596,7 @@ fn transition(a: &Kv) -> Option<Value> {
     if let (true, [x1, y1, x2, y2, ..]) = (easing == "CUSTOM_CUBIC_BEZIER", f.as_slice()) {
         e["easingFunctionCubicBezier"] = json!({"x1": x1, "y1": y1, "x2": x2, "y2": y2});
     }
-    let mut t = json!({"type": kind, "duration": num(a, "transitionDuration").unwrap_or(0.3) * 1000.0, "easing": e});
+    let mut t = json!({"type": kind, "duration": (num(a, "transitionDuration").unwrap_or(0.3) * 1000.0).round(), "easing": e});
     if let Some(d) = dir {
         t["direction"] = json!(d);
     }

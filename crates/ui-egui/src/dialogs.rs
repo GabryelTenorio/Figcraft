@@ -444,12 +444,27 @@ fn color_profile_dialog(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// Save the whole file as `.fig`; the toast says how much was left out.
+fn save_fig(app: &mut FigApp, name: &str) {
+    let Some(p) = app.services.pick_save(tr("Export"), &format!("{name}.fig"), &["fig"]) else { return };
+    let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    if let Some(r) = app.run("file.export", json!({"format": "fig", "path": p.to_string_lossy()})) {
+        let left_out = r["warnings"].as_array().map_or(0, Vec::len);
+        app.toast(match left_out {
+            0 => trf("Exported {name}", &[("name", &file)]),
+            n => trn("Exported {name}; {n} kinds of content were left out", n, &[("name", &file)]),
+        });
+    }
+}
+
 /// What the Export dialog was asked to do.
 enum ExportChoice {
     /// Every layer with export settings, with those settings.
     Layers,
     /// The layers together as one file.
     Once(ExportSetting),
+    /// The whole file as `.fig` (experimental).
+    Fig,
 }
 
 /// The Export dialog: the layers' own export settings when they have some, and one-off presets for
@@ -484,6 +499,20 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
         let caption = |ui: &mut egui::Ui, s: &str| {
             ui.label(RichText::new(s).font(regular(11.0)).color(t.text_secondary));
         };
+        let divider = |ui: &mut egui::Ui| {
+            ui.add_space(10.0);
+            let (r, _) = ui.allocate_exact_size(vec2(320.0, 1.0), Sense::hover());
+            ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.border));
+            ui.add_space(10.0);
+        };
+        let row = |ui: &mut egui::Ui, label: &str| {
+            let (r, resp) = ui.allocate_exact_size(vec2(320.0, 30.0), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+            }
+            ui.painter().text(r.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, label, regular(12.0), t.text);
+            resp.clicked()
+        };
         if !jobs.is_empty() {
             caption(ui, tr("With the layers' export settings"));
             const SHOWN: usize = 6;
@@ -499,21 +528,13 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
             if crate::widgets::button(ui, &label, true, true).clicked() {
                 choice = Some(ExportChoice::Layers);
             }
-            ui.add_space(10.0);
-            let (r, _) = ui.allocate_exact_size(vec2(320.0, 1.0), Sense::hover());
-            ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.border));
-            ui.add_space(10.0);
+            divider(ui);
         }
         caption(ui, &trn("{n} layers as one file", ids.len(), &[]));
         ui.add_space(4.0);
         for p in &presets {
             let label = if p.format.is_raster() { format!("{} @{}", p.format.label(), p.size.label()) } else { p.format.label().to_string() };
-            let (r, resp) = ui.allocate_exact_size(vec2(320.0, 30.0), Sense::click());
-            if resp.hovered() {
-                ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-            }
-            ui.painter().text(r.left_center() + vec2(10.0, 0.0), Align2::LEFT_CENTER, label, regular(12.0), t.text);
-            if resp.clicked() {
+            if row(ui, &label) {
                 choice = Some(ExportChoice::Once(p.clone()));
             }
         }
@@ -523,12 +544,20 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
         if let Some(next) = crate::export_panel::print_options(ui, egui::Id::new("export_dialog_print"), &print) {
             app.ui.pdf_print = next;
         }
+        divider(ui);
+        caption(ui, tr("The whole file"));
+        ui.add_space(4.0);
+        if row(ui, tr(".fig (experimental)")) {
+            choice = Some(ExportChoice::Fig);
+        }
+        caption(ui, tr("Other apps may not open every .fig file exported here."));
     });
     let close = choice.is_some() || !open;
     match choice {
         Some(ExportChoice::Layers) => export_layers(app, &with_settings, false),
         Some(ExportChoice::Once(s)) if !ids.is_empty() => save_one(app, &ids, &s, &suggested_name(&doc, &ids, &s, "Export")),
         Some(ExportChoice::Once(_)) => app.toast(tr("Nothing to export")),
+        Some(ExportChoice::Fig) => save_fig(app, &doc.name),
         None => {}
     }
     if close {

@@ -516,7 +516,7 @@ fn easing_type(ty: Option<&str>, e: Option<&Value>) -> Easing {
     }
 }
 
-fn overlay_position(s: &str) -> Option<OverlayPosition> {
+pub(crate) fn overlay_position(s: &str) -> Option<OverlayPosition> {
     Some(match s {
         "CENTER" => OverlayPosition::Center,
         "TOP_LEFT" => OverlayPosition::TopLeft,
@@ -537,7 +537,7 @@ fn modifier(code: f64) -> Option<i64> {
 }
 
 /// Our key name for a keyboard key code.
-fn key_name(code: f64) -> Option<String> {
+pub(crate) fn key_name(code: f64) -> Option<String> {
     if !(code.is_finite() && (0.0..=255.0).contains(&code)) {
         return None;
     }

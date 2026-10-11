@@ -31,12 +31,16 @@ page 1 "Screens": 380 nodes, 4 top-level
   …
 ```
 
-### `export <file> -o <out> [--format png|jpg|svg|webp|pdf] [--scale N] [--page NAME] [--node ID|NAME] [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk]`
+### `export <file> -o <out> [--format png|jpg|svg|webp|pdf|fig] [--scale N] [--page NAME] [--node ID|NAME] [--bleed LENGTH] [--crop-marks] [--bleed-marks] [--cmyk]`
 
 - `<out>` is a directory: one file per top-level frame of the page (default the first page), named
   after the frame (`Home.png`, `Settings.png`…); with no frames, one file per top-level layer.
 - `<out>` has an image extension: one file with the given `--node`, or the whole page composited.
 - `--node` takes a layer id (`12` or `0:12`) or a layer name.
+- `--format fig` (or an `<out>` ending in `.fig`) writes the whole file as `.fig`, experimental:
+  written from public format notes and checked only by opening it again in FigCraft; other apps
+  may not open every file. What was left out (shared style links, variables, comments, Dev Mode
+  data…) is printed as `note:` lines.
 - The format comes from `--format`, else `<out>`'s extension, else png. `--scale` (default 1, max 64)
   applies to raster formats.
 - A `.pdf` `<out>` without `--node` holds the page's top-level frames, one PDF page each in reading
@@ -56,6 +60,7 @@ figcraft-cli export app.figcraft -o exports/ --scale 2
 figcraft-cli export app.figcraft -o hero.svg --node "Hero"
 figcraft-cli export app.figcraft -o screens.pdf --page "Screens"
 figcraft-cli export app.figcraft -o poster.pdf --node "Poster" --bleed 3mm --crop-marks --cmyk
+figcraft-cli export app.figcraft -o handoff.fig
 ```
 
 ### `convert <in> <out>`
@@ -64,7 +69,7 @@ By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.f
 shapes, text, gradients, masks and effects; `info` lists what it left out as `note:` lines), `.png/.jpg/.webp/.gif/.tif/.bmp`
 (an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
 `.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (the current page's
-frames, one page each).
+frames, one page each), `.fig` (the whole file, experimental, as `export --format fig`).
 
 ### `render <file> -o <out.png> [--scale N] [--page NAME]`
 

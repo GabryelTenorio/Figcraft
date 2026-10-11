@@ -196,7 +196,7 @@ Or in a project's `.mcp.json`:
 | `inspect_document {depth, allPages}` | The document as JSON (layer tree, styles, selection, history). |
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
-| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
+| `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?, contentsOnly?, includeBoundingBox?, svgOutlineText?, svgIdAttribute?, svgSimplifyStroke?}` | png, jpg, svg, webp, pdf, or `fig`: the whole file as `.fig`, experimental (see Exporting `.fig` files below); `size` is `2x`, `512w` or `512h`. The image covers what the layers paint (shadows towards their offset, strokes, unclipped children, a mask group's mask; hidden layers take no room; a slice is its area with everything under it); `contentsOnly: false` also draws every other layer showing in that area, `includeBoundingBox` exports the layers' own boxes; SVG: `svgOutlineText: false` keeps `<text>`, `svgIdAttribute` writes unique ids from layer names, `svgSimplifyStroke: false` writes every stroke as an outline. The same options go in export settings (`export.add` / `export.update`). PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?, assets?}` (every layer once per setting, named `<layer><suffix>.<format>`, a slash in a layer name making a folder; `assets: true` exports the Inspect tab's assets instead: icons as SVG, images as PNG). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
@@ -682,6 +682,22 @@ vector networks (their outlines when the network is missing or damaged); sticky 
 text, connectors, tables and similar layers come in as the closest frames, text layers and
 vectors; set-variable, set-variable-mode and conditional actions come across; video fills are
 skipped. The result's `opened.warnings` list what was approximated or skipped.
+
+### Exporting `.fig` files (experimental)
+
+`export {format: "fig", path?}` (or `run_command` `file.export {format: "fig"}`, or any `path`
+ending in `.fig`) writes the whole document as a `.fig` file, from the same public format notes the
+import uses: the layer tree, geometry, paints with image bytes, strokes, effects, text with styled
+runs, vector networks, auto layout, constraints, components, sets, instances with their overrides
+and property values, and prototype interactions. `warnings` lists what was left out (shared style
+links, variables, comments, Dev Mode data and the like). Only round trips through FigCraft's own
+importer are verified; other apps may not open every file. Without `path` the file comes back as
+base64 `data`. Check one by opening it again:
+
+```text
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"export","arguments":{"format":"fig","path":"/tmp/handoff.fig"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"open_file","arguments":{"path":"/tmp/handoff.fig"}}}
+```
 
 ### Importing REST API file JSON
 

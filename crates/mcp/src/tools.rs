@@ -196,11 +196,11 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale` (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print; options `contentsOnly`, `includeBoundingBox`, and for SVG `svgOutlineText`, `svgIdAttribute`, `svgSimplifyStroke`). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
+            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale`, or the whole file as `fig` (experimental: written from public format knowledge, with `warnings` for what was left out; other apps may not open every file) (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print; options `contentsOnly`, `includeBoundingBox`, and for SVG `svgOutlineText`, `svgIdAttribute`, `svgSimplifyStroke`). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
             obj(
                 json!({
                     "ids": ids_schema("Layers to export (several are composited into one image)"),
-                    "format": {"type": "string", "enum": ["png", "jpg", "svg", "webp", "pdf"], "description": "Format (default png, or from the path's extension)"},
+                    "format": {"type": "string", "enum": ["png", "jpg", "svg", "webp", "pdf", "fig"], "description": "Format (default png, or from the path's extension)"},
                     "scale": num("Pixel scale for raster formats (default 1, max 64)"),
                     "size": string("Instead of `scale`: `2x`, or a width or height in pixels like `512w` / `512h`"),
                     "path": string("Output file path"),
@@ -652,8 +652,8 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     }
     let format = s_arg(a, "format")?.map(str::to_ascii_lowercase);
     if let Some(f) = &format {
-        if !["png", "jpg", "jpeg", "svg", "webp", "pdf"].contains(&f.as_str()) {
-            return Err(format!("unknown format `{f}` (png|jpg|svg|webp|pdf)"));
+        if !["png", "jpg", "jpeg", "svg", "webp", "pdf", "fig"].contains(&f.as_str()) {
+            return Err(format!("unknown format `{f}` (png|jpg|svg|webp|pdf|fig)"));
         }
         params.insert("format".into(), json!(f));
     }
@@ -690,7 +690,11 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
         "webp" => Ok(ToolResult::image(&bytes, "image/webp", &json!({"format": "webp", "bytes": bytes.len()}))),
         "svg" => Ok(ToolResult::text(String::from_utf8_lossy(&bytes).into_owned())),
         other => {
-            Ok(ToolResult::json(&json!({"format": other, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})))
+            let mut out = json!({"format": other, "bytes": bytes.len(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)});
+            if let Some(w) = r.get("warnings") {
+                out["warnings"] = w.clone();
+            }
+            Ok(ToolResult::json(&out))
         }
     }
 }

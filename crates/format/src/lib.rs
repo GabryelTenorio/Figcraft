@@ -316,12 +316,17 @@ fn parse_json(text: &str) -> Result<(Document, Vec<String>, ImageIndex), FormatE
     Ok((doc, issues, header.images))
 }
 
-fn io_err(e: impl std::fmt::Display) -> FormatError {
+pub(crate) fn io_err(e: impl std::fmt::Display) -> FormatError {
     FormatError::Io(e.to_string())
 }
 
 /// Add one member to the archive.
-fn put<W: Write + Seek>(z: &mut zip::ZipWriter<W>, name: &str, opts: zip::write::SimpleFileOptions, bytes: &[u8]) -> Result<(), FormatError> {
+pub(crate) fn put<W: Write + Seek>(
+    z: &mut zip::ZipWriter<W>,
+    name: &str,
+    opts: zip::write::SimpleFileOptions,
+    bytes: &[u8],
+) -> Result<(), FormatError> {
     z.start_file(name, opts).map_err(io_err)?;
     z.write_all(bytes).map_err(io_err)
 }

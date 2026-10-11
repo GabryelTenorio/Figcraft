@@ -96,8 +96,7 @@ pub(super) fn decode(b: &[u8]) -> Option<Network> {
     Some(net)
 }
 
-/// The blob of `net` (for tests: fixtures are written with it).
-#[cfg(test)]
+/// The blob of `net` (the export writes it; so do test fixtures). Callers pass finite values.
 pub(super) fn encode(net: &Network) -> Vec<u8> {
     let mut out = Vec::new();
     let u = |v: u32, out: &mut Vec<u8>| out.extend_from_slice(&v.to_le_bytes());

@@ -384,7 +384,7 @@ fn mangled_tail_files_never_panic() {
     // Mangled messages decode and map without panicking.
     let sc = schema();
     let root = sc.find("Message").unwrap();
-    let msg = encode::message(&sc, root, &tail_message());
+    let msg = encode::message(&sc, root, &tail_message()).unwrap();
     for _ in 0..2000 {
         let mut m = msg.clone();
         for _ in 0..1 + r.next() % 4 {

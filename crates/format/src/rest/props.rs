@@ -70,7 +70,7 @@ pub(super) fn transform(v: &Value) -> Option<Affine> {
 
 // ---- enums ----
 
-pub(super) fn blend_mode(s: &str) -> Option<BlendMode> {
+pub(crate) fn blend_mode(s: &str) -> Option<BlendMode> {
     Some(match s {
         "PASS_THROUGH" => BlendMode::PassThrough,
         "NORMAL" => BlendMode::Normal,

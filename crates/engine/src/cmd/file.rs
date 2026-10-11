@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.export",
             "Export",
-            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
+            "{ids? (default selection, else the page), format? (png|jpg|svg|pdf|webp, or fig: the whole file as .fig, experimental, with `warnings` for what was left out; other apps may not open every file), scale? (default 1) | size? (2x|512w|512h or {by: scale|width|height, value}: a scale, or a width or height in pixels), path? (else returns base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options)}",
             false,
             export
         ),
@@ -429,7 +429,11 @@ pub(crate) fn read_capped(path: &str, max: u64) -> Result<Vec<u8>> {
 pub(crate) fn write(path: &str, bytes: &[u8]) -> Result<()> {
     let tmp = format!("{path}.tmp-figcraft");
     std::fs::write(&tmp, bytes).map_err(|e| EngineError::Other(format!("{tmp}: {e}")))?;
-    std::fs::rename(&tmp, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    std::fs::rename(&tmp, path).map_err(|e| {
+        // Leave nothing behind when the file can't take its place.
+        let _ = std::fs::remove_file(&tmp);
+        EngineError::Other(format!("{path}: {e}"))
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -806,6 +810,13 @@ pub fn copy_png(doc: &Document, ids: &[NodeId]) -> Option<figcraft_render::Pixma
 
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.export";
+    let fig = match string(p, "format") {
+        Some(f) => f.eq_ignore_ascii_case("fig"),
+        None => string(p, "path").is_some_and(|pp| ext(&pp) == "fig"),
+    };
+    if fig {
+        return export_fig(s, p);
+    }
     let doc = s.doc()?;
     let mut ids = targets(s, p);
     if ids.is_empty() {
@@ -830,6 +841,25 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => Ok(json!({"format": format.ext(), "data": base64::engine::general_purpose::STANDARD.encode(&bytes)})),
     }
+}
+
+/// The whole document as a `.fig` file (experimental: only round trips through our own importer
+/// are verified), with the warnings about what was left out.
+fn export_fig(s: &mut Session, p: &Value) -> Result<Value> {
+    let doc = s.doc()?;
+    let (bytes, warnings) = fig_bytes(doc)?;
+    match string(p, "path") {
+        Some(path) => {
+            write(&path, &bytes)?;
+            Ok(json!({"path": path, "bytes": bytes.len(), "format": "fig", "warnings": warnings}))
+        }
+        None => Ok(json!({"format": "fig", "data": base64::engine::general_purpose::STANDARD.encode(&bytes), "warnings": warnings})),
+    }
+}
+
+/// `doc` as a `.fig` file (with a thumbnail) and the warnings about what was left out.
+pub fn fig_bytes(doc: &Document) -> Result<(Vec<u8>, Vec<String>)> {
+    figcraft_format::fig::export(doc, thumbnail(doc).as_deref()).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// The scale that gives `ids` (their export area together) `setting`'s export size.

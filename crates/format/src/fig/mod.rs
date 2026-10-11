@@ -12,6 +12,9 @@
 //! tables, …) come in as the closest frames, text and vectors. Anything not understood is skipped
 //! with a warning; malformed input never panics.
 
+mod export;
+#[cfg(test)]
+mod export_tests;
 pub mod kiwi;
 mod map;
 mod network;
@@ -21,6 +24,8 @@ mod tests;
 use std::io::Read;
 
 use figcraft_doc::Document;
+
+pub use export::export;
 
 use crate::FormatError;
 use kiwi::Schema;

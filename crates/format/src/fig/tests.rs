@@ -76,47 +76,7 @@ message Message NodeChange[] nodeChanges, Blob[] blobs
 ";
 
 fn schema() -> Schema {
-    let lines: Vec<Vec<&str>> = SCHEMA.lines().map(|l| l.split_whitespace().collect()).filter(|l: &Vec<&str>| !l.is_empty()).collect();
-    let index = |name: &str| lines.iter().position(|l| l[1] == name);
-    let builtin = |t: &str| match t {
-        "bool" => Some(Type::Bool),
-        "byte" => Some(Type::Byte),
-        "int" => Some(Type::Int),
-        "uint" => Some(Type::Uint),
-        "float" => Some(Type::Float),
-        "string" => Some(Type::Str),
-        "int64" => Some(Type::Int64),
-        "uint64" => Some(Type::Uint64),
-        _ => None,
-    };
-    let defs = lines
-        .iter()
-        .map(|l| {
-            let kind = match l[0] {
-                "enum" => Kind::Enum,
-                "struct" => Kind::Struct,
-                _ => Kind::Message,
-            };
-            let fields = if kind == Kind::Enum {
-                l[2..].iter().enumerate().map(|(i, n)| Field { name: n.to_string(), ty: None, array: false, value: i as u32 }).collect()
-            } else {
-                l[2..]
-                    .join(" ")
-                    .split(',')
-                    .enumerate()
-                    .map(|(i, f)| {
-                        let (t, n) = f.trim().split_once(' ').unwrap();
-                        let array = t.ends_with("[]");
-                        let t = t.trim_end_matches("[]");
-                        let ty = builtin(t).unwrap_or_else(|| Type::Def(index(t).unwrap_or_else(|| panic!("type {t}"))));
-                        Field { name: n.to_string(), ty: Some(ty), array, value: i as u32 + 1 }
-                    })
-                    .collect()
-            };
-            Def { name: l[1].to_string(), kind, fields }
-        })
-        .collect();
-    Schema { defs }
+    Schema::parse(SCHEMA).unwrap()
 }
 
 fn o(fields: Vec<(&'static str, Kv<'static>)>) -> Kv<'static> {
@@ -188,7 +148,7 @@ fn triangle_blob() -> Vec<u8> {
 }
 
 /// A 2×1 PNG.
-fn png() -> Vec<u8> {
+pub(super) fn png() -> Vec<u8> {
     let img = image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]));
     let mut out = Vec::new();
     img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
@@ -399,7 +359,7 @@ fn canvas(schema: &Schema, msg: &Kv) -> Vec<u8> {
     let mut z = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(&encode::schema(schema)).unwrap();
     let schema_chunk = z.finish().unwrap();
-    let msg_chunk = ruzstd::encoding::compress_to_vec(&encode::message(schema, root, msg)[..], ruzstd::encoding::CompressionLevel::Fastest);
+    let msg_chunk = ruzstd::encoding::compress_to_vec(&encode::message(schema, root, msg).unwrap()[..], ruzstd::encoding::CompressionLevel::Fastest);
     let mut out = b"fig-kiwi".to_vec();
     out.extend_from_slice(&101u32.to_le_bytes());
     for c in [schema_chunk, msg_chunk] {
@@ -440,7 +400,7 @@ fn kiwi_round_trip() {
     }
     let msg = message();
     let root = sc.find("Message").unwrap();
-    assert_eq!(back.decode_message(root, &encode::message(&sc, root, &msg)).unwrap(), msg);
+    assert_eq!(back.decode_message(root, &encode::message(&sc, root, &msg).unwrap()).unwrap(), msg);
 }
 
 #[test]
@@ -619,7 +579,7 @@ fn mangled_kiwi_never_panics() {
     let sc = schema();
     let root = sc.find("Message").unwrap();
     let schema_bytes = encode::schema(&sc);
-    let msg = encode::message(&sc, root, &message());
+    let msg = encode::message(&sc, root, &message()).unwrap();
     let mut r = Lcg(11);
     for cut in 0..schema_bytes.len() {
         let _ = Schema::decode(&schema_bytes[..cut]);
@@ -709,7 +669,7 @@ fn instances_inside_their_own_main_stop() {
 mod tail;
 
 /// `.fig` files in the folder `FIGCRAFT_FIG_SAMPLES` names (none when it's unset).
-fn samples() -> Vec<std::path::PathBuf> {
+pub(super) fn samples() -> Vec<std::path::PathBuf> {
     let Some(dir) = std::env::var_os("FIGCRAFT_FIG_SAMPLES") else { return Vec::new() };
     let dir = std::fs::read_dir(dir).into_iter().flatten().flatten();
     dir.map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "fig")).collect()
