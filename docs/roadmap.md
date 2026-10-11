@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (stretch and scatter brushes, pen pressure: gap 9 down to text on a path and pattern fills; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -50,7 +50,7 @@ blockers.
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~77% | keyboard box selection, interaction pass (Open recent and the outline mode variants landed 2026-10-11) | 6–12 + pass |
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
 | M3 Components & styles depth | ~78% (extended collections, variables import/export, gradient stop and variant bindings landed 2026-10-11) | real libraries, component playground | 7–14 |
-| M4 Vector & text depth | ~75% (live booleans, arc fields, shape builder on strokes, one-sided widths landed 2026-10-11) | spell check, Figma Draw (brushes, pressure, text on a path, patterns), boolean hit testing on the result | 18–32 |
+| M4 Vector & text depth | ~78% (live booleans, arc fields, shape builder on strokes, one-sided widths, brushes and pen pressure landed 2026-10-11) | spell check, Figma Draw (text on a path, patterns), boolean hit testing on the result | 13–23 |
 | M5 Prototype & present | ~85% | media, gamepad, separate window | 5–9 |
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC (animated GIFs and TIFF landed 2026-10-11), CMYK intent, Code Connect | 40–80 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
@@ -64,13 +64,14 @@ blockers.
 
 - Shared libraries on top of the multiplayer server (10–20 h), branching (8–15 h).
 - GPU canvas held to the CPU renderer (30–60 h).
-- Figma Draw tools (10–18 h).
+- Figma Draw text on a path and pattern fills (5–9 h).
 - Mobile viewer and prototype mirror (20–40 h).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Stretch and scatter brushes and pen pressure landed (gap 9): eight brushes drawn in code (four stretched along the path, four scattered with spacing, size, rotation and scatter jitter from a seed) in the stroke settings, drawn everywhere strokes are and flattened by outline stroke; the Pencil records pen pressure as the stroke's width profile (Windows pens, browser styluses; macOS and Linux tablets report none) and can draw with a brush; Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–9 h; Strokes 2–4 h → 1–3 h; Hardware 50% → 55%, 15–30 h → 13–27 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |

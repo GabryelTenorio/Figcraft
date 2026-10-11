@@ -137,7 +137,7 @@ Or in a project's `.mcp.json`:
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
-| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
+| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
@@ -718,6 +718,25 @@ noise and texture over the result.
   DeviceCMYK without an output intent, because embedding one needs a CMYK ICC profile and none
   ships with FigCraft. Soft masks stay RGB (they aren't printed) and transparency groups blend in
   RGB, as the PDF writer declares them.
+
+### Brushes and pen pressure
+
+- `stroke.brush {ids?, preset, spacing?, sizeJitter?, rotationJitter?, scatter?, seed?}` draws a
+  layer's stroke with a brush (`preset: null` back to a plain stroke; a layer without a stroke gets
+  a black one); `node.set {brush}` takes the same (a preset id, an object or `null`) and `get_node`
+  shows `brush`. Stretch brushes bend one shape along each subpath: `taper`, `ink`, `ribbon`,
+  `bristle`. Scatter brushes drop copies along it every `spacing` stroke weights (default 1.5; at
+  most 5,000 copies a path): `dots`, `stars`, `confetti`, `leaves`, varied by `sizeJitter` (0–1),
+  `rotationJitter` (0–1, up to half a turn) and `scatter` (0–4 weights off the path), repeatably
+  from `seed`. The stroke weight sets the brush's size and a width profile scales it along the
+  path. Brushes draw on the canvas, in PNG, SVG and PDF (as filled outlines) and `vector.outlineStroke`
+  flattens them; dashes don't apply to brushes.
+- **Pen pressure**: the Pencil records pressure into the stroke's width profile (up to 32 points by
+  length; medium pressure, 0.5, draws the stroke weight, from a tenth of it to twice it); without
+  pressure (a mouse) the stroke stays uniform. `pointer` takes `pressure` and, for drags,
+  `pressureTo`. `tool.pencilBrush {preset?, …}` sets the brush new Pencil strokes get (`null`
+  clears it; no `preset` reads it). The desktop app reads pressure from pen input on Windows; in the
+  browser from stylus touch events that report a force; macOS and Linux tablets report none.
 
 ### Paint, effect and layout grid lists
 

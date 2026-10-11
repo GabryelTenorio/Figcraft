@@ -265,6 +265,8 @@ pub fn tool_definitions() -> Vec<Value> {
                     "shift": boolean("Shift held"),
                     "alt": boolean("Alt/Option held"),
                     "cmd": boolean("Cmd (macOS) / Ctrl held"),
+                    "pressure": num("Pen pressure 0-1 (the Pencil records it as the stroke's width profile; a drag starts with it)"),
+                    "pressureTo": num("Pen pressure 0-1 at a drag's end (interpolated along it)"),
                 }),
                 &["x", "y"],
             ),
@@ -757,6 +759,11 @@ fn pointer(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, St
     }
     if let Some(s) = n_arg(a, "steps")? {
         p.insert("steps".into(), json!(s.clamp(1.0, 200.0) as u64));
+    }
+    for k in ["pressure", "pressureTo"] {
+        if let Some(v) = n_arg(a, k)? {
+            p.insert(k.into(), json!(v.clamp(0.0, 1.0)));
+        }
     }
     mods(a, &mut p)?;
     b.call("ui.pointer", Value::Object(p)).map(|v| ToolResult::json(&v))

@@ -56,6 +56,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
                 let points = crate::cmd::props::width_points_json(Some(p));
                 o.insert("widthProfile".into(), json!({"preset": p.preset().map(|x| x.id()), "points": points}));
             }
+            if let Some(b) = &n.stroke.brush {
+                o.insert("brush".into(), camel(serde_json::to_value(b).unwrap_or(Value::Null)));
+            }
         }
         if !n.effects.is_empty() {
             o.insert("effects".into(), camel(serde_json::to_value(&n.effects).unwrap_or(Value::Null)));

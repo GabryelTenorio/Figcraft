@@ -175,8 +175,19 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
         "hover pointer move (µs each)",
         mean(hits, |i| {
             let p = pt(i);
-            let ev =
-                PointerEvent { kind: PointerKind::Hover, x: p.x, y: p.y, sx: 0.0, sy: 0.0, shift: false, alt: false, cmd: false, ctrl: false, zoom };
+            let ev = PointerEvent {
+                kind: PointerKind::Hover,
+                x: p.x,
+                y: p.y,
+                sx: 0.0,
+                sy: 0.0,
+                shift: false,
+                alt: false,
+                cmd: false,
+                ctrl: false,
+                zoom,
+                pressure: None,
+            };
             let _ = s.pointer(&ev);
         }) * 1000.0,
     );
