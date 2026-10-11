@@ -1,7 +1,7 @@
-//! Exporting: the Design panel's Export section (a row per export setting with size, suffix and
-//! format, PDF print settings, a preview, and "Export N layers"), the page's Export button, and the
-//! export actions and print options the Export dialog shares. Every change runs an `export.*` or
-//! `file.export*` command.
+//! Exporting: the Design panel's Export section (a row per export setting with size, suffix,
+//! format and its advanced options, PDF print settings, a preview, and "Export N layers"), the
+//! page's Export button, and the export actions and print options the Export dialog shares. Every
+//! change runs an `export.*` or `file.export*` command.
 
 use std::collections::BTreeSet;
 
@@ -56,16 +56,18 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         (k, _) => trn("Export {n} layers", k, &[]),
     };
     if wide_button(ui, &label) {
-        export_layers(app, sel);
+        export_layers(app, sel, false);
     }
 }
 
-/// One export setting: size (typed or picked), suffix, format and remove; a PDF's print settings
-/// under it.
+/// One export setting: size (typed or picked), suffix, format, advanced options and remove; a
+/// PDF's print settings under it.
 fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &ExportSetting) {
     row(ui, 32.0, |ui| {
-        let (size_w, format_w, gap) = (56.0, 60.0, ui.spacing().item_spacing.x);
-        let suffix_w = (ui.available_width() - size_w - format_w - 24.0 - gap * 3.0).max(32.0);
+        // Tighter spacing so the advanced options and remove buttons fit beside the fields.
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let (size_w, format_w, button, gap) = (52.0, 54.0, 22.0, ui.spacing().item_spacing.x);
+        let suffix_w = (ui.available_width() - size_w - format_w - button * 2.0 - gap * 4.0).max(32.0);
         let presets: Vec<String> =
             ExportSize::SCALES.iter().map(|value| ExportSize::Scale { value: *value }.label()).chain(["512w".into(), "512h".into()]).collect();
         if let Some(s) = widgets::combo_field(ui, Id::new(("export_size", i)), &e.size.label(), size_w, &presets)
@@ -87,13 +89,44 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
                 }
             }
         });
-        if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove export setting")).clicked() {
+        let more = icons::button(ui, Icon::Dots, button, false, tr("Export settings"));
+        egui::Popup::from_toggle_button_response(&more)
+            .id(Id::new(("export_more", i)))
+            .width(216.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                if let Some(mut params) = advanced_options(ui, e) {
+                    params["ids"] = json!(ids);
+                    params["index"] = json!(i);
+                    app.run("export.update", params);
+                }
+            });
+        if icons::button(ui, Icon::Minus, button, false, tr("Remove export setting")).clicked() {
             app.run("export.remove", json!({"ids": ids, "index": i}));
         }
     });
     if e.format == ExportFormat::Pdf {
         print_row(app, ui, ids, i, &e.print);
     }
+}
+
+/// A setting's advanced options: contents only and include bounding box, and for SVG outline
+/// text, the id attribute and simplified strokes. Returns the changed option as command params.
+fn advanced_options(ui: &mut Ui, e: &ExportSetting) -> Option<Value> {
+    let mut out = None;
+    let mut option = |ui: &mut Ui, key: &str, on: bool, label: &str| {
+        if widgets::checkbox(ui, on, label) {
+            out = Some(json!({ key: !on }));
+        }
+    };
+    option(ui, "contentsOnly", e.contents_only, tr("Contents only"));
+    option(ui, "includeBoundingBox", e.include_bounding_box, tr("Include bounding box"));
+    if e.format == ExportFormat::Svg {
+        option(ui, "svgOutlineText", e.svg_outline_text, tr("Outline text"));
+        option(ui, "svgIdAttribute", e.svg_id_attribute, tr("Include id attribute"));
+        option(ui, "svgSimplifyStroke", e.svg_simplify_stroke, tr("Simplify stroke"));
+    }
+    out
 }
 
 /// A PDF setting's print settings: a summary row that opens them.
@@ -176,12 +209,17 @@ fn print_params(p: &PrintSettings) -> Value {
     json!({"bleed": p.bleed(), "cropMarks": p.crop_marks, "bleedMarks": p.bleed_marks, "cmyk": p.cmyk})
 }
 
-/// `params` with the setting's print options added (PDF exports).
-fn with_print(mut params: Value, setting: &ExportSetting) -> Value {
-    if setting.format == ExportFormat::Pdf
-        && let (Value::Object(m), Value::Object(p)) = (&mut params, print_params(&setting.print))
-    {
-        m.extend(p);
+/// `file.export` params for `setting`: its size, format and options (PDF: its print options).
+fn setting_params(setting: &ExportSetting) -> Value {
+    let mut params = serde_json::to_value(setting).unwrap_or_else(|_| json!({}));
+    if let Value::Object(m) = &mut params {
+        m.remove("print");
+        m.remove("suffix");
+        if setting.format == ExportFormat::Pdf
+            && let Value::Object(p) = print_params(&setting.print)
+        {
+            m.extend(p);
+        }
     }
     params
 }
@@ -267,19 +305,21 @@ pub(crate) fn wide_button(ui: &mut Ui, label: &str) -> bool {
     clicked
 }
 
-/// Export `ids` with their export settings: one file through a save dialog, several into a
-/// folder.
-pub(crate) fn export_layers(app: &mut FigApp, ids: &[NodeId]) {
+/// Export `ids` with their export settings (`assets`: the Inspect tab's assets in and under them):
+/// one file through a save dialog, several into a folder.
+pub(crate) fn export_layers(app: &mut FigApp, ids: &[NodeId], assets: bool) {
     let jobs = match app.session.doc() {
+        Ok(doc) if assets => figcraft_engine::devinspect::asset_jobs(doc, ids),
         Ok(doc) => export_jobs(doc, ids),
         Err(_) => return,
     };
     match jobs.as_slice() {
         [] => {}
-        [one] => save_one(app, &[one.id], &one.setting, &one.file),
+        // The suggested name keeps only the file's own name (a layer's folders apply to folders).
+        [one] => save_one(app, &[one.id], &one.setting, one.file.rsplit('/').next().unwrap_or(&one.file)),
         _ => {
             let Some(dir) = app.services.pick_folder(tr("Export")) else { return };
-            if let Some(r) = app.run("file.exportLayers", json!({"ids": ids, "dir": dir.to_string_lossy()})) {
+            if let Some(r) = app.run("file.exportLayers", json!({"ids": ids, "dir": dir.to_string_lossy(), "assets": assets})) {
                 let n = r["files"].as_array().map_or(0, Vec::len);
                 app.toast(trn("Exported {n} files", n, &[]));
             }
@@ -292,7 +332,10 @@ pub(crate) fn save_one(app: &mut FigApp, ids: &[NodeId], setting: &ExportSetting
     let ext = setting.format.ext();
     let Some(p) = app.services.pick_save(tr("Export"), file, &[ext]) else { return };
     let path = p.to_string_lossy().to_string();
-    if app.run("file.export", with_print(json!({"ids": ids, "format": ext, "size": setting.size, "path": path}), setting)).is_some() {
+    let mut params = setting_params(setting);
+    params["ids"] = json!(ids);
+    params["path"] = json!(path);
+    if app.run("file.export", params).is_some() {
         app.toast(trf("Exported {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
     }
 }

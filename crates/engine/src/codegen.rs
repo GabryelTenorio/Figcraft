@@ -18,20 +18,34 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "inspect.code",
         "Code for layer",
-        "{id?, language?: css|html|react|swiftui|compose (default css; html and react are the whole layer tree; components take their properties as parameters, instances pass their values; a component connected to code (codeConnect.set) gives its import and snippet instead)} → {code, language, connected}",
+        "{id?, language?: css|html|react|swiftui|compose (default css; html and react are the whole layer tree; components take their properties as parameters, instances pass their values; a component connected to code (codeConnect.set) gives its import and snippet instead), unit?: px|rem (CSS, HTML and React; default px), rootFontSize? (rem: pixels per rem, default 16)} → {code, language, connected}",
         false,
         |s, p| {
-            let id = targets(s, p).first().copied().ok_or_else(|| bad("inspect.code", "select a layer"))?;
+            let cmd = "inspect.code";
+            let id = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select a layer"))?;
             let lang = match string(p, "language") {
-                Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad("inspect.code", "language: css|html|react|swiftui|compose"))?,
+                Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad(cmd, "language: css|html|react|swiftui|compose"))?,
                 None => CodeLang::Css,
             };
+            let rem = match string(p, "unit").map(|u| u.to_ascii_lowercase()).as_deref() {
+                None | Some("px") => None,
+                Some("rem") => Some(num_or(p, "rootFontSize", 16.0)).filter(|r| r.is_finite() && *r > 0.0 && *r <= 1000.0),
+                Some(_) => return Err(bad(cmd, "unit: px|rem")),
+            };
+            if string(p, "unit").is_some_and(|u| u.eq_ignore_ascii_case("rem")) && rem.is_none() {
+                return Err(bad(cmd, "rootFontSize: a positive number of pixels (up to 1000)"));
+            }
             let doc = s.doc()?;
             if !doc.contains(id) {
-                return Err(bad("inspect.code", "no such layer"));
+                return Err(bad(cmd, "no such layer"));
             }
             let connected = crate::code_connect::link(doc, id, lang).is_some();
-            Ok(json!({"code": code_for(doc, id, lang), "language": lang.id(), "connected": connected}))
+            let code = code_for(doc, id, lang);
+            let code = match rem {
+                Some(root) if matches!(lang, CodeLang::Css | CodeLang::Html | CodeLang::React) => px_to_rem(&code, root),
+                _ => code,
+            };
+            Ok(json!({"code": code, "language": lang.id(), "connected": connected}))
         }
     )]
 }
@@ -88,6 +102,34 @@ pub(crate) fn num(v: f64) -> String {
     }
     let r = (v * 100.0).round() / 100.0;
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
+}
+
+/// `code` with every pixel length (`12px`) in rem of `root` pixels (`0.75rem`); names that end
+/// in "px" are left alone.
+pub fn px_to_rem(code: &str, root: f64) -> String {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(i) = rest.find("px") {
+        let (head, tail) = (rest.get(..i).unwrap_or(""), rest.get(i + 2..).unwrap_or(""));
+        // The number right before "px".
+        let start = head.char_indices().rev().take_while(|(_, c)| c.is_ascii_digit() || *c == '.' || *c == '-').last().map_or(head.len(), |(j, _)| j);
+        let (before, number) = (head.get(..start).unwrap_or(""), head.get(start..).unwrap_or(""));
+        let free = !before.chars().next_back().is_some_and(ident) && !tail.chars().next().is_some_and(|c| ident(c) || c == '-');
+        match number.parse::<f64>() {
+            Ok(v) if free && v.is_finite() => {
+                out.push_str(before);
+                out.push_str(&format!("{}rem", num(v / root)));
+            }
+            _ => {
+                out.push_str(head);
+                out.push_str("px");
+            }
+        }
+        rest = tail;
+    }
+    out.push_str(rest);
+    out
 }
 
 pub fn code_for(doc: &Document, id: NodeId, lang: CodeLang) -> String {
@@ -314,6 +356,16 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     if n.opacity < 1.0 {
         put("opacity", tok(doc, n, &["opacity"], num(f64::from(n.opacity)), t));
     }
+    if !matches!(n.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
+        put("mix-blend-mode", n.blend.css().into());
+    }
+    // Rotation turns counter-clockwise about the top-left corner (the position given); CSS
+    // rotate turns clockwise.
+    let rot = figcraft_geom::rotation_degrees(n.transform);
+    if rot.abs() > 0.01 && rot.is_finite() {
+        put("transform", format!("rotate({}deg)", num(-rot)));
+        put("transform-origin", "top left".into());
+    }
     for (i, p) in n.fills.iter().enumerate().filter(|(_, p)| p.visible) {
         match &p.kind {
             PaintKind::Solid { color } => {
@@ -322,10 +374,7 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
                 // A variable binds the first paint's colour.
                 put(key, if i == 0 { tok(doc, n, &["fill"], c, t) } else { c });
             }
-            PaintKind::Gradient(g) => {
-                let stops: Vec<String> = g.sorted_stops().iter().map(|s| format!("{} {}%", s.color.to_css(), (s.position * 100.0).round())).collect();
-                put("background", format!("linear-gradient({})", stops.join(", ")));
-            }
+            PaintKind::Gradient(g) => put("background", css_gradient(g, n.width, n.height)),
             PaintKind::Image(_) => put("background", "url(image.png) center / cover".into()),
             PaintKind::Pattern(_) => put("background", "url(pattern.png) repeat".into()),
         }
@@ -379,11 +428,49 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
             LetterSpacing::Percent(p) if p != 0.0 => put("letter-spacing", format!("{}em", num(p / 100.0))),
             _ => {}
         }
+        match tx.align_h {
+            TextAlignH::Left => {}
+            TextAlignH::Center => put("text-align", "center".into()),
+            TextAlignH::Right => put("text-align", "right".into()),
+            TextAlignH::Justified => put("text-align", "justify".into()),
+        }
+        match s.case {
+            TextCase::Original => {}
+            TextCase::Upper => put("text-transform", "uppercase".into()),
+            TextCase::Lower => put("text-transform", "lowercase".into()),
+            TextCase::Title => put("text-transform", "capitalize".into()),
+            TextCase::SmallCaps => put("font-variant", "small-caps".into()),
+        }
+        match s.decoration {
+            TextDecoration::None => {}
+            TextDecoration::Underline => put("text-decoration", "underline".into()),
+            TextDecoration::Strikethrough => put("text-decoration", "line-through".into()),
+        }
         if tx.leading_trim == figcraft_doc::LeadingTrim::CapHeight {
             put("text-box", "trim-both cap alphabetic".into());
         }
     }
     out
+}
+
+/// A gradient fill on a `w`×`h` box as a CSS background: linear along its handles' direction
+/// (CSS angles: 0deg up, 90deg right), radial with its handles' radii, angular as a conic
+/// gradient from its start direction.
+fn css_gradient(g: &figcraft_color::Gradient, w: f64, h: f64) -> String {
+    let stops = g.sorted_stops().iter().map(|s| format!("{} {}%", s.color.to_css(), (s.position * 100.0).round())).collect::<Vec<_>>().join(", ");
+    let (dx, dy) = ((g.to.0 - g.from.0) * w, (g.to.1 - g.from.1) * h);
+    let angle = if dx == 0.0 && dy == 0.0 { 180.0 } else { dx.atan2(-dy).to_degrees().rem_euclid(360.0) };
+    let pct = |v: f64| format!("{}%", num(v * 100.0));
+    let at = format!("at {} {}", pct(g.from.0), pct(g.from.1));
+    match g.kind {
+        figcraft_color::GradientKind::Linear => format!("linear-gradient({}deg, {stops})", num(angle)),
+        figcraft_color::GradientKind::Radial | figcraft_color::GradientKind::Diamond => {
+            let (rx, ry) = (((g.width.0 - g.from.0) * w).hypot((g.width.1 - g.from.1) * h), dx.hypot(dy));
+            let rel = |r: f64, side: f64| if side > 0.0 { pct(r / side) } else { "50%".into() };
+            format!("radial-gradient({} {} {at}, {stops})", rel(rx, w), rel(ry, h))
+        }
+        figcraft_color::GradientKind::Angular => format!("conic-gradient(from {}deg {at}, {stops})", num(angle)),
+    }
 }
 
 // ------------------------------------------------------------------ HTML and React markup

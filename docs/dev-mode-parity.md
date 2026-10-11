@@ -1,16 +1,16 @@
 # Dev Mode parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect and Dev Mode plugins) · **Target:** Figma Design Dev Mode (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (inspect behaviour suite and fixes: colour formats, rem, blend, positions from the frame, CSS for rotation, gradients and text, icons and images as assets; code connect and Dev Mode plugins) · **Target:** Figma Design Dev Mode (desktop app 126.10.7)
 
-**Breadth ~90%, ready ~64% (estimated).** The inspect surface is broad and components connect
+**Breadth ~93%, ready ~70% (estimated).** The inspect surface is broad and components connect
 to the code components of a repository; left: dev resources links. Remaining: 1–3 h.
 
 | Feature | Status | Notes |
 |---|---|---|
 | Dev Mode toggle (Shift+D), Inspect panel | done | |
-| Properties with their styles and variables; redlines on hover | done | |
-| Code: CSS, iOS (SwiftUI), Android (Compose) | done | plus HTML and React (ours); components take properties as parameters, instances are calls |
-| Assets list with export | done | |
+| Properties with their styles and variables; redlines on hover | done | positions from the frame around the layer (groups aren't frames), rotation, radius (CSS corner order), opacity, blend; colours in hex, RGB, CSS, HSL or HSB (`inspect.properties {colorFormat}`, the Inspect tab's Color format) |
+| Code: CSS, iOS (SwiftUI), Android (Compose) | done | plus HTML and React (ours); components take properties as parameters, instances are calls; CSS in px or rem (`inspect.code {unit, rootFontSize}`), with rotation, blend modes, gradient directions and kinds (linear, radial, conic), text alignment, case and decoration |
+| Assets list with export | done | layers with export settings, icons (small, vector shapes only: SVG) and images (PNG); the icon rule is ours |
 | Annotations: pinned properties, categories, coloured callouts, filter | done | |
 | Ready for dev list, statuses, "Changed" after edits | done | |
 | Focus view (one frame, previous / next) | done | |
@@ -24,5 +24,6 @@ to the code components of a repository; left: dev resources links. Remaining: 1�
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Export and inspect behaviour suite written from the public documentation (139 cases in 19 tests; 47 failed before the fixes) and its fixes: an export covers what the layer paints, so a drop shadow adds room only where it falls, strokes on boxes and ellipses reach their real width (they added up to four times as much), hidden layers take no room and a mask group exports the mask's area; a slice exports everything under it; slashes in layer names export into folders; Copy as PNG copies the whole selection. Added: the export settings' contents only and include bounding box, and for SVG outline text (off writes `<text>`), unique id attributes and simplified strokes (stroke attributes where exact); Inspect colour formats (hex, RGB, CSS, HSL, HSB), CSS in rem, a Blend row, positions measured from the frame around a layer (groups aren't frames), CSS for rotation, blend modes, gradient directions and kinds, text alignment, case and decoration; icons and images in the asset list (`file.exportLayers {assets}`). Dev Mode breadth 90% → 93%, ready 64% → 70%, hours unchanged (1–3, dev resources); feature breadth and ready for real work unchanged at this rounding |
 | 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–720 h |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

@@ -702,6 +702,37 @@ impl Node {
 
     /// Maximum distance (in local units) painting can reach outside the node box.
     pub fn paint_reach(&self) -> f64 {
+        let fx = self.effects.iter().map(Effect::reach).fold(0.0, f64::max);
+        self.outline_reach() + fx + self.spread_miter_reach()
+    }
+
+    /// The page-space area this node paints itself under `world` (its children aside): its box
+    /// grown by its strokes and glyphs, then by its effects (see [`Node::grow_by_effects`]).
+    pub fn own_paint_bounds(&self, world: Affine) -> figcraft_geom::Rect {
+        let o = self.outline_reach();
+        self.grow_by_effects(figcraft_geom::transform_rect_bbox(world, self.local_rect().inflate(o, o)))
+    }
+
+    /// Page-space area `b` grown by what this node's visible effects paint around it: blurs all
+    /// round, drop shadows towards their offset (in page units, as the renderer draws them), so a
+    /// shadow falling down adds room below and none above.
+    pub fn grow_by_effects(&self, b: figcraft_geom::Rect) -> figcraft_geom::Rect {
+        let miter = self.spread_miter_reach();
+        self.effects.iter().filter(|e| e.visible).fold(b, |r, e| match &e.kind {
+            EffectKind::DropShadow(s) => {
+                let g = s.radius.abs() * 1.5 + s.spread.max(0.0) + miter;
+                let (dx, dy) = s.offset;
+                if g.is_finite() && dx.is_finite() && dy.is_finite() { r.union(b.inflate(g, g) + figcraft_geom::kurbo::Vec2::new(dx, dy)) } else { r }
+            }
+            _ => {
+                let g = e.reach();
+                if g.is_finite() && g > 0.0 { r.union(b.inflate(g, g)) } else { r }
+            }
+        })
+    }
+
+    /// How far (local units) strokes and glyphs reach outside the box.
+    fn outline_reach(&self) -> f64 {
         let stroke = if self.has_visible_stroke() {
             let w = self.stroke.sides.map(|s| s.iter().copied().fold(0.0, f64::max)).unwrap_or_else(|| self.stroke.max_weight());
             let base = match self.stroke.align {
@@ -711,13 +742,15 @@ impl Node {
             };
             // Arrowheads are sized by the weight, whatever a width profile does.
             let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w.max(self.stroke.weight) * 3.0 } else { w };
-            base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * self.stroke.miter_limit.clamp(1.0, 4.0)
+            // Right-angled or smooth outlines (boxes, ellipses) end their mitres on the grown box.
+            let boxy = matches!(self.kind, NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Section { .. }) || self.kind.is_frame_like();
+            let miter = if boxy { 1.0 } else { self.stroke.miter_limit.clamp(1.0, 4.0) };
+            base.max(if matches!(self.kind, NodeKind::Line | NodeKind::Vector { .. }) { caps } else { 0.0 }) * miter
         } else {
             0.0
         };
-        let fx = self.effects.iter().map(Effect::reach).fold(0.0, f64::max);
         let glyphs = if let NodeKind::Text(t) = &self.kind { t.path_reach() + t.trim_reach() } else { 0.0 };
-        stroke + fx + self.spread_miter_reach() + glyphs
+        stroke + glyphs
     }
 
     /// How much further than its spread a drop shadow can reach at the outline's sharp corners:

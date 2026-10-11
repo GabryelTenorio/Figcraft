@@ -95,7 +95,8 @@ fn inner_shadows_go_over_fills_and_under_strokes() {
     let svg = export(&d, &[n]);
     let fill = svg.find(&format!("fill=\"{FILL}\"")).unwrap();
     let shadow = svg.find("<g clip-path=").unwrap();
-    let stroke = svg.find(&format!("fill=\"{STROKE}\"")).unwrap();
+    // A simplified stroke (an inside stroke on a box is a stroke attribute).
+    let stroke = svg.find(&format!("stroke=\"{STROKE}\"")).unwrap();
     assert!(fill < shadow && shadow < stroke, "{svg}");
 }
 

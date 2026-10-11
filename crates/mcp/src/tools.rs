@@ -196,7 +196,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale` (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
+            "Export layers (default: the selection, else every top-level layer of the current page) as png, jpg, svg, webp or pdf at `scale` (PDF: with `bleed`, `cropMarks`, `bleedMarks` and `cmyk` for print; options `contentsOnly`, `includeBoundingBox`, and for SVG `svgOutlineText`, `svgIdAttribute`, `svgSimplifyStroke`). With `path` the file is written there (absolute path recommended) and the result says where. Without `path`: png/jpg/webp come back as an image content block, svg as text, other formats as base64 `data`.",
             obj(
                 json!({
                     "ids": ids_schema("Layers to export (several are composited into one image)"),
@@ -208,6 +208,11 @@ pub fn tool_definitions() -> Vec<Value> {
                     "cropMarks": boolean("PDF: crop marks"),
                     "bleedMarks": boolean("PDF: bleed marks"),
                     "cmyk": boolean("PDF: CMYK colour instead of RGB"),
+                    "contentsOnly": boolean("Only the layers themselves (default true); false also draws every other layer that shows in their area"),
+                    "includeBoundingBox": boolean("Export the layers' own boxes, cutting off shadows and outside strokes (default false)"),
+                    "svgOutlineText": boolean("SVG: text as outlines (default true); false keeps `<text>` elements"),
+                    "svgIdAttribute": boolean("SVG: layer names as unique `id` attributes (default false)"),
+                    "svgSimplifyStroke": boolean("SVG: strokes as `stroke` attributes where exact (default true); false writes outlines"),
                 }),
                 &[],
             ),
@@ -661,8 +666,10 @@ fn export(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<ToolResult, Str
     if let Some(s) = s_arg(a, "size")? {
         params.insert("size".into(), json!(s));
     }
-    // PDF print options, checked by the command.
-    for k in ["bleed", "cropMarks", "bleedMarks", "cmyk"] {
+    // PDF print options and the export options, checked by the command.
+    for k in
+        ["bleed", "cropMarks", "bleedMarks", "cmyk", "contentsOnly", "includeBoundingBox", "svgOutlineText", "svgIdAttribute", "svgSimplifyStroke"]
+    {
         if let Some(v) = a.get(k).filter(|v| !v.is_null()) {
             params.insert(k.into(), v.clone());
         }

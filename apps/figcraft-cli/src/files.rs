@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use figcraft_doc::{Document, ExportFormat, NodeId, NodeKind, PrintSettings};
+use figcraft_doc::{Document, ExportFormat, ExportSetting, NodeId, NodeKind, PrintSettings};
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
@@ -117,7 +117,12 @@ fn page_pdf(doc: &Document, page: NodeId, print: &PrintSettings) -> CliResult<Ve
     let r = if doc.top_frames(page).iter().any(|f| doc.node(*f).is_some_and(|n| n.visible)) {
         figcraft_engine::cmd::file::frames_pdf(doc, page, print).map(|(bytes, _)| bytes)
     } else {
-        figcraft_engine::cmd::file::export_bytes_with(doc, &children(doc, page), ExportFormat::Pdf, 1.0, print)
+        figcraft_engine::cmd::file::export_bytes_with(
+            doc,
+            &children(doc, page),
+            &ExportSetting { format: ExportFormat::Pdf, print: *print, ..Default::default() },
+            1.0,
+        )
     };
     r.map_err(|e| CliError::Failed(e.to_string()))
 }
@@ -201,8 +206,10 @@ pub fn export(file: &str, out: &str, t: &Target) -> CliResult<ExitCode> {
     };
     let target = node.map(|q| find_node(&doc, page, q)).transpose()?;
     let single = image_format(&ext(out)).is_some();
-    let bytes_of =
-        |ids: &[NodeId]| figcraft_engine::cmd::file::export_bytes_with(&doc, ids, fmt, scale, print).map_err(|e| CliError::Failed(e.to_string()));
+    let bytes_of = |ids: &[NodeId]| {
+        let setting = ExportSetting { format: fmt, print: *print, ..Default::default() };
+        figcraft_engine::cmd::file::export_bytes_with(&doc, ids, &setting, scale).map_err(|e| CliError::Failed(e.to_string()))
+    };
     if single {
         let bytes = match target {
             Some(t) => bytes_of(&[t])?,

@@ -359,7 +359,9 @@ fn exports_include_what_effects_paint_outside_the_layer() {
     ];
     for (why, effects, grows) in rows {
         let (w, h) = size(effects);
-        assert_eq!((w > 40 && h > 40, w == 40 && h == 40), (grows, !grows), "{why}: {w} × {h}");
+        // Effects grow the export only on the sides they reach (a shadow falling down grows its height).
+        assert!(w >= 40 && h >= 40, "{why}: {w} × {h}");
+        assert_eq!(w > 40 || h > 40, grows, "{why}: {w} × {h}");
     }
     // The export holds the shadow where the canvas draws it, pixel for pixel.
     let (d, r) = square(vec![Paint::solid(hex("FF0000"))], vec![fx(EffectKind::DropShadow(Shadow { radius: 6.0, ..sharp((0.0, 10.0), 2.0) }))]);

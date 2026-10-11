@@ -1394,8 +1394,8 @@ impl PrintSettings {
 }
 
 /// One row of a node's Export section.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct ExportSetting {
     pub size: ExportSize,
     pub suffix: String,
@@ -1403,6 +1403,45 @@ pub struct ExportSetting {
     /// PDF only: bleed, marks and colour.
     #[serde(skip_serializing_if = "PrintSettings::is_default")]
     pub print: PrintSettings,
+    /// Only the layer itself (on), or every layer that shows in its area (off).
+    #[serde(skip_serializing_if = "is_true")]
+    pub contents_only: bool,
+    /// The layer's own box, cutting off what it paints outside it (shadows, outside strokes).
+    #[serde(skip_serializing_if = "is_false")]
+    pub include_bounding_box: bool,
+    /// SVG: text as outlines (on) or as `<text>` elements (off).
+    #[serde(skip_serializing_if = "is_true")]
+    pub svg_outline_text: bool,
+    /// SVG: layer names as `id` attributes.
+    #[serde(skip_serializing_if = "is_false")]
+    pub svg_id_attribute: bool,
+    /// SVG: strokes as `stroke` attributes where that's exact (on), else as outlines.
+    #[serde(skip_serializing_if = "is_true")]
+    pub svg_simplify_stroke: bool,
+}
+
+impl Default for ExportSetting {
+    fn default() -> Self {
+        Self {
+            size: ExportSize::default(),
+            suffix: String::new(),
+            format: ExportFormat::default(),
+            print: PrintSettings::default(),
+            contents_only: true,
+            include_bounding_box: false,
+            svg_outline_text: true,
+            svg_id_attribute: false,
+            svg_simplify_stroke: true,
+        }
+    }
+}
+
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl ExportSetting {

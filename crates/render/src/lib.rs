@@ -241,11 +241,6 @@ pub fn raster_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
 /// The page-space rectangle a node exports: a clipping frame's box (plus its own effects), else
 /// everything it paints.
 pub fn export_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
-    let n = doc.node(id)?;
-    if n.kind.is_frame_like() && n.clip {
-        let reach = n.paint_reach();
-        return Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), n.local_rect().inflate(reach, reach)));
-    }
     doc.world_render_bounds(id)
 }
 
@@ -256,16 +251,25 @@ pub fn render_node(doc: &Document, id: NodeId, scale: f64) -> Option<Pixmap> {
 
 /// [`render_node`] `time` seconds into animated GIFs (the presenter plays them).
 pub fn render_node_at(doc: &Document, id: NodeId, scale: f64, time: f64) -> Option<Pixmap> {
-    let b = export_bounds(doc, id)?;
+    area_at(doc, &[id], export_bounds(doc, id)?, scale, time)
+}
+
+/// Rasterise `ids` (bottom to top) over page area `b` at `scale` (export): the image starts at the
+/// area's top-left and its sides round up to whole pixels. `None` past 16384 pixels a side.
+pub fn render_area(doc: &Document, ids: &[NodeId], b: Rect, scale: f64) -> Option<Pixmap> {
+    area_at(doc, ids, b, scale, 0.0)
+}
+
+fn area_at(doc: &Document, ids: &[NodeId], b: Rect, scale: f64, time: f64) -> Option<Pixmap> {
     let scale = if scale.is_finite() && scale > 0.0 { scale.min(64.0) } else { 1.0 };
     let w = (b.width() * scale - 1e-6).ceil().max(1.0);
     let h = (b.height() * scale - 1e-6).ceil().max(1.0);
-    if w > 16_384.0 || h > 16_384.0 {
+    if !(w <= 16_384.0 && h <= 16_384.0 && b.x0.is_finite() && b.y0.is_finite()) {
         return None;
     }
     let view = View { origin: (b.x0, b.y0), scale, width: w as u32, height: h as u32 };
     let mut pix = new_pixmap(view.width, view.height)?;
-    nodes_into(doc, &[id], &view, &mut pix, time);
+    nodes_into(doc, ids, &view, &mut pix, time);
     Some(pix)
 }
 

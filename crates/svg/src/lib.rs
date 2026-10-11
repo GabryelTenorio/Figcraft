@@ -36,15 +36,20 @@ const MAX_RASTER_SIDE: f64 = 4096.0;
 
 #[derive(Clone, Debug)]
 pub struct SvgOptions {
-    /// Include node ids as `id` attributes (Figma's "Include id attribute").
+    /// Layer names as `id` attributes (unique in the file: repeats get `_2`, `_3`…).
     pub include_ids: bool,
-    /// Outline text (always true for now: no font embedding).
+    /// Text as outlines; off: `<text>` elements (selectable, drawn with the reader's fonts).
     pub outline_text: bool,
+    /// Strokes as `stroke` attributes where that's exact (uniform weight; centred, or inside and
+    /// outside on boxes and ellipses); off: every stroke as a filled outline.
+    pub simplify_stroke: bool,
+    /// The page area the SVG covers (default: the exported layers' export bounds).
+    pub bounds: Option<Rect>,
 }
 
 impl Default for SvgOptions {
     fn default() -> Self {
-        Self { include_ids: false, outline_text: true }
+        Self { include_ids: false, outline_text: true, simplify_stroke: true, bounds: None }
     }
 }
 
@@ -64,6 +69,8 @@ struct W<'a> {
     /// isolates what it holds (it is a stacking context), so clips go on what blends instead: a
     /// layer that isolates anyway, or each paint and child of a plain group.
     clip: Option<String>,
+    /// `id` attributes written so far.
+    used_ids: std::collections::BTreeSet<String>,
 }
 
 /// ` clip-path="url(#…)"` for a clip path id (else nothing).
@@ -363,7 +370,7 @@ impl W<'_> {
             return;
         }
         let xf = xf * n.transform;
-        let id_attr = if self.opts.include_ids { format!(" id=\"{}\"", esc(&n.name.replace(' ', "_"))) } else { String::new() };
+        let id_attr = if self.opts.include_ids { format!(" id=\"{}\"", esc(&self.unique_id(&n.name))) } else { String::new() };
         if self.raster_whole(id, n, &id_attr) {
             return;
         }
@@ -409,7 +416,10 @@ impl W<'_> {
             _ => figcraft_render::node_outline(self.doc, n),
         };
         let closed = figcraft_doc::geometry::is_closed(n) || matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Text(_));
-        if let Some((path, rule)) = &outline
+        let live_text = if self.opts.outline_text { None } else { self.text_element(n, xf) };
+        if let Some(t) = &live_text {
+            self.body.push_str(t);
+        } else if let Some((path, rule)) = &outline
             && closed
         {
             let fr = if *rule == figcraft_render::FillRule::EvenOdd { " fill-rule=\"evenodd\"" } else { "" };
@@ -484,7 +494,11 @@ impl W<'_> {
             }
             self.clip = inherited;
         }
-        if n.has_visible_stroke() {
+        if n.has_visible_stroke()
+            && let Some(simple) = self.opts.simplify_stroke.then(|| self.simple_stroke(n, xf)).flatten()
+        {
+            self.body.push_str(&simple);
+        } else if n.has_visible_stroke() {
             let geom = match &n.kind {
                 NodeKind::BooleanOp { .. } | NodeKind::Text(_) => outline.as_ref().map(|(p, _)| p.clone()),
                 _ => figcraft_doc::geometry::stroke_geometry(n),
@@ -502,6 +516,134 @@ impl W<'_> {
         }
         self.body.push_str(&grains);
         self.body.push_str("</g>");
+    }
+
+    /// `name` as an `id` not used yet in this file (spaces as underscores; repeats get `_2`…).
+    fn unique_id(&mut self, name: &str) -> String {
+        let base: String = name.chars().take(200).map(|c| if c.is_whitespace() || c.is_control() { '_' } else { c }).collect();
+        let base = if base.is_empty() { "layer".to_string() } else { base };
+        let id = (1..).map(|k| if k == 1 { base.clone() } else { format!("{base}_{k}") }).find(|i| !self.used_ids.contains(i)).unwrap_or(base);
+        self.used_ids.insert(id.clone());
+        id
+    }
+
+    /// Text layer `n` as a `<text>` element, one `<tspan>` per laid-out line, in its first fill.
+    /// shortcut: one style for the whole layer (the first run's family, size and weight) and text
+    /// on a path stays outlined; write a `<tspan>` per styled run when mixed styles are needed.
+    fn text_element(&mut self, n: &Node, xf: Affine) -> Option<String> {
+        let NodeKind::Text(t) = &n.kind else { return None };
+        if t.path.is_some() {
+            return None;
+        }
+        let st = &t.style;
+        let fill = n.fills.iter().find_map(|p| self.paint_attr(p, n.width, n.height)).unwrap_or_else(|| "fill=\"none\"".into());
+        let chars: Vec<char> = t.characters.chars().collect();
+        let mut spans = String::new();
+        let mut gxf = xf;
+        if let Some((layout, dy)) = figcraft_text::layout_node(n) {
+            gxf = xf * Affine::translate((0.0, dy));
+            for line in &layout.lines {
+                let text: String = chars.get(line.char_start..line.char_end.min(chars.len())).unwrap_or(&[]).iter().collect();
+                let text = st.case.apply(text.trim_end_matches(['\n', '\r']));
+                let (x, y) = layout.glyphs.get(line.glyph_start).map_or((0.0, line.baseline), |g| (g.x, g.y));
+                let _ = write!(spans, "<tspan x=\"{}\" y=\"{}\">{}</tspan>", num(x), num(y), esc(&text));
+            }
+        }
+        if spans.is_empty() {
+            // No fonts laid it out: one line on the first baseline.
+            let _ = write!(spans, "<tspan x=\"0\" y=\"{}\">{}</tspan>", num(st.font_size * 0.8), esc(&st.case.apply(&t.characters)));
+        }
+        let italic = if st.italic() { " font-style=\"italic\"" } else { "" };
+        let spacing = match st.letter_spacing {
+            figcraft_doc::LetterSpacing::Pixels(v) if v != 0.0 => format!(" letter-spacing=\"{}\"", num(v)),
+            figcraft_doc::LetterSpacing::Percent(p) if p != 0.0 => format!(" letter-spacing=\"{}\"", num(p / 100.0 * st.font_size)),
+            _ => String::new(),
+        };
+        Some(format!(
+            "<text transform=\"{}\" font-family=\"{}\" font-size=\"{}\" font-weight=\"{}\"{italic}{spacing} {fill} xml:space=\"preserve\">{spans}</text>",
+            matrix(gxf),
+            esc(&st.font_family),
+            num(st.font_size),
+            st.weight()
+        ))
+    }
+
+    /// `n`'s strokes as `stroke` attributes on a path, when that draws exactly what the outline
+    /// does: a uniform weight (no per-side weights, width profile, brush or arrowheads), centred on
+    /// the path, or inside or outside a box or ellipse (drawn centred on it grown or shrunk by half
+    /// the weight). `None` otherwise.
+    fn simple_stroke(&mut self, n: &Node, xf: Affine) -> Option<String> {
+        use figcraft_doc::{StrokeAlign, StrokeCap, StrokeJoin};
+        let k = &n.stroke;
+        let w = k.weight;
+        if k.sides.is_some()
+            || k.profile().is_some()
+            || k.brush.is_some()
+            || k.cap_start.is_arrow()
+            || k.cap_end.is_arrow()
+            || !(w.is_finite() && w > 0.0)
+        {
+            return None;
+        }
+        let path = match k.align {
+            StrokeAlign::Center => match n.kind {
+                NodeKind::Text(_) | NodeKind::BooleanOp { .. } | NodeKind::Group => return None,
+                _ => figcraft_doc::geometry::stroke_geometry(n)?,
+            },
+            align if k.dashes.is_empty() => {
+                let d = if align == StrokeAlign::Inside { -w / 2.0 } else { w / 2.0 };
+                let r = n.local_rect().inflate(d, d);
+                if r.width() <= 0.0 || r.height() <= 0.0 {
+                    return None;
+                }
+                match n.kind {
+                    NodeKind::Ellipse { sweep, inner, .. } if inner == 0.0 && sweep >= std::f64::consts::TAU - 1e-9 => {
+                        figcraft_geom::kurbo::Shape::to_path(&figcraft_geom::kurbo::Ellipse::from_rect(r), 0.1)
+                    }
+                    NodeKind::Rectangle | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. } if n.corners.smoothing == 0.0 => {
+                        // A rounded corner keeps a radius only while the shifted radius stays positive.
+                        let radii = n.corners.radii.map(|c| if c > 0.0 { c + d } else { 0.0 });
+                        if n.corners.radii.iter().zip(radii).any(|(c, r)| *c > 0.0 && r <= 0.0) {
+                            return None;
+                        }
+                        let [tl, tr, br, bl] = radii;
+                        figcraft_geom::kurbo::Shape::to_path(&figcraft_geom::kurbo::RoundedRect::from_rect(r, (tl, tr, br, bl)), 0.1)
+                    }
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let cap = match k.cap_start {
+            StrokeCap::Round => " stroke-linecap=\"round\"",
+            StrokeCap::Square => " stroke-linecap=\"square\"",
+            _ => "",
+        };
+        let join = match k.join {
+            StrokeJoin::Miter if (k.miter_limit - 4.0).abs() > 1e-9 => format!(" stroke-miterlimit=\"{}\"", num(k.miter_limit.max(1.0))),
+            StrokeJoin::Miter => String::new(),
+            StrokeJoin::Round => " stroke-linejoin=\"round\"".into(),
+            StrokeJoin::Bevel => " stroke-linejoin=\"bevel\"".into(),
+        };
+        let dash = if k.dashes.is_empty() {
+            String::new()
+        } else {
+            format!(" stroke-dasharray=\"{}\"", k.dashes.iter().map(|d| num(*d)).collect::<Vec<_>>().join(" "))
+        };
+        let mut out = String::new();
+        for p in &n.strokes {
+            if let Some(a) = self.paint_attr(p, n.width, n.height) {
+                let a = a.replace("fill-opacity=", "stroke-opacity=").replacen("fill=", "stroke=", 1);
+                let _ = write!(
+                    out,
+                    "<path transform=\"{}\" d=\"{}\" fill=\"none\" {a} stroke-width=\"{}\"{cap}{join}{dash}/>",
+                    matrix(xf),
+                    path_d(&path),
+                    num(w)
+                );
+            }
+        }
+        Some(out)
     }
 
     /// `<image>` markup of `pix`, a render of `view`'s page area, with `attrs`; `None` when it is
@@ -776,9 +918,23 @@ fn sniff_mime(b: &[u8]) -> &'static str {
 
 /// Export `ids` (in z-order) as one SVG document covering their export bounds.
 pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<String> {
-    let bounds: Rect = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b))?;
+    let bounds: Rect = match opts.bounds {
+        Some(b) if [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) => b,
+        _ => ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b))?,
+    };
     let origin = Affine::translate((-bounds.x0, -bounds.y0));
-    let mut w = W { doc, roots: ids, page: origin, defs: String::new(), body: String::new(), next: 0, opts, mask: None, clip: None };
+    let mut w = W {
+        doc,
+        roots: ids,
+        page: origin,
+        defs: String::new(),
+        body: String::new(),
+        next: 0,
+        opts,
+        mask: None,
+        clip: None,
+        used_ids: Default::default(),
+    };
     for id in ids {
         let parent_xf = doc.node(*id).and_then(|n| n.parent).map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
         w.node(*id, origin * parent_xf, 0);

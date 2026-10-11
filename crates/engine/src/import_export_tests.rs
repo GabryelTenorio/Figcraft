@@ -187,7 +187,7 @@ fn export_layers_uses_each_layers_settings() {
     let r = s.execute("file.exportLayers", &json!({"ids": [a, b, c]})).unwrap();
     let files = r["files"].as_array().unwrap();
     let names: Vec<&str> = files.iter().map(|f| f["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["Icon.png", "Icon@2x.png", "Icon 2.png", "Logo_Dark.svg"], "unique, safe names");
+    assert_eq!(names, ["Icon.png", "Icon@2x.png", "Icon 2.png", "Logo/Dark.svg"], "unique names; a slash makes a folder");
     assert_eq!(r["skipped"], 1);
     let data = |i: usize| base64::engine::general_purpose::STANDARD.decode(files[i]["data"].as_str().unwrap()).unwrap();
     assert_eq!(png_width(&data(0)), 32);
@@ -200,7 +200,7 @@ fn export_layers_uses_each_layers_settings() {
     let dir = temp_dir("exportlayers");
     let r = s.execute("file.exportLayers", &json!({"dir": dir.to_string_lossy()})).unwrap();
     assert_eq!(r["files"].as_array().map(Vec::len), Some(4));
-    assert!(dir.join("Icon@2x.png").is_file() && dir.join("Logo_Dark.svg").is_file());
+    assert!(dir.join("Icon@2x.png").is_file() && dir.join("Logo").join("Dark.svg").is_file());
     let _ = std::fs::remove_dir_all(&dir);
 
     // Nothing to export.

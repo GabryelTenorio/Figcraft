@@ -2084,14 +2084,15 @@ pub(crate) fn prop_row(app: &mut FigApp, ui: &mut Ui, p: &figcraft_engine::devin
     }
 }
 
-/// The selection's layers with export settings: click one to export it, or export them all.
+/// The selection's assets (layers with export settings, icons, images): click one to export it,
+/// or export them all.
 fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devinspect::Asset]) {
     let t = Tokens::get(ui.ctx());
     widgets::separator(ui);
     let export_all = [(Icon::Export, tr("Export all"))];
     let all = widgets::section_header(ui, tr("Assets"), if assets.is_empty() { &[] } else { &export_all }, false).is_some();
     if assets.is_empty() {
-        widgets::note(ui, tr("No export settings. Add them in the Design tab."), t.text_secondary);
+        widgets::note(ui, tr("No assets: no export settings, icons or images. Add export settings in the Design tab."), t.text_secondary);
         return;
     }
     let mut export: Option<Vec<NodeId>> = all.then(|| assets.iter().map(|a| a.id).collect());
@@ -2117,7 +2118,7 @@ fn inspect_assets(app: &mut FigApp, ui: &mut Ui, assets: &[figcraft_engine::devi
         }
     }
     if let Some(ids) = export {
-        crate::export_panel::export_layers(app, &ids);
+        crate::export_panel::export_layers(app, &ids, true);
     }
     ui.add_space(4.0);
 }
@@ -2142,7 +2143,22 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     widgets::section_header(ui, &name, &[], false);
     crate::dev_mode::status(app, ui, &doc, &sel);
     crate::dev_mode::annotations_section(app, ui, &doc, first);
-    for s in figcraft_engine::devinspect::properties(&doc, first) {
+    use figcraft_engine::devinspect::ColorFormat;
+    let fmt_id = Id::new("inspect_color_format");
+    let fmt = ui.data(|d| d.get_temp::<usize>(fmt_id)).and_then(|i| ColorFormat::ALL.get(i).copied()).unwrap_or_default();
+    row(ui, 32.0, |ui| {
+        widgets::label(ui, tr("Color format"), t.text_secondary);
+        let resp = widgets::dropdown(ui, fmt.label(), 72.0, None);
+        menu_popup(&resp).show(|ui| {
+            for (i, f) in ColorFormat::ALL.iter().enumerate() {
+                if menu_item(ui, f.label(), "") {
+                    ui.data_mut(|d| d.insert_temp(fmt_id, i));
+                    ui.close();
+                }
+            }
+        });
+    });
+    for s in figcraft_engine::devinspect::properties_with(&doc, first, fmt) {
         inspect_section(app, ui, &s);
     }
     inspect_assets(app, ui, &figcraft_engine::devinspect::assets(&doc, &sel));
@@ -2151,6 +2167,10 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
     widgets::separator(ui);
     let copy = widgets::section_header(ui, tr("Code"), &[(Icon::Export, tr("Copy"))], false).is_some();
+    // Pixels or rem (of a 16 px root) for the web languages.
+    let rem_id = Id::new("inspect_rem");
+    let web = matches!(lang, CodeLang::Css | CodeLang::Html | CodeLang::React);
+    let rem = web && ui.data(|d| d.get_temp::<bool>(rem_id)).unwrap_or(false);
     row(ui, 32.0, |ui| {
         let resp = widgets::dropdown(ui, lang.label(), 120.0, Some(Icon::Code));
         menu_popup(&resp).show(|ui| {
@@ -2161,8 +2181,20 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
                 }
             }
         });
+        if web {
+            let resp = widgets::dropdown(ui, if rem { "rem" } else { "px" }, 56.0, None);
+            menu_popup(&resp).show(|ui| {
+                for (on, label) in [(false, "px"), (true, "rem")] {
+                    if menu_item(ui, label, "") {
+                        ui.data_mut(|d| d.insert_temp(rem_id, on));
+                        ui.close();
+                    }
+                }
+            });
+        }
     });
     let code = crate::dev_mode::code(app, ui, first, lang);
+    let code = if rem { figcraft_engine::codegen::px_to_rem(&code, 16.0) } else { code };
     egui::Frame::NONE
         .fill(t.field)
         .corner_radius(CornerRadius::same(6))

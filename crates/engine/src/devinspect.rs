@@ -2,7 +2,7 @@
 //! typography, fills, strokes, effects), each with the style or variable behind it when there is
 //! one. The Inspect tab shows these, and `inspect.properties` returns them.
 
-use figcraft_color::{Color, GradientKind, PaintKind};
+use figcraft_color::{Color, GradientKind, Hsb, Hsl, PaintKind};
 use figcraft_doc::*;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -30,19 +30,76 @@ pub struct Prop {
     pub token: Option<String>,
 }
 
-/// A layer in the inspected selection that has export settings.
+/// Why a layer is listed as an asset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AssetKind {
+    /// It has export settings.
+    Export,
+    /// A small layer made only of vector shapes (exported as SVG).
+    Icon,
+    /// A layer filled with an image (exported as PNG).
+    Image,
+}
+
+/// A layer in the inspected selection to hand over as a file.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Asset {
     pub id: NodeId,
     pub name: String,
-    /// Its export settings as shown ("PNG 2x", "SVG 1x"…).
+    pub kind: AssetKind,
+    /// How it exports, as shown ("PNG 2x", "SVG 1x"…).
     pub exports: Vec<String>,
+    /// How it exports: its export settings, or SVG for an icon and PNG for an image.
+    #[serde(skip)]
+    pub settings: Vec<ExportSetting>,
 }
 
 /// Most assets listed for one selection.
 const MAX_ASSETS: usize = 200;
+/// Largest side of a layer listed as an icon.
+const ICON_MAX: f64 = 128.0;
 
-/// The layers in and under `ids` that have export settings, in layer order.
+/// Whether `id` (visible parts only) is made of vector shapes alone: paths, booleans, stars,
+/// polygons and lines, with rectangles and ellipses among them, in groups or frames. `paths` is
+/// set when one of the former is in it.
+fn vector_only(doc: &Document, id: NodeId, depth: usize, paths: &mut bool) -> bool {
+    let Some(n) = doc.node(id) else { return false };
+    if !n.visible {
+        return true;
+    }
+    if n.fills.iter().chain(&n.strokes).any(|p| matches!(p.kind, PaintKind::Image(_) | PaintKind::Pattern(_))) {
+        return false;
+    }
+    match n.kind {
+        NodeKind::Vector { .. } | NodeKind::BooleanOp { .. } | NodeKind::Star { .. } | NodeKind::Polygon { .. } | NodeKind::Line => {
+            *paths = true;
+            true
+        }
+        NodeKind::Rectangle | NodeKind::Ellipse { .. } => true,
+        NodeKind::Group | NodeKind::Frame | NodeKind::Component { .. } | NodeKind::Instance { .. } => {
+            depth < 16 && !n.children.is_empty() && n.children.iter().all(|c| vector_only(doc, *c, depth + 1, paths))
+        }
+        _ => false,
+    }
+}
+
+/// Why `n` is an asset, if it is one.
+fn asset_kind(doc: &Document, n: &Node) -> Option<AssetKind> {
+    let mut paths = false;
+    if !n.exports.is_empty() {
+        Some(AssetKind::Export)
+    } else if n.width <= ICON_MAX && n.height <= ICON_MAX && vector_only(doc, n.id, 0, &mut paths) && paths {
+        Some(AssetKind::Icon)
+    } else if n.fills.iter().any(|p| p.visible && matches!(p.kind, PaintKind::Image(_))) {
+        Some(AssetKind::Image)
+    } else {
+        None
+    }
+}
+
+/// The assets in and under `ids`, in layer order: layers with export settings, icons and images
+/// (an icon's own shapes aren't listed again).
 pub fn assets(doc: &Document, ids: &[NodeId]) -> Vec<Asset> {
     let mut out = Vec::new();
     let mut stack: Vec<NodeId> = ids.iter().rev().copied().collect();
@@ -54,13 +111,100 @@ pub fn assets(doc: &Document, ids: &[NodeId]) -> Vec<Asset> {
             break;
         }
         let Some(n) = doc.node(id) else { continue };
-        if !n.exports.is_empty() && !out.iter().any(|a: &Asset| a.id == id) {
-            let exports = n.exports.iter().map(|e| format!("{} {}", e.format.label(), e.size.label())).collect();
-            out.push(Asset { id, name: n.name.clone(), exports });
+        if !n.visible || n.is_page() {
+            if n.is_page() {
+                stack.extend(n.children.iter().rev().copied());
+            }
+            continue;
         }
-        stack.extend(n.children.iter().rev().copied());
+        let kind = asset_kind(doc, n);
+        if let Some(kind) = kind
+            && !out.iter().any(|a: &Asset| a.id == id)
+        {
+            let settings = match kind {
+                AssetKind::Export => n.exports.clone(),
+                AssetKind::Icon => vec![ExportSetting { format: ExportFormat::Svg, ..Default::default() }],
+                AssetKind::Image => vec![ExportSetting::default()],
+            };
+            let exports = settings.iter().map(|e| format!("{} {}", e.format.label(), e.size.label())).collect();
+            out.push(Asset { id, name: n.name.clone(), kind, exports, settings });
+        }
+        if kind != Some(AssetKind::Icon) {
+            stack.extend(n.children.iter().rev().copied());
+        }
     }
     out
+}
+
+/// The files exporting the assets in and under `ids` makes (see [`assets`]).
+pub fn asset_jobs(doc: &Document, ids: &[NodeId]) -> Vec<crate::cmd::file::ExportJob> {
+    crate::cmd::file::jobs_for(assets(doc, ids).into_iter().map(|a| (a.id, a.settings)), doc)
+}
+
+/// How the Inspect tab writes colours.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ColorFormat {
+    /// `#FF8000`
+    #[default]
+    Hex,
+    /// `255, 128, 0`
+    Rgb,
+    /// `rgb(255, 128, 0)`, `rgba(255, 128, 0, 0.5)`
+    Css,
+    /// `30, 100%, 50%`
+    Hsl,
+    /// `30, 100%, 100%`
+    Hsb,
+}
+
+impl ColorFormat {
+    pub const ALL: [ColorFormat; 5] = [ColorFormat::Hex, ColorFormat::Rgb, ColorFormat::Css, ColorFormat::Hsl, ColorFormat::Hsb];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            ColorFormat::Hex => "hex",
+            ColorFormat::Rgb => "rgb",
+            ColorFormat::Css => "css",
+            ColorFormat::Hsl => "hsl",
+            ColorFormat::Hsb => "hsb",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ColorFormat::Hex => "Hex",
+            ColorFormat::Rgb => "RGB",
+            ColorFormat::Css => "CSS",
+            ColorFormat::Hsl => "HSL",
+            ColorFormat::Hsb => "HSB",
+        }
+    }
+
+    pub fn from_id(s: &str) -> Option<ColorFormat> {
+        ColorFormat::ALL.into_iter().find(|f| f.id().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// `c` in this format; the opacity follows as " · 50%" (CSS puts it in `rgba`).
+    pub fn format(self, c: Color) -> String {
+        let [r, g, b, _] = c.to_rgba8();
+        let alpha = c.a < 0.999;
+        let pct = |v: f32| format!("{}%", (v * 100.0).round());
+        let body = match self {
+            ColorFormat::Hex => format!("#{}", c.to_hex()),
+            ColorFormat::Rgb => format!("{r}, {g}, {b}"),
+            ColorFormat::Css if alpha => return format!("rgba({r}, {g}, {b}, {})", num(f64::from(c.a))),
+            ColorFormat::Css => return format!("rgb({r}, {g}, {b})"),
+            ColorFormat::Hsl => {
+                let x = Hsl::from_color(c);
+                format!("{}, {}, {}", x.h.round(), pct(x.s), pct(x.l))
+            }
+            ColorFormat::Hsb => {
+                let x = Hsb::from_color(c);
+                format!("{}, {}, {}", x.h.round(), pct(x.s), pct(x.b))
+            }
+        };
+        if alpha { format!("{body} · {}", pct(c.a)) } else { body }
+    }
 }
 
 /// A frame or section with a handoff status, for Dev Mode's list of what's ready.
@@ -138,7 +282,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "inspect.assets",
             "Inspect assets",
-            "{ids? (default the selection)} → {assets: [{id, name, exports}]}  the layers in and under them with export settings (export them with `file.exportLayers`)",
+            "{ids? (default the selection)} → {assets: [{id, name, kind: export|icon|image, exports}]}  the layers in and under them to hand over as files: those with export settings, icons (small, vector shapes only; SVG) and images (PNG). Export them with `file.exportLayers {assets: true}`",
             false,
             |s, p| {
                 let ids = targets(s, p);
@@ -148,16 +292,21 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "inspect.properties",
             "Inspect properties",
-            "{id?} → {sections: [{title, rows: [{label, value, color?, token?}]}]}  layout (relative to the parent), auto layout, typography, fills, strokes and effects, with style and variable names",
+            "{id?, colorFormat?: hex|rgb|css|hsl|hsb (default hex)} → {sections: [{title, rows: [{label, value, color?, token?}]}]}  layout (positions from the frame around the layer), auto layout, typography, fills, strokes and effects, with style and variable names",
             false,
             |s, p| {
+                let cmd = "inspect.properties";
                 let id = match id(p, "id") {
                     Some(i) => i,
-                    None => s.selection().first().copied().ok_or_else(|| crate::bad("inspect.properties", "select a layer or pass `id`"))?,
+                    None => s.selection().first().copied().ok_or_else(|| crate::bad(cmd, "select a layer or pass `id`"))?,
+                };
+                let fmt = match string(p, "colorFormat") {
+                    Some(f) => ColorFormat::from_id(&f).ok_or_else(|| crate::bad(cmd, "colorFormat: hex|rgb|css|hsl|hsb"))?,
+                    None => ColorFormat::Hex,
                 };
                 let doc = s.doc()?;
-                doc.node(id).ok_or_else(|| crate::bad("inspect.properties", "no such layer"))?;
-                Ok(json!({"sections": serde_json::to_value(properties(doc, id)).unwrap_or(Value::Null)}))
+                doc.node(id).ok_or_else(|| crate::bad(cmd, "no such layer"))?;
+                Ok(json!({"sections": serde_json::to_value(properties_with(doc, id, fmt)).unwrap_or(Value::Null)}))
             }
         ),
     ]
@@ -171,11 +320,6 @@ fn num(v: f64) -> String {
     let s = format!("{:.2}", (v * 100.0).round() / 100.0);
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s == "-0" { "0".into() } else { s.to_string() }
-}
-
-/// `#RRGGBB` plus the opacity when it isn't 100%.
-fn color_text(c: Color) -> String {
-    if c.a < 0.999 { format!("#{} · {}%", c.to_hex(), (c.a * 100.0).round()) } else { format!("#{}", c.to_hex()) }
 }
 
 fn prop(label: impl Into<String>, value: impl Into<String>) -> Prop {
@@ -214,8 +358,14 @@ fn style_name(doc: &Document, id: Option<&StyleId>) -> Option<String> {
     id.and_then(|s| doc.style(s)).map(|s| s.name.clone())
 }
 
-/// The properties of `id`, grouped; empty when it doesn't exist.
+/// The properties of `id`, grouped, colours in hex; empty when it doesn't exist.
 pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
+    properties_with(doc, id, ColorFormat::Hex)
+}
+
+/// [`properties`] with colours written in `fmt`.
+pub fn properties_with(doc: &Document, id: NodeId, fmt: ColorFormat) -> Vec<Section> {
+    let color_text = |c: Color| fmt.format(c);
     let Some(n) = doc.node(id) else { return Vec::new() };
     let mut out = vec![layout(doc, id, n)];
     if let Some(l) = &n.layout {
@@ -233,7 +383,7 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
             .filter(|(_, p)| p.visible)
             .map(|(i, p)| {
                 let token = crate::cmd::lists::paint_binding_key(n, fills, i).and_then(|k| variable(doc, n, k));
-                paint_row(p).token(token)
+                paint_row(p, fmt).token(token)
             })
             .collect();
         match style_name(doc, style) {
@@ -313,11 +463,11 @@ pub fn properties(doc: &Document, id: NodeId) -> Vec<Section> {
 
 /// A style or variable applies to the whole list: show it on the first row.
 /// One paint's row: its kind and colour (or stops, or opacity for images).
-fn paint_row(p: &figcraft_color::Paint) -> Prop {
+fn paint_row(p: &figcraft_color::Paint, fmt: ColorFormat) -> Prop {
     match &p.kind {
         PaintKind::Solid { color } => {
             let c = color.with_alpha(color.a * p.opacity);
-            prop("Solid", color_text(c)).color(c)
+            prop("Solid", fmt.format(c)).color(c)
         }
         PaintKind::Gradient(g) => {
             let kind = match g.kind {
@@ -326,7 +476,7 @@ fn paint_row(p: &figcraft_color::Paint) -> Prop {
                 GradientKind::Angular => "Angular",
                 GradientKind::Diamond => "Diamond",
             };
-            let stops: Vec<String> = g.stops.iter().map(|s| format!("#{} {}%", s.color.to_hex(), (s.position * 100.0).round())).collect();
+            let stops: Vec<String> = g.stops.iter().map(|s| format!("{} {}%", fmt.format(s.color), (s.position * 100.0).round())).collect();
             let r = prop(kind, stops.join(", "));
             match g.stops.first() {
                 Some(s) => r.color(s.color),
@@ -348,13 +498,10 @@ fn tag_first(mut rows: Vec<Prop>, token: Option<String>) -> Vec<Prop> {
 fn layout(doc: &Document, id: NodeId, n: &Node) -> Section {
     let mut rows =
         vec![prop("Width", num(n.width)).token(variable(doc, n, "width")), prop("Height", num(n.height)).token(variable(doc, n, "height"))];
-    // Position from the parent frame's top-left (from the page origin at the top level).
+    // Position from the top-left of the frame around it (groups aren't frames; the canvas
+    // origin at the top level).
     if let Some(b) = doc.world_bounds(id) {
-        let origin = n
-            .parent
-            .filter(|p| !doc.node(*p).is_some_and(|pn| pn.is_page()))
-            .and_then(|p| doc.world_bounds(p))
-            .map_or((0.0, 0.0), |pb| (pb.x0, pb.y0));
+        let origin = doc.containing_frame(id).and_then(|f| doc.world_bounds(f)).map_or((0.0, 0.0), |pb| (pb.x0, pb.y0));
         rows.push(prop("Top", num(b.y0 - origin.1)));
         rows.push(prop("Left", num(b.x0 - origin.0)));
     }
@@ -364,6 +511,9 @@ fn layout(doc: &Document, id: NodeId, n: &Node) -> Section {
     }
     if n.opacity < 0.999 {
         rows.push(prop("Opacity", format!("{}%", (f64::from(n.opacity) * 100.0).round())).token(variable(doc, n, "opacity")));
+    }
+    if !matches!(n.blend, figcraft_color::BlendMode::Normal | figcraft_color::BlendMode::PassThrough) {
+        rows.push(prop("Blend", n.blend.label()));
     }
     if n.kind.has_corner_radius() {
         let r = match n.corners.uniform() {

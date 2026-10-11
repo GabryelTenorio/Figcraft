@@ -664,19 +664,40 @@ impl Document {
         Some(figcraft_geom::transform_rect_bbox(self.world_transform(id), n.local_rect()))
     }
 
-    /// Bounds of everything painted by a node, effects and strokes included (page coordinates).
+    /// Bounds of everything painted by a node, effects and strokes included (page coordinates):
+    /// a clipping frame's own area, else that and what its visible children show (masked
+    /// children only within their mask). A group is what its children show, grown by its effects.
     pub fn world_render_bounds(&self, id: NodeId) -> Option<Rect> {
         let n = self.node(id)?;
-        let reach = n.paint_reach();
-        let mut r = figcraft_geom::transform_rect_bbox(self.world_transform(id), n.local_rect().inflate(reach, reach));
-        if !(n.clip && n.kind.is_frame_like()) || n.kind.bounds_follow_children() {
-            for (c, _) in self.box_children(n) {
-                if let Some(cr) = self.world_render_bounds(c) {
-                    r = r.union(cr);
-                }
-            }
+        let own = n.own_paint_bounds(self.world_transform(id));
+        if n.clip && n.kind.is_frame_like() && !n.kind.bounds_follow_children() {
+            return Some(own);
         }
-        Some(r)
+        Some(match (self.children_render_bounds(n), &n.kind) {
+            (Some(kids), NodeKind::Group) => n.grow_by_effects(kids),
+            (Some(kids), _) => own.union(kids),
+            (None, _) => own,
+        })
+    }
+
+    /// What `n`'s visible children show, together: each mask's run within the mask's bounds.
+    fn children_render_bounds(&self, n: &Node) -> Option<Rect> {
+        let shown = |i: &NodeId| self.node(*i).is_some_and(|c| c.visible && !c.is_mask);
+        let mut out: Option<Rect> = None;
+        for run in self.paint_runs(n) {
+            let ids = n.children.get(run).unwrap_or(&[]);
+            let mask = ids.first().copied().filter(|m| self.node(*m).is_some_and(|c| c.is_mask && c.visible));
+            let r = ids.iter().filter(|i| shown(i)).filter_map(|i| self.world_render_bounds(*i)).reduce(|a, b| a.union(b));
+            let r = match mask {
+                Some(m) => r.zip(self.world_render_bounds(m)).map(|(a, b)| a.intersect(b)).filter(|x| x.width() > 0.0 && x.height() > 0.0),
+                None => r,
+            };
+            out = match (out, r) {
+                (Some(a), Some(b)) => Some(a.union(b)),
+                (a, b) => a.or(b),
+            };
+        }
+        out
     }
 
     /// Union of the top-level nodes' bounds on a page.

@@ -1244,6 +1244,8 @@ mod draw_tools_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
+mod export_behaviour_tests;
+#[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
 mod frame_guides_tests;
@@ -1261,6 +1263,8 @@ mod gesture_preview_tests;
 mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
+#[cfg(test)]
+mod inspect_behaviour_tests;
 #[cfg(test)]
 mod invite_links_tests;
 #[cfg(test)]

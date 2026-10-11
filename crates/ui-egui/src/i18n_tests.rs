@@ -28,6 +28,7 @@ const DATA_LABELS: &[&str] = &[
     "Alpha",
     "Background blur",
     "Black & white",
+    "Blend",
     "Bristle",
     "Circle",
     "Color burn",

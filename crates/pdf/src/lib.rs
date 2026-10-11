@@ -52,11 +52,13 @@ pub struct PdfOptions {
     pub title: Option<String>,
     /// Bleed, printer's marks and CMYK colour.
     pub print: PrintSettings,
+    /// A one-page export's page area (page coordinates) instead of its layers' bounds.
+    pub area: Option<Rect>,
 }
 
 impl Default for PdfOptions {
     fn default() -> Self {
-        Self { outline_text: false, raster_scale: 2.0, title: None, print: PrintSettings::default() }
+        Self { outline_text: false, raster_scale: 2.0, title: None, print: PrintSettings::default(), area: None }
     }
 }
 
@@ -109,7 +111,8 @@ pub fn export_groups(doc: &Document, groups: &[Vec<NodeId>], opts: &PdfOptions) 
             }
             _ => None,
         };
-        let b = frame.or(bounds).ok_or(PdfError::NoBounds(first))?;
+        let area = opts.area.filter(|a| groups.len() == 1 && rect_finite(*a) && a.width() > 0.0 && a.height() > 0.0);
+        let b = area.or(frame).or(bounds).ok_or(PdfError::NoBounds(first))?;
         let grow = 2.0 * print::Sheet::new(b.width(), b.height(), &opts.print).margin;
         if b.width() + grow > MAX_PAGE_SIDE || b.height() + grow > MAX_PAGE_SIDE {
             return Err(PdfError::TooLarge(b.width().round(), b.height().round()));

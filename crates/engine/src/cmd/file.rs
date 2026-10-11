@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.exportLayers",
             "Export layers",
-            "{ids? (default the selection, else every layer on the page with export settings), dir? (folder to write into; else each file comes back as base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
+            "{ids? (default the selection, else every layer on the page with export settings), assets? (true: the Inspect tab's assets in and under them instead: layers with export settings, icons as SVG, images as PNG), dir? (folder to write into; else each file comes back as base64 `data`), bleed? (PDF: points, or with a unit: \"3mm\", \"0.125in\", \"9pt\"), cropMarks?, bleedMarks?, cmyk? (PDF print options): for every PDF instead of each setting's own}  every layer once per export setting, named `<layer><suffix>.<format>` (\"@2x\" when a scaled export has no suffix; repeats get \" 2\"; slashes in a layer name make folders). Returns {files: [{name, id, bytes, path | data}], skipped (layers without settings)}",
             false,
             export_layers
         ),
@@ -701,66 +701,95 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Encode `ids` (or the page) in `format` at `scale`.
 pub fn export_bytes(doc: &Document, ids: &[NodeId], format: ExportFormat, scale: f64) -> Result<Vec<u8>> {
-    export_bytes_with(doc, ids, format, scale, &PrintSettings::default())
+    export_bytes_with(doc, ids, &ExportSetting { format, ..Default::default() }, scale)
 }
 
-/// [`export_bytes`], PDFs with `print`'s bleed, marks and colour.
-pub fn export_bytes_with(doc: &Document, ids: &[NodeId], format: ExportFormat, scale: f64, print: &PrintSettings) -> Result<Vec<u8>> {
-    if ids.is_empty() {
-        return Err(EngineError::Disabled("file.export".into(), "nothing to export".into()));
+/// The page area exporting `ids` with `setting` covers: what they paint (a clipping frame's own
+/// area), or their boxes with "include bounding box" and for slices.
+pub fn export_area(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Option<figcraft_geom::Rect> {
+    ids.iter()
+        .filter_map(|i| {
+            let slice = doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice));
+            if setting.include_bounding_box || slice { doc.world_bounds(*i) } else { figcraft_render::export_bounds(doc, *i) }
+        })
+        .reduce(|a, b| a.union(b))
+}
+
+/// What an export of `ids` draws, bottom to top: the layers themselves, or (contents only off,
+/// and always for slices) every top-level layer of their page, so whatever shows in the area is in.
+fn drawn_layers(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> Vec<NodeId> {
+    let slice = ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)));
+    match ids.first().and_then(|i| doc.page_of(*i)).and_then(|p| doc.node(p)) {
+        Some(page) if slice || !setting.contents_only => page.children.clone(),
+        _ => super::edit::z_sorted(doc, ids),
     }
-    match format {
+}
+
+/// [`export_bytes`] with an export setting's format and options (its size is `scale`: see
+/// [`export_scale`]): contents only, include bounding box, the SVG options and PDF print settings.
+pub fn export_bytes_with(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scale: f64) -> Result<Vec<u8>> {
+    let nothing = || EngineError::Disabled("file.export".into(), "nothing to export".into());
+    if ids.is_empty() {
+        return Err(nothing());
+    }
+    let area = export_area(doc, ids, setting).ok_or_else(nothing)?;
+    let drawn = drawn_layers(doc, ids, setting);
+    // The layers' own area unless an option or a slice says otherwise.
+    let own_area = setting.contents_only
+        && !setting.include_bounding_box
+        && !ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Slice)));
+    match setting.format {
         // SVG and PDF colours are sRGB: a Display P3 file exports converted (out-of-gamut colours clip).
-        ExportFormat::Svg => figcraft_svg::export_svg(&doc.in_srgb(), ids, &Default::default())
-            .map(String::into_bytes)
-            .ok_or_else(|| EngineError::Other("nothing to export".into())),
+        ExportFormat::Svg => {
+            let opts = figcraft_svg::SvgOptions {
+                include_ids: setting.svg_id_attribute,
+                outline_text: setting.svg_outline_text,
+                simplify_stroke: setting.svg_simplify_stroke,
+                bounds: Some(area),
+            };
+            figcraft_svg::export_svg(&doc.in_srgb(), &drawn, &opts).map(String::into_bytes).ok_or_else(nothing)
+        }
         ExportFormat::Pdf => {
             let doc = &*doc.in_srgb();
             // Frames export one page each; anything else shares one page.
-            let all_frames = ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
-            let groups: Vec<Vec<NodeId>> = if all_frames { ids.iter().map(|i| vec![*i]).collect() } else { vec![super::edit::z_sorted(doc, ids)] };
-            pdf_bytes(doc, &groups, print)
+            let all_frames = own_area && ids.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
+            let groups: Vec<Vec<NodeId>> = if all_frames { ids.iter().map(|i| vec![*i]).collect() } else { vec![drawn] };
+            pdf_bytes(doc, &groups, &setting.print, (!own_area).then_some(area))
         }
         _ => {
-            let pix = if ids.len() == 1 {
-                ids.first().and_then(|i| figcraft_render::render_node(doc, *i, scale))
-            } else {
-                let b = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b));
-                b.and_then(|b| {
-                    let view = figcraft_render::View {
-                        origin: (b.x0, b.y0),
-                        scale,
-                        width: (b.width() * scale).ceil().max(1.0) as u32,
-                        height: (b.height() * scale).ceil().max(1.0) as u32,
-                    };
-                    let mut pix = figcraft_render::Pixmap::new(view.width.clamp(1, 16384), view.height.clamp(1, 16384))?;
-                    let ordered = super::edit::z_sorted(doc, ids);
-                    figcraft_render::render_nodes_into(doc, &ordered, &view, &mut pix);
-                    Some(pix)
-                })
-            };
-            let pix = pix.ok_or_else(|| EngineError::Other("render failed (empty or too large)".into()))?;
-            figcraft_render::encode_export(&pix, format, doc.color_profile).map_err(EngineError::Other)
+            let pix = figcraft_render::render_area(doc, &drawn, area, scale)
+                .ok_or_else(|| EngineError::Other("render failed (empty or too large)".into()))?;
+            figcraft_render::encode_export(&pix, setting.format, doc.color_profile).map_err(EngineError::Other)
         }
     }
 }
 
+/// What Copy as PNG puts on the clipboard: the layers together, at 2x (in the document's colour
+/// profile; the clipboard wants sRGB).
+pub fn copy_png(doc: &Document, ids: &[NodeId]) -> Option<figcraft_render::Pixmap> {
+    let area = export_area(doc, ids, &ExportSetting::default())?;
+    figcraft_render::render_area(doc, &super::edit::z_sorted(doc, ids), area, 2.0)
+}
+
 fn export(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.export";
     let doc = s.doc()?;
     let mut ids = targets(s, p);
     if ids.is_empty() {
         ids = doc.get(s.page()?)?.children.clone();
     }
-    let format = string(p, "format")
-        .and_then(|f| ExportFormat::from_ext(&f))
-        .or_else(|| string(p, "path").and_then(|pp| ExportFormat::from_ext(&ext(&pp))))
-        .unwrap_or_default();
-    let scale = match size_param("file.export", p)? {
-        Some(size) => export_scale(doc, &ids, size),
+    let mut setting = export_setting(cmd, ExportSetting::default(), p)?;
+    if string(p, "format").is_none()
+        && let Some(f) = string(p, "path").and_then(|pp| ExportFormat::from_ext(&ext(&pp)))
+    {
+        setting.format = f;
+    }
+    let scale = match size_param(cmd, p)? {
+        Some(_) => export_scale(doc, &ids, &setting),
         None => num_or(p, "scale", 1.0).clamp(0.01, ExportSize::MAX_SCALE),
     };
-    let print = print_param("file.export", p, PrintSettings::default())?;
-    let bytes = export_bytes_with(doc, &ids, format, scale, &print)?;
+    let format = setting.format;
+    let bytes = export_bytes_with(doc, &ids, &setting, scale)?;
     match string(p, "path") {
         Some(path) => {
             write(&path, &bytes)?;
@@ -770,10 +799,9 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-/// The scale that gives `ids` (their bounds together) the export size `size`.
-pub fn export_scale(doc: &Document, ids: &[NodeId], size: ExportSize) -> f64 {
-    let b = ids.iter().filter_map(|i| figcraft_render::export_bounds(doc, *i)).reduce(|a, b| a.union(b));
-    b.map_or(1.0, |b| size.scale_for(b.width(), b.height()))
+/// The scale that gives `ids` (their export area together) `setting`'s export size.
+pub fn export_scale(doc: &Document, ids: &[NodeId], setting: &ExportSetting) -> f64 {
+    export_area(doc, ids, setting).map_or(1.0, |b| setting.size.scale_for(b.width(), b.height()))
 }
 
 /// `e` with the `size` ("2x", "512w", "512h" or `{by, value}`), `suffix` and `format` that `p` sets.
@@ -788,6 +816,18 @@ pub(super) fn export_setting(cmd: &str, mut e: ExportSetting, p: &Value) -> Resu
         e.format = ExportFormat::from_ext(&f).ok_or_else(|| bad(cmd, "format: png|jpg|svg|pdf|webp"))?;
     }
     e.print = print_param(cmd, p, e.print)?;
+    for (key, slot) in [
+        ("contentsOnly", &mut e.contents_only),
+        ("includeBoundingBox", &mut e.include_bounding_box),
+        ("svgOutlineText", &mut e.svg_outline_text),
+        ("svgIdAttribute", &mut e.svg_id_attribute),
+        ("svgSimplifyStroke", &mut e.svg_simplify_stroke),
+    ] {
+        match get(p, key) {
+            None | Some(Value::Null) => {}
+            Some(v) => *slot = bool_of(v).ok_or_else(|| bad(cmd, format!("{key}: true or false")))?,
+        }
+    }
     Ok(e)
 }
 
@@ -844,13 +884,17 @@ pub struct ExportJob {
 /// The files exporting `ids` with their export settings makes, with unique names (repeats get
 /// " 2", " 3"…). Layers without settings make none.
 pub fn export_jobs(doc: &Document, ids: &[NodeId]) -> Vec<ExportJob> {
+    jobs_for(ids.iter().filter_map(|i| Some((*i, doc.node(*i)?.exports.clone()))), doc)
+}
+
+/// The files exporting each layer with the settings beside it makes (see [`export_jobs`]).
+pub fn jobs_for(items: impl IntoIterator<Item = (NodeId, Vec<ExportSetting>)>, doc: &Document) -> Vec<ExportJob> {
     let mut used = std::collections::BTreeSet::new();
     let mut out = Vec::new();
-    for id in ids {
-        let Some(n) = doc.node(*id) else { continue };
-        let name = safe_file_name(&n.name);
-        let base = Some(name.trim().trim_end_matches('.')).filter(|b| !b.is_empty()).unwrap_or("Untitled");
-        for e in &n.exports {
+    for (id, settings) in items {
+        let Some(n) = doc.node(id) else { continue };
+        let base = export_path(&n.name);
+        for e in settings {
             if out.len() >= MAX_EXPORT_FILES {
                 return out;
             }
@@ -859,11 +903,19 @@ pub fn export_jobs(doc: &Document, ids: &[NodeId]) -> Vec<ExportJob> {
             let file =
                 (1..).map(|k| if k == 1 { format!("{stem}.{ext}") } else { format!("{stem} {k}.{ext}") }).find(|f| used.insert(f.to_lowercase()));
             if let Some(file) = file {
-                out.push(ExportJob { id: *id, setting: e.clone(), file });
+                out.push(ExportJob { id, setting: e, file });
             }
         }
     }
     out
+}
+
+/// The file path a layer name exports to, without extension: each `/` makes a folder; `.` and
+/// `..` segments are dropped, so it stays inside the export folder.
+fn export_path(name: &str) -> String {
+    let parts: Vec<String> =
+        name.split('/').map(|seg| safe_file_name(seg).trim().trim_end_matches('.').to_string()).filter(|seg| !seg.is_empty()).take(32).collect();
+    if parts.is_empty() { "Untitled".into() } else { parts.join("/") }
 }
 
 /// `name` without path separators and characters file systems reject.
@@ -879,11 +931,12 @@ pub fn exportable_layers(doc: &Document, page: NodeId) -> Vec<NodeId> {
 fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.exportLayers";
     let doc = s.doc()?;
+    let assets = boolean(p, "assets").unwrap_or(false);
     let mut ids = targets(s, p);
     if ids.is_empty() {
-        ids = exportable_layers(doc, s.page()?);
+        ids = if assets { vec![s.page()?] } else { exportable_layers(doc, s.page()?) };
     }
-    let jobs = export_jobs(doc, &ids);
+    let jobs = if assets { crate::devinspect::asset_jobs(doc, &ids) } else { export_jobs(doc, &ids) };
     if jobs.is_empty() {
         return Err(EngineError::Disabled(cmd.into(), "no export settings (add one with export.add)".into()));
     }
@@ -892,12 +945,18 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let print = has_print_param(p).then(|| print_param(cmd, p, PrintSettings::default())).transpose()?;
     let mut files = Vec::with_capacity(jobs.len());
     for job in &jobs {
-        let scale = export_scale(doc, &[job.id], job.setting.size);
-        let bytes = export_bytes_with(doc, &[job.id], job.setting.format, scale, print.as_ref().unwrap_or(&job.setting.print))?;
+        let setting = ExportSetting { print: print.unwrap_or(job.setting.print), ..job.setting.clone() };
+        let scale = export_scale(doc, &[job.id], &setting);
+        let bytes = export_bytes_with(doc, &[job.id], &setting, scale)?;
         let mut f = json!({"name": job.file, "id": job.id, "bytes": bytes.len()});
         match &dir {
             Some(d) => {
-                let path = std::path::Path::new(d).join(&job.file).to_string_lossy().to_string();
+                let path = std::path::Path::new(d).join(&job.file);
+                // A layer name with slashes exports into folders.
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let path = path.to_string_lossy().to_string();
                 write(&path, &bytes)?;
                 f["path"] = json!(path);
             }
@@ -909,9 +968,10 @@ fn export_layers(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"files": files, "skipped": ids.len().saturating_sub(with_settings.len())}))
 }
 
-/// A PDF with one page per group of layers (an sRGB document), titled after the file.
-fn pdf_bytes(doc: &Document, groups: &[Vec<NodeId>], print: &PrintSettings) -> Result<Vec<u8>> {
-    let opts = figcraft_pdf::PdfOptions { title: Some(doc.name.clone()), print: *print, ..Default::default() };
+/// A PDF with one page per group of layers (an sRGB document), titled after the file; `area`
+/// sizes a single page to that page area instead of the layers' bounds.
+fn pdf_bytes(doc: &Document, groups: &[Vec<NodeId>], print: &PrintSettings, area: Option<figcraft_geom::Rect>) -> Result<Vec<u8>> {
+    let opts = figcraft_pdf::PdfOptions { title: Some(doc.name.clone()), print: *print, area, ..Default::default() };
     figcraft_pdf::export_groups(doc, groups, &opts).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -923,7 +983,7 @@ pub fn frames_pdf(doc: &Document, page: NodeId, print: &PrintSettings) -> Result
         return Err(EngineError::Disabled("file.exportFramesPdf".into(), "the page has no visible frames".into()));
     }
     let groups: Vec<Vec<NodeId>> = frames.iter().map(|f| vec![*f]).collect();
-    Ok((pdf_bytes(&doc.in_srgb(), &groups, print)?, frames.len()))
+    Ok((pdf_bytes(&doc.in_srgb(), &groups, print, None)?, frames.len()))
 }
 
 /// Every top-level frame of a page (reading order), one PDF page each.

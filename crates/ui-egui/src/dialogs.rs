@@ -407,7 +407,7 @@ fn export_dialog(app: &mut FigApp, ctx: &Context) {
     });
     let close = choice.is_some() || !open;
     match choice {
-        Some(ExportChoice::Layers) => export_layers(app, &with_settings),
+        Some(ExportChoice::Layers) => export_layers(app, &with_settings, false),
         Some(ExportChoice::Once(s)) if !ids.is_empty() => save_one(app, &ids, &s, &suggested_name(&doc, &ids, &s, "Export")),
         Some(ExportChoice::Once(_)) => app.toast(tr("Nothing to export")),
         None => {}
