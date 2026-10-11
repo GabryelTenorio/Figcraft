@@ -125,7 +125,8 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             app.ui.home = false;
         }
         if let Some(i) = close {
-            let dirty = app.session.docs.get(i).is_some_and(|d| d.is_dirty());
+            // A branch tab's edits live on in its main file: closing it loses nothing.
+            let dirty = app.session.docs.get(i).is_some_and(|d| d.is_dirty() && d.branch_of.is_none());
             if dirty {
                 app.ui.find = None;
                 app.toast(format!("Unsaved changes: save first, or close again with {} to discard", crate::toolbar::pretty_shortcut("Alt")));

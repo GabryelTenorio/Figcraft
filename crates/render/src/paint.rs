@@ -84,6 +84,11 @@ fn diamond_pixmap(g: &Gradient, opacity: f32) -> Option<Arc<Pixmap>> {
 /// Build the shader for `paint` on a `w`×`h` local box. Returns `None` when the paint draws
 /// nothing (invisible, fully transparent, missing image).
 pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared> {
+    prepare_at(paint, w, h, doc, 0.0)
+}
+
+/// [`prepare`] `time` seconds into animated GIFs (0: their first frame).
+pub fn prepare_at(paint: &Paint, w: f64, h: f64, doc: &Document, time: f64) -> Option<Prepared> {
     if !paint.visible || paint.opacity <= 0.0 {
         return None;
     }
@@ -121,13 +126,21 @@ pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared
         }
         PaintKind::Image(img) => {
             let data = doc.images.get(&img.image);
-            let pm = crate::images::get(&img.image, data, &img.filters, doc.color_profile)?;
+            let moving = crate::images::frame_at(&img.image, data, &img.filters, doc.color_profile, time);
+            let pm = match &moving {
+                Some(f) => f.clone(),
+                None => crate::images::get(&img.image, data, &img.filters, doc.color_profile)?,
+            };
             let transform = image_transform(img, f64::from(pm.width()), f64::from(pm.height()), w, h);
             if img.scale_mode == ImageScaleMode::Tile {
                 return Some(Prepared::Pattern { pixmap: pm, mode: SpreadMode::Repeat, quality: FilterQuality::Bicubic, opacity: op, transform });
             }
             // Fit/Fill/Crop: a transparent 1-px border so Pad spreads transparency, not edge pixels.
-            let padded = crate::images::padded(&img.image, &img.filters, doc.color_profile, &pm)?;
+            // A GIF's later frames each show once per loop: not worth caching padded.
+            let padded = match moving {
+                Some(_) => Arc::new(crate::images::pad(&pm)?),
+                None => crate::images::padded(&img.image, &img.filters, doc.color_profile, &pm)?,
+            };
             let transform = Transform::from_translate(-1.0, -1.0).post_concat(transform);
             Some(Prepared::Pattern { pixmap: padded, mode: SpreadMode::Pad, quality: FilterQuality::Bicubic, opacity: op, transform })
         }

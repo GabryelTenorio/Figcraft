@@ -563,6 +563,40 @@ closing or saving a version ends the preview first, and `version.list` marks the
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
 
+### Branches
+
+A branch is a copy of the file to try changes in, reviewed against the main file and merged back.
+Branches are kept in the main `.figcraft` file (saving either tab saves the main file with its
+branches). Driven with `run_command`:
+
+- `branch.create {name?}` copies the file into a new branch tab and returns `{id, name, index}`.
+  The branch remembers the file as it is now (its base) and makes new ids in its own id space, so
+  layers, styles and comments made on both sides never clash.
+- `branch.list` lists the branches of the file shown (or of the file a branch tab belongs to):
+  `[{id, name, time, state: active|merged|archived, index?}]` (`index`: its open tab).
+- `branch.open {id}` opens a branch in a tab (or switches to it). Edit it like any document.
+- `branch.review {id?}` (default: the branch tab shown) returns what changed on each side since the
+  base and the conflicts: `{branch: {layers, document, truncated}, main: {…}, conflicts: [{key, id?,
+  name, property, branch, main, deletedBy?}]}`. `layers` are the changed layers with their property
+  changes formatted like Inspect (`fill #2563EB → #DC2626`); `document` lists styles, variables,
+  comments and file settings. A conflict is the same property changed on both sides to different
+  values (key `<layer id>/<property>`, e.g. `4/fills`; a layer's parent and position are one
+  property, `parent`), a layer deleted on one side while the other edited it or what's inside it
+  (`<layer id>/layer`, with `deletedBy`), or a document-level entry or setting changed on both sides
+  (`style/<id>`, `variable/<id>`, `comment/<id>`, `doc/<property>`…).
+- `branch.merge {id?, resolutions?}` merges the branch into the main file as one undo step,
+  archives it (`state: merged`), closes its tab and shows the main file. `resolutions` maps every
+  conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
+  neither side's work is dropped without a choice.
+- `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
+  branch the same way (the new base is the main file as it is now). It is not undoable: the branch
+  tab's undo history starts over.
+- `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
+  opened, but not merged).
+
+Versions are saved on the main file (`file.saveVersion` is refused on a branch tab), and branches
+aren't available in a live session.
+
 ### Collaboration changes
 
 `collab.diff {against? (undo: the last undoable action, the default | saved: since the last

@@ -185,8 +185,16 @@ impl W<'_> {
                 let data = self.doc.images.get(&img.image)?;
                 let pid = self.id("pattern");
                 let iid = self.id("image");
-                let mime = sniff_mime(&data.bytes);
-                let b64 = base64::engine::general_purpose::STANDARD.encode(data.bytes.as_slice());
+                // Formats SVG viewers don't show (TIFF, BMP) go in as PNG.
+                let png;
+                let (mime, bytes) = match sniff_mime(&data.bytes) {
+                    "application/octet-stream" => {
+                        png = figcraft_render::images::decode(&data.bytes).and_then(|p| figcraft_render::encode_png(&p).ok())?;
+                        ("image/png", png.as_slice())
+                    }
+                    m => (m, data.bytes.as_slice()),
+                };
+                let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
                 let t = figcraft_render::paint::image_transform(img, f64::from(data.width), f64::from(data.height), w, h);
                 let m = Affine::new([f64::from(t.sx), f64::from(t.ky), f64::from(t.kx), f64::from(t.sy), f64::from(t.tx), f64::from(t.ty)]);
                 let (pw, ph) = if img.scale_mode == figcraft_color::ImageScaleMode::Tile {

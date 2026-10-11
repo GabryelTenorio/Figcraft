@@ -96,9 +96,12 @@ pub fn specs() -> Vec<CommandSpec> {
             let path = s.ds()?.path.clone().ok_or_else(|| EngineError::Disabled("file.revert".into(), "the file was never saved".into()))?;
             let (loaded, _) = load_path(&path, None)?;
             let i = s.active;
+            let uid = s.ds()?.uid;
             if let Some(slot) = s.docs.get_mut(i) {
-                *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions);
+                *slot = DocState::new(loaded.doc, Some(path)).with_versions(loaded.versions).with_branches(loaded.branches);
             }
+            // Edits on its branch tabs are reverted too.
+            crate::branches::close_tabs(s, uid, None);
             ok()
         }),
         spec!(
@@ -233,7 +236,8 @@ pub const MAX_AUTOSAVES: usize = 20;
 /// `version.autosave`: a checkpoint of a document with unsaved changes since the last version.
 fn autosave(s: &mut Session, _: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
-    if ds.preview.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
+    // A branch's versions would have nowhere to be saved.
+    if ds.preview.is_some() || ds.branch_of.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
         return Ok(json!({"saved": false}));
     }
     // Make room: the oldest autosave goes first; user versions are never dropped.
@@ -260,7 +264,7 @@ fn snapshot_version(ds: &DocState, name: &str, description: &str) -> Version {
     if snap.current_page != Some(ds.page) {
         Arc::make_mut(&mut snap).current_page = Some(ds.page);
     }
-    Version::new(new_version_id(&ds.versions), name, description, super::comment::now_secs(), snap)
+    Version::new(unique_id(|id| ds.versions.iter().any(|v| v.id == id)), name, description, super::comment::now_secs(), snap)
 }
 
 fn version_list(ds: &DocState) -> Value {
@@ -296,12 +300,12 @@ fn read_version(v: &Version) -> Result<Arc<Document>> {
     v.document().map_err(|e| EngineError::Other(format!("version “{}” can't be read: {e}", v.name)))
 }
 
-/// A new version id: the time in milliseconds (hex), unique in the history.
-fn new_version_id(versions: &[Version]) -> String {
+/// A new version or branch id: the time in milliseconds (hex), not `taken`.
+pub(crate) fn unique_id(taken: impl Fn(&str) -> bool) -> String {
     let mut n = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     loop {
         let id = format!("{n:x}");
-        if !versions.iter().any(|v| v.id == id) {
+        if !taken(&id) {
             return id;
         }
         n = n.wrapping_add(1);
@@ -310,6 +314,9 @@ fn new_version_id(versions: &[Version]) -> String {
 
 fn save_version(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
+    if ds.branch_of.is_some() {
+        return Err(EngineError::Disabled("file.saveVersion".into(), "versions are saved on the main file, not on a branch".into()));
+    }
     if ds.versions.len() >= figcraft_format::MAX_VERSIONS {
         return Err(EngineError::Disabled(
             "file.saveVersion".into(),
@@ -418,7 +425,7 @@ fn load_with(
                 .notes;
             Ok((figcraft_format::Loaded { issues: notes, ..doc.into() }, false))
         }
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
             let (hash, w, h) = figcraft_format::add_image(&mut doc, bytes.to_vec()).map_err(|e| EngineError::Other(e.to_string()))?;
@@ -577,7 +584,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
     let warnings = rest || ext(&path) == "svg";
-    s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions));
+    s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions).with_branches(loaded.branches));
     s.active = s.docs.len() - 1;
     let mut out = json!({"index": s.active});
     out[if warnings { "warnings" } else { "repairs" }] = json!(loaded.issues);
@@ -604,7 +611,7 @@ pub fn file_bytes(ds: &DocState) -> Result<Vec<u8>> {
     let mut doc = (*ds.doc).clone();
     doc.current_page = Some(ds.page);
     let thumb = thumbnail(&doc);
-    figcraft_format::save_bytes_with_versions(&doc, thumb.as_deref(), &ds.versions).map_err(|e| EngineError::Other(e.to_string()))
+    figcraft_format::save_bytes_with_history(&doc, thumb.as_deref(), &ds.versions, &ds.branches).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
@@ -619,13 +626,19 @@ fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"profile": profile.id(), "changed": changed}))
 }
 
+/// Save the file of the active tab (the main file for a branch tab, with its branches).
 fn save_to(s: &mut Session, path: String) -> Result<Value> {
-    let ds = s.ds_mut()?;
+    let i = crate::branches::file_tab(s);
+    let ds = s.docs.get_mut(i).ok_or(EngineError::NoDocument)?;
     let bytes = file_bytes(ds)?;
     write(&path, &bytes)?;
     ds.path = Some(path.clone());
     ds.mark_saved();
     ds.revision += 1;
+    let uid = ds.uid;
+    for tab in s.docs.iter_mut().filter(|d| d.branch_of.as_ref().is_some_and(|(m, _)| *m == uid)) {
+        tab.mark_saved();
+    }
     remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
@@ -634,7 +647,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(path) = string(p, "path") {
         return save_to(s, path);
     }
-    match s.ds()?.path.clone() {
+    match s.docs.get(crate::branches::file_tab(s)).ok_or(EngineError::NoDocument)?.path.clone() {
         Some(path) => save_to(s, path),
         None => {
             s.request_ui("dialog.saveAs", json!({}));
@@ -1016,14 +1029,17 @@ fn append_pages(doc: &mut Document, other: &Document) -> Result<Vec<NodeId>> {
 fn close(s: &mut Session, p: &Value) -> Result<Value> {
     let i = num(p, "index").map(|x| x as usize).unwrap_or(s.active);
     let Some(ds) = s.docs.get(i) else { return Err(bad("file.close", "no such document")) };
-    if ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
+    // A branch tab's edits are in its main file already (which then has unsaved changes).
+    if ds.branch_of.is_none() && ds.is_dirty() && !boolean(p, "force").unwrap_or(false) {
         s.request_ui("dialog.unsaved", json!({"index": i}));
         return Err(EngineError::Disabled("file.close".into(), "the document has unsaved changes (pass force: true to discard)".into()));
     }
+    let uid = ds.uid;
     s.docs.remove(i);
     if s.active >= s.docs.len() {
         s.active = s.docs.len().saturating_sub(1);
     }
+    crate::branches::close_tabs(s, uid, None);
     ok()
 }
 

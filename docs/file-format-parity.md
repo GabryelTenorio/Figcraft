@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created; formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every format Figma reads or writes, with FigCraft's support. Sources: `Info.plist` of
 `/Applications/Figma.app` (document types only; nothing inside the bundle's code was read), Figma's
@@ -26,12 +26,12 @@ alpha.
 |---|---|---|---|---|
 | SVG | editable vectors | **yes**, editable | corpus of 21 synthetic files with hand-computed expected pixels, structure and round-trip checks; gradients, patterns as image fills, clip paths, masks, shadow/blur filters, blend modes, text as text layers; other filters dropped with a warning; text on a path as outlines; fuzzed | 2–4 (filters) |
 | PNG, JPG | yes | yes | | — |
-| GIF | yes (animated) | first frame only | | 2–4 |
+| GIF | yes (animated) | **yes**, animated | the file is kept as is; the canvas and PNG, JPG and PDF exports show the first frame (SVG exports embed the file, so viewers that animate GIFs animate it), the presenter and the preview play it (frames decoded on first play: at most 500 frames and 128 MB, past that the rest don't play; always loops) | — |
 | WebP | yes | yes | | — |
-| HEIC | yes | **no** | needs a decoder with an acceptable licence | 2–3 |
-| TIFF | Safari only | **no** | | 1 |
+| HEIC | yes | **no** | shortcut: no Rust decoder; the usable ones (libheif, libde265) are C libraries, and HEVC carries patents. Revisit when a Rust decoder exists | 2–3 |
+| TIFF | Safari only | **yes** | open, import, place, drop (the `image` crate's TIFF decoder); SVG exports embed it (and BMP) as PNG, which SVG viewers show | — |
 | BMP | — | yes | | — |
-| MP4, MOV, WebM (video fills, paid plans) | yes | **no** | presenter playback is most of the work | 4–8 |
+| MP4, MOV, WebM (video fills, paid plans) | yes | **no** | shortcut: decoding H.264/HEVC/VP9 needs non-Rust libraries (FFmpeg or each platform's media framework); presenter playback would reuse the animated GIF clock | 4–8 |
 | Images over 4096 px | downscaled to 4096 | kept | | — |
 | Pasted content from other apps | images, SVG, text, Figma clipboard | images, SVG, text (newest clipboard content wins) | no Figma clipboard (it carries Figma's own binary) | with `.fig` |
 
@@ -61,4 +61,5 @@ alpha.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |
