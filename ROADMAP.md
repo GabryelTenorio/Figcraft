@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (several windows; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (several windows; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -19,13 +19,13 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~43%** | estimated: weekly areas 66.8% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~200–365 h** one agent | estimated |
-| Remaining to full parity | **~370–706 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~360–691 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~355–675 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Full target (ready for real work) | ~47% | ~345–660 h | multiplayer (45–90), localization (60–100), plugins (15–40), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
 | Mainstream practitioner | ~43% | ~165–310 h | core editor depth incl. `.fig` import (83–163), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -65,7 +65,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Hardware | 60% | 10–21 | [hardware-parity](docs/hardware-parity.md) |
 | Localization | 10% (English only) | 60–100 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
-| Ecosystem / plugins | 20% (own WASM plugins) | 25–55 | [gaps](docs/gaps.md) |
+| Ecosystem / plugins | 28% (own WASM plugins with panels and settings) | 15–40 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
 
 ## Features
@@ -89,7 +89,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Dev Mode / inspect | 90% | 64% | 1–3 | [dev-mode-parity](docs/dev-mode-parity.md) |
 | Comments, versions, misc | 80% | 58% | 4–8 | [collaboration-parity](docs/collaboration-parity.md) |
 | Multiplayer & sharing | 15% | 5% | 45–90 | [collaboration-parity](docs/collaboration-parity.md) |
-| Plugins & widgets | 35% | 20% | 25–55 | [plugins](docs/plugins.md) |
+| Plugins & widgets | 45% | 28% | 15–40 | [plugins](docs/plugins.md) |
 | Team libraries | 70% | 40% | 4–8 | [components-parity](docs/components-parity.md) |
 | Figma Draw extras | 80% | 55% | 2–5 | [gaps](docs/gaps.md) |
 | AI features | 0% | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -131,6 +131,10 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
   tab dragged off the strip; each window has its own tabs, panels and canvas, draws only when it
   needs to and asks about unsaved changes when it closes (the main window too); the control channel
   and MCP open, list, focus and capture windows. Hardware 60%.
+- **2026-10-11** · Plugin panels and settings (gap 6, ABI v2; v1 plugins run unchanged): a plugin shows a panel of
+  fields and buttons drawn with FigCraft's widgets and is called back for each button or changed value (one undo step
+  per callback, same sandbox limits), `plugin.ui` / `plugin.event` / `plugin.close` drive panels from scripts and MCP,
+  and per-plugin settings are kept with the preferences; Swatch grid gained a palette panel. Plugins & widgets 45%.
 - **2026-10-11** · Canvas fixes: clicks hit boolean groups where their result is (a click in a
   subtracted hole reaches what's behind), a layer dragged inside a group stays in it, View ▸ Frame
   outlines and View ▸ Slices draw, and a flaky idle test now waits for the render thread (gap 13).
@@ -178,7 +182,8 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-11 | minor | Several windows (gap 18): File ▸ New window, a tab's Open in new window or a tab dragged off the tab strip opens files in another window with its own tabs, panels and canvas, sharing the files, preferences, libraries and clipboard; each window draws only when it needs to (idle: ~0% CPU), closing one closes its files after asking about unsaved changes (the main window too, which takes over another window instead of quitting; the last window quits), and the control channel and MCP open, list, focus and capture windows (`window.new`, `window.list`, `window.focus`, `window` on any request); the screen-reader tree covers the main window only (eframe 0.36), so with a screen reader running files stay tabs; one window in the browser. Hardware 55% → 60%, 13–27 h → 10–21 h; gap 18 6–12 h → 4–8 h (P3 on screen left); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~373–712 h → ~370–706 h |
+| 2026-10-11 | minor | Several windows (gap 18): File ▸ New window, a tab's Open in new window or a tab dragged off the tab strip opens files in another window with its own tabs, panels and canvas, sharing the files, preferences, libraries and clipboard; each window draws only when it needs to (idle: ~0% CPU), closing one closes its files after asking about unsaved changes (the main window too, which takes over another window instead of quitting; the last window quits), and the control channel and MCP open, list, focus and capture windows (`window.new`, `window.list`, `window.focus`, `window` on any request); the screen-reader tree covers the main window only (eframe 0.36), so with a screen reader running files stay tabs; one window in the browser. Hardware 55% → 60%, 13–27 h → 10–21 h; gap 18 6–12 h → 4–8 h (P3 on screen left); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~360–691 h |
+| 2026-10-11 | minor | Plugin panels and settings landed (gap 6, ABI v2; v1 plugins unchanged): a plugin shows a panel of notes, fields (text, number, checkbox, menu, list, colour) and buttons drawn with FigCraft's widgets; a button or a changed value calls it back with every value (same limits per callback, one undo step per callback that edits, rolled back on failure), its module staying loaded while the panel is open; `plugin.ui` / `plugin.event` / `plugin.close` drive panels headless; per-plugin settings (64 KB) kept with the preferences; the Swatch grid example gained a palette panel that remembers the last palette. Plugins & widgets breadth 35% → 45%, ready 20% → 28%, 25–55 h → 15–40 h; ecosystem 20% → 28%; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~373–712 h → ~363–697 h |
 | 2026-10-11 | minor | Canvas fixes (gap 13 closed): boolean groups are clicked where their result is (a click in a subtracted hole reaches what's behind; with the group or an operand selected its operands are hit, so each can still be picked), a layer dragged inside a group stays in the group (frames and auto layout still take other drops), View ▸ Frame outlines and View ▸ Slices draw on the canvas, and the idle tests wait for the render thread instead of counting frames. Shapes & vector 1–3 h → 1–2 h (vector QA with real files left); percentages, feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~378–722 h → ~375–717 h |
 | 2026-10-11 | minor | Stretch and scatter brushes and pen pressure landed (gap 9): eight brushes drawn in code (four stretched along the path, four scattered with spacing, size, rotation and scatter jitter from a seed) in the stroke settings, drawn everywhere strokes are and flattened by outline stroke; the Pencil records pen pressure as the stroke's width profile (Windows pens, browser styluses; macOS and Linux tablets report none) and can draw with a brush; Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–9 h; Strokes 2–4 h → 1–3 h; Hardware 50% → 55%, 15–30 h → 13–27 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~378–722 h → ~373–712 h |

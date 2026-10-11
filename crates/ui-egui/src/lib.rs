@@ -92,6 +92,8 @@ mod panel_reorder_tests;
 #[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
+mod plugin_panel_tests;
+#[cfg(test)]
 mod popup_width_tests;
 #[cfg(test)]
 mod present_tests;
