@@ -1608,6 +1608,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "figcraft-server"
+version = "0.3.1"
+dependencies = [
+ "crc32fast",
+ "env_logger",
+ "figcraft-collab",
+ "figcraft-collab-net",
+ "figcraft-doc",
+ "figcraft-engine",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml",
+ "tungstenite",
+]
+
+[[package]]
 name = "figcraft-svg"
 version = "0.3.1"
 dependencies = [

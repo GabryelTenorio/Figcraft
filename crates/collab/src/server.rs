@@ -7,9 +7,9 @@ use figcraft_doc::{Document, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::change::{Change, Entry, Prop, Target};
-use crate::message::{Accepted, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, ServerMsg};
+use crate::message::{Accepted, Access, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, ServerMsg};
 use crate::replica::{Mode, Replica, create_change};
-use crate::{Error, Limits, docprops};
+use crate::{Error, Limits, docprops, same_secret};
 
 /// A message for the transport to deliver.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +20,23 @@ pub enum Outgoing {
     All(ServerMsg),
     /// To every client but one.
     Others(u32, ServerMsg),
+}
+
+/// Why a viewer's batch is refused.
+pub const VIEW_ONLY: &str = "you can only view this file (your link is view-only)";
+
+/// What changed a server's lasting state, in order: what a store appends to its log between
+/// snapshots ([`Server::journaling`]) and replays over the last snapshot after a restart
+/// ([`Server::replay`]). Presence and who is connected aren't in it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Journal {
+    /// A client id was handed out.
+    Issued { client: u32 },
+    /// A batch was accepted.
+    Accepted(Accepted),
+    /// A client's batch was refused.
+    Refused { client: u32, batch_id: u64 },
 }
 
 /// A session server for one file.
@@ -48,6 +65,10 @@ pub struct Server {
     log: VecDeque<Accepted>,
     /// Changes in `log`.
     log_changes: usize,
+    /// The connected clients that may only view.
+    viewers: BTreeSet<u32>,
+    /// What changed the lasting state since it was last taken (`None`: not kept).
+    journal: Option<Vec<Journal>>,
 }
 
 /// The most client ids a session remembers for reconnecting (the oldest disconnected ones go
@@ -92,6 +113,8 @@ impl Server {
             issued: BTreeMap::new(),
             log: VecDeque::new(),
             log_changes: 0,
+            viewers: BTreeSet::new(),
+            journal: None,
         }
     }
 
@@ -131,6 +154,66 @@ impl Server {
         Ok(server)
     }
 
+    /// Keep a [`Journal`] of what changes the lasting state (`on`), or stop (dropping what wasn't
+    /// taken).
+    pub fn journaling(&mut self, on: bool) {
+        self.journal = on.then(|| self.journal.take().unwrap_or_default());
+    }
+
+    /// What changed the lasting state since the last call, oldest first.
+    pub fn take_journal(&mut self) -> Vec<Journal> {
+        self.journal.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    fn note(&mut self, j: Journal) {
+        if let Some(v) = self.journal.as_mut() {
+            v.push(j);
+        }
+    }
+
+    /// Apply a journal entry over a restored state (after a restart). What the state already has
+    /// (a batch at or below its sequence number, a client id it knows, a refusal it noted)
+    /// changes nothing; a batch that doesn't follow the sequence number, or doesn't apply, is an
+    /// error (the rest of that log can't be trusted). Replayed entries aren't journaled again.
+    pub fn replay(&mut self, j: Journal) -> Result<(), Error> {
+        match j {
+            Journal::Issued { client } => {
+                if let std::collections::btree_map::Entry::Vacant(v) = self.issued.entry(client) {
+                    v.insert(Processed::default());
+                    self.next_client = self.next_client.max(client.saturating_add(1));
+                    self.forget_oldest();
+                }
+                Ok(())
+            }
+            Journal::Accepted(acc) if acc.seq <= self.seq => Ok(()),
+            Journal::Accepted(acc) => {
+                if acc.seq != self.seq + 1 {
+                    return Err(Error::Protocol(format!("batch {} after {}", acc.seq, self.seq)));
+                }
+                self.accept(acc.author, self.seq, &acc.changes)?;
+                self.issued.entry(acc.author).or_default().note(acc.batch_id, false);
+                self.next_client = self.next_client.max(acc.author.saturating_add(1));
+                self.remember(acc);
+                Ok(())
+            }
+            Journal::Refused { client, batch_id } => {
+                if let Some(p) = self.issued.get_mut(&client).filter(|p| batch_id > p.last_batch) {
+                    p.note(batch_id, true);
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Beyond [`MAX_REMEMBERED`] client ids, forget the oldest one that isn't connected.
+    fn forget_oldest(&mut self) {
+        if self.issued.len() > MAX_REMEMBERED
+            && let Some(old) = self.issued.keys().copied().find(|k| !self.peers.contains_key(k))
+        {
+            self.issued.remove(&old);
+        }
+    }
+
     /// The authoritative document.
     pub fn document(&self) -> &Document {
         self.state.document()
@@ -163,6 +246,11 @@ impl Server {
     /// snapshot when they are no longer in the log; an id this session never gave out joins as
     /// new.
     pub fn join(&mut self, hello: Hello) -> Result<(u32, Vec<Outgoing>), ServerMsg> {
+        self.join_as(hello, Access::Edit)
+    }
+
+    /// [`join`](Self::join) with what the client may do: every batch of a viewer is refused.
+    pub fn join_as(&mut self, hello: Hello, access: Access) -> Result<(u32, Vec<Outgoing>), ServerMsg> {
         let refuse = |reason: &str| ServerMsg::Refused { reason: reason.to_string() };
         if hello.protocol != PROTOCOL {
             return Err(refuse(&format!("protocol {} isn't supported (this server speaks {PROTOCOL})", hello.protocol)));
@@ -192,11 +280,8 @@ impl Server {
                 let id = self.next_client;
                 self.next_client += 1;
                 self.issued.insert(id, Processed::default());
-                if self.issued.len() > MAX_REMEMBERED
-                    && let Some(old) = self.issued.keys().copied().find(|k| !self.peers.contains_key(k))
-                {
-                    self.issued.remove(&old);
-                }
+                self.forget_oldest();
+                self.note(Journal::Issued { client: id });
                 id
             }
         };
@@ -204,8 +289,13 @@ impl Server {
         self.presence.remove(&id);
         let peer = Peer { client_id: id, name: hello.name, color: hello.color };
         let others = self.peers.values().filter(|p| p.client_id != id).cloned().collect();
-        let welcome = ServerMsg::Welcome { session: self.session, client_id: id, seq: self.seq, catch_up, processed, peers: others };
+        let welcome = ServerMsg::Welcome { session: self.session, client_id: id, seq: self.seq, catch_up, processed, peers: others, access };
         self.peers.insert(id, peer.clone());
+        if access == Access::View {
+            self.viewers.insert(id);
+        } else {
+            self.viewers.remove(&id);
+        }
         Ok((id, vec![Outgoing::To(id, welcome), Outgoing::Others(id, ServerMsg::PeerJoined(peer))]))
     }
 
@@ -213,6 +303,7 @@ impl Server {
     pub fn leave(&mut self, id: u32) -> Vec<Outgoing> {
         self.presence.remove(&id);
         self.acked.remove(&id);
+        self.viewers.remove(&id);
         match self.peers.remove(&id) {
             Some(_) => vec![Outgoing::Others(id, ServerMsg::PeerLeft { client_id: id })],
             None => Vec::new(),
@@ -230,7 +321,7 @@ impl Server {
             // client learned what happened to it from the catch-up.
             ClientMsg::Changes { batch_id, .. } if self.issued.get(&from).is_some_and(|p| batch_id <= p.last_batch) => Vec::new(),
             ClientMsg::Changes { base_seq, batch_id, changes } => {
-                let result = self.accept(from, base_seq, &changes);
+                let result = if self.viewers.contains(&from) { Err(Error::Invalid(VIEW_ONLY.into())) } else { self.accept(from, base_seq, &changes) };
                 if let Some(p) = self.issued.get_mut(&from) {
                     p.note(batch_id, result.is_err());
                 }
@@ -238,9 +329,11 @@ impl Server {
                     Ok(()) => {
                         let acc = Accepted { seq: self.seq, author: from, batch_id, changes };
                         self.remember(acc.clone());
+                        self.note(Journal::Accepted(acc.clone()));
                         vec![Outgoing::All(ServerMsg::Changes(acc))]
                     }
                     Err(e) => {
+                        self.note(Journal::Refused { client: from, batch_id });
                         let fixes = self.fixes(&changes).unwrap_or_default();
                         vec![Outgoing::To(from, ServerMsg::Reject { batch_id, reason: reason(&e), fixes })]
                     }
@@ -255,6 +348,9 @@ impl Server {
                 Vec::new()
             }
             ClientMsg::Ping => vec![Outgoing::To(from, ServerMsg::Pong)],
+            ClientMsg::Manage(_) | ClientMsg::Admin(_) => {
+                vec![Outgoing::To(from, ServerMsg::Refused { reason: "managing files needs a connection of its own".into() })]
+            }
         }
     }
 
@@ -420,10 +516,4 @@ fn reason(e: &Error) -> String {
         Error::Unknown(_) => "a layer it changes was deleted by someone else".into(),
         e => e.to_string(),
     }
-}
-
-/// Compare secrets without stopping at the first difference.
-fn same_secret(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

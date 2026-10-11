@@ -26,9 +26,13 @@ pub mod guest;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod host;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod hub;
+#[cfg(not(target_arch = "wasm32"))]
 mod link;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod links;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod manage;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 #[cfg(not(target_arch = "wasm32"))]
@@ -38,7 +42,7 @@ pub mod token;
 mod web;
 
 pub use inbox::{Inbox, Waker};
-pub use invite::Invite;
+pub use invite::{Endpoint, Invite};
 pub use limits::NetLimits;
 #[cfg(not(target_arch = "wasm32"))]
 pub use link::{DEFAULT_PORT, NetLink, lan_ip};

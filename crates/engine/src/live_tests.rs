@@ -62,6 +62,7 @@ pub(crate) fn info(role: Role, me: u32) -> SessionInfo {
         url: "ws://127.0.0.1:47900/?file=f&token=t".into(),
         address: "127.0.0.1:47900".into(),
         network: false,
+        access: crate::live::Access::Edit,
     }
 }
 

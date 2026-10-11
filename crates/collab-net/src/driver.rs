@@ -139,7 +139,7 @@ impl<S: Socket> Driver<S> {
     pub(crate) fn closed(&mut self, code: u16, reason: &str, now: Instant) {
         let Some(opened) = self.conn.as_ref().map(|c| c.opened) else { return };
         let outcome = match closed(code, reason) {
-            Outcome::Retry(_) if !opened => Outcome::Retry(format!("no answer from {}", self.cfg.invite.host)),
+            Outcome::Retry(_) if !opened => Outcome::Retry(format!("no answer from {}", self.cfg.invite.server.display())),
             Outcome::Retry(_) if code == 1006 => Outcome::Retry("the connection dropped".into()),
             o => o,
         };
@@ -206,7 +206,7 @@ impl<S: Socket> Driver<S> {
         let (opened, started, last_heard, last_sent) = (c.opened, c.started, c.last_heard, c.last_sent);
         if !opened {
             if now >= started + self.cfg.connect_timeout {
-                self.end(Outcome::Retry(format!("no answer from {}", self.cfg.invite.host)), now);
+                self.end(Outcome::Retry(format!("no answer from {}", self.cfg.invite.server.display())), now);
             }
             return;
         }

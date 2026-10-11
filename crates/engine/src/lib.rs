@@ -620,7 +620,8 @@ impl Session {
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
-            .and_then(|v| self.check_preview(id, &before).map(|()| v));
+            .and_then(|v| self.check_preview(id, &before).map(|()| v))
+            .and_then(|v| self.check_live_access(id, &before).map(|()| v));
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
@@ -655,6 +656,17 @@ impl Session {
             return Ok(());
         }
         Err(EngineError::Disabled(id.to_string(), PREVIEW_READ_ONLY.into()))
+    }
+
+    /// A live session's document you may only view (or that is on its way to a server) is
+    /// read-only: refuse an edit (it is rolled back).
+    fn check_live_access(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        match self.live_read_only(*uid) {
+            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) => Err(EngineError::Disabled(id.to_string(), why.into())),
+            _ => Ok(()),
+        }
     }
 
     /// Instances can't gain, lose or reorder layers, and library copies are read-only: refuse such
@@ -731,6 +743,9 @@ impl Session {
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
         textpreview::end(self);
+        if let Some(why) = self.active_read_only() {
+            return Err(EngineError::Disabled(label.to_string(), why.into()));
+        }
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));

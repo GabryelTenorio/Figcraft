@@ -8,7 +8,7 @@ use figcraft_doc::{Document, NodeId};
 
 use crate::change::{Change, Prop};
 use crate::history::{BACK, BatchKind, FWD, Notice, Step, Touches};
-use crate::message::{Accepted, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg};
+use crate::message::{Accepted, Access, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg};
 use crate::replica::{Mode, Replica};
 use crate::{Diff, Error, NoRecompute, Recompute, diff};
 
@@ -59,6 +59,8 @@ pub struct Client {
     next_step: u64,
     history_limit: usize,
     notices: Vec<Notice>,
+    /// What the server lets this client do (a viewer's edits are refused).
+    access: Access,
 }
 
 /// The step with id `id` in either stack.
@@ -82,7 +84,7 @@ impl Client {
 
     /// Start from the server's `Welcome` (which must carry a snapshot).
     pub fn join(welcome: ServerMsg) -> Result<Client, Error> {
-        let ServerMsg::Welcome { session, client_id, seq, catch_up: CatchUp::Snapshot(snapshot), peers, .. } = welcome else {
+        let ServerMsg::Welcome { session, client_id, seq, catch_up: CatchUp::Snapshot(snapshot), peers, access, .. } = welcome else {
             return Err(Error::Protocol("expected a welcome with the document".into()));
         };
         let mut confirmed = Replica::from_snapshot(&snapshot)?;
@@ -105,12 +107,18 @@ impl Client {
             next_step: 1,
             history_limit: HISTORY_LIMIT,
             notices: Vec::new(),
+            access,
         })
     }
 
     /// This client's id (its node ids are `id << 32 | counter`).
     pub fn id(&self) -> u32 {
         self.id
+    }
+
+    /// What the server lets this client do (from the latest welcome).
+    pub fn access(&self) -> Access {
+        self.access
     }
 
     /// The document as this user sees it (server state plus their unconfirmed edits). Edit a copy
@@ -443,13 +451,15 @@ impl Client {
             }
             ServerMsg::Pong => Ok(Vec::new()),
             ServerMsg::Welcome { .. } if self.online => Err(Error::Protocol("already joined".into())),
-            ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers } => {
+            ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers, access } => {
                 if session != self.session || client_id != self.id {
-                    return self.restart(ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers });
+                    return self.restart(ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers, access });
                 }
+                self.access = access;
                 self.rejoin(seq, catch_up, &processed, peers, recompute)
             }
             ServerMsg::Refused { reason } => Err(Error::Protocol(reason)),
+            ServerMsg::Admin(_) => Err(Error::Protocol("an answer meant for a managing connection".into())),
         }
     }
 
