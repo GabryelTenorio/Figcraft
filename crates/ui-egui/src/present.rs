@@ -1564,7 +1564,7 @@ fn inspect_panel(app: &mut FigApp, ui: &mut Ui, pres: &Presenter) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         let Some((id, doc, name)) = found else {
             widgets::section_header(ui, tr("Inspect"), &[], false);
-            crate::right::row(ui, 32.0, |ui| widgets::label(ui, tr("Hover a layer to see its properties"), t.text_secondary));
+            widgets::note(ui, tr("Hover a layer to see its properties"), t.text_secondary);
             return;
         };
         widgets::section_header(ui, &name, &[], false);

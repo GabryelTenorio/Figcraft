@@ -139,24 +139,37 @@ fn number_field_impl(
     let mut out = None;
     // Scrub by dragging the label.
     if let Some(v) = value {
+        let dx_id = id.with("scrub_dx");
         if lead_resp.drag_started() {
-            ui.data_mut(|d| d.insert_temp(id.with("scrub0"), v));
+            ui.data_mut(|d| {
+                d.insert_temp(id.with("scrub0"), v);
+                d.insert_temp(dx_id, 0.0_f64);
+            });
         }
         if lead_resp.dragged() || lead_resp.drag_stopped() {
             let v0: f64 = ui.data(|d| d.get_temp(id.with("scrub0"))).unwrap_or(v);
-            let total = lead_resp.total_drag_delta().map(|d| d.x).unwrap_or(0.0) as f64;
+            // The release frame reports no drag any more: the scrub ends where the last frame left it.
+            let total = match lead_resp.total_drag_delta() {
+                Some(d) => {
+                    ui.data_mut(|m| m.insert_temp(dx_id, f64::from(d.x)));
+                    f64::from(d.x)
+                }
+                None => ui.data(|m| m.get_temp(dx_id)).unwrap_or(0.0),
+            };
             let shift = ui.input(|i| i.modifiers.shift);
             let k = if shift { step * 10.0 } else { step };
             let nv = v0 + (total * k).round();
             out = Some(FieldEdit::Scrub(nv, lead_resp.drag_stopped()));
         }
     }
-    let started = editing.is_none() && field_resp.clicked();
+    // Typing on a field the keyboard reached (Tab) edits it: the editor takes the typed text.
+    let typed = editing.is_none() && field_resp.has_focus() && ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))));
+    let started = editing.is_none() && (field_resp.clicked() || typed);
     if started {
-        editing = Some(value.map(fmt_num).unwrap_or_default());
+        editing = Some(if typed { String::new() } else { value.map(fmt_num).unwrap_or_default() });
         ui.data_mut(|d| d.insert_temp(editing_id, editing.clone().unwrap_or_default()));
         ui.memory_mut(|m| m.request_focus(id.with("te")));
-        ui.data_mut(|d| d.insert_temp(id.with("selectall"), true));
+        ui.data_mut(|d| d.insert_temp(id.with("selectall"), !typed));
     }
     match editing {
         Some(mut text) => {

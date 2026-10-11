@@ -250,7 +250,8 @@ impl Gradient {
     /// the current colour at 100% → the same at 0% opacity. We use black→white for a visible default.
     pub fn default_for(kind: GradientKind, base: Color) -> Self {
         let (from, to, width) = match kind {
-            GradientKind::Linear => ((0.5, 0.0), (0.5, 1.0), (0.0, 0.5)),
+            // The width handle square to the axis from the start (colour bands across the axis).
+            GradientKind::Linear => ((0.5, 0.0), (0.5, 1.0), (-0.5, 0.0)),
             _ => ((0.5, 0.5), (0.5, 1.0), (1.0, 0.5)),
         };
         Self {
@@ -260,6 +261,15 @@ impl Gradient {
             to,
             width,
         }
+    }
+
+    /// Put a linear gradient's width handle square to its axis in a `w`×`h` box, so its colour
+    /// bands cross the axis at right angles on screen (the canvas has no handle for it; imported
+    /// files can still skew it). Moving the start or end handle calls this.
+    pub fn square_linear_width(&mut self, w: f64, h: f64) {
+        let (w, h) = if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 { (w, h) } else { (1.0, 1.0) };
+        let (dx, dy) = ((self.to.0 - self.from.0) * w, (self.to.1 - self.from.1) * h);
+        self.width = (self.from.0 - dy / w, self.from.1 + dx / h);
     }
 
     /// Stops sorted by position with NaNs removed; at least one stop.
@@ -612,6 +622,8 @@ impl Paint {
     }
 }
 
+#[cfg(test)]
+mod gradient_tests;
 #[cfg(test)]
 mod pattern_tests;
 #[cfg(test)]

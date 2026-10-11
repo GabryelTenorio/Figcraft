@@ -111,6 +111,8 @@ mod shortcuts_tests;
 mod titlebar_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
+#[cfg(test)]
+mod windows_qa_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -253,7 +255,11 @@ pub struct UiState {
     pub screenshot_requests: Vec<(u64, String)>,
     pub frame_ms: f64,
     pub render_ms: f64,
+    /// Quit for good: closing the window skips the unsaved changes check (`app.quit`).
     pub quit: bool,
+    /// When (UI clock) closing the window was held back for unsaved changes: closing again while
+    /// the message shows discards them.
+    pub close_warned: Option<f64>,
     /// The Export dialog is open.
     pub export_preview: bool,
     /// The Export dialog's PDF print options (bleed, marks, CMYK).
@@ -343,6 +349,7 @@ impl Default for UiState {
             frame_ms: 0.0,
             render_ms: 0.0,
             quit: false,
+            close_warned: None,
             export_preview: false,
             pdf_print: figcraft_doc::PrintSettings::default(),
             color_profile: None,
@@ -466,6 +473,13 @@ impl FigApp {
 
     pub fn toast(&mut self, msg: impl Into<String>) {
         self.ui.toast = Some((msg.into(), None));
+    }
+
+    /// Say that `n` documents left unsaved by a crash were opened again from recovery copies.
+    pub fn note_recovered(&mut self, n: usize) {
+        if n > 0 {
+            self.toast(i18n::trn("Recovered {n} unsaved files after the app quit unexpectedly: save them to keep them", n, &[]));
+        }
     }
 
     /// Act on UI requests queued by commands (dialogs, panels).
@@ -660,6 +674,23 @@ impl FigApp {
         repaint_in(ctx, AUTOSAVE_SECS);
     }
 
+    /// Closing the window with unsaved changes (its close button, Alt+F4) asks first, like closing
+    /// a tab: the first close is cancelled with a message, closing again while it shows discards.
+    fn close_guard(&mut self, ctx: &egui::Context) {
+        if self.ui.quit || !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        // A branch tab's edits live on in its main file.
+        let dirty = self.session.docs.iter().filter(|d| d.is_dirty() && d.branch_of.is_none()).count();
+        let now = ctx.input(|i| i.time);
+        if dirty == 0 || self.ui.close_warned.is_some_and(|t| now - t < TOAST_SECS) {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.ui.close_warned = Some(now);
+        self.toast(i18n::trn("{n} files have unsaved changes: save them first, or close the window again to discard", dirty, &[]));
+    }
+
     /// Draw the whole UI.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -668,6 +699,7 @@ impl FigApp {
         self.frame_stats.record(&ctx);
         let first = !self.fonts_installed;
         self.logic(&ctx);
+        self.close_guard(&ctx);
         self.autosave_tick(&ctx);
         if first {
             // New fonts apply from the next frame; draw nothing until then.
@@ -705,6 +737,7 @@ impl FigApp {
         if self.session.docs.is_empty() || self.ui.home {
             tabs::tab_bar(self, ui);
             home::show(self, ui);
+            dialogs::keys(self, &ctx);
             dialogs::show(self, &ctx);
             return;
         }
@@ -771,6 +804,7 @@ impl FigApp {
         dev_compare::keys(self, &ctx);
         branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
+        dialogs::keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);

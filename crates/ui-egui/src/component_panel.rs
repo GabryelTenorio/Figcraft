@@ -230,7 +230,7 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
         }
     });
     if defs.is_empty() && variants.is_empty() {
-        row(ui, 28.0, |ui| widgets::label(ui, tr("Add properties to make instances configurable"), t.text_tertiary));
+        widgets::note(ui, tr("Add properties to make instances configurable"), t.text_tertiary);
     }
     // Variant properties: name, values (the matrix), add value, delete.
     for (k, vals) in &variants {

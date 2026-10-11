@@ -847,6 +847,7 @@ name = "English"
 "Recent" = "Recent"
 "Recent files" = "Recent files"
 "Recents" = "Recents"
+"Recovered {n} unsaved files after the app quit unexpectedly: save them to keep them" = { one = "Recovered an unsaved file after the app quit unexpectedly: save it to keep it", other = "Recovered {n} unsaved files after the app quit unexpectedly: save them to keep them" }
 "Rectangle" = "Rectangle"
 "Rectangles" = "Rectangles"
 "Red" = "Red"
@@ -1253,6 +1254,7 @@ name = "English"
 "{n} conflicts to resolve" = { one = "{n} conflict to resolve", other = "{n} conflicts to resolve" }
 "{n} days ago" = { one = "{n} day ago", other = "{n} days ago" }
 "{n} files" = { one = "{n} file", other = "{n} files" }
+"{n} files have unsaved changes: save them first, or close the window again to discard" = { one = "A file has unsaved changes: save it first, or close the window again to discard", other = "{n} files have unsaved changes: save them first, or close the window again to discard" }
 "{n} hours ago" = { one = "{n} hour ago", other = "{n} hours ago" }
 "{n} instances" = { one = "{n} instance", other = "{n} instances" }
 "{n} layers" = { one = "{n} layer", other = "{n} layers" }

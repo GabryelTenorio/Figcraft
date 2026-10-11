@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use figcraft_engine::{Prefs, Session};
+use figcraft_engine::Prefs;
 use figcraft_ui_egui::{FigApp, Services};
 use serde_json::{Value, json};
 
@@ -17,7 +17,7 @@ pub struct Desktop {
     language: Option<String>,
 }
 
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
     #[cfg(target_os = "windows")]
@@ -123,25 +123,6 @@ pub fn save_state(app: &FigApp) {
     if std::fs::write(&tmp, v.to_string()).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join("state.json"));
     }
-}
-
-/// After an unexpected panic: write every dirty document to the recovery folder.
-pub fn emergency_save(s: &Session) {
-    let Some(dir) = config_dir().map(|d| d.join("Recovery")) else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    for d in &s.docs {
-        if d.is_dirty()
-            && let Ok(bytes) = figcraft_format_save(&d.doc)
-        {
-            let name = d.doc.name.replace(['/', '\\', ':'], "_");
-            let _ = std::fs::write(dir.join(format!("{name}-{}.figcraft", d.uid)), bytes);
-        }
-    }
-}
-
-fn figcraft_format_save(doc: &figcraft_engine::doc::Document) -> Result<Vec<u8>, String> {
-    let v = serde_json::to_vec(doc).map_err(|e| e.to_string())?;
-    Ok(v)
 }
 
 impl Services for Desktop {

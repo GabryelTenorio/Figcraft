@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved changes kept on window close and after a crash; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -21,7 +21,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 5 | Localization: English and a Spanish draft only (the layer landed 2026-10-11) | Localization | 45–75 | [localization-parity](localization-parity.md) |
 | 6 | Plugins: no distribution or widgets; Figma's plugins don't run | Ecosystem | 15–40 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
-| 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
+| 8 | Platform QA: Linux and the browser left (Windows pass done 2026-10-11) | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
 | 9 | Figma Draw: multi-edit, pen pressure on macOS/Linux tablets (brushes, pressure, text on a path and pattern fills landed) | Feature | 2–5 | [target-app-parity](target-app-parity.md) |
 | 10 | Team libraries: no team-wide lists or accounts; analytics are counts | Feature | 4–8 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
@@ -134,10 +134,15 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Estimate:** 30–60 h for a GPU path (vello or wgpu shaders) held to the CPU renderer as the
   oracle.
 
-### 8. Platform QA is mostly macOS
-- **Missing:** regular runs on Windows, Linux and the browser; real screen readers.
+### 8. Platform QA: Linux and the browser left
+- **Missing:** regular runs on Linux and the browser; real screen readers; a repeat of the Windows
+  pass on other machines (scale factors above 100%, pen tablets, file drops from Explorer).
 - **Evidence:** CI tests on Linux only (`.github/workflows/ci.yml`); release builds exist for every
-  platform (v0.2.0) but no issue has been filed yet and the builders checked on macOS.
+  platform (v0.2.0) but no issue has been filed yet. Windows: QA pass done 2026-10-11, findings in
+  PR (Windows 11, the desktop app driven over the control channel, the same workflow through MCP):
+  eight bugs fixed, among them unsaved changes lost when the window closed or the app was killed,
+  Ctrl+arrows and Ctrl+Backspace acting on the whole line in text, scrubbed fields snapping back
+  and skewed linear gradients.
 - **Impact:** unknown bugs on the platforms where FigCraft is most attractive (Linux has no Figma
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).

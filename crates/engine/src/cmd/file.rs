@@ -72,6 +72,20 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         spec!("file.placeImage", "Place image", "{path | data, x?, y?}", true, super::create::place_image),
         spec!("file.close", "Close tab", "{index?, force? (discard unsaved changes)}", false, close),
+        spec!(
+            "file.recover",
+            "Recover file",
+            "{path}  open a recovery copy (written while the app runs, read back after a crash) as a document with unsaved changes and no path: saving asks where → {index}",
+            false,
+            |s, p| {
+                let path = req_string("file.recover", p, "path")?;
+                let loaded =
+                    read(&path).and_then(|b| figcraft_format::load_bytes_with_versions(&b).map_err(|e| EngineError::Other(e.to_string())))?;
+                s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches).unsaved());
+                s.active = s.docs.len() - 1;
+                Ok(json!({"index": s.active}))
+            }
+        ),
         spec!("file.rename", "Rename file", "{name}", true, |s, p| {
             let name = req_string("file.rename", p, "name")?;
             s.doc_mut()?.name = name;

@@ -848,6 +848,7 @@ status = "draft — needs native review"
 "Recent" = "Recientes"
 "Recent files" = "Archivos recientes"
 "Recents" = "Recientes"
+"Recovered {n} unsaved files after the app quit unexpectedly: save them to keep them" = { one = "Se recuperó un archivo sin guardar tras un cierre inesperado de la app: guárdalo para conservarlo", other = "Se recuperaron {n} archivos sin guardar tras un cierre inesperado de la app: guárdalos para conservarlos" }
 "Rectangle" = "Rectángulo"
 "Rectangles" = "Rectángulos"
 "Red" = "Rojo"
@@ -1254,6 +1255,7 @@ status = "draft — needs native review"
 "{n} conflicts to resolve" = { one = "{n} conflicto por resolver", other = "{n} conflictos por resolver" }
 "{n} days ago" = { one = "hace {n} día", other = "hace {n} días" }
 "{n} files" = { one = "{n} archivo", other = "{n} archivos" }
+"{n} files have unsaved changes: save them first, or close the window again to discard" = { one = "Un archivo tiene cambios sin guardar: guárdalo primero o vuelve a cerrar la ventana para descartarlos", other = "{n} archivos tienen cambios sin guardar: guárdalos primero o vuelve a cerrar la ventana para descartarlos" }
 "{n} hours ago" = { one = "hace {n} hora", other = "hace {n} horas" }
 "{n} instances" = { one = "{n} instancia", other = "{n} instancias" }
 "{n} layers" = { one = "{n} capa", other = "{n} capas" }
@@ -1425,6 +1427,7 @@ status = "draft — needs native review"
 "file.open" = "Abrir"
 "file.openRecent" = "Abrir reciente"
 "file.placeImage" = "Colocar imagen"
+"file.recover" = "Recuperar archivo"
 "file.rename" = "Cambiar nombre del archivo"
 "file.revert" = "Volver a lo guardado"
 "file.save" = "Guardar"

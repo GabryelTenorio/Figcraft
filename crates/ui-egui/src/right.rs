@@ -1018,7 +1018,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
     }
     style_picker::chip(app, ui, doc, &ids, slot);
     match &list {
-        None => row(ui, 32.0, |ui| widgets::label(ui, tr("Click + to replace mixed content"), t.text_secondary)),
+        None => widgets::note(ui, tr("Click + to replace mixed content"), t.text_secondary),
         Some(l) => {
             // The last paint is on top: shown first. Rows drag to reorder.
             let mut drag = ListDrag::new(ui, if fills { "fills" } else { "strokes" });
