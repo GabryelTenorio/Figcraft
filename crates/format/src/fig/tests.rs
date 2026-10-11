@@ -12,17 +12,23 @@ use super::*;
 /// The fixture schema: `enum Name A B …`, `struct|message Name type field, type field[] …`.
 /// Message field ids count from 1; enum values from 0.
 const SCHEMA: &str = "
-enum NodeType NONE DOCUMENT CANVAS GROUP FRAME BOOLEAN_OPERATION VECTOR STAR LINE ELLIPSE RECTANGLE REGULAR_POLYGON ROUNDED_RECTANGLE TEXT SLICE SYMBOL INSTANCE STICKY VARIABLE VARIABLE_SET
+enum NodeType NONE DOCUMENT CANVAS GROUP FRAME BOOLEAN_OPERATION VECTOR STAR LINE ELLIPSE RECTANGLE REGULAR_POLYGON ROUNDED_RECTANGLE TEXT SLICE SYMBOL INSTANCE STICKY VARIABLE VARIABLE_SET SHAPE_WITH_TEXT CONNECTOR TABLE
 enum PaintType SOLID GRADIENT_LINEAR IMAGE
 enum WindingRule NONZERO ODD
 enum StyleType NONE FILL TEXT
 enum StackMode NONE HORIZONTAL VERTICAL
 enum PropType BOOL TEXT
 enum VariableField MISSING VISIBLE TEXT_DATA
-enum DataType BOOLEAN FLOAT STRING ALIAS COLOR PROP_REF
+enum DataType BOOLEAN FLOAT STRING ALIAS COLOR PROP_REF EXPRESSION
 enum ResolvedType BOOLEAN FLOAT STRING COLOR
 enum InteractionType ON_CLICK ON_HOVER
-enum ConnectionType NONE INTERNAL_NODE URL
+enum ConnectionType NONE INTERNAL_NODE URL BACK CLOSE SET_VARIABLE CONDITIONAL SET_VARIABLE_MODE
+enum StrokeCap NONE ROUND SQUARE ARROW_LINES ARROW_EQUILATERAL
+enum StrokeJoin MITER BEVEL ROUND
+enum VectorMirror NONE ANGLE ANGLE_AND_LENGTH
+enum ShapeWithTextType SQUARE ELLIPSE
+enum ConnectorLineStyle ELBOWED STRAIGHT CURVED
+enum ExpressionFunction ADDITION SUBTRACTION RESOLVE_VARIANT MULTIPLY DIVIDE EQUALS
 enum NavigationType NAVIGATE OVERLAY
 enum TransitionType INSTANT_TRANSITION DISSOLVE SMART_ANIMATE
 enum EasingType IN_CUBIC OUT_CUBIC
@@ -34,7 +40,13 @@ struct ColorStop Color color, float position
 message Image byte[] hash, string name
 message VariableID GUID guid
 message PropRefValue GUID defId
-message AnyValue bool boolValue, float floatValue, VariableID alias, Color colorValue, PropRefValue propRefValue, TextData textDataValue
+message AnyValue bool boolValue, float floatValue, VariableID alias, Color colorValue, PropRefValue propRefValue, TextData textDataValue, string textValue, Expression expressionValue
+message Expression ExpressionFunction expressionFunction, VariableData[] expressionArguments
+message VariableTarget VariableID id
+message VariableSetID GUID guid
+message ConditionalActions Action[] actions, VariableData condition
+message VectorData uint vectorNetworkBlob, Vector normalizedSize, NodeChange[] styleOverrideTable
+message ConnectorEndpoint GUID endpointNodeID, Vector position, Vector relativePosition
 message VariableData AnyValue value, DataType dataType
 message Paint PaintType type, Color color, float opacity, bool visible, Image image, Matrix transform, ColorStop[] stops, VariableData colorVar
 message ParentIndex GUID guid, string position
@@ -55,10 +67,10 @@ message Values ValuesEntry[] entries
 message ModeEntry VariableID variableSetID, GUID variableModeID
 message ModeMap ModeEntry[] entries
 message Event InteractionType interactionType
-message Action GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, ConnectionType connectionType, NavigationType navigationType
+message Action GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, ConnectionType connectionType, NavigationType navigationType, VariableTarget targetVariable, VariableData targetVariableData, VariableSetID targetVariableSetID, GUID targetVariableModeID, ConditionalActions[] conditionalActions
 message Interaction Event event, Action[] actions
 message StartingPoint string name, string position
-message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale
+message NodeChange GUID guid, ParentIndex parentIndex, NodeType type, string name, bool visible, float opacity, Vector size, Matrix transform, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, float cornerRadius, bool resizeToFit, bool internalOnly, float fontSize, FontName fontName, TextData textData, uint styleID, Path[] fillGeometry, Path[] strokeGeometry, StyleType styleType, StyleId styleIdForFill, SymbolData symbolData, PropDef[] componentPropDefs, PropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, SetMode[] variableSetModes, VariableID variableSetID, ResolvedType variableResolvedType, Values variableDataValues, ModeMap variableModeBySetMap, Interaction[] prototypeInteractions, StartingPoint prototypeStartingPoint, GUIDPath guidPath, StackMode stackMode, float stackSpacing, float stackHorizontalPadding, float stackVerticalPadding, uint count, float starInnerScale, VectorData vectorData, StrokeCap strokeCap, StrokeJoin strokeJoin, VectorMirror handleMirroring, ShapeWithTextType shapeWithTextType, ConnectorEndpoint connectorStart, ConnectorEndpoint connectorEnd, StrokeCap connectorStartCap, StrokeCap connectorEndCap, ConnectorLineStyle connectorLineStyle
 message Blob byte[] bytes
 message Message NodeChange[] nodeChanges, Blob[] blobs
 ";
@@ -493,7 +505,7 @@ fn imports_the_fixture() {
     assert_eq!(doc.node(page.children[0]).unwrap().name, "Screen");
     let screen = named(&doc, "Screen");
     let names: Vec<&str> = screen.children.iter().map(|c| doc.node(*c).unwrap().name.as_str()).collect();
-    assert_eq!(names, ["Photo", "Title", "Group", "Styled", "Card", "Button copy"]);
+    assert_eq!(names, ["Photo", "Title", "Group", "Styled", "Card", "Button copy", "Note"]);
     // Image fill from the archive.
     let photo = named(&doc, "Photo");
     let figcraft_doc::color::PaintKind::Image(img) = &photo.fills[0].kind else { panic!("not an image fill") };
@@ -539,8 +551,9 @@ fn imports_the_fixture() {
     assert_eq!(it.duration_ms, 250);
     let Some(NodeKind::Page { flows, .. }) = doc.node(doc.pages[0]).map(|p| &p.kind) else { panic!("no page") };
     assert_eq!((flows[0].name.as_str(), flows[0].start), ("Main flow", screen.id));
-    // The sticky note isn't supported: a warning.
-    assert!(warnings.iter().any(|w| w.contains("STICKY")), "{warnings:?}");
+    // The sticky note comes in as a frame, with a warning.
+    assert!(matches!(named(&doc, "Note").kind, NodeKind::Frame));
+    assert!(warnings.iter().any(|w| w.contains("sticky layers import as frames")), "{warnings:?}");
 }
 
 #[test]
@@ -691,6 +704,9 @@ fn instances_inside_their_own_main_stop() {
     let (doc, _) = import(&canvas(&schema(), &o(vec![("nodeChanges", arr(doc_nodes))])), "x").unwrap();
     assert!(doc.nodes().any(|n| n.name == "Self"));
 }
+
+#[path = "tail_tests.rs"]
+mod tail;
 
 /// `.fig` files in the folder `FIGCRAFT_FIG_SAMPLES` names (none when it's unset).
 fn samples() -> Vec<std::path::PathBuf> {

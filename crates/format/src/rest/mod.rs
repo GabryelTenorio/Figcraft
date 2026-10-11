@@ -520,9 +520,19 @@ impl<'a> Ctx<'a> {
         self.bindings(n, j);
     }
 
-    /// A vector's network from its geometry. A stroke-only vector uses the stroke outline,
-    /// painted with the stroke paints (exact look, editable as a shape).
+    /// A vector's network: the editable one when the JSON carries it (`vectorNetwork`, our
+    /// extension, written by the `.fig` import), else from its geometry. A stroke-only vector
+    /// uses the stroke outline, painted with the stroke paints (exact look, editable as a shape).
     fn vector(&mut self, n: &mut Node, j: &Value) {
+        if let Some(net) = j.get("vectorNetwork") {
+            match network(net) {
+                Some(network) => {
+                    n.kind = NodeKind::Vector { network };
+                    return;
+                }
+                None => self.warn("invalid or oversized vector networks import as outlines"),
+            }
+        }
         let fills_shown = n.fills.iter().any(|p| p.visible);
         let strokes_shown = n.strokes.iter().any(|p| p.visible) && n.stroke.weight > 0.0;
         let fill = self.geometry(j, "fillGeometry");
@@ -945,6 +955,25 @@ fn local(parent: Affine, world: Affine) -> Affine {
 }
 
 /// Finite path data within the coordinate cap.
+/// A vector network in our own JSON shape, when it's within bounds and refers only to what it has.
+fn network(v: &Value) -> Option<VectorNetwork> {
+    use serde::Deserialize;
+    let mut net = VectorNetwork::deserialize(v).ok()?;
+    let entries: usize = net.regions.iter().flat_map(|r| &r.loops).map(Vec::len).sum();
+    let coord = |x: f64| x.is_finite() && x.abs() <= MAX_COORD;
+    let fits = net.vertices.len() + net.segments.len() + entries <= MAX_PATH_ELEMENTS
+        && net.vertices.iter().all(|p| coord(p.x) && coord(p.y) && coord(p.radius))
+        && net.segments.iter().all(|s| [s.ta.0, s.ta.1, s.tb.0, s.tb.1].into_iter().all(coord));
+    if !fits {
+        return None;
+    }
+    for p in &mut net.vertices {
+        p.radius = p.radius.clamp(0.0, MAX_SIZE);
+    }
+    net.sanitize();
+    (!net.segments.is_empty()).then_some(net)
+}
+
 fn sane(p: &BezPath) -> bool {
     let b = p.bounding_box();
     [b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD)

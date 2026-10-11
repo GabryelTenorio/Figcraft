@@ -10,9 +10,11 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use figcraft_doc::geom::{Affine, Point};
+use figcraft_doc::proto::{MAX_ACTION_DEPTH, MAX_EXPR_DEPTH};
 use serde_json::{Map, Value, json};
 
 use super::kiwi::Kv;
+use super::network;
 
 type Obj = Map<String, Value>;
 
@@ -283,14 +285,19 @@ impl<'a> Mapper<'a> {
             (Some(i), Some(p)) => format!("I{};{}", i.root, p.join(";")),
             _ => id.to_string(),
         };
-        let ty = match view.str("type").unwrap_or("") {
+        let own = view.str("type").unwrap_or("");
+        let stand = stand_in(own);
+        let ty = match own {
             "ROUNDED_RECTANGLE" => "RECTANGLE",
             "SYMBOL" => "COMPONENT",
             "FRAME" if view.flag("isStateGroup") == Some(true) => "COMPONENT_SET",
             "FRAME" if view.flag("resizeToFit") == Some(true) => "GROUP",
             "VARIABLE" | "VARIABLE_SET" => return None,
-            t => t,
+            t => stand.map_or(t, |s| s.0),
         };
+        if let Some((_, what)) = stand {
+            self.warn(format!("{} layers import as {what}", own.to_ascii_lowercase().replace('_', " ")));
+        }
         self.count += 1;
         let mut o = Obj::new();
         o.insert("id".into(), json!(rest_id));
@@ -301,6 +308,9 @@ impl<'a> Mapper<'a> {
             "TEXT" => self.text(&mut o, &view),
             "VECTOR" | "STAR" | "REGULAR_POLYGON" => self.geometry(&mut o, &view),
             _ => {}
+        }
+        if own == "CONNECTOR" {
+            self.connector(&mut o, &view, space);
         }
         if ty == "COMPONENT" || ty == "COMPONENT_SET" {
             self.component(&mut o, &view, &rest_id);
@@ -323,10 +333,122 @@ impl<'a> Mapper<'a> {
                 kids.extend(self.layer(&c, inst, child_space, Some(&view), depth + 1));
             }
         }
+        if stand.is_some_and(|s| s.0 == "FRAME") {
+            kids.splice(0..0, self.shape_with_text(&mut o, &view, own, &rest_id));
+            kids.extend(self.inner_text(&o, &view, &rest_id, own == "STICKY"));
+        }
         if !kids.is_empty() {
             o.insert("children".into(), Value::Array(kids));
         }
         Some(Value::Object(o))
+    }
+
+    /// A non-rectangular shape-with-text's shape, as a vector under its frame (which gives up its
+    /// paints to it).
+    fn shape_with_text(&mut self, o: &mut Obj, v: &View<'a>, own: &str, rest_id: &str) -> Option<Value> {
+        let shape = v.str("shapeWithTextType").unwrap_or("SQUARE");
+        let outlined = !v.list("fillGeometry").is_empty() || !v.list("strokeGeometry").is_empty();
+        if own != "SHAPE_WITH_TEXT" || matches!(shape, "SQUARE" | "ROUNDED_RECTANGLE") || !outlined || self.count >= MAX_NODES {
+            return None;
+        }
+        let mut s = Obj::new();
+        s.insert("id".into(), json!(format!("{rest_id};shape")));
+        s.insert("type".into(), json!("VECTOR"));
+        s.insert("name".into(), json!(shape.to_ascii_lowercase().replace('_', " ")));
+        for k in ["size", "strokeWeight", "strokeAlign", "strokeJoin", "strokeDashes"] {
+            if let Some(x) = o.get(k) {
+                s.insert(k.into(), x.clone());
+            }
+        }
+        for k in ["fills", "strokes"] {
+            s.insert(k.into(), o.insert(k.into(), json!([])).unwrap_or_else(|| json!([])));
+        }
+        s.insert("relativeTransform".into(), rows(Affine::IDENTITY));
+        self.geometry(&mut s, v);
+        if !s.contains_key("fillGeometry") && !s.contains_key("strokeGeometry") {
+            // Damaged outlines: the frame keeps its paints and box.
+            for k in ["fills", "strokes"] {
+                o.insert(k.into(), s.remove(k).unwrap_or_else(|| json!([])));
+            }
+            return None;
+        }
+        self.count += 1;
+        Some(Value::Object(s))
+    }
+
+    /// The text a stand-in frame holds (a sticky note's, a shape's, a table cell's) as a text
+    /// layer filling it, inset a little; centred unless it's a note.
+    fn inner_text(&mut self, o: &Obj, v: &View<'a>, rest_id: &str, note: bool) -> Option<Value> {
+        let chars = own_text(v)?;
+        if self.count >= MAX_NODES {
+            return None;
+        }
+        self.count += 1;
+        let size = |k: &str| o.get("size").and_then(|s| s.get(k)).and_then(Value::as_f64).unwrap_or(0.0);
+        let (w, h) = (size("x"), size("y"));
+        let pad = (w.min(h) / 4.0).clamp(0.0, 16.0);
+        let mut t = Obj::new();
+        t.insert("id".into(), json!(format!("{rest_id};text")));
+        t.insert("type".into(), json!("TEXT"));
+        t.insert("name".into(), json!(chars.chars().take(40).collect::<String>()));
+        t.insert("size".into(), json!({"x": (w - 2.0 * pad).max(1.0), "y": (h - 2.0 * pad).max(1.0)}));
+        t.insert("relativeTransform".into(), rows(Affine::translate((pad, pad))));
+        self.text(&mut t, v);
+        if let Some(Value::Object(st)) = t.get_mut("style") {
+            let (hor, ver) = if note { ("LEFT", "TOP") } else { ("CENTER", "CENTER") };
+            st.entry("textAlignHorizontal").or_insert_with(|| json!(hor));
+            st.entry("textAlignVertical").or_insert_with(|| json!(ver));
+            st.insert("textAutoResize".into(), json!("NONE"));
+        }
+        Some(Value::Object(t))
+    }
+
+    /// A connector's end caps, and when it has no saved outline or network a straight line
+    /// between its ends: free points, or a point (the centre unless given) of a sibling layer.
+    fn connector(&mut self, o: &mut Obj, v: &View<'a>, space: Affine) {
+        for (from, to) in [("connectorStartCap", "strokeCapStart"), ("connectorEndCap", "strokeCapEnd")] {
+            if let Some(c) = v.str(from) {
+                o.insert(to.into(), json!(cap_name(c)));
+            }
+        }
+        if own_text(v).is_some() {
+            self.warn("connector labels were skipped");
+        }
+        if ["vectorNetwork", "fillGeometry", "strokeGeometry"].iter().any(|k| o.contains_key(*k)) {
+            return;
+        }
+        let parent = v.get("parentIndex").and_then(|p| p.get("guid")).and_then(guid);
+        let end = |k: &str| -> Option<Point> {
+            let e = v.get(k)?;
+            let p = match e.get("endpointNodeID").and_then(guid).filter(|g| g != NO_STYLE) {
+                Some(id) => {
+                    let n = *self.nodes.get(&id)?;
+                    // Only siblings share the connector's coordinates.
+                    if n.get("parentIndex").and_then(|p| p.get("guid")).and_then(guid) != parent {
+                        return None;
+                    }
+                    let (w, h) = n.get("size").map_or((0.0, 0.0), |s| (num(s, "x").unwrap_or(0.0), num(s, "y").unwrap_or(0.0)));
+                    let (rx, ry) = e.get("relativePosition").and_then(|r| Some((num(r, "x")?, num(r, "y")?))).unwrap_or((0.5, 0.5));
+                    n.get("transform").and_then(matrix).unwrap_or_default() * Point::new(w * rx, h * ry)
+                }
+                None => e.get("position").and_then(|p| Some(Point::new(num(p, "x")?, num(p, "y")?)))?,
+            };
+            (p.x.is_finite() && p.y.is_finite()).then_some(p)
+        };
+        let (Some(a), Some(b)) = (end("connectorStart"), end("connectorEnd")) else {
+            self.warn("connectors whose ends can't be placed are empty");
+            return;
+        };
+        if v.str("connectorLineStyle").is_some_and(|s| s != "STRAIGHT") {
+            self.warn("elbowed and curved connectors without a saved path import as straight lines");
+        }
+        let (x0, y0) = (a.x.min(b.x), a.y.min(b.y));
+        o.insert("relativeTransform".into(), rows(space * Affine::translate((x0, y0))));
+        o.insert("size".into(), json!({"x": (a.x - b.x).abs(), "y": (a.y - b.y).abs()}));
+        o.insert(
+            "vectorNetwork".into(),
+            json!({"vertices": [{"x": a.x - x0, "y": a.y - y0}, {"x": b.x - x0, "y": b.y - y0}], "segments": [{"a": 0, "b": 1}]}),
+        );
     }
 
     /// Fields every layer type shares.
@@ -556,13 +678,89 @@ impl<'a> Mapper<'a> {
             }
         }
         let vector = o.get("type").and_then(Value::as_str) == Some("VECTOR");
-        if vector && !o.contains_key("fillGeometry") && !o.contains_key("strokeGeometry") {
+        if vector && !self.network(o, v) && !o.contains_key("fillGeometry") && !o.contains_key("strokeGeometry") && v.str("type") != Some("CONNECTOR")
+        {
             self.warn("vectors without geometry are empty");
         }
         if !vector {
             copy_num(o, v, "count", "pointCount");
             copy_num(o, v, "starInnerScale", "innerRadius");
         }
+    }
+
+    /// The editable network of `vectorData` as `vectorNetwork` (the REST importer's extension),
+    /// scaled to the layer's size, with per-point corner radii, handle mirroring and end caps.
+    /// False when there's none or it's damaged (the outlines stand in).
+    fn network(&mut self, o: &mut Obj, v: &View<'a>) -> bool {
+        let Some(vd) = v.get("vectorData") else { return false };
+        let Some(blob) = num(vd, "vectorNetworkBlob").and_then(|i| self.blobs.get(i as usize)).copied() else { return false };
+        let Some(net) = network::decode(blob) else {
+            self.warn("damaged vector networks import as outlines");
+            return false;
+        };
+        // An open path shows its fill, which regions can't hold: the outline keeps the look.
+        let fills_shown =
+            o.get("fills").and_then(Value::as_array).is_some_and(|f| f.iter().any(|p| p.get("visible").and_then(Value::as_bool) != Some(false)));
+        if net.segments.is_empty() || (net.regions.is_empty() && fills_shown && o.contains_key("fillGeometry")) {
+            return false;
+        }
+        let styles: BTreeMap<u64, &Kv> =
+            vd.get("styleOverrideTable").map(Kv::list).unwrap_or_default().iter().filter_map(|s| Some((num(s, "styleID")? as u64, s))).collect();
+        let style = |id: u32| styles.get(&u64::from(id)).copied().filter(|_| id != 0);
+        let scale = |k: &str| {
+            let (size, norm) = (v.get("size").and_then(|s| num(s, k)), vd.get("normalizedSize").and_then(|s| num(s, k)));
+            size.zip(norm).filter(|(s, n)| s.is_finite() && *n > 1e-9).map_or(1.0, |(s, n)| s / n)
+        };
+        let (sx, sy) = (scale("x"), scale("y"));
+        let vertices: Vec<Value> = net
+            .vertices
+            .iter()
+            .map(|p| {
+                let mut out = json!({"x": p.x * sx, "y": p.y * sy});
+                let st = style(p.style);
+                if let Some(r) = st.and_then(|s| num(s, "cornerRadius")).filter(|r| *r > 0.0) {
+                    out["radius"] = json!(r);
+                }
+                match st.and_then(|s| s.get("handleMirroring")).and_then(Kv::str) {
+                    Some("ANGLE") => out["mirror"] = json!("angle"),
+                    Some("ANGLE_AND_LENGTH") => out["mirror"] = json!("angleAndLength"),
+                    Some("NONE") => out["mirror"] = json!("none"),
+                    _ => {}
+                }
+                out
+            })
+            .collect();
+        let segments: Vec<Value> =
+            net.segments.iter().map(|s| json!({"a": s.a, "b": s.b, "ta": [s.ta.0 * sx, s.ta.1 * sy], "tb": [s.tb.0 * sx, s.tb.1 * sy]})).collect();
+        let regions: Vec<Value> =
+            net.regions.iter().map(|r| json!({"loops": r.loops, "winding": if r.non_zero { "nonZero" } else { "evenOdd" }})).collect();
+        if net.regions.iter().any(|r| style(r.style).is_some_and(|s| s.get("fillPaints").is_some())) {
+            self.warn("filled areas of a vector with their own fill use the layer's fill");
+        }
+        let join = v.str("strokeJoin");
+        if net.vertices.iter().any(|p| style(p.style).and_then(|s| s.get("strokeJoin")).and_then(Kv::str).is_some_and(|j| Some(j) != join)) {
+            self.warn("points with their own stroke join use the layer's");
+        }
+        // The stroke starts at the first end point and stops at the last (as the editor draws it).
+        let mut degree = vec![0usize; net.vertices.len()];
+        for s in &net.segments {
+            for i in [s.a, s.b] {
+                if let Some(d) = degree.get_mut(i) {
+                    *d += 1;
+                }
+            }
+        }
+        let ends: Vec<usize> = (0..degree.len()).filter(|i| degree.get(*i) == Some(&1)).collect();
+        let cap =
+            |i: Option<&usize>| i.and_then(|i| net.vertices.get(*i)).and_then(|p| style(p.style)).and_then(|s| s.get("strokeCap")).and_then(Kv::str);
+        let (first, last) = (cap(ends.first()), cap(ends.last()));
+        if first.is_some() || last.is_some() {
+            let node = v.str("strokeCap").unwrap_or("NONE");
+            o.insert("strokeCapStart".into(), json!(cap_name(first.unwrap_or(node))));
+            o.insert("strokeCapEnd".into(), json!(cap_name(last.unwrap_or(node))));
+        }
+        o.insert("vectorNetwork".into(), json!({"vertices": vertices, "segments": segments, "regions": regions}));
+        true
     }
 
     /// Component property definitions and description.
@@ -765,39 +963,66 @@ impl<'a> Mapper<'a> {
                 trigger["device"] = json!(if d.contains("KEYBOARD") { "KEYBOARD" } else { d });
             }
         }
-        let mut actions = Vec::new();
-        for a in it.get("actions").map(Kv::list).unwrap_or_default() {
-            match a.get("connectionType").and_then(Kv::str) {
-                Some("INTERNAL_NODE") | None => {
-                    let Some(dest) = a.get("transitionNodeID").and_then(guid) else { continue };
-                    let nav = match a.get("navigationType").and_then(Kv::str) {
-                        Some("SWAP_STATE") => "CHANGE_TO",
-                        Some(n) => n,
-                        None => "NAVIGATE",
-                    };
-                    let mut act = json!({"type": "NODE", "destinationId": dest, "navigation": nav});
-                    if let Some(t) = transition(a) {
-                        act["transition"] = t;
-                    }
-                    if let Some(b) = a.get("transitionPreserveScroll").and_then(Kv::bool) {
-                        act["preserveScrollPosition"] = json!(b);
-                    }
-                    actions.push(act);
-                }
-                Some("URL") => {
-                    if let Some(u) = a.get("connectionURL").and_then(Kv::str) {
-                        actions.push(json!({"type": "URL", "url": u}));
-                    }
-                }
-                Some("BACK") => actions.push(json!({"type": "BACK"})),
-                Some("CLOSE") => actions.push(json!({"type": "CLOSE"})),
-                Some("NONE") => {}
-                Some(other) => {
-                    self.warn(format!("{} prototype actions are not imported from .fig files yet", other.to_ascii_lowercase().replace('_', " ")))
-                }
-            }
-        }
+        let actions: Vec<Value> = it.get("actions").map(Kv::list).unwrap_or_default().iter().filter_map(|a| self.action(a, 0)).collect();
         (!actions.is_empty()).then(|| json!({"trigger": trigger, "actions": actions}))
+    }
+
+    /// One prototype action in the REST shape (`depth`: conditionals it's nested in).
+    fn action(&mut self, a: &Kv, depth: usize) -> Option<Value> {
+        Some(match a.get("connectionType").and_then(Kv::str) {
+            Some("INTERNAL_NODE") | None => {
+                let dest = a.get("transitionNodeID").and_then(guid)?;
+                let nav = match a.get("navigationType").and_then(Kv::str) {
+                    Some("SWAP_STATE") => "CHANGE_TO",
+                    Some(n) => n,
+                    None => "NAVIGATE",
+                };
+                let mut act = json!({"type": "NODE", "destinationId": dest, "navigation": nav});
+                if let Some(t) = transition(a) {
+                    act["transition"] = t;
+                }
+                if let Some(b) = a.get("transitionPreserveScroll").and_then(Kv::bool) {
+                    act["preserveScrollPosition"] = json!(b);
+                }
+                act
+            }
+            Some("URL") => json!({"type": "URL", "url": a.get("connectionURL").and_then(Kv::str)?}),
+            Some("BACK") => json!({"type": "BACK"}),
+            Some("CLOSE") => json!({"type": "CLOSE"}),
+            Some("NONE") => return None,
+            Some("SET_VARIABLE") => {
+                let var = a.get("targetVariable").and_then(|t| t.get("id")).and_then(ref_guid).or_else(|| a.get("targetVariableID").and_then(guid));
+                // Missing parts are left out: the REST importer skips the action with a warning.
+                let mut act = json!({"type": "SET_VARIABLE", "variableId": var});
+                if let Some(d) = a.get("targetVariableData").and_then(|d| variable_data(d, 0)) {
+                    act["variableValue"] = d;
+                }
+                act
+            }
+            Some("SET_VARIABLE_MODE") => json!({
+                "type": "SET_VARIABLE_MODE",
+                "variableCollectionId": a.get("targetVariableSetID").and_then(ref_guid),
+                "variableModeId": a.get("targetVariableModeID").and_then(guid),
+            }),
+            Some("CONDITIONAL") if depth < MAX_ACTION_DEPTH => {
+                let mut blocks = Vec::new();
+                for b in a.get("conditionalActions").map(Kv::list).unwrap_or_default() {
+                    let actions: Vec<Value> =
+                        b.get("actions").map(Kv::list).unwrap_or_default().iter().filter_map(|x| self.action(x, depth + 1)).collect();
+                    let mut block = json!({"actions": actions});
+                    // A condition that can't be read must not turn the block into an "else".
+                    if let Some(c) = b.get("condition") {
+                        block["condition"] = variable_data(c, 0).unwrap_or_else(|| json!({}));
+                    }
+                    blocks.push(block);
+                }
+                json!({"type": "CONDITIONAL", "conditionalBlocks": blocks})
+            }
+            Some(other) => {
+                self.warn(format!("{} prototype actions are not imported from .fig files yet", other.to_ascii_lowercase().replace('_', " ")));
+                return None;
+            }
+        })
     }
 
     fn variable_bindings(&mut self, o: &mut Obj, v: &View<'a>) {
@@ -941,12 +1166,7 @@ fn stroke(o: &mut Obj, v: &View) {
     }
     copy_str(o, v, "strokeJoin", "strokeJoin");
     if let Some(cap) = v.str("strokeCap") {
-        let cap = match cap {
-            "ARROW_LINES" => "LINE_ARROW",
-            "ARROW_EQUILATERAL" => "TRIANGLE_ARROW",
-            c => c,
-        };
-        o.insert("strokeCap".into(), json!(cap));
+        o.insert("strokeCap".into(), json!(cap_name(cap)));
     }
     let dashes: Vec<f64> = v.list("dashPattern").iter().filter_map(Kv::f64).collect();
     if !dashes.is_empty() {
@@ -964,6 +1184,75 @@ fn stroke(o: &mut Obj, v: &View) {
             json!({"top": side("borderTopWeight"), "right": side("borderRightWeight"), "bottom": side("borderBottomWeight"), "left": side("borderLeftWeight")}),
         );
     }
+}
+
+/// A `VariableData` (literal, variable reference or expression) in the REST shape; `None` for
+/// kinds a prototype can't evaluate.
+fn variable_data(d: &Kv, depth: usize) -> Option<Value> {
+    let v = d.get("value")?;
+    let ty = d.get("dataType").and_then(Kv::str)?;
+    let value = match ty {
+        "ALIAS" => json!({"type": "VARIABLE_ALIAS", "id": v.get("alias").and_then(ref_guid)?}),
+        "EXPRESSION" if depth < MAX_EXPR_DEPTH => {
+            let e = v.get("expressionValue")?;
+            let function = match e.get("expressionFunction").and_then(Kv::str)? {
+                "MULTIPLY" => "MULTIPLICATION",
+                "DIVIDE" => "DIVISION",
+                f => f,
+            };
+            let args = e.get("expressionArguments").map(Kv::list).unwrap_or_default();
+            let args = args.iter().map(|x| variable_data(x, depth + 1)).collect::<Option<Vec<Value>>>()?;
+            json!({"expressionFunction": function, "expressionArguments": args})
+        }
+        "BOOLEAN" => json!(v.get("boolValue").and_then(Kv::bool)?),
+        "FLOAT" => json!(num(v, "floatValue").filter(|x| x.is_finite())?),
+        "STRING" => json!(v.get("textValue").and_then(Kv::str)?),
+        "COLOR" => color(v.get("colorValue")?),
+        _ => return None,
+    };
+    let mut out = json!({"type": ty, "value": value});
+    if let Some(r) = d.get("resolvedDataType").and_then(Kv::str) {
+        out["resolvedType"] = json!(r);
+    }
+    Some(out)
+}
+
+/// The text a layer that isn't a text layer carries (a note's, a shape's), unless blank.
+fn own_text<'a>(v: &View<'a>) -> Option<&'a str> {
+    v.get("textData").and_then(|t| t.get("characters")).and_then(Kv::str).filter(|c| !c.trim().is_empty())
+}
+
+/// The REST name of a stroke cap.
+fn cap_name(cap: &str) -> &str {
+    match cap {
+        "ARROW_LINES" => "LINE_ARROW",
+        "ARROW_EQUILATERAL" => "TRIANGLE_ARROW",
+        c => c,
+    }
+}
+
+/// The layer kind (and how the warning names it) that a layer the editor has no counterpart for
+/// imports as: frames for notes, shapes, tables, slides and the like (their text as a text layer),
+/// vectors for connectors and marker strokes, plain text for text on a path.
+fn stand_in(ty: &str) -> Option<(&'static str, &'static str)> {
+    Some(match ty {
+        "STICKY"
+        | "SHAPE_WITH_TEXT"
+        | "CODE_BLOCK"
+        | "TABLE"
+        | "TABLE_CELL"
+        | "STAMP"
+        | "MEDIA"
+        | "WIDGET"
+        | "SLIDE"
+        | "SLIDE_GRID"
+        | "SLIDE_ROW"
+        | "INTERACTIVE_SLIDE_ELEMENT"
+        | "MODULE" => ("FRAME", "frames with their text"),
+        "CONNECTOR" | "HIGHLIGHT" | "WASHI_TAPE" => ("VECTOR", "vectors"),
+        "TEXT_PATH" => ("TEXT", "text off its path"),
+        _ => return None,
+    })
 }
 
 /// How a layer sizes and sits in an auto layout parent.

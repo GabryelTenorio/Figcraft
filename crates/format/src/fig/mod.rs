@@ -6,12 +6,15 @@
 //! zstd: a binary schema in the kiwi format ([`kiwi`]), then a message encoded with it. Every file
 //! carries its own schema, so the message is decoded generically and read by field name: a list
 //! of node changes (each with its id, parent id and position among its siblings) that make up the
-//! layer tree, plus blobs (vector geometry). [`map`] turns that into the REST API file JSON shape
-//! and the REST importer builds the document, so both imports share one mapping. Anything not
-//! understood is skipped with a warning; malformed input never panics.
+//! layer tree, plus blobs (vector outlines and editable vector networks, [`network`]). [`map`]
+//! turns that into the REST API file JSON shape and the REST importer builds the document, so both
+//! imports share one mapping. Layer kinds the editor doesn't have (sticky notes, connectors,
+//! tables, …) come in as the closest frames, text and vectors. Anything not understood is skipped
+//! with a warning; malformed input never panics.
 
 pub mod kiwi;
 mod map;
+mod network;
 #[cfg(test)]
 mod tests;
 

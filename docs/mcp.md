@@ -611,10 +611,11 @@ refused.
 with, so the data is decoded generically and mapped by field name onto the REST import below: the
 same layers, paints, text, auto layout, components, styles, variables and prototyping come across,
 with image fills from the file's own `images/` folder. Instances are rebuilt from their main
-component with the overrides and property values the file records. Vectors come in as their
-outlines (not editable vector networks); sticky notes, connectors, tables and other non-design
-layers, set-variable and conditional actions and video fills are skipped. The result's `warnings`
-list what was skipped.
+component with the overrides and property values the file records. Vectors come in as editable
+vector networks (their outlines when the network is missing or damaged); sticky notes, shapes with
+text, connectors, tables and similar layers come in as the closest frames, text layers and
+vectors; set-variable, set-variable-mode and conditional actions come across; video fills are
+skipped. The result's `opened.warnings` list what was approximated or skipped.
 
 ### Importing REST API file JSON
 

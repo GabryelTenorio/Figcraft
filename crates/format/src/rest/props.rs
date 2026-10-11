@@ -309,18 +309,26 @@ pub(super) fn stroke_props(v: &Value, sp: &mut StrokeProps) {
         Some("OUTSIDE") => sp.align = StrokeAlign::Outside,
         _ => {}
     }
-    let cap = match text(v, "strokeCap") {
-        Some("ROUND") => Some(StrokeCap::Round),
-        Some("SQUARE") => Some(StrokeCap::Square),
-        Some("LINE_ARROW") => Some(StrokeCap::LineArrow),
-        Some("TRIANGLE_ARROW" | "TRIANGLE_FILLED") => Some(StrokeCap::TriangleArrow),
-        Some("DIAMOND_FILLED") => Some(StrokeCap::DiamondFilled),
-        Some("CIRCLE_FILLED") => Some(StrokeCap::CircleFilled),
-        Some(_) => Some(StrokeCap::None),
-        None => None,
+    let cap = |k: &str| {
+        text(v, k).map(|c| match c {
+            "ROUND" => StrokeCap::Round,
+            "SQUARE" => StrokeCap::Square,
+            "LINE_ARROW" => StrokeCap::LineArrow,
+            "TRIANGLE_ARROW" | "TRIANGLE_FILLED" => StrokeCap::TriangleArrow,
+            "DIAMOND_FILLED" => StrokeCap::DiamondFilled,
+            "CIRCLE_FILLED" => StrokeCap::CircleFilled,
+            _ => StrokeCap::None,
+        })
     };
-    if let Some(c) = cap {
+    if let Some(c) = cap("strokeCap") {
         sp.cap_start = c;
+        sp.cap_end = c;
+    }
+    // Each end on its own (our extension, written by the `.fig` import).
+    if let Some(c) = cap("strokeCapStart") {
+        sp.cap_start = c;
+    }
+    if let Some(c) = cap("strokeCapEnd") {
         sp.cap_end = c;
     }
     match text(v, "strokeJoin") {
