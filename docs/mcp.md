@@ -672,11 +672,23 @@ manifest, the ABI and the Rust SDK). Driven with `run_command`: `plugin.import {
 `figcraft-plugin.json` or its folder) or `plugin.import {manifest, wasm}` (the manifest as an
 object or JSON text and the module as base64, for this session only), `plugin.list`,
 `plugin.remove {id}`, and `plugin.run {id, command?, params?, fuel?}`, which returns
-`{plugin, command, output, logs, calls, fuel}`. A run is one undo step and is rolled back when it
+`{plugin, command, output, logs, calls, fuel, panel}`. A run is one undo step and is rolled back when it
 fails; a plugin only reads the document unless its manifest asks for `write`, may be limited to
 some commands, and can never touch files, other documents, the undo history, dialogs or other
 plugins. A headless MCP session starts with no plugins: import them first. `plugins.runLast` runs
 the last plugin command again.
+
+A plugin that shows a panel (API 2) can be used headless too: `plugin.ui {id?}` returns the open
+panel (`{plugin, command, title, controls, values}`, or null), `plugin.event {id, control, value?}`
+presses a button or sets a field as a click would (the plugin is called back; one undo step;
+returns like `plugin.run`, with the updated `panel`), and `plugin.close {id}` ends the session.
+Plugin settings are kept per plugin with the preferences (in a headless session, for the session).
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.run","params":{"id":"org.figcraft.examples.swatch-grid","command":"panel"}}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"palette","value":"Forest"}}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"generate"}}}}
+```
 
 ### Dev Mode
 

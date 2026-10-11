@@ -13,12 +13,17 @@ use crate::theme::{ACCENT, Tokens, regular, semibold};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// A dialog window, centred.
 pub(crate) fn window<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
+    floating(title, ctx).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+}
+
+/// A window styled like the dialogs that the user can move.
+pub(crate) fn floating<'a>(title: &'a str, ctx: &Context) -> egui::Window<'a> {
     let t = Tokens::get(ctx);
     egui::Window::new(title)
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(20)))
 }
 

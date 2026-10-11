@@ -268,7 +268,7 @@ fn bad_manifests_are_refused() {
         json!({"main": "C:\\plugin.wasm"}),
         json!({"main": "plugin.js"}),
         json!({"main": "a//b.wasm"}),
-        json!({"api": 2}),
+        json!({"api": 3}),
         json!({"api": 0}),
         json!({"permissions": {"access": "root"}}),
         json!({"permissions": {"commands": ["*.x"]}}),
@@ -277,7 +277,7 @@ fn bad_manifests_are_refused() {
         json!({"commands": [{"id": "a", "label": "A", "params": [{"name": "s", "type": "select"}]}]}),
         json!({"commands": [{"id": "a", "label": "A", "params": [{"name": "n", "type": "number", "min": 5, "max": 1}]}]}),
         json!({"commands": [{"id": "a", "label": "A", "params": [{"name": "n"}, {"name": "n"}]}]}),
-        json!({"commands": [{"id": "a", "label": "A", "params": [{"name": "n", "type": "color"}]}]}),
+        json!({"commands": [{"id": "a", "label": "A", "params": [{"name": "n", "type": "date"}]}]}),
         json!({"commands": "run"}),
     ];
     for extra in bad {

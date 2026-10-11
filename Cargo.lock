@@ -1585,6 +1585,7 @@ dependencies = [
 name = "figcraft-plugin"
 version = "0.3.1"
 dependencies = [
+ "figcraft-color",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1672,6 +1673,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "wat",
 ]
 
 [[package]]

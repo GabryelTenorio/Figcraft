@@ -18,6 +18,8 @@ pub enum Lead<'a> {
     Text(&'a str),
     Icon(Icon, &'a str),
     None,
+    /// No lead, only a name for screen readers (the label is beside the field).
+    Named(&'a str),
 }
 
 impl Lead<'_> {
@@ -27,7 +29,7 @@ impl Lead<'_> {
             Lead::Text("W") => "Width",
             Lead::Text("H") => "Height",
             Lead::Text(s) => s,
-            Lead::Icon(_, name) => name,
+            Lead::Icon(_, name) | Lead::Named(name) => name,
             Lead::None => "",
         }
     }
@@ -101,7 +103,7 @@ fn number_field_impl(
         return (None, bound_field(ui, id, lead, rect, name));
     }
     let lead_w = match lead {
-        Lead::None => 6.0,
+        Lead::None | Lead::Named(_) => 6.0,
         Lead::Text(s) => (12.0 + s.chars().count() as f32 * 7.0).max(24.0),
         Lead::Icon(..) => 24.0,
     };
@@ -128,7 +130,7 @@ fn number_field_impl(
         Lead::Icon(i, _) => {
             icons::paint(ui.painter(), Rect::from_center_size(lead_rect.center() + vec2(1.0, 0.0), vec2(14.0, 14.0)), i, t.icon_secondary)
         }
-        Lead::None => {}
+        Lead::None | Lead::Named(_) => {}
     }
     if lead_resp.hovered() || lead_resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -249,7 +251,7 @@ pub fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> O
         ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
     }
     let lead_w = match lead {
-        Lead::None => 4.0,
+        Lead::None | Lead::Named(_) => 4.0,
         Lead::Text(s) => {
             ui.painter().text(pos2(rect.min.x + 8.0, rect.center().y), Align2::LEFT_CENTER, s, regular(11.0), t.text_secondary);
             (12.0 + s.chars().count() as f32 * 7.0).max(24.0)
@@ -323,6 +325,12 @@ pub fn eval(s: &str, cur: Option<f64>) -> Option<f64> {
 pub fn text_field(ui: &mut Ui, id: Id, value: &str, width: f32, placeholder: &str) -> Option<String> {
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
     text_field_in(ui, id, value, rect, placeholder, placeholder)
+}
+
+/// [`text_field`] without a placeholder, named `name` for screen readers (its label is beside it).
+pub fn text_field_named(ui: &mut Ui, id: Id, value: &str, width: f32, name: &str) -> Option<String> {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    text_field_in(ui, id, value, rect, "", name)
 }
 
 /// A multi-line text field across the panel (descriptions, notes) that commits when it loses

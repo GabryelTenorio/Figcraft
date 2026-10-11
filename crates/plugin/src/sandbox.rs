@@ -2,7 +2,7 @@
 //! memory cap, and sees the outside world only through the host functions below. There is no WASI:
 //! no file system, network, clock or randomness.
 //!
-//! # ABI (version 1)
+//! # ABI (version 2; version 1 is the first seven imports)
 //!
 //! The module exports its `memory` and `figcraft_run(input_len: i32) -> i32`. Host functions are
 //! imported from the module `figcraft`; strings are UTF-8 `(ptr, len)` pairs in the plugin's memory.
@@ -16,11 +16,25 @@
 //! | `log` | `(ptr, len)` | A line for the run's log. |
 //! | `notify` | `(ptr, len)` | A short message shown to the user. |
 //! | `set_output` | `(ptr, len)` | The run's result (JSON or text), or its error message when it fails. |
+//! | `ui_show` | `(ptr, len) -> i32` | Shows (or replaces) the plugin's panel: a [`Panel`] as JSON. 1: invalid, the reply says why. |
+//! | `ui_close` | `()` | Closes the panel. |
+//! | `setting_get` | `(key_ptr, key_len) -> i32` | 0: the reply holds the stored JSON; 1: no such setting. |
+//! | `setting_set` | `(key_ptr, key_len, value_ptr, value_len) -> i32` | Stores JSON under the key. 1: refused, the reply says why. |
+//! | `setting_delete` | `(key_ptr, key_len)` | Forgets a setting. |
 //!
 //! When `figcraft_run` starts, the reply holds the input JSON (`input_len` bytes):
-//! `{"command", "params", "selection"}`. It returns 0 on success; anything else fails the run.
+//! `{"api", "command", "params", "selection"}`, plus `event` and `values` when a panel calls the
+//! plugin back. It returns 0 on success; anything else fails the run.
+//!
+//! An [`Instance`] keeps the module's memory between calls, so a plugin with a panel open keeps its
+//! state from one callback to the next. Every call gets the full [`Limits`] again.
 
-use wasmi::{Caller, Config, Engine, Extern, FuncType, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode, ValType};
+use wasmi::{
+    Caller, Config, Engine, Extern, FuncType, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode, TypedFunc, TypedResumableCall, Val,
+    ValType,
+};
+
+use crate::manifest::Panel;
 
 /// The module host functions are imported from.
 pub const IMPORT_MODULE: &str = "figcraft";
@@ -28,8 +42,20 @@ pub const IMPORT_MODULE: &str = "figcraft";
 pub const ENTRY: &str = "figcraft_run";
 
 /// The host functions: (name, params, results), all i32.
-const IMPORTS: &[(&str, usize, usize)] =
-    &[("call", 4, 1), ("selection", 0, 1), ("reply_len", 0, 1), ("reply_read", 2, 1), ("log", 2, 0), ("notify", 2, 0), ("set_output", 2, 0)];
+const IMPORTS: &[(&str, usize, usize)] = &[
+    ("call", 4, 1),
+    ("selection", 0, 1),
+    ("reply_len", 0, 1),
+    ("reply_read", 2, 1),
+    ("log", 2, 0),
+    ("notify", 2, 0),
+    ("set_output", 2, 0),
+    ("ui_show", 2, 1),
+    ("ui_close", 0, 0),
+    ("setting_get", 2, 1),
+    ("setting_set", 4, 1),
+    ("setting_delete", 2, 0),
+];
 
 /// What a run may use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +106,8 @@ pub enum PluginError {
     Failed(String),
 }
 
-/// What the sandbox asks of its host (the engine): run commands, read the selection, log.
+/// What the sandbox asks of its host (the engine): run commands, read the selection, log, keep
+/// settings.
 pub trait Host {
     /// Run `command` with `params` (JSON text): the result JSON, or why it was refused or failed.
     fn call(&mut self, command: &str, params: &str) -> Result<String, String>;
@@ -90,6 +117,22 @@ pub trait Host {
     fn notify(&mut self, message: &str);
     /// A line of the run's log, as the plugin writes it (it's also in [`RunOutput::logs`]).
     fn log(&mut self, _line: &str) {}
+    /// The plugin's setting `key` (JSON text).
+    fn setting(&mut self, _key: &str) -> Option<String> {
+        None
+    }
+    /// Store (`Some`) or forget (`None`) setting `key`, or say why not.
+    fn set_setting(&mut self, _key: &str, _value: Option<&str>) -> Result<(), String> {
+        Err("settings aren't available here".into())
+    }
+}
+
+/// What a run asked of the panel.
+#[derive(Clone, Debug, PartialEq)]
+pub enum UiChange {
+    /// Show this panel (or replace the one showing).
+    Show(Panel),
+    Close,
 }
 
 /// A finished run.
@@ -102,16 +145,88 @@ pub struct RunOutput {
     pub calls: u32,
     /// Fuel used.
     pub fuel: u64,
+    /// The last `ui_show` / `ui_close` of the run.
+    pub ui: Option<UiChange>,
 }
 
-struct State<'h> {
-    host: &'h mut dyn Host,
+/// A host call that needs the [`Host`]: the plugin is paused while the host answers it (see
+/// [`Instance::call`]), so the store never borrows the host and can outlive one call.
+enum Request {
+    Call(String, String),
+    Selection,
+    Log(String),
+    Notify(String),
+    SettingGet(String),
+    SettingSet(String, String),
+    SettingDelete(String),
+}
+
+struct State {
     limits: Limits,
     store_limits: StoreLimits,
     reply: Vec<u8>,
     out: RunOutput,
     /// A limit the host tripped (reported instead of the trap it causes).
     abort: Option<PluginError>,
+    request: Option<Request>,
+}
+
+impl State {
+    /// Make `bytes` the reply; returns its length.
+    fn set_reply(&mut self, bytes: Vec<u8>) -> i32 {
+        let max = self.limits.max_message;
+        let bytes = if bytes.len() > max { format!("the result is larger than {max} bytes").into_bytes() } else { bytes };
+        let len = i32::try_from(bytes.len()).unwrap_or(i32::MAX);
+        self.reply = bytes;
+        len
+    }
+
+    /// Answer a paused host call; the host function's result, if it has one.
+    fn answer(&mut self, host: &mut dyn Host, request: Request) -> Option<i32> {
+        match request {
+            Request::Call(cmd, params) => {
+                let (status, reply) = match host.call(&cmd, &params) {
+                    Ok(v) => (0, v),
+                    Err(m) => (1, m),
+                };
+                self.set_reply(reply.into_bytes());
+                Some(status)
+            }
+            Request::Selection => Some(self.set_reply(host.selection().into_bytes())),
+            Request::Log(line) => {
+                host.log(&line);
+                if self.out.logs.len() < self.limits.max_logs {
+                    self.out.logs.push(line);
+                }
+                None
+            }
+            Request::Notify(msg) => {
+                host.notify(&msg);
+                None
+            }
+            Request::SettingGet(key) => Some(match host.setting(&key) {
+                Some(v) => {
+                    self.set_reply(v.into_bytes());
+                    0
+                }
+                None => {
+                    self.set_reply(Vec::new());
+                    1
+                }
+            }),
+            Request::SettingSet(key, value) => Some(match host.set_setting(&key, Some(&value)) {
+                Ok(()) => 0,
+                Err(m) => {
+                    self.set_reply(m.into_bytes());
+                    1
+                }
+            }),
+            Request::SettingDelete(key) => {
+                let _ = host.set_setting(&key, None);
+                None
+            }
+        }
+    }
 }
 
 fn engine() -> Engine {
@@ -164,36 +279,80 @@ fn compile(engine: &Engine, bytes: &[u8], limits: &Limits) -> Result<Module, Plu
     Ok(module)
 }
 
-/// Run a plugin module: `input` is the JSON handed to `figcraft_run`.
+/// Run a plugin module once: `input` is the JSON handed to `figcraft_run`.
 pub fn run(bytes: &[u8], input: &str, limits: &Limits, host: &mut dyn Host) -> Result<RunOutput, PluginError> {
-    let engine = engine();
-    let module = compile(&engine, bytes, limits)?;
-    if input.len() > limits.max_message {
-        return Err(PluginError::Limit("the input is too large".into()));
+    Instance::new(bytes, limits)?.call(input, host)
+}
+
+/// A started plugin module whose memory lasts from one call to the next.
+pub struct Instance {
+    store: Store<State>,
+    entry: TypedFunc<i32, i32>,
+}
+
+impl std::fmt::Debug for Instance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Instance").finish_non_exhaustive()
     }
-    let store_limits = StoreLimitsBuilder::new().memory_size(limits.memory_bytes).memories(1).tables(4).table_elements(100_000).instances(1).build();
-    let state = State { host, limits: *limits, store_limits, reply: input.as_bytes().to_vec(), out: RunOutput::default(), abort: None };
-    let mut store = Store::new(&engine, state);
-    store.limiter(|s| &mut s.store_limits);
-    store.set_fuel(limits.fuel).map_err(|e| PluginError::Trap(e.to_string()))?;
-    let linker = linker(&engine)?;
-    let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| classify(&mut store, &e, true))?;
-    let entry = instance.get_typed_func::<i32, i32>(&store, ENTRY).map_err(|e| PluginError::InvalidModule(e.to_string()))?;
-    let input_len = i32::try_from(input.len()).map_err(|_| PluginError::Limit("the input is too large".into()))?;
-    let status = entry.call(&mut store, input_len).map_err(|e| classify(&mut store, &e, false))?;
-    let fuel = limits.fuel.saturating_sub(store.get_fuel().unwrap_or(0));
-    let mut out = std::mem::take(&mut store.data_mut().out);
-    out.fuel = fuel;
-    if status != 0 {
-        let msg = if out.output.trim().is_empty() { format!("the plugin failed (status {status})") } else { out.output };
-        return Err(PluginError::Failed(msg));
+}
+
+impl Instance {
+    /// Compile, check and start a module. A start function can't call host functions.
+    pub fn new(bytes: &[u8], limits: &Limits) -> Result<Self, PluginError> {
+        let engine = engine();
+        let module = compile(&engine, bytes, limits)?;
+        let store_limits =
+            StoreLimitsBuilder::new().memory_size(limits.memory_bytes).memories(1).tables(4).table_elements(100_000).instances(1).build();
+        let state = State { limits: *limits, store_limits, reply: Vec::new(), out: RunOutput::default(), abort: None, request: None };
+        let mut store = Store::new(&engine, state);
+        store.limiter(|s| &mut s.store_limits);
+        store.set_fuel(limits.fuel).map_err(|e| PluginError::Trap(e.to_string()))?;
+        let linker = linker(&engine)?;
+        let instance = linker.instantiate_and_start(&mut store, &module).map_err(|e| classify(&mut store, &e, true))?;
+        let entry = instance.get_typed_func::<i32, i32>(&store, ENTRY).map_err(|e| PluginError::InvalidModule(e.to_string()))?;
+        Ok(Self { store, entry })
     }
-    Ok(out)
+
+    /// Call `figcraft_run` with `input`, with the full limits. Host calls that need `host` pause
+    /// the plugin, are answered here and resume it.
+    pub fn call(&mut self, input: &str, host: &mut dyn Host) -> Result<RunOutput, PluginError> {
+        let limits = self.store.data().limits;
+        let input_len = i32::try_from(input.len()).ok().filter(|_| input.len() <= limits.max_message);
+        let input_len = input_len.ok_or_else(|| PluginError::Limit("the input is too large".into()))?;
+        let st = self.store.data_mut();
+        st.reply = input.as_bytes().to_vec();
+        st.out = RunOutput::default();
+        st.abort = None;
+        st.request = None;
+        self.store.set_fuel(limits.fuel).map_err(|e| PluginError::Trap(e.to_string()))?;
+        let mut call = self.entry.call_resumable(&mut self.store, input_len).map_err(|e| classify(&mut self.store, &e, false))?;
+        let status = loop {
+            match call {
+                TypedResumableCall::Finished(status) => break status,
+                TypedResumableCall::OutOfFuel(_) => return Err(PluginError::OutOfFuel),
+                TypedResumableCall::HostTrap(paused) => {
+                    let Some(request) = self.store.data_mut().request.take() else {
+                        return Err(classify(&mut self.store, paused.host_error(), false));
+                    };
+                    let results: Vec<Val> = self.store.data_mut().answer(host, request).map(Val::I32).into_iter().collect();
+                    call = paused.resume(&mut self.store, &results).map_err(|e| classify(&mut self.store, &e, false))?;
+                }
+            }
+        };
+        let fuel = limits.fuel.saturating_sub(self.store.get_fuel().unwrap_or(0));
+        let mut out = std::mem::take(&mut self.store.data_mut().out);
+        out.fuel = fuel;
+        if status != 0 {
+            let msg = if out.output.trim().is_empty() { format!("the plugin failed (status {status})") } else { out.output };
+            return Err(PluginError::Failed(msg));
+        }
+        Ok(out)
+    }
 }
 
 /// The error a failed instantiation or call stands for: a limit the host tripped first, else the
 /// trap.
-fn classify(store: &mut Store<State<'_>>, e: &wasmi::Error, instantiating: bool) -> PluginError {
+fn classify(store: &mut Store<State>, e: &wasmi::Error, instantiating: bool) -> PluginError {
     if let Some(abort) = store.data_mut().abort.take() {
         return abort;
     }
@@ -208,17 +367,25 @@ fn classify(store: &mut Store<State<'_>>, e: &wasmi::Error, instantiating: bool)
     }
 }
 
-type Ctx<'a, 'h> = Caller<'a, State<'h>>;
+type Ctx<'a> = Caller<'a, State>;
 
 /// Stop the run because of `err` (the trap it causes reports `err`).
-fn abort(caller: &mut Ctx<'_, '_>, err: PluginError) -> wasmi::Error {
+fn abort(caller: &mut Ctx<'_>, err: PluginError) -> wasmi::Error {
     let msg = err.to_string();
     caller.data_mut().abort = Some(err);
     wasmi::Error::new(msg)
 }
 
+/// Pause the plugin until the host answers `request`.
+// shortcut: a host function tail-called (`return_call`) from `figcraft_run` itself can't be
+// resumed and fails the run; fine for compiled plugins, which don't do that.
+fn ask(caller: &mut Ctx<'_>, request: Request) -> wasmi::Error {
+    caller.data_mut().request = Some(request);
+    wasmi::Error::new("a host function was called outside figcraft_run")
+}
+
 /// Charge a host call: fuel and the call count.
-fn charge(caller: &mut Ctx<'_, '_>) -> Result<(), wasmi::Error> {
+fn charge(caller: &mut Ctx<'_>) -> Result<(), wasmi::Error> {
     let cost = caller.data().limits.call_fuel;
     let left = caller.get_fuel()?;
     if left < cost {
@@ -235,7 +402,7 @@ fn charge(caller: &mut Ctx<'_, '_>) -> Result<(), wasmi::Error> {
 }
 
 /// The bytes at `(ptr, len)` in the plugin's memory.
-fn read_bytes(caller: &mut Ctx<'_, '_>, ptr: i32, len: i32) -> Result<Vec<u8>, wasmi::Error> {
+fn read_bytes(caller: &mut Ctx<'_>, ptr: i32, len: i32) -> Result<Vec<u8>, wasmi::Error> {
     let (ptr, len) = (ptr as u32 as usize, len as u32 as usize);
     if len > caller.data().limits.max_message {
         return Err(abort(caller, PluginError::Limit(format!("a {len}-byte string is too long"))));
@@ -250,44 +417,29 @@ fn read_bytes(caller: &mut Ctx<'_, '_>, ptr: i32, len: i32) -> Result<Vec<u8>, w
 }
 
 /// The UTF-8 text at `(ptr, len)`.
-fn read_str(caller: &mut Ctx<'_, '_>, ptr: i32, len: i32) -> Result<String, wasmi::Error> {
+fn read_str(caller: &mut Ctx<'_>, ptr: i32, len: i32) -> Result<String, wasmi::Error> {
     let bytes = read_bytes(caller, ptr, len)?;
     String::from_utf8(bytes).map_err(|_| abort(caller, PluginError::Trap("a string isn't valid UTF-8".into())))
 }
 
-/// Make `bytes` the reply; returns its length.
-fn set_reply(caller: &mut Ctx<'_, '_>, bytes: Vec<u8>) -> Result<i32, wasmi::Error> {
-    let max = caller.data().limits.max_message;
-    let bytes = if bytes.len() > max { format!("the result is larger than {max} bytes").into_bytes() } else { bytes };
-    let len = i32::try_from(bytes.len()).unwrap_or(i32::MAX);
-    caller.data_mut().reply = bytes;
-    Ok(len)
-}
-
-fn linker<'h>(engine: &Engine) -> Result<Linker<State<'h>>, PluginError> {
-    let mut l = <Linker<State<'h>>>::new(engine);
+fn linker(engine: &Engine) -> Result<Linker<State>, PluginError> {
+    let mut l = <Linker<State>>::new(engine);
     let err = |e: wasmi::errors::LinkerError| PluginError::InvalidModule(e.to_string());
-    l.func_wrap(IMPORT_MODULE, "call", |mut c: Ctx<'_, 'h>, cp: i32, cl: i32, pp: i32, pl: i32| -> Result<i32, wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "call", |mut c: Ctx<'_>, cp: i32, cl: i32, pp: i32, pl: i32| -> Result<i32, wasmi::Error> {
         charge(&mut c)?;
         let cmd = read_str(&mut c, cp, cl)?;
         let params = read_str(&mut c, pp, pl)?;
         let params = if params.trim().is_empty() { "{}".to_string() } else { params };
-        let (status, reply) = match c.data_mut().host.call(&cmd, &params) {
-            Ok(v) => (0, v),
-            Err(m) => (1, m),
-        };
-        set_reply(&mut c, reply.into_bytes())?;
-        Ok(status)
+        Err(ask(&mut c, Request::Call(cmd, params)))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "selection", |mut c: Ctx<'_, 'h>| -> Result<i32, wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "selection", |mut c: Ctx<'_>| -> Result<i32, wasmi::Error> {
         charge(&mut c)?;
-        let sel = c.data_mut().host.selection();
-        set_reply(&mut c, sel.into_bytes())
+        Err(ask(&mut c, Request::Selection))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "reply_len", |c: Ctx<'_, 'h>| -> i32 { i32::try_from(c.data().reply.len()).unwrap_or(i32::MAX) }).map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "reply_read", |mut c: Ctx<'_, 'h>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "reply_len", |c: Ctx<'_>| -> i32 { i32::try_from(c.data().reply.len()).unwrap_or(i32::MAX) }).map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "reply_read", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
         let (ptr, want) = (ptr as u32 as usize, len as u32 as usize);
         let Some(mem) = c.get_export("memory").and_then(Extern::into_memory) else {
             return Err(abort(&mut c, PluginError::InvalidModule("no memory".into())));
@@ -300,29 +452,64 @@ fn linker<'h>(engine: &Engine) -> Result<Linker<State<'h>>, PluginError> {
         Ok(i32::try_from(n).unwrap_or(i32::MAX))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "log", |mut c: Ctx<'_, 'h>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "log", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
         charge(&mut c)?;
         let line = read_str(&mut c, ptr, len)?;
-        let st = c.data_mut();
-        st.host.log(&line);
-        if st.out.logs.len() < st.limits.max_logs {
-            st.out.logs.push(line);
-        }
-        Ok(())
+        Err(ask(&mut c, Request::Log(line)))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "notify", |mut c: Ctx<'_, 'h>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "notify", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
         charge(&mut c)?;
         let msg = read_str(&mut c, ptr, len)?;
         let msg: String = msg.chars().filter(|ch| !ch.is_control()).take(200).collect();
-        c.data_mut().host.notify(&msg);
-        Ok(())
+        Err(ask(&mut c, Request::Notify(msg)))
     })
     .map_err(err)?;
-    l.func_wrap(IMPORT_MODULE, "set_output", |mut c: Ctx<'_, 'h>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
+    l.func_wrap(IMPORT_MODULE, "set_output", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<(), wasmi::Error> {
         let out = read_str(&mut c, ptr, len)?;
         c.data_mut().out.output = out;
         Ok(())
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "ui_show", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
+        let spec = read_str(&mut c, ptr, len)?;
+        let st = c.data_mut();
+        Ok(match Panel::parse(&spec) {
+            Ok(panel) => {
+                st.out.ui = Some(UiChange::Show(panel));
+                0
+            }
+            Err(why) => {
+                st.set_reply(why.into_bytes());
+                1
+            }
+        })
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "ui_close", |mut c: Ctx<'_>| -> Result<(), wasmi::Error> {
+        charge(&mut c)?;
+        c.data_mut().out.ui = Some(UiChange::Close);
+        Ok(())
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "setting_get", |mut c: Ctx<'_>, kp: i32, kl: i32| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
+        let key = read_str(&mut c, kp, kl)?;
+        Err(ask(&mut c, Request::SettingGet(key)))
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "setting_set", |mut c: Ctx<'_>, kp: i32, kl: i32, vp: i32, vl: i32| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
+        let key = read_str(&mut c, kp, kl)?;
+        let value = read_str(&mut c, vp, vl)?;
+        Err(ask(&mut c, Request::SettingSet(key, value)))
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "setting_delete", |mut c: Ctx<'_>, kp: i32, kl: i32| -> Result<(), wasmi::Error> {
+        charge(&mut c)?;
+        let key = read_str(&mut c, kp, kl)?;
+        Err(ask(&mut c, Request::SettingDelete(key)))
     })
     .map_err(err)?;
     Ok(l)

@@ -50,7 +50,7 @@ pub use figcraft_doc as doc;
 pub use figcraft_svg::looks_like_svg;
 pub use tools::{PointerEvent, PointerKind, ToolId};
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use figcraft_doc::{Document, Node, NodeId};
@@ -491,6 +491,10 @@ pub struct Prefs {
     /// Installed plugins (Plugins menu), in menu order.
     #[serde(serialize_with = "plugins::persisted")]
     pub plugins: Vec<plugins::InstalledPlugin>,
+    /// Plugins' own settings (`setting_set`), by plugin id, then key: JSON values, capped per
+    /// plugin.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_settings: BTreeMap<String, BTreeMap<String, Value>>,
     /// Recently opened or saved files, newest first (File ▸ Open recent; at most
     /// [`cmd::file::MAX_RECENT`]).
     pub recent_files: Vec<String>,
@@ -511,6 +515,7 @@ impl Default for Prefs {
             reduce_motion: false,
             invite_links: None,
             plugins: Vec::new(),
+            plugin_settings: BTreeMap::new(),
             recent_files: Vec::new(),
         }
     }
@@ -1247,6 +1252,8 @@ mod paint_tests;
 mod pdf_print_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod plugin_panels_tests;
 #[cfg(test)]
 mod plugins_tests;
 #[cfg(test)]

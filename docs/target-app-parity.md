@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (plugin panels and settings; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -21,7 +21,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 | Essentials user | **~53%** | estimated ([below](#essentials-user): core features 77.8% × discounts 0.92 × 0.92 × 0.8) |
 | Mainstream practitioner | **~43%** | estimated ([below](#mainstream-practitioner): weekly areas 66.8% × discounts 0.9 × 0.9 × 0.8) |
 | Remaining to beta | **~200–365 h** one Opus 5.5 agent (~40–80 h wall-clock with 5 parallel agents) | estimated |
-| Remaining to full parity | **~378–722 h** one agent (~95–165 h wall-clock with 5 parallel agents) | estimated |
+| Remaining to full parity | **~368–707 h** one agent (~95–165 h wall-clock with 5 parallel agents) | estimated |
 | Stage | **alpha**: the alpha gate passes ([roadmap](roadmap.md#alpha-gate)); `.fig` import and multiplayer are beta gaps (see [ROADMAP](../ROADMAP.md#stage)) | |
 
 The previous figures (ROADMAP of 2026-10-10, "feature depth ~79%", "full parity 115–195 h") were
@@ -35,7 +35,7 @@ tool; presence was being graded as behaviour in places.
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~360–680 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Full target (ready for real work) | ~47% | ~350–665 h | multiplayer (45–90), localization (60–100), plugins (15–40), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
 | Mainstream practitioner | ~43% | ~170–315 h | core editor depth incl. `.fig` import (88–171), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -111,11 +111,11 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 15 | Dev Mode / inspect | 2 | 80% | 62% | Code Connect, plugins in Dev Mode, editor integrations ([dev-mode-parity](dev-mode-parity.md)) | 4–8 |
 | 16 | Comments, versions, find, misc | 3 | 85% | 60% | Comments are local only; a branch's own version history (branches with review and merge landed) | 2–5 |
 | 17 | Multiplayer & sharing | 8 | 15% | 5% | Core landed (`crates/collab`: ids, change sets, server ordering, convergence tested); live sessions (preview): WebSocket transport, hosting from the desktop app, joining from the app or the browser, invite links that open the app, cursors, selections and follow, per-person undo, offline resume; a self-hosted `figcraft-server` with persistence and share links to edit or view. Left: accounts and teams, cursor chat, TLS in the desktop app ([collaboration-parity](collaboration-parity.md)) | 45–90 |
-| 18 | Plugins & widgets | 4 | 35% | 20% | Own sandboxed WASM plugins landed (#101: manifest, permissions, menu, Run last, Manage, SDK, 2 examples). Left: plugin UI at run time, settings storage, distribution, widgets; Figma's plugins are JavaScript and don't run (a JS engine would be an owner decision) ([plugins.md](plugins.md)) | 25–55 |
+| 18 | Plugins & widgets | 4 | 45% | 28% | Own sandboxed WASM plugins landed (#101: manifest, permissions, menu, Run last, Manage, SDK, 2 examples), then plugin panels called back per button or changed value and per-plugin settings (ABI v2). Left: distribution, widgets; panels one at a time without a colour picker; Figma's plugins are JavaScript and don't run (a JS engine would be an owner decision) ([plugins.md](plugins.md)) | 15–40 |
 | 19 | Team libraries & organization | 2 | 70% | 40% | Libraries kept on `figcraft-server` under their file and enabled by a share link (per-asset versions, background update checks, overrides kept), usage counts per component and file, swapping a library by names. Left: team-wide library lists, accounts and permissions, analytics over time, pushed update notices | 4–8 |
 | 20 | Figma Draw extras | 2 | 45% | 30% | Have: variable width, lasso, shape builder, noise/texture. Missing: brushes (stretch/scatter), pressure, text on a path, pattern fills, multi-edit | 10–18 |
 | 21 | AI features | 3 | 0% | 0% | First draft, rename layers, image edit/remove background, visual search, Make: needs local models (owner decision) | 30–60 |
-| | **Weighted (÷113)** | 113 | **~79%** | **~57%** | | **206–411** |
+| | **Weighted (÷113)** | 113 | **~79%** | **~57%** | | **196–396** |
 | | Core editor only (1–16, ÷94) | 94 | ~90% | ~67% | | 86–168 |
 
 ## By dimension (ready for real work)
@@ -131,9 +131,9 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | Hardware | 3 | 50% | 15–30 | Trackpad pinch and HiDPI yes; no pen pressure, no GPU canvas, no P3 on screen, one window | [hardware-parity](hardware-parity.md) |
 | Localization | 3 | 10% | 60–100 | English only; Figma ships 7 more UI languages | [localization-parity](localization-parity.md) |
 | Platforms | 3 | 75% | 10–20 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web all packaged (v0.2.0); Figma also has iOS/Android apps; non-macOS QA thin | [hardware-parity](hardware-parity.md) |
-| Ecosystem/plugins | 3 | 20% | 25–55 | Own WASM plugins with a Rust SDK and two examples (#101); no Figma plugin compatibility, no widgets, no distribution or community files; the CLI, control channel and MCP server are ahead of Figma for agents | [gaps](gaps.md) |
+| Ecosystem/plugins | 3 | 28% | 15–40 | Own WASM plugins with a Rust SDK and two examples (#101), plugin panels and settings (ABI v2); no Figma plugin compatibility, no widgets, no distribution or community files; the CLI, control channel and MCP server are ahead of Figma for agents | [gaps](gaps.md) |
 | AI features | 2 | 0% | 30–60 | None | [gaps](gaps.md) |
-| **Ready for real work** | 100 | **~47%** | **~378–722** | | |
+| **Ready for real work** | 100 | **~47%** | **~368–707** | | |
 
 Dimension hours add up to the full-parity total without double counting: the feature-area rows
 for import/export (14), multiplayer and team libraries (17, 19), plugins (18) and AI (21) are
@@ -463,9 +463,11 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    manifest… (kept in the preferences, the module re-read on every run), the installed plugins in
    the Plugins menu with a parameters form drawn from the manifest, Run last plugin (⌥⌘P), Manage
    plugins, and `plugin.*` commands for scripts, the CLI and MCP; a Rust SDK and two example
-   plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. *Left:*
-   plugin-defined UI at run time (forms or panels a plugin returns), plugin settings storage,
-   distribution; for collaboration, the browser client and a standalone server. 18–45 h.
+   plugins (Tidy names, Swatch grid) in `plugins/`, built by `cargo xtask plugins`. Then plugin
+   panels (ABI v2: fields and buttons drawn with FigCraft's widgets, the plugin called back for
+   each button or changed value as one undo step, `plugin.ui` / `plugin.event` / `plugin.close`
+   for scripts and MCP) and per-plugin settings kept with the preferences. *Left:* plugin
+   distribution; for collaboration, the browser client and a standalone server. 15–40 h.
 9. **Hardening and performance**: *landed:* `cargo xtask bench` (synthetic 1k/10k/50k-layer
    pages: engine, render and headless UI-frame timings). The canvas keeps its last image and
    re-renders only what a pan uncovers or an edit touches: moving one layer at 10k layers re-renders
@@ -577,6 +579,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Plugin panels and settings landed (gap 6, ABI v2; v1 plugins unchanged): a plugin shows a panel of notes, fields (text, number, checkbox, menu, list, colour) and buttons drawn with FigCraft's widgets; a button or a changed value calls it back with every value (same limits per callback, one undo step per callback that edits, rolled back on failure), its module staying loaded while the panel is open; `plugin.ui` / `plugin.event` / `plugin.close` drive panels headless; per-plugin settings (64 KB) kept with the preferences; the Swatch grid example gained a palette panel that remembers the last palette. Plugins & widgets breadth 35% → 45%, ready 20% → 28%, 25–55 h → 15–40 h; ecosystem 20% → 28%; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~378–722 h → ~368–707 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Branches landed (gap 17): File ▸ Create branch… copies the file into a branch tab that remembers its base; Review and merge shows both sides' changes (layers with Inspect-style property changes, styles, variables, comments) and the conflicts (the same property changed on both sides, or a layer deleted on one side and edited on the other), each resolved for the branch or main; merging is one undo step and archives the branch; Update from main; branches are saved in the `.figcraft` file. Comments, versions, find, misc breadth 80% → 85%, ready 58% → 60%, 4–8 h → 2–5 h; collaboration 12% → 13%; menu breadth 204/204 (the catalog gained File ▸ Create branch…); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~378–722 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
