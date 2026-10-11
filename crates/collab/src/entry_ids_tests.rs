@@ -122,6 +122,7 @@ fn create_everything(doc: &mut Document, who: usize, round: usize) {
         hidden_from_publishing: false,
         extends: None,
         overrides: Default::default(),
+        code_syntax: Default::default(),
     });
     let k = doc.new_comment_id();
     let c = comment(k, doc);

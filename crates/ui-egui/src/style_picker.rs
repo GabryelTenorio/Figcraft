@@ -930,6 +930,139 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
+/// Open the style editor on this file's style `id` (from the Local styles list).
+fn edit_local(app: &mut FigApp, ui: &Ui, slot: StyleSlot, id: &str) {
+    let y = ui.input(|i| i.pointer.interact_pos()).map_or(140.0, |p| p.y - 12.0);
+    let edit = app.session.doc().ok().and_then(|d| d.style(id).map(editing));
+    app.ui.style_picker = Some(Picker { slot, ids: app.session.selection(), y, query: String::new(), edit });
+}
+
+/// `style.move` for the shown style `from` dropped at shown position `to` (`shown` in display
+/// order): before the style that ends up under it, into the folder of its new neighbour above
+/// (below at the top).
+fn drop_move(shown: &[&Style], from: usize, to: usize) -> Option<Value> {
+    let moved = shown.get(from)?;
+    let rest: Vec<&Style> = shown.iter().enumerate().filter(|(i, _)| *i != from).map(|(_, s)| *s).collect();
+    let below = rest.get(to);
+    let near = to.checked_sub(1).and_then(|i| rest.get(i)).or(below)?;
+    let mut q = json!({"styles": [moved.id], "folder": folder(&near.name)});
+    if let Some(b) = below {
+        q["before"] = json!(b.id);
+    }
+    Some(q)
+}
+
+/// The id of the folder caption being renamed in the Local styles list (temp data).
+fn folder_rename_id() -> Id {
+    Id::new("local_style_folder_rename")
+}
+
+/// The Design panel's Local styles (shown with nothing selected): this file's styles by type
+/// (text, colour, effect, grid), then by folder. A click edits a style; right-click offers edit,
+/// duplicate and delete; a row dragged by its grip moves (into the folder it lands in, renamed to
+/// match); right-click on a folder renames it (and the styles in it).
+pub fn local_styles(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
+    let t = Tokens::get(ui.ctx());
+    let renaming: Option<String> = ui.data(|d| d.get_temp(folder_rename_id()));
+    let mut run: Option<(&'static str, Value)> = None;
+    let mut edit: Option<(StyleSlot, String)> = None;
+    for slot in [StyleSlot::Text, StyleSlot::Fill, StyleSlot::Effect, StyleSlot::Grid] {
+        let groups = by_folder(library::local_styles(doc).filter(|s| slot.holds(&s.kind)));
+        if groups.is_empty() {
+            continue;
+        }
+        crate::right::row(ui, 24.0, |ui| widgets::label(ui, slot.title(), t.text_secondary));
+        let mut drag = crate::list_drag::ListDrag::in_order(ui, ("local_styles", slot.key()));
+        let mut shown: Vec<&Style> = Vec::new();
+        for (f, list) in &groups {
+            let indent = if f.is_empty() { 0.0 } else { 12.0 };
+            if !f.is_empty() {
+                let w = ui.available_width();
+                let (r, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+                let text_r = Rect::from_min_max(pos2(r.min.x + widgets::PAD, r.min.y + 2.0), pos2(r.max.x - widgets::PAD, r.max.y - 2.0));
+                if renaming.as_deref() == Some(*f) {
+                    let (out, open) = widgets::rename_field(ui, folder_rename_id().with(*f), f, text_r, regular(11.0), false);
+                    if let Some(name) = out {
+                        run = Some(("style.renameFolder", json!({"folder": f, "name": name})));
+                    }
+                    if !open {
+                        ui.data_mut(|d| d.remove::<String>(folder_rename_id()));
+                    }
+                } else {
+                    let resp = resp.tip(*f);
+                    crate::bidi::paint_name(ui.painter(), text_r.left_center(), f, semibold(11.0), t.text, text_r.width());
+                    crate::right::context_popup(&resp).show(|ui| {
+                        if crate::right::menu_item(ui, tr("Rename folder"), "") {
+                            ui.data_mut(|d| d.insert_temp(folder_rename_id(), f.to_string()));
+                            ui.memory_mut(|m| m.request_focus(folder_rename_id().with(*f).with("te")));
+                            ui.close();
+                        }
+                    });
+                }
+            }
+            for s in list {
+                let index = shown.len();
+                shown.push(s);
+                let w = ui.available_width();
+                let (r, resp) = ui.allocate_exact_size(vec2(w, 28.0), Sense::click());
+                if resp.hovered() {
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
+                }
+                let x = r.min.x + widgets::PAD + indent;
+                let icon_r = Rect::from_center_size(pos2(x + 8.0, r.center().y), vec2(16.0, 16.0));
+                match &s.kind {
+                    StyleKind::Paint { paints } => {
+                        let p = paints.last().cloned().unwrap_or_else(|| Paint::solid(figcraft_color::Color::TRANSPARENT));
+                        widgets::paint_swatch(ui.painter(), icon_r, &p);
+                    }
+                    _ => icons::paint(ui.painter(), icon_r, slot.icon(), t.icon_secondary),
+                }
+                let mut name_w = r.max.x - widgets::PAD - (x + 24.0);
+                if let Some(def) = text_def(s) {
+                    let meta = ui.painter().text(
+                        pos2(r.max.x - widgets::PAD, r.center().y),
+                        Align2::RIGHT_CENTER,
+                        text_meta(def),
+                        regular(10.0),
+                        t.text_secondary,
+                    );
+                    name_w -= meta.width() + 8.0;
+                }
+                crate::bidi::paint_name(ui.painter(), pos2(x + 24.0, r.center().y), leaf(&s.name), regular(11.0), t.text, name_w);
+                let tip = if s.description.is_empty() { s.name.clone() } else { format!("{}\n{}", s.name, s.description) };
+                let resp = resp.tip(tip);
+                if resp.clicked() {
+                    edit = Some((slot, s.id.clone()));
+                }
+                crate::right::context_popup(&resp).show(|ui| {
+                    if crate::right::menu_item(ui, tr("Edit style"), "") {
+                        edit = Some((slot, s.id.clone()));
+                        ui.close();
+                    }
+                    if crate::right::menu_item(ui, tr("Duplicate"), "") {
+                        run = Some(("style.duplicate", json!({"style": s.id})));
+                        ui.close();
+                    }
+                    if crate::right::menu_item(ui, tr("Delete"), "") {
+                        run = Some(("style.delete", json!({"style": s.id})));
+                        ui.close();
+                    }
+                });
+                drag.row(ui, index, r, r, || leaf(&s.name).to_string());
+            }
+        }
+        if let Some(q) = drag.finish(ui).and_then(|(from, to)| drop_move(&shown, from, to)) {
+            run = Some(("style.move", q));
+        }
+    }
+    if let Some((cmd, q)) = run {
+        app.run(cmd, q);
+    }
+    if let Some((slot, id)) = edit {
+        edit_local(app, ui, slot, &id);
+    }
+}
+
 #[cfg(test)]
 #[path = "style_picker_tests.rs"]
 mod tests;

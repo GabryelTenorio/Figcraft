@@ -19,6 +19,7 @@ pub(crate) fn vars() -> Variables {
         hidden_from_publishing: false,
         extends: None,
         overrides: Default::default(),
+        code_syntax: Default::default(),
     };
     Variables {
         collections: vec![Collection {

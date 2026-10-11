@@ -606,6 +606,26 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
                 start_rename(ui, st, target.clone());
                 ui.close();
             }
+            if menu_item(ui, tr("Duplicate mode"), "") {
+                let name = unique(&format!("{} copy", m.name), |n| coll.modes.iter().any(|x| x.name == n));
+                let made = app.run("variable.addMode", json!({"collection": coll.id, "name": name, "from": m.id}));
+                if let Some(id) = made.and_then(|r| r["id"].as_str().map(str::to_string)) {
+                    start_rename(ui, st, Rename::Mode(coll.id.clone(), id));
+                }
+                ui.close();
+            }
+            // The default mode is the first column: moving a column changes it.
+            let last = coll.modes.len() - 1;
+            for (show, label, to) in [
+                (i > 0, tr_noop("Set as default"), 0),
+                (i > 0, tr_noop("Move column left"), i.saturating_sub(1)),
+                (i < last, tr_noop("Move column right"), i + 1),
+            ] {
+                if show && menu_item(ui, tr(label), "") {
+                    app.run("variable.moveMode", json!({"collection": coll.id, "mode": m.id, "to": to}));
+                    ui.close();
+                }
+            }
             if coll.modes.len() > 1 && menu_item(ui, tr("Delete mode"), "") {
                 app.run("variable.removeMode", json!({"collection": coll.id, "mode": m.id}));
                 ui.close();
@@ -914,6 +934,19 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
             ui.add_space(6.0);
             if widgets::checkbox(ui, v.hidden_from_publishing, tr("Hide from publishing")) {
                 app.run("variable.update", json!({"variable": v.id, "hiddenFromPublishing": !v.hidden_from_publishing}));
+            }
+            // The names code uses for it per platform (generated CSS uses the Web one).
+            ui.add_space(10.0);
+            widgets::label(ui, tr("Code syntax"), t.text_secondary);
+            for (key, label) in [("WEB", tr_noop("Web")), ("iOS", tr_noop("iOS")), ("ANDROID", tr_noop("Android"))] {
+                ui.horizontal(|ui| {
+                    let (lr, _) = ui.allocate_exact_size(vec2(60.0, 24.0), Sense::hover());
+                    ui.painter().text(lr.left_center(), Align2::LEFT_CENTER, tr(label), regular(11.0), t.text);
+                    let cur = v.code_syntax.get(key).map_or("", String::as_str);
+                    if let Some(n) = widgets::text_field_named(ui, Id::new(("var_detail_code", key, &v.id)), cur, 192.0, tr(label)) {
+                        app.run("variable.update", json!({"variable": v.id, "codeSyntax": {key: n}}));
+                    }
+                });
             }
             let scopes = scopes_for(v.kind);
             if scopes.is_empty() {

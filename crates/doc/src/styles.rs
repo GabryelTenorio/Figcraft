@@ -169,7 +169,14 @@ pub struct Variable {
     /// The modes whose value an inheriting variable overrides.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub overrides: BTreeSet<ModeId>,
+    /// The name code uses for the variable per platform ([`CODE_PLATFORMS`]: `WEB`, `iOS`,
+    /// `ANDROID`), e.g. `var(--space-xs)`; generated code uses the Web one.
+    #[serde(default, rename = "codeSyntax", skip_serializing_if = "BTreeMap::is_empty")]
+    pub code_syntax: BTreeMap<String, String>,
 }
+
+/// The platforms a variable has code syntax for (the variables JSON's `codeSyntax` keys).
+pub const CODE_PLATFORMS: [&str; 3] = ["WEB", "iOS", "ANDROID"];
 
 impl Variable {
     /// Whether pickers offer this variable for properties of `scope`.
@@ -191,9 +198,13 @@ pub fn scopes_for(kind: VariableType) -> &'static [(&'static str, &'static str)]
             ("OPACITY", "Layer opacity"),
             ("STROKE_FLOAT", "Stroke"),
             ("EFFECT_FLOAT", "Effects"),
+            ("FONT_WEIGHT", "Font weight"),
             ("FONT_SIZE", "Font size"),
             ("LINE_HEIGHT", "Line height"),
             ("LETTER_SPACING", "Letter spacing"),
+            ("PARAGRAPH_SPACING", "Paragraph spacing"),
+            ("PARAGRAPH_INDENT", "Paragraph indent"),
+            ("TEXT_CONTENT", "Text content"),
         ],
         VariableType::Color => &[
             ("FRAME_FILL", "Frame fill"),

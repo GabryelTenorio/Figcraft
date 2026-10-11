@@ -5,7 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use figcraft_doc::{ALL_SCOPES, Collection, Mode, Node, NodeKind, Variable, VariableType, VariableValue, Variables, normalize_scopes};
+use figcraft_doc::{
+    ALL_SCOPES, CODE_PLATFORMS, Collection, Mode, Node, NodeKind, Variable, VariableType, VariableValue, Variables, normalize_scopes,
+};
 use serde_json::{Map, Value, json};
 
 use super::Ctx;
@@ -93,7 +95,7 @@ pub fn export(vars: &Variables, collections: &[&Collection]) -> Value {
             v.id.clone(),
             json!({"id": v.id, "name": v.name, "key": v.id, "variableCollectionId": v.collection, "resolvedType": kind, "valuesByMode": values,
                    "remote": false, "description": v.description, "hiddenFromPublishing": v.hidden_from_publishing, "scopes": scopes,
-                   "codeSyntax": {}}),
+                   "codeSyntax": v.code_syntax}),
         );
     }
     json!({"status": 200, "error": false, "meta": {"variableCollections": colls, "variables": out}})
@@ -207,6 +209,10 @@ impl Ctx<'_> {
             hidden_from_publishing: v.get("hiddenFromPublishing").and_then(Value::as_bool).unwrap_or(false),
             extends: None,
             overrides: Default::default(),
+            code_syntax: objects(v, "codeSyntax", 16)
+                .filter(|(k, _)| CODE_PLATFORMS.contains(&k.as_str()))
+                .filter_map(|(k, x)| Some((k.clone(), clip_str(x.as_str().filter(|x| !x.trim().is_empty())?).to_string())))
+                .collect(),
         })
     }
 

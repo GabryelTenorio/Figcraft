@@ -17,13 +17,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.update",
             "Edit variable",
-            "{variable, name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers), hiddenFromPublishing? (left out when the file is published as a library)}",
+            "{variable, name?, description?, scopes? ([scope ids]; null or [\"ALL_SCOPES\"] = every supported property, [] = hidden from pickers), hiddenFromPublishing? (left out when the file is published as a library), codeSyntax? {WEB?, iOS?, ANDROID?: name code uses (\"\" clears)}}",
             true,
             update
         ),
         spec!("variable.duplicate", "Duplicate variable", "{variable} → {id}", true, duplicate),
         spec!("variable.renameMode", "Rename mode", "{collection, mode, name}", true, rename_mode),
         spec!("variable.removeMode", "Delete mode", "{collection, mode} (a collection keeps at least one mode)", true, remove_mode),
+        spec!("variable.moveMode", "Move mode", "{collection, mode, to (index; 0 = the default mode, layers on Auto follow it)}", true, move_mode),
         spec!("variable.renameCollection", "Rename collection", "{collection, name}", true, rename_collection),
         spec!(
             "variable.deleteCollection",
@@ -64,7 +65,7 @@ pub(crate) fn check_modes_editable(doc: &Document, cmd: &str, collection: &str) 
 }
 
 /// A variable name with each `/`-separated group part trimmed; None when nothing is left.
-fn clean_name(name: &str) -> Option<String> {
+pub(crate) fn clean_name(name: &str) -> Option<String> {
     let parts: Vec<&str> = name.split('/').map(str::trim).filter(|s| !s.is_empty()).collect();
     let out = parts.join("/");
     (!out.is_empty()).then(|| out.chars().take(500).collect())
@@ -103,7 +104,29 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(_) => return Err(bad(cmd, "scopes: [scope ids] or null")),
     };
+    let mut code = var.code_syntax.clone();
+    match get(p, "codeSyntax") {
+        None => {}
+        Some(Value::Object(m)) => {
+            for (k, x) in m {
+                if !CODE_PLATFORMS.contains(&k.as_str()) {
+                    return Err(bad(cmd, format!("codeSyntax: `{k}` isn't a platform (WEB, iOS, ANDROID)")));
+                }
+                match x {
+                    Value::String(n) if !n.trim().is_empty() => {
+                        code.insert(k.clone(), n.trim().chars().take(500).collect());
+                    }
+                    Value::String(_) | Value::Null => {
+                        code.remove(k);
+                    }
+                    _ => return Err(bad(cmd, "codeSyntax: names are strings")),
+                }
+            }
+        }
+        Some(_) => return Err(bad(cmd, "codeSyntax: {WEB?, iOS?, ANDROID?}")),
+    }
     let slot = doc.variables.variables.iter_mut().find(|x| x.id == var.id).ok_or_else(|| bad(cmd, "no such variable"))?;
+    slot.code_syntax = code;
     if let Some(n) = name {
         slot.name = n;
     }
@@ -195,6 +218,19 @@ fn remove_mode(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+fn move_mode(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.moveMode";
+    let to = num(p, "to").filter(|x| x.is_finite()).ok_or_else(|| bad(cmd, "`to` must be a number"))?;
+    let doc = s.doc_mut()?;
+    let (ci, mode) = mode_of(doc, cmd, p)?;
+    let coll = doc.variables.collections.get_mut(ci).ok_or_else(|| bad(cmd, "no such collection"))?;
+    let from = coll.modes.iter().position(|m| m.id == mode).ok_or_else(|| bad(cmd, "no such mode"))?;
+    let m = coll.modes.remove(from);
+    let at = (to.max(0.0) as usize).min(coll.modes.len());
+    coll.modes.insert(at, m);
+    ok()
+}
+
 fn rename_collection(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.renameCollection";
     let name = req_string(cmd, p, "name")?.trim().chars().take(200).collect::<String>();
@@ -216,18 +252,45 @@ fn delete_collection(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.deleteCollection";
     let doc = s.doc_mut()?;
     let ci = collection_index(doc, cmd, &req_string(cmd, p, "collection")?)?;
-    let cid = doc.variables.collections.remove(ci).id;
+    let cid = doc.variables.collections.get(ci).map(|c| c.id.clone()).ok_or_else(|| bad(cmd, "no such collection"))?;
     let gone: BTreeSet<VariableId> = doc.variables.variables.iter().filter(|v| v.collection == cid).map(|v| v.id.clone()).collect();
-    doc.variables.variables.retain(|v| v.collection != cid);
-    // Layers keep their current values but no longer follow the deleted variables or modes.
-    let users: Vec<NodeId> =
-        doc.nodes().filter(|n| n.var_modes.contains_key(&cid) || n.bound.values().any(|v| gone.contains(v))).map(|n| n.id).collect();
+    forget_variables(doc, &gone)?;
+    doc.variables.collections.retain(|c| c.id != cid);
+    // Layers no longer follow the deleted modes either.
+    let users: Vec<NodeId> = doc.nodes().filter(|n| n.var_modes.contains_key(&cid)).map(|n| n.id).collect();
     for id in users {
-        let n = doc.get_mut(id)?;
-        n.var_modes.remove(&cid);
-        n.bound.retain(|_, v| !gone.contains(v));
+        doc.get_mut(id)?.var_modes.remove(&cid);
     }
     Ok(json!({"deletedVariables": gone.len()}))
+}
+
+/// Delete variables `gone`: layers bound to them keep the values they show but no longer follow
+/// them, and variables aliasing them take their values (per mode: the aliased variable's value in
+/// that mode when it's in the same collection, else in its default mode).
+pub(crate) fn forget_variables(doc: &mut Document, gone: &BTreeSet<VariableId>) -> Result<()> {
+    let vars = &doc.variables;
+    let mut detached: Vec<(VariableId, ModeId, VariableValue)> = Vec::new();
+    for v in vars.variables.iter().filter(|v| !gone.contains(&v.id)) {
+        for (m, val) in &v.values {
+            let VariableValue::Alias(a) = val else { continue };
+            let Some(t) = vars.get(a).filter(|t| gone.contains(&t.id)) else { continue };
+            let modes = std::collections::BTreeMap::from([(t.collection.clone(), m.clone())]);
+            if let Some(r) = vars.resolve(&t.id, &modes) {
+                detached.push((v.id.clone(), m.clone(), r));
+            }
+        }
+    }
+    for (vid, m, r) in detached {
+        if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == vid) {
+            slot.values.insert(m, r);
+        }
+    }
+    doc.variables.variables.retain(|v| !gone.contains(&v.id));
+    let users: Vec<NodeId> = doc.nodes().filter(|n| n.bound.values().any(|v| gone.contains(v))).map(|n| n.id).collect();
+    for id in users {
+        doc.get_mut(id)?.bound.retain(|_, v| !gone.contains(v));
+    }
+    Ok(())
 }
 
 fn reset_override(s: &mut Session, p: &Value) -> Result<Value> {
@@ -366,6 +429,9 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
         "opacity" => "OPACITY",
         "strokeWeight" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" => "STROKE_FLOAT",
         "fontSize" => "FONT_SIZE",
+        "fontWeight" => "FONT_WEIGHT",
+        "paragraphSpacing" => "PARAGRAPH_SPACING",
+        "paragraphIndent" => "PARAGRAPH_INDENT",
         "lineHeight" => "LINE_HEIGHT",
         "letterSpacing" => "LETTER_SPACING",
         "characters" => "TEXT_CONTENT",
@@ -384,4 +450,15 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
             (BoundList::Grids, _, _) => return None,
         },
     })
+}
+
+/// Whether property `field` of `node` takes a variable of type `kind`: the type its scope belongs
+/// to (number variables also fill text content), booleans for visibility, numbers for layout grid
+/// fields; fields without a known type take any.
+pub fn field_takes(doc: &Document, node: NodeId, field: &str, kind: VariableType) -> bool {
+    match (field, field_scope(doc, node, field)) {
+        ("visible", _) => kind == VariableType::Boolean,
+        (_, Some(scope)) => scope_known(kind, scope),
+        (f, None) => !matches!(super::lists::list_binding(f), Some((BoundList::Grids, _, _))) || kind == VariableType::Number,
+    }
 }

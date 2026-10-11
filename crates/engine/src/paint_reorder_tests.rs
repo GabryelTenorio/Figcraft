@@ -130,10 +130,11 @@ fn strokes_move_with_their_bindings_and_moves_unlink_styles() {
         ex(&mut s, "stroke.add", json!({"ids": [r], "color": "#00FF00"}));
     }
     ex(&mut s, "variable.bind", json!({"ids": [a, b], "field": "stroke", "variable": "brand"}));
+    // (Adding a fill to a styled layer would unlink its style: add it first.)
+    ex(&mut s, "fill.add", json!({"ids": [a, b], "color": "#FFFFFF"}));
     ex(&mut s, "style.create", json!({"type": "paint", "name": "Two", "from": a}));
     ex(&mut s, "style.apply", json!({"ids": [a, b], "style": "Two"}));
     assert!(node(&s, a).styles.fill.is_some());
-    ex(&mut s, "fill.add", json!({"ids": [a, b], "color": "#FFFFFF"}));
     // One command moves the strokes of every selected layer.
     ex(&mut s, "stroke.move", json!({"ids": [a, b], "from": 0, "to": 1}));
     for r in [a, b] {

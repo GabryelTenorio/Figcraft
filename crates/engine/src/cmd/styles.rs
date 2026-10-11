@@ -47,6 +47,21 @@ pub fn specs() -> Vec<CommandSpec> {
             detach
         ),
         spec!("style.update", "Edit style", "{style, name?, description?, value?, from? (node id: redefine from it)}", true, update),
+        spec!("style.duplicate", "Duplicate style", "{style} → {id} (right below it, named \"<name> copy\")", true, duplicate),
+        spec!(
+            "style.move",
+            "Move styles",
+            "{styles [ids], before? (style id; default: the end), folder? (\"Brand/Blog\"; \"\" = no folder: the styles are renamed into it)}",
+            true,
+            move_styles
+        ),
+        spec!(
+            "style.renameFolder",
+            "Rename style folder",
+            "{folder (\"Brand/Blog\"), name (\"Brand/News\")} (renames the styles in it)",
+            true,
+            rename_folder
+        ),
         spec!("style.delete", "Delete style", "{style}", true, |s, p| {
             let id = req_string("style.delete", p, "style")?;
             let doc = s.doc_mut()?;
@@ -99,7 +114,7 @@ pub fn specs() -> Vec<CommandSpec> {
             doc.variables.collections.push(Collection { id: id.clone(), name, modes, extends: None });
             Ok(json!({"id": id}))
         }),
-        spec!("variable.addMode", "Add mode", "{collection, name}", true, |s, p| {
+        spec!("variable.addMode", "Add mode", "{collection, name, from? (mode id or name to duplicate; default: the default mode)}", true, |s, p| {
             let c = req_string("variable.addMode", p, "collection")?;
             let name = req_string("variable.addMode", p, "name")?;
             let missing = || bad("variable.addMode", "no such collection");
@@ -110,9 +125,12 @@ pub fn specs() -> Vec<CommandSpec> {
             // session it comes from this client's id space).
             let mid = doc.new_mode_id(&cid).ok_or_else(missing)?;
             let coll = doc.variables.collections.iter_mut().find(|x| x.id == cid).ok_or_else(missing)?;
-            let first = coll.modes.first().map(|m| m.id.clone());
+            let first = match string(p, "from") {
+                Some(f) => Some(coll.find_mode(&f).map(|m| m.id.clone()).ok_or_else(|| bad("variable.addMode", format!("no mode `{f}`")))?),
+                None => coll.modes.first().map(|m| m.id.clone()),
+            };
             coll.modes.push(Mode { id: mid.clone(), name });
-            // New mode starts with the default mode's values.
+            // New mode starts with the default mode's values (a duplicate with its source's).
             for v in doc.variables.variables.iter_mut().filter(|v| v.collection == cid) {
                 if let Some(val) = first.as_ref().and_then(|f| v.values.get(f)).cloned() {
                     v.values.insert(mid.clone(), val);
@@ -134,17 +152,24 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             var_set
         ),
-        spec!("variable.delete", "Delete variable", "{variable}", true, |s, p| {
-            let v = req_string("variable.delete", p, "variable")?;
-            let doc = s.doc_mut()?;
-            let var = doc.variables.get(&v).ok_or_else(|| bad("variable.delete", "no such variable"))?;
-            if var.extends.is_some() {
-                return Err(bad("variable.delete", "an inherited variable stays while the collection it extends has it"));
+        spec!(
+            "variable.delete",
+            "Delete variable",
+            "{variable} (bound layers keep their values; variables aliasing it take its values)",
+            true,
+            |s, p| {
+                let v = req_string("variable.delete", p, "variable")?;
+                let doc = s.doc_mut()?;
+                let var = doc.variables.get(&v).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+                if var.extends.is_some() {
+                    return Err(bad("variable.delete", "an inherited variable stays while the collection it extends has it"));
+                }
+                // Bound layers keep their values; aliases to it take its values.
+                let gone = std::collections::BTreeSet::from([var.id.clone()]);
+                super::variables::forget_variables(doc, &gone)?;
+                ok()
             }
-            let id = var.id.clone();
-            doc.variables.variables.retain(|x| x.id != id);
-            ok()
-        }),
+        ),
         spec!(
             "variable.bind",
             "Bind variable",
@@ -257,7 +282,7 @@ fn kind_from_node(t: &str, n: &Node) -> Option<StyleKind> {
 fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "style.create";
     let t = req_string(cmd, p, "type")?.to_ascii_lowercase();
-    let name = req_string(cmd, p, "name")?;
+    let name = style_name(cmd, &req_string(cmd, p, "name")?)?;
     let from = id(p, "from").or_else(|| s.selection().first().copied());
     // A text style made while editing text takes (and links) the selected chars.
     let range = match (t.as_str(), crate::textedit::selected_range(s)) {
@@ -309,6 +334,10 @@ pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<
         None => None,
     };
     let n = doc.get_mut(id)?;
+    // The style's values replace variables bound to what it sets.
+    if let Some(st) = &style {
+        n.bound.retain(|k, _| !style_sets(field, &st.kind, k));
+    }
     match (field, &style) {
         ("fillStyle", Some(Style { kind: StyleKind::Paint { paints }, id, .. })) => {
             n.fills = paints.clone();
@@ -356,7 +385,14 @@ pub(crate) fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     let style = s.doc()?.style(&st).cloned().ok_or_else(|| bad(cmd, format!("no style `{st}`")))?;
     // Text styles go on chars: a range, the selected chars of the edited text, or whole layers.
     if let StyleKind::Text { style: def } = &style.kind {
-        for (i, range) in text_targets(cmd, s, p)? {
+        // A text style is no property of other layers: they're left alone.
+        let doc = s.doc()?;
+        let targets: Vec<TextTarget> =
+            text_targets(cmd, s, p)?.into_iter().filter(|(i, _)| doc.node(*i).is_some_and(|n| n.kind.text().is_some())).collect();
+        if targets.is_empty() {
+            return Err(bad(cmd, "a text style goes on text layers"));
+        }
+        for (i, range) in targets {
             let doc = s.doc_mut()?;
             match range {
                 Some((a, b)) => {
@@ -407,8 +443,9 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
+    let name = string(p, "name").map(|n| style_name(cmd, &n)).transpose()?;
     let Some(style) = doc.styles.get_mut(idx) else { return Err(bad(cmd, "no such style")) };
-    if let Some(n) = string(p, "name") {
+    if let Some(n) = name {
         style.name = n;
     }
     if let Some(d) = string(p, "description") {
@@ -419,6 +456,121 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let sid = style.id.clone();
     propagate_style(doc, &sid);
+    ok()
+}
+
+/// Whether a `field` link (fillStyle, …) to a style of `kind` sets the property bound as `key`.
+fn style_sets(field: &str, kind: &StyleKind, key: &str) -> bool {
+    use super::lists::{BoundList, list_binding};
+    let list = match (field, kind) {
+        ("fillStyle", _) => BoundList::Fills,
+        ("strokeStyle", _) => BoundList::Strokes,
+        ("effectStyle", _) => BoundList::Effects,
+        ("gridStyle", _) => BoundList::Grids,
+        (_, StyleKind::Text { .. }) => {
+            return matches!(
+                key,
+                "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "paragraphSpacing" | "paragraphIndent"
+            );
+        }
+        _ => return false,
+    };
+    list_binding(key).is_some_and(|(l, _, _)| l == list)
+}
+
+/// A style name with each `/`-separated folder part trimmed; empty names are refused.
+fn style_name(cmd: &str, name: &str) -> Result<String> {
+    super::variables::clean_name(name).ok_or_else(|| bad(cmd, "name can't be empty"))
+}
+
+/// The index of local style `st` (id or name); library styles are read-only.
+fn local_style_index(doc: &Document, cmd: &str, st: &str) -> Result<usize> {
+    let idx = doc.styles.iter().position(|x| x.id == st || x.name == st).ok_or_else(|| bad(cmd, format!("no style `{st}`")))?;
+    match doc.styles.get(idx) {
+        Some(x) if crate::library::is_remote_style(doc, &x.id) => Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into())),
+        _ => Ok(idx),
+    }
+}
+
+fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.duplicate";
+    let doc = s.doc_mut()?;
+    let idx = local_style_index(doc, cmd, &req_string(cmd, p, "style")?)?;
+    let mut copy = doc.styles.get(idx).cloned().ok_or_else(|| bad(cmd, "no such style"))?;
+    let base = format!("{} copy", copy.name);
+    copy.name = (1..1000)
+        .map(|k| if k == 1 { base.clone() } else { format!("{base} {k}") })
+        .find(|n| !doc.styles.iter().any(|x| x.name == *n))
+        .unwrap_or(base);
+    copy.id = doc.new_style_id();
+    let id = copy.id.clone();
+    doc.styles.insert(idx + 1, copy);
+    Ok(json!({"id": id}))
+}
+
+/// `name` moved into `folder` ("" = none): its last part under the folder.
+fn in_folder(folder: &str, name: &str) -> String {
+    let leaf = name.rsplit('/').next().unwrap_or(name);
+    if folder.is_empty() { leaf.to_string() } else { format!("{folder}/{leaf}") }
+}
+
+fn move_styles(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.move";
+    let doc = s.doc_mut()?;
+    let keys: Vec<&str> = match get(p, "styles") {
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).collect(),
+        _ => return Err(bad(cmd, "`styles` must be a list of style ids")),
+    };
+    let mut picked: Vec<usize> = keys.iter().map(|k| local_style_index(doc, cmd, k)).collect::<Result<_>>()?;
+    if picked.is_empty() {
+        return Err(bad(cmd, "no styles to move"));
+    }
+    picked.sort_unstable();
+    picked.dedup();
+    let folder = match string(p, "folder") {
+        Some(f) if f.split('/').all(|x| x.trim().is_empty()) => Some(String::new()),
+        Some(f) => Some(style_name(cmd, &f)?),
+        None => None,
+    };
+    let before = match string(p, "before") {
+        Some(b) => Some(doc.style(&b).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, format!("no style `{b}`")))?),
+        None => None,
+    };
+    // Take the moved styles out (keeping their order), then put them back before `before` (or last).
+    let mut moved = Vec::with_capacity(picked.len());
+    for i in picked.into_iter().rev() {
+        moved.push(doc.styles.remove(i));
+    }
+    moved.reverse();
+    if let Some(f) = &folder {
+        for st in &mut moved {
+            st.name = in_folder(f, &st.name);
+        }
+    }
+    let at = before.and_then(|b| doc.styles.iter().position(|x| x.id == b)).unwrap_or(doc.styles.len());
+    doc.styles.splice(at..at, moved);
+    ok()
+}
+
+fn rename_folder(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.renameFolder";
+    let from = style_name(cmd, &req_string(cmd, p, "folder")?)?;
+    let to = style_name(cmd, &req_string(cmd, p, "name")?)?;
+    let doc = s.doc_mut()?;
+    let prefix = format!("{from}/");
+    let inside: Vec<usize> = (0..doc.styles.len())
+        .filter(|i| doc.styles.get(*i).is_some_and(|x| x.name.starts_with(&prefix) && !crate::library::is_remote_style(doc, &x.id)))
+        .collect();
+    if inside.is_empty() {
+        return Err(bad(cmd, format!("no styles in folder `{from}`")));
+    }
+    for i in inside {
+        if let Some(st) = doc.styles.get_mut(i)
+            && let Some(rest) = st.name.strip_prefix(&prefix)
+        {
+            st.name = format!("{to}/{rest}");
+        }
+    }
     ok()
 }
 
@@ -492,6 +644,32 @@ pub fn sync_text_styles(doc: &mut Document, ids: &[NodeId]) {
     }
 }
 
+/// Paint, effect and grid style links follow edits (on `ids`): a list edited away from its style's
+/// values (by `node.set`, a paint row, a bound variable…) unlinks, as text chars do
+/// ([`sync_text_styles`]).
+pub fn sync_list_styles(doc: &mut Document, before: &Document, ids: &[NodeId]) {
+    for &id in ids {
+        let (Some(n), Some(b)) = (doc.node(id), before.node(id)) else { continue };
+        if n.styles.is_empty() {
+            continue;
+        }
+        let off = |r: &Option<StyleId>, same: &dyn Fn(&StyleKind) -> bool| r.as_deref().and_then(|s| doc.style(s)).is_some_and(|st| !same(&st.kind));
+        let fill = n.fills != b.fills && off(&n.styles.fill, &|k| matches!(k, StyleKind::Paint { paints } if *paints == n.fills));
+        let stroke = n.strokes != b.strokes && off(&n.styles.stroke, &|k| matches!(k, StyleKind::Paint { paints } if *paints == n.strokes));
+        let effect = n.effects != b.effects && off(&n.styles.effect, &|k| matches!(k, StyleKind::Effect { effects } if *effects == n.effects));
+        let grid = n.grids != b.grids && off(&n.styles.grid, &|k| matches!(k, StyleKind::Grid { grids } if *grids == n.grids));
+        if !(fill || stroke || effect || grid) {
+            continue;
+        }
+        let Ok(n) = doc.get_mut(id) else { continue };
+        for (gone, r) in [(fill, &mut n.styles.fill), (stroke, &mut n.styles.stroke), (effect, &mut n.styles.effect), (grid, &mut n.styles.grid)] {
+            if gone {
+                *r = None;
+            }
+        }
+    }
+}
+
 /// `variable.bind`: bind (or with no variable, unbind) `field` of the targets.
 pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "variable.bind";
@@ -503,10 +681,17 @@ pub fn bind(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(doc.variables.get(v).map(|x| x.id.clone()).ok_or_else(|| bad(cmd, "no such variable"))?),
         None => None,
     };
-    // An instance's component property takes a variable of its type.
-    if let (Some(name), Some(v)) = (field.strip_prefix(crate::components::PROP_BINDING), vid.as_ref().and_then(|v| doc.variables.get(v))) {
+    // An instance's component property takes a variable of its type; other fields the types their
+    // scopes belong to.
+    if let Some(v) = vid.as_ref().and_then(|v| doc.variables.get(v)) {
         for i in &ids {
-            super::component::check_prop_binding(doc, *i, name, v.kind).map_err(|e| bad(cmd, e))?;
+            match field.strip_prefix(crate::components::PROP_BINDING) {
+                Some(name) => super::component::check_prop_binding(doc, *i, name, v.kind).map_err(|e| bad(cmd, e))?,
+                None if !super::variables::field_takes(doc, *i, &field, v.kind) => {
+                    return Err(bad(cmd, format!("`{field}` doesn't take a {} variable", v.kind.id())));
+                }
+                None => {}
+            }
         }
     }
     for i in ids {
@@ -600,6 +785,14 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     for m in &coll.modes {
         values.entry(m.id.clone()).or_insert_with(|| default.clone());
     }
+    // Aliases name an existing variable of the same type (stored by id; nothing refers to the new
+    // variable yet, so they can't loop).
+    for val in values.values_mut() {
+        if let VariableValue::Alias(a) = val {
+            let t = doc.variables.get(a).filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
+            *a = t.id.clone();
+        }
+    }
     let id = doc.new_variable_id();
     doc.variables.variables.push(Variable {
         id: id.clone(),
@@ -612,6 +805,7 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         hidden_from_publishing: false,
         extends: None,
         overrides: Default::default(),
+        code_syntax: Default::default(),
     });
     Ok(json!({"id": id}))
 }
@@ -695,6 +889,7 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
                 // Arc sweep and ratio variables hold percentages too (what the Arc fields show).
                 VariableValue::Number(x) if field == "arcSweep" => json!(x * 3.6),
                 VariableValue::Number(x) if field == "arcInner" => json!(x / 100.0),
+                VariableValue::Number(x) if field == "characters" => json!(trim_num(*x)),
                 VariableValue::Number(x) => json!(x),
                 VariableValue::String(x) => json!(x),
                 VariableValue::Boolean(b) => json!(b),

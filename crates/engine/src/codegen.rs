@@ -201,8 +201,8 @@ pub(crate) struct Tokens(pub Vec<(String, String)>);
 
 impl Tokens {
     /// `var(--name, value)`, remembering the variable.
-    fn var(&mut self, variable: &str, value: String) -> String {
-        let name = css_var_name(variable);
+    fn var(&mut self, variable: &Variable, value: String) -> String {
+        let name = css_var_of(variable);
         let out = format!("var({name}, {value})");
         if !self.0.iter().any(|(n, _)| *n == name) {
             self.0.push((name, value));
@@ -234,10 +234,19 @@ pub fn css_var_name(variable: &str) -> String {
     if trimmed.len() <= 2 { "--variable".into() } else { trimmed.to_string() }
 }
 
+/// A variable's CSS custom property: its Web code syntax (`var(--x)` or `--x`) when it has one,
+/// else made from its name.
+pub fn css_var_of(v: &Variable) -> String {
+    let Some(web) = v.code_syntax.get("WEB").map(|w| w.trim()) else { return css_var_name(&v.name) };
+    let inner = web.strip_prefix("var(").map_or(web, |r| r.split([',', ')']).next().unwrap_or("").trim());
+    let valid = inner.len() > 2 && inner.starts_with("--") && inner.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+    if valid { inner.chars().take(80).collect() } else { css_var_name(inner) }
+}
+
 /// `value`, or a reference to the variable bound to the first of `fields` that has one.
 fn tok(doc: &Document, n: &Node, fields: &[&str], value: String, t: &mut Tokens) -> String {
     match fields.iter().find_map(|f| crate::devinspect::bound_variable(doc, n, f)) {
-        Some(v) => t.var(&v.name, value),
+        Some(v) => t.var(v, value),
         None => value,
     }
 }

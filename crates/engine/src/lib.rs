@@ -1003,8 +1003,9 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         }
     }
     touched.extend(doc.take_dirty());
-    // Text chars edited away from their text style unlink from it.
+    // Lists and text chars edited away from their style unlink from it.
     let live_now: Vec<NodeId> = touched.iter().copied().filter(|i| doc.contains(*i)).collect();
+    cmd::styles::sync_list_styles(doc, before, &live_now);
     cmd::styles::sync_text_styles(doc, &live_now);
     touched.extend(doc.take_dirty());
     let live = |doc: &Document, t: &BTreeSet<NodeId>| -> Vec<NodeId> { t.iter().copied().filter(|i| doc.contains(*i)).collect() };
@@ -1330,6 +1331,8 @@ mod stroke_style_tests;
 #[cfg(test)]
 mod style_tests;
 #[cfg(test)]
+mod styles_behaviour_tests;
+#[cfg(test)]
 mod svg_import_tests;
 #[cfg(test)]
 mod tests;
@@ -1347,6 +1350,8 @@ mod tiff_tests;
 mod transform_behaviour_tests;
 #[cfg(test)]
 mod variable_tests;
+#[cfg(test)]
+mod variables_behaviour_tests;
 #[cfg(test)]
 mod variables_editor_tests;
 #[cfg(test)]

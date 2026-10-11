@@ -157,3 +157,45 @@ fn chars_linked_to_several_styles_show_mixed() {
     let doc = app.session.doc().unwrap().clone();
     assert_eq!(text_link(&app, &doc, &[t]), None);
 }
+
+#[test]
+fn local_style_drops_move_into_the_folder_above() {
+    let st = |id: &str, name: &str| Style { id: id.into(), name: name.into(), description: String::new(), kind: StyleKind::Paint { paints: vec![] } };
+    let (a, b, c) = (st("a", "Top"), st("b", "Brand/One"), st("c", "Brand/Two"));
+    let shown = [&a, &b, &c];
+    // `Top` dropped between One and Two: into Brand, before Two.
+    assert_eq!(drop_move(&shown, 0, 1), Some(json!({"styles": ["a"], "folder": "Brand", "before": "c"})));
+    // Two dropped at the top: the folder of the style below it (none), before Top.
+    assert_eq!(drop_move(&shown, 2, 0), Some(json!({"styles": ["c"], "folder": "", "before": "a"})));
+    // One dropped last: Brand, at the end.
+    assert_eq!(drop_move(&shown, 1, 2), Some(json!({"styles": ["b"], "folder": "Brand"})));
+    assert_eq!(drop_move(&shown, 5, 0), None);
+}
+
+#[test]
+fn local_styles_list_draws_by_type_and_folder() {
+    let mut s = Session::new();
+    for (ty, name, value) in
+        [("paint", "Brand/Primary", json!(["#0D99FF"])), ("paint", "Danger", json!(["#F24822"])), ("text", "Type/Body", json!({"fontSize": 14}))]
+    {
+        s.execute("style.create", &json!({"type": ty, "name": name, "value": value})).unwrap();
+    }
+    let mut app = FigApp::new(s, Box::new(NoServices));
+    let ctx = egui::Context::default();
+    let mut t = 0.0;
+    // Nothing selected: the Design panel shows the page, with Local styles; a folder rename in
+    // progress draws its field.
+    ctx.data_mut(|d| d.insert_temp(folder_rename_id(), "Brand".to_string()));
+    for _ in 0..3 {
+        frame(&ctx, &mut app, &mut t);
+    }
+    edit_local_for_test(&mut app, &ctx);
+    frame(&ctx, &mut app, &mut t);
+    let editing = app.ui.style_picker.as_ref().and_then(|p| p.edit.as_ref()).map(|e| e.name.clone());
+    assert_eq!(editing.as_deref(), Some("Danger"), "a local style opens in the style editor");
+}
+
+fn edit_local_for_test(app: &mut FigApp, ctx: &egui::Context) {
+    let mut out = ctx.run_ui(RawInput::default(), |ui| edit_local(app, ui, StyleSlot::Fill, "Danger"));
+    out.textures_delta.clear();
+}

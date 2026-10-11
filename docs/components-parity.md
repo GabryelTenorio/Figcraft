@@ -1,6 +1,6 @@
 # Components, variants, styles and variables parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (styles and variables behaviour suite and fixes; components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
 
 Design systems are why teams adopt Figma. **Components: breadth ~96%, ready ~72%. Styles and
 variables: breadth ~92%, ready ~72% (estimated).** QA'd with a synthetic design system of ~300
@@ -56,9 +56,15 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Paint, text, effect, grid styles; style picker; text styles on character ranges | done | |
-| Variables: colour, number, string, boolean; collections, modes, aliases, scopes, groups | done | |
-| Bindings: fills, strokes, effects, opacity, padding, gaps, sizes, radius, font size, line height, letter spacing, text, visibility, layout grids, instance properties | done | |
+| Paint, text, effect, grid styles; style picker; text styles on character ranges | done | behaviour suite: `styles_behaviour_tests.rs` |
+| Editing a style updates its layers; detach and delete keep values; editing a styled property unlinks that style | done | an edited fill/stroke/effect/grid list or text chars unlink; applying a style replaces variables bound to what it sets; text styles on text layers only |
+| Organising styles: folders by `/` names, order, duplicate, rename folder, Local styles list | done | `style.move` (into a folder renames), `style.duplicate` (right below), `style.renameFolder`; the page's Local styles list by type and folder (drag to reorder, right-click) |
+| Variables inside styles (colour variables in paint and shadow styles) | missing | 2–3 h |
+| Variables: colour, number, string, boolean; collections, modes, aliases, scopes, groups | done | behaviour suite: `variables_behaviour_tests.rs`; aliases same type, no loops (also on create); scopes filter pickers only |
+| Modes: add, duplicate, rename, delete, set as default / reorder | done | layers on Auto follow a new default; explicit modes stay |
+| Deleting a bound variable or its collection | done | layers keep their last value and are unbound; aliases to it take its values |
+| Code syntax per platform (Web, iOS, Android) | done | generated CSS uses the Web name; in the variables JSON; SwiftUI/Compose code doesn't name variables yet |
+| Bindings: fills, strokes, effects, opacity, padding, gaps, sizes, radius, font size/weight, line height, letter spacing, paragraph spacing/indent, text, visibility, layout grids, instance properties | done | type-checked per field; number variables fill text content |
 | Explicit modes per frame, library collections' modes | done | |
 | Gradient stops and variant properties bound to variables | done | a stop's binding follows it when earlier stops are removed |
 | Extended collections | done | library collections; overrides per mode with reset; follow library updates; modes inherited. New library variables arrive with the next other update ([gaps](gaps.md) #14) |
@@ -69,6 +75,7 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Styles and variables behaviour suite from the public documentation (18 tests) and its fixes (styled properties edited away unlink, deleted variables unbind with values kept, type-checked bindings, alias checks on create, text styles on text only); style folders, order and duplicates with a Local styles list; mode duplicate and default; code syntax. Found missing: variables inside styles. Styles and variables breadth ~92% → ~94%, ready ~72% → ~76%; remaining here 7–14 h → 9–17 h |
 | 2026-10-11 | minor | Behaviour suite from the public documentation and its fixes: overrides of padding, gap, alignment, layout grids, export settings, interactions and every text property kept (they were lost when the main changed); geometry, constraints and resizing of layers inside instances refused; variant switches keep only overrides both variants agreed on (text layers keep theirs); Alt-drops from Assets keep only text overrides; top-left default variant; hidden exposed instances hide their properties; push from nested layers goes to the outer main; variant property reordering and conflict warnings. Components ~95%/~68% → ~96%/~72%; remaining here 7–14 h → 5–11 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` (publish under the file, enable by a share link, updates with overrides kept), usage counts per component and file, and swapping a library by names (gap 10) |
 | 2026-10-11 | minor | Extended collections, variables import/export (JSON, CSS) and gradient stop and variant property bindings landed: styles and variables breadth ~85% → ~92%, ready ~70% → ~72%; remaining here 10–20 h → 7–14 h |

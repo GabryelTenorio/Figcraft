@@ -131,6 +131,18 @@ Or in a project's `.mcp.json`:
   values) on linked chars unlinks them; `style.update` moves every linked char. `style.create
   {type: "text", name}` takes the selected chars while editing; a `value` may use the `node.set`
   spellings (`{"fontSize": 32, "lineHeight": "120%", "letterSpacing": "2%"}`).
+- **Styles stay true to their layers**: editing a styled fill, stroke, effect or layout grid list
+  (`node.set`, `fill.set`, `fill.add`, a bound variable…) unlinks that style (`styles.fill` etc. go
+  `null`), so a later `style.update` doesn't overwrite the edit; `style.apply` replaces variables
+  bound to what the style sets; a text style goes on text layers only. Names are trimmed per `/`
+  folder part. `style.move {styles, before?, folder?}` reorders (and with `folder`, renames into it),
+  `style.duplicate {style}` adds "<name> copy" right below, `style.renameFolder {folder, name}`.
+- **Variables**: `variable.bind` refuses a variable of a type the field doesn't take (a colour on
+  `width`); scopes only filter pickers. `variable.delete` / `variable.deleteCollection` unbind the
+  layers using them (they keep their last value) and give aliases to them their values.
+  `variable.addMode {from}` duplicates a mode, `variable.moveMode {collection, mode, to}` reorders
+  (index 0 is the default mode, which layers on Auto follow). `variable.update {codeSyntax: {WEB?,
+  iOS?, ANDROID?}}` sets code names (`""` clears); generated CSS uses the Web one.
 - **Live previews**: `text.preview {command, params}` shows what `style.apply`,
   `library.applyStyle`, `text.setVariations` or `text.style` would do on the canvas without an undo
   step (in place of an earlier preview); `text.endPreview` puts the document back. Any other command

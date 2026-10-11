@@ -8,7 +8,7 @@ use figcraft_doc::*;
 use serde_json::{Value, json};
 
 use super::CommandSpec;
-use crate::codegen::css_var_name;
+use crate::codegen::{css_var_name, css_var_of};
 use crate::library::{is_remote_collection, local_collections};
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
@@ -80,12 +80,12 @@ fn css(vars: &Variables, colls: &[&Collection]) -> String {
                     Some(VariableValue::String(t)) => format!("\"{}\"", css_safe(t)),
                     Some(VariableValue::Boolean(b)) => b.to_string(),
                     Some(VariableValue::Alias(a)) => match vars.get(a) {
-                        Some(t) => format!("var({})", css_var_name(&t.name)),
+                        Some(t) => format!("var({})", css_var_of(t)),
                         None => continue,
                     },
                     None => continue,
                 };
-                out.push_str(&format!("  {}: {value};\n", css_var_name(&v.name)));
+                out.push_str(&format!("  {}: {value};\n", css_var_of(v)));
             }
             out.push_str("}\n");
         }

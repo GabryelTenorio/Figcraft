@@ -407,22 +407,8 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         }
     });
     widgets::separator(ui);
-    let styles: Vec<(String, String, String)> =
-        figcraft_engine::library::local_styles(doc).map(|s| (s.id.clone(), s.name.clone(), s.kind.type_name().to_string())).collect();
-    widgets::section_header(ui, tr("Local styles"), &[], styles.is_empty());
-    for (_, name, ty) in &styles {
-        row(ui, 28.0, |ui| {
-            let icon = match ty.as_str() {
-                "text" => Icon::Text,
-                "effect" => Icon::Effects,
-                "grid" => Icon::Grid,
-                _ => Icon::Fill,
-            };
-            let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-            icons::paint(ui.painter(), r, icon, t.icon_secondary);
-            widgets::label(ui, name, t.text);
-        });
-    }
+    widgets::section_header(ui, tr("Local styles"), &[], figcraft_engine::library::local_styles(doc).next().is_none());
+    crate::style_picker::local_styles(app, ui, doc);
     widgets::separator(ui);
     crate::export_panel::page_section(app, ui, doc, page);
 }
