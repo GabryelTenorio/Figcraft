@@ -672,7 +672,7 @@ pub fn swatch(ui: &mut Ui, paint: &figcraft_color::Paint, size: f32) -> Response
     resp
 }
 
-/// A paint as a screen reader says it: "#FF0000", "#FF0000 50%", "Gradient", "Image".
+/// A paint as a screen reader says it: "#FF0000", "#FF0000 50%", "Gradient", "Image", "Pattern".
 pub fn paint_name(paint: &figcraft_color::Paint) -> String {
     use figcraft_color::PaintKind;
     match &paint.kind {
@@ -683,6 +683,7 @@ pub fn paint_name(paint: &figcraft_color::Paint) -> String {
         }
         PaintKind::Gradient(_) => "Gradient".into(),
         PaintKind::Image(_) => "Image".into(),
+        PaintKind::Pattern(_) => "Pattern".into(),
     }
 }
 
@@ -711,9 +712,10 @@ pub fn paint_swatch(painter: &egui::Painter, rect: Rect, paint: &figcraft_color:
                 clip.rect_filled(Rect::from_min_max(pos2(x0, rect.min.y), pos2(x1, rect.max.y)), CornerRadius::ZERO, c);
             }
         }
-        PaintKind::Image(_) => {
+        PaintKind::Image(_) | PaintKind::Pattern(_) => {
+            let icon = if matches!(paint.kind, PaintKind::Image(_)) { Icon::Image } else { Icon::ViewGrid };
             clip.rect_filled(rect, CornerRadius::ZERO, Color32::from_gray(0xB3));
-            icons::paint(&clip, rect.shrink(2.0), Icon::Image, Color32::WHITE);
+            icons::paint(&clip, rect.shrink(2.0), icon, Color32::WHITE);
         }
     }
     painter.rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0, t.border), StrokeKind::Inside);

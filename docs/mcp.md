@@ -294,9 +294,9 @@ flow with its description.
 
 ### Local libraries
 
-A `.figcraft` file can be published as a library and used from other files (local files only: no
-accounts, nothing on the network; the browser build has no file system, so there the commands that
-read library files return an error).
+A `.figcraft` file can be published as a library and used from other files (library files here;
+libraries kept on a `figcraft-server` for a team: [Team libraries](#team-libraries); the browser
+build has no file system, so there the commands that read library files return an error).
 
 - **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
   the file's components, component sets, styles and variable collections as a new version (by
@@ -349,6 +349,34 @@ name and sets them this way);
   same library, components the other file publishes as a library are used from it (and that
   library is enabled when the other file is saved), and other mains stay behind: the instance shows
   a missing main (`component.restoreMain` makes it a main here).
+
+### Team libraries
+
+A file kept on a `figcraft-server` ([`server.md`](server.md#team-libraries)) can hold a library that
+other files use through one of its share links. Each call waits for the server (a few seconds at
+most when it can't be reached).
+
+- `library.publishToServer {server?, key?, description?, include?, exclude?}` publishes the active
+  document's library as the next version of the one the server keeps under the file (selection and
+  per-asset versions as `library.publish`, following the server's version): `server` is an edit
+  link of the file, or omit it while the document is in a live session on a server with edit
+  access; with the server's address and key (`ws://host:47900/?key=…`, or `key`) the document is
+  kept there as a new file first and the result has its `file`, `edit` and `view` links. A view
+  link is refused. The document itself doesn't change (nothing to undo).
+- `library.add {path: <share link>}` enables it (a view link is enough); then `library.place`,
+  `library.applyStyle`, `library.bindVariable`… work as for library files. `library.list` and
+  `library.updates` ask the server for a newer version first (`"server": true` in the listing);
+  `library.acceptUpdates` takes it, overrides kept.
+- `library.usage {library?}` → `{id, name, instances, files: [{name, updated, instances}],
+  components: [{id, name, instances, files}]}`: what the files using it reported (each fetch
+  reports the asking document's name and its instances per component). `library` is an enabled
+  team library; omit it for the active document's own library on its server.
+- `library.swap {from, to}` (any two enabled libraries, files or team) re-points every instance,
+  style and variable copied from `from` to the published asset of the same name in `to` (variants
+  by name in their set, styles by name and type, variables by collection, name and type, modes by
+  name), keeping overrides; one undo step → `{components, styles, variables, unmatched: [names
+  still from `from`, including this file's collections that extend one of its collections],
+  removed (nothing of `from` was left, so it was removed)}`.
 
 ### Swapping instances
 
@@ -426,6 +454,30 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.merge","params":{"ids":[2,3],"points":[[120,80],[160,80]]}}}}
 ```
 
+### Text on a path and pattern fills
+
+- **Text on a path**: `text.onPath {text?, path?, start?, flip?}` (default: the selected text layer
+  and the other selected layer) puts a text layer on a vector's or shape's path: the text takes the
+  path layer's place, transform and box, and the path layer is removed (`edit.undo` brings it back).
+  The baseline follows the path from `start` (0..1 of its length); the text's horizontal alignment
+  places it there (left starts, centre centres, right ends at it); `flip` runs it on the other side
+  the other way. Glyphs past an open path's end are hidden; a closed path (ellipse, rectangle) wraps
+  them around; only the first subpath is followed. `text.pathOptions {start?, flip?, ids?}` changes
+  them, `text.removeFromPath {ids?}` makes it plain auto-width text again. Resizing the layer
+  scales the path. The text stays editable (`text.edit.*`, `type_text`); `get_node` shows
+  `textPath {d (SVG path data in the layer's space), start, flip}`. Exports draw it as outlines
+  (PDF too: not selectable); underline and strikethrough aren't drawn on a path.
+- **Pattern fills**: `fill.pattern {source (layer id), ids?, index?, tile? (grid|horizontalHex|
+  verticalHex), scale?, spacing? [x, y], align? (start|center|end), opacity?}` makes the fill at
+  `index` (default the top one) the source layer repeated, at `scale` × its own size with `spacing`
+  between tiles; hex tiles shift every other row (column) by half a tile; `align` puts a tile in the
+  box's top-left corner, centre or bottom-right corner. The fill is `{type: "pattern", source,
+  tile, scale, spacing, align}` and can also be set with `fill.set {paint}`. It updates as the
+  source changes; a layer can't tile itself or a layer containing it (a pattern nested more than
+  two deep draws nothing). Copies made together with their source tile the copied source. Exports:
+  SVG `<pattern>` and PDF tiling patterns of the source's vectors (a source with effects as an image
+  of the tile); the canvas draws one tile at the zoom it shows (at most 2048 px a side) and repeats it.
+
 ### Importing SVG
 
 `open_file {path}` opens an SVG as a new document; `run_command {command: "file.import", params:
@@ -440,7 +492,8 @@ and masks as luminance or alpha masks; shadow and blur filters (`feDropShadow`, 
 flood / composite chains, colour-matrix shadows, inner shadows, `feMorphology` spread) as drop
 shadows, inner shadows and layer blurs; opacity and `mix-blend-mode`; text as text layers (fonts
 the SVG names when installed, anchors, letter spacing, styled `<tspan>` runs, stacked lines as one
-layer); images as image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
+layer; text on one `<textPath>` as text on a path, with its start offset and anchor); images as
+image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
 and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list what was left out
 (filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
 Linked files are never read, only data URIs; documents nested more than 512 elements deep are

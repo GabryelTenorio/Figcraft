@@ -61,13 +61,28 @@ struct Frame {
 struct Sensitive {
     areas: Vec<Rect>,
     backdrop_blur: f64,
+    /// Pattern fill sources: an edit inside one shows wherever the pattern does.
+    pattern_sources: Vec<NodeId>,
 }
 
 /// Grain effects (noise, texture) work on their layer's pixels, which end where a render cuts the
 /// layer (texture scatters pixels from across the cut): grainy layers are redrawn whole.
 fn sensitive(doc: &Document) -> Sensitive {
     let noisy = doc.nodes().filter(|n| n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::Noise(_) | EffectKind::Texture(_))));
-    Sensitive { areas: noisy.filter_map(|n| draw::paint_bounds(doc, n.id)).collect(), backdrop_blur: crate::max_backdrop_blur(doc) }
+    let pattern_sources = doc
+        .nodes()
+        .flat_map(|n| n.fills.iter().chain(&n.strokes))
+        .filter_map(|p| match &p.kind {
+            figcraft_color::PaintKind::Pattern(pt) => Some(NodeId(pt.source)),
+            _ => None,
+        })
+        .collect();
+    Sensitive { areas: noisy.filter_map(|n| draw::paint_bounds(doc, n.id)).collect(), backdrop_blur: crate::max_backdrop_blur(doc), pattern_sources }
+}
+
+/// Whether `id` is a pattern source or inside one in `doc`.
+fn in_pattern_source(doc: &Document, s: &Sensitive, id: NodeId) -> bool {
+    s.pattern_sources.iter().any(|src| *src == id || doc.is_ancestor(*src, id))
 }
 
 /// A view snapped outwards to whole device pixels: the origin on its zoom's pixel grid and one
@@ -270,6 +285,10 @@ fn patch(last: Frame, doc: &Arc<Document>, page: NodeId, view: &View, px: (i64, 
     if !Arc::ptr_eq(&last.doc, doc) {
         let mut areas = Vec::new();
         for id in doc.changed_ids(&last.doc, MAX_CHANGED)? {
+            // shortcut: an edited pattern source redraws the whole view; patch the patterned layers' areas when that shows up in profiles.
+            if in_pattern_source(doc, s, id) || in_pattern_source(&last.doc, &last.sensitive, id) {
+                return None;
+            }
             changed_areas(&last.doc, page, id, &mut areas)?;
             changed_areas(doc, page, id, &mut areas)?;
         }

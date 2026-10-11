@@ -7,7 +7,9 @@ restart (or a crash) loses nothing that was confirmed, and apps reconnect where 
 headless, native only (no web build), and runs on the same platforms as the desktop app.
 
 There are no user accounts yet: a share link is the access to one file, and the **server key**
-manages files (publishing, links, removal). Accounts and per-person permissions come later.
+manages files (publishing, links, removal). Accounts and per-person permissions come later. A file
+can also hold a **team library** that other files use through one of its links (see
+[Team libraries](#team-libraries)).
 
 The protocol and the design behind it are in [`collab-protocol.md`](collab-protocol.md).
 
@@ -61,6 +63,35 @@ others see your cursor and selection, but you can't change anything: the toolbar
 only** badge with only the Move and Hand tools, edits are refused with a message (and the server
 refuses them too). **Leave session** keeps the file open as your own copy, editable again.
 
+## Team libraries
+
+A file on the server can hold a **team library**: its published components, styles and variables,
+which other files use without anyone copying the library file around.
+
+- **Publishing.** In the library file, opened from the server with an edit link (or published to
+  it), **Assets ▸ Libraries ▸ Publish to server** publishes the chosen assets as the library's next
+  version (`library.publishToServer`; with the server's address and key a file not on the server
+  yet is kept there first). The server keeps the latest version of each file's library. Each asset
+  keeps the version it last changed in, so files using the library update only what changed; the
+  server's version is the one that counts, so when someone published since, the next publish
+  follows it. Publishing needs an edit link: a view link's publish is refused.
+- **Using.** In another file, paste one of the library file's links (a **view link** is enough)
+  into **Assets ▸ Libraries** (`library.add {path: <link>}`). The library is listed in the Assets
+  panel like a library file: placing a component or applying a style copies it in as a read-only
+  linked copy, as for library files. While the Assets panel shows, the app asks the server for a
+  newer version at once and then every 30 seconds (a few bytes when nothing changed) and shows
+  **Library updates available**; accepting keeps instance overrides. While the server can't be
+  reached, the last version fetched stays in use. The file keeps the link, token included:
+  sharing that file shares read access to the library.
+- **Usage.** Each time a file's app asks for the library it reports which of its components the
+  file uses and how often. **Show usage** in the library file (`library.usage`) lists the files and
+  the instances of each component. Files are told apart by their names; a file's report changes
+  only when its usage does.
+- **Swapping.** `library.swap` (the swap button by an enabled library) moves a file's instances,
+  styles and variables from one library to another's of the same names, keeping overrides.
+
+The browser build can't use team libraries yet (it has no library support of its own).
+
 ## Managing files and links
 
 | Command | What it does |
@@ -109,6 +140,8 @@ network address.
 <data>/files/<id>/links.json   its links: id, access, label, created, SHA-256 of the token
 <data>/files/<id>/snapshot.bin its state at the last compaction (with a checksum)
 <data>/files/<id>/log.bin      what changed since, one checksummed record per change
+<data>/files/<id>/library.bin  its team library, when one was published (a .figcraft archive)
+<data>/files/<id>/usage.json   which files use that library's components, as their apps report it
 ```
 
 - **Writes are atomic**: a snapshot, a description or a link list is written to a temporary file
@@ -170,5 +203,10 @@ internet), and use `wss://` links from the browser build.
 - **Limits**: the transport's (message sizes, 100 messages a second per connection, idle and
   handshake timeouts, `max_connections`) and the collaboration core's (layers, changes per batch,
   `max_people`), plus `max_files`, `max_file_mb` and `max_links`. Every message is decoded
-  defensively, and fuzzed in the tests.
+  defensively, and fuzzed in the tests. A library is read in full before it is kept (as files
+  using it read it: size limits on every part, at most `max_file_mb`), must be the file's library
+  at a newer version, and is checked on the server's main thread; usage reports keep at most 2,000
+  components per file and 500 files per library.
+- **Team libraries**: any link of a file reads its library and its usage reports (file names and
+  counts); only an edit link publishes it.
 - **Not there yet**: user accounts, per-person permissions, rate limits per address, audit logs.

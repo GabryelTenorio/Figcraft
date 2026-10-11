@@ -1,15 +1,19 @@
 //! What the tests share: temporary data directories (removed when dropped), settings, and engine
 //! sessions linked over loopback.
 
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+use figcraft_collab::message::{self, ClientMsg, ServerMsg};
 use figcraft_collab_net::NetLink;
 use figcraft_collab_net::guest::GuestConfig;
 use figcraft_engine::Session;
+use figcraft_engine::live::{Published, Status};
 use serde_json::json;
+use tungstenite::{Bytes, Message, WebSocket};
 
 use crate::config::Config;
 
@@ -80,4 +84,50 @@ pub fn pump(sessions: &mut [&mut Session], what: &str, f: impl Fn(&[&mut Session
 /// The synced properties of two documents agree.
 pub fn same(a: &figcraft_doc::Document, b: &figcraft_doc::Document) -> bool {
     figcraft_collab::diff(&figcraft_collab::Replica::new(a.clone()), b).is_ok_and(|d| d.changes.is_empty())
+}
+
+pub fn key(dir: &Path) -> String {
+    std::fs::read_to_string(dir.join(crate::store::KEY)).unwrap().trim().to_string()
+}
+
+pub fn live(s: &Session) -> bool {
+    s.live.status == Status::Live && s.live.syncing()
+}
+
+/// `a` publishes its open file to the server at `addr`; the links.
+pub fn publish(a: &mut Session, dir: &Path, addr: SocketAddr) -> Published {
+    let r = a.execute("collab.publish", &json!({"server": format!("ws://{addr}/?key={}", key(dir)), "name": "Team file"})).unwrap();
+    assert_eq!(r["status"], "connecting");
+    assert_eq!(r["readOnly"], true, "read-only while it is on its way");
+    pump(&mut [a], "the publish", |s| live(s[0]) && s[0].live.published.is_some());
+    a.live.published.clone().unwrap()
+}
+
+pub fn join(link: &str, name: &str) -> Session {
+    let mut s = session(name);
+    s.execute("collab.join", &json!({"link": link})).unwrap();
+    s
+}
+
+/// A bare client: hello, then what it's told.
+pub struct Raw(WebSocket<TcpStream>);
+
+impl Raw {
+    pub fn connect(addr: SocketAddr) -> Raw {
+        let s = TcpStream::connect(addr).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        Raw(tungstenite::client::client(format!("ws://{addr}/"), s).unwrap().0)
+    }
+
+    pub fn send(&mut self, m: &ClientMsg) {
+        self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap()))).unwrap();
+    }
+
+    pub fn next(&mut self) -> ServerMsg {
+        loop {
+            if let Message::Binary(b) = self.0.read().unwrap() {
+                return message::decode(&b, usize::MAX).unwrap();
+            }
+        }
+    }
 }

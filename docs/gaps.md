@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices: gap 13 closed; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices: gap 13 closed; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -22,8 +22,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 6 | Plugins: no run-time UI, distribution or widgets; Figma's plugins don't run | Ecosystem | 25–55 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
-| 9 | Figma Draw: brushes, pressure, text on a path, pattern fills | Feature | 10–18 | [target-app-parity](target-app-parity.md) |
-| 10 | Shared (team) libraries | Feature | 10–20 | [components-parity](components-parity.md) |
+| 9 | Figma Draw: stretch and scatter brushes, pen pressure (text on a path and pattern fills landed) | Feature | 5–10 | [target-app-parity](target-app-parity.md) |
+| 10 | Team libraries: no team-wide lists or accounts; analytics are counts | Feature | 4–8 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video fills; HEIC images | File format | 5–10 | [file-format-parity](file-format-parity.md) |
 | 13 | Vector tail: none left (boolean hit testing on the result landed 2026-10-11) | Feature | — | [target-app-parity](target-app-parity.md) |
@@ -137,21 +137,27 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).
 
-### 9. Figma Draw: brushes, pressure, text on a path, pattern fills
-- **Missing:** stretch and scatter brushes, pen pressure for the pencil and brushes, text on a
-  path, pattern fills, multi-edit.
-- **Evidence:** `PaintKind` has solid, gradient and image only (`crates/color/src/lib.rs`); no
-  pressure input anywhere; SVG text on a path imports as outlines.
+### 9. Figma Draw: brushes and pressure
+- **Missing:** stretch and scatter brushes, pen pressure for the pencil and brushes, multi-edit.
+- **Landed:** text on a path (`text.onPath`, `text.pathOptions`, `text.removeFromPath`; the
+  Design panel's Typography section; canvas, PNG, SVG and PDF as outlines; SVG `<textPath>` imports
+  as text on a path) and pattern fills (`PaintKind::Pattern`, `fill.pattern`, the colour picker's
+  Pattern tab; SVG `<pattern>`, PDF tiling patterns).
+- **Evidence:** no pressure input anywhere; strokes have uniform and variable widths only.
 - **Impact:** illustration-flavoured work moved into Figma Draw in 2025.
-- **Estimate:** 10–18 h.
+- **Estimate:** 5–10 h.
 
-### 10. Shared (team) libraries
-- **Missing:** libraries shared across people and files without copying them around; library
-  analytics; swapping a whole library.
-- **Evidence:** local library files work (publish, enable, updates with overrides kept), see
-  [`components-parity.md`](components-parity.md).
-- **Impact:** design-system teams. Builds on multiplayer's server.
-- **Estimate:** 10–20 h after gap 2.
+### 10. Team libraries: no team-wide lists or accounts; analytics are counts
+- **Missing:** libraries listed for a whole team or organization (each file enables a library by
+  its link), accounts and per-person library permissions, analytics beyond instance counts per
+  component and file (insertions and detaches over time), update notices pushed by the server
+  (apps ask every 30 seconds while the Assets panel shows).
+- **Evidence:** a file's library is published to `figcraft-server` under the file and enabled in
+  other files by a share link, with per-asset versions, updates with overrides kept, usage counts
+  and swapping a whole library by names ([`server.md`](server.md#team-libraries),
+  [`components-parity.md`](components-parity.md)).
+- **Impact:** design-system teams.
+- **Estimate:** 4–8 h, the accounts part after gap 2.
 
 ### 11. Spell check
 - **Missing:** spelling underline and suggestions while editing text.
@@ -256,6 +262,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Canvas fixes (gap 13 closed): boolean groups are clicked where their result is (a click in a subtracted hole reaches what's behind; with the group or an operand selected its operands are hit, so each can still be picked), a layer dragged inside a group stays in the group (frames and auto layout still take other drops), View ▸ Frame outlines and View ▸ Slices draw on the canvas, and the idle tests wait for the render thread instead of counting frames. Shapes & vector 1–3 h → 1–2 h (vector QA with real files left); percentages, feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
+| 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
+| 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Branches landed (gap 17): File ▸ Create branch… copies the file into a branch tab that remembers its base; Review and merge shows both sides' changes (layers with Inspect-style property changes, styles, variables, comments) and the conflicts (the same property changed on both sides, or a layer deleted on one side and edited on the other), each resolved for the branch or main; merging is one undo step and archives the branch; Update from main; branches are saved in the `.figcraft` file. Comments, versions, find, misc breadth 80% → 85%, ready 58% → 60%, 4–8 h → 2–5 h; collaboration 12% → 13%; menu breadth 204/204 (the catalog gained File ▸ Create branch…); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~378–722 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |

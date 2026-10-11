@@ -55,8 +55,9 @@ pub fn ts_path(p: &BezPath) -> Option<tiny_skia::Path> {
 }
 
 fn fill_with(pix: &mut Pixmap, path: &tiny_skia::Path, paints: &[Paint], w: f64, h: f64, xf: Affine, rule: FillRule, ctx: &Ctx, mask: Option<&Mask>) {
+    let scale = xf.determinant().abs().sqrt();
     for p in paints {
-        let Some(prep) = prepare_at(p, w, h, ctx.doc, ctx.time) else { continue };
+        let Some(prep) = prepare_at(p, w, h, scale, ctx.doc, ctx.time) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
         pix.fill_path(path, &paint, rule, ts_transform(xf), mask);
     }

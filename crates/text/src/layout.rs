@@ -27,6 +27,8 @@ pub struct Glyph {
     pub style: usize,
     /// Part of a right-to-left run: its first char sits at the glyph's right edge.
     pub rtl: bool,
+    /// Moves the placed glyph onto the text's path (identity without one).
+    pub warp: Affine,
 }
 
 impl Glyph {
@@ -34,7 +36,7 @@ impl Glyph {
     pub fn path(&self) -> BezPath {
         let s = self.size / self.face.upem;
         let mut p = (*self.face.outline_at(self.gid, &self.coords)).clone();
-        p.apply_affine(Affine::new([s, 0.0, 0.0, s, self.x, self.y]));
+        p.apply_affine(self.warp * Affine::new([s, 0.0, 0.0, s, self.x, self.y]));
         p
     }
 }
@@ -76,6 +78,8 @@ pub struct TextLayout {
     pub height: f64,
     /// Whether text was cut off (truncation).
     pub truncated: bool,
+    /// Where the text sits on its path (text on a path).
+    pub on_path: Option<crate::onpath::OnPath>,
 }
 
 /// Ratio of Figma's "Auto" line height to the font size (font ascent+descent+gap, per face).
@@ -430,6 +434,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                         char_end: at,
                         style: st_idx,
                         rtl: false,
+                        warp: Affine::IDENTITY,
                     });
                     mx += adv;
                 }
@@ -463,6 +468,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     char_end: it.char_end,
                     style: it.style,
                     rtl: it.level % 2 == 1,
+                    warp: Affine::IDENTITY,
                 });
             }
             pen += it.adv;
@@ -567,6 +573,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
     }
     out.decorations = decos;
+    if let Some(tp) = &text.path {
+        crate::onpath::place(&mut out, tp, text.align_h);
+    }
     let _ = LineHeight::Auto;
     out
 }
@@ -625,6 +634,7 @@ fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
         char_end: last.char_end,
         style: last.style,
         rtl: false,
+        warp: Affine::IDENTITY,
     });
     if let Some(l) = out.lines.last_mut() {
         l.glyph_end = out.glyphs.len();
@@ -757,7 +767,8 @@ impl TextLayout {
         let glyphs = lines.flat_map(|(l, gs)| {
             gs.iter().map(move |g| {
                 let pad = g.size.abs() * 0.5;
-                Rect::new(g.x.min(g.x + g.advance) - pad, l.top - pad, g.x.max(g.x + g.advance) + pad, l.top + l.height + pad)
+                let r = Rect::new(g.x.min(g.x + g.advance) - pad, l.top - pad, g.x.max(g.x + g.advance) + pad, l.top + l.height + pad);
+                figcraft_geom::transform_rect_bbox(g.warp, r)
             })
         });
         glyphs.chain(self.decorations.iter().map(|d| d.rect)).filter(|r| r.x0.is_finite() && r.y1.is_finite()).reduce(|a, b| a.union(b))
@@ -826,8 +837,30 @@ impl TextLayout {
         }
     }
 
+    /// Layout point `(x, y)` where it shows: moved onto the path for text on a path.
+    pub fn warp_point(&self, x: f64, y: f64) -> figcraft_geom::Point {
+        let p = figcraft_geom::Point::new(x, y);
+        let Some(on) = &self.on_path else { return p };
+        let baseline = self.lines.iter().find(|l| y <= l.top + l.height).or(self.lines.last()).map_or(y, |l| l.baseline);
+        on.frame(x, baseline).map_or(p, |f| f * p)
+    }
+
+    /// Text on a path: the char nearest to where `(x, y)` shows, by the glyph it falls nearest to.
+    fn hit_on_path(&self, x: f64, y: f64) -> usize {
+        let p = figcraft_geom::Point::new(x, y);
+        let near = self.glyphs.iter().filter(|g| g.char_end > g.char_start && g.warp.determinant().abs() > 1e-12).map(|g| {
+            let q = g.warp.inverse() * p;
+            let mid = g.x + g.advance / 2.0;
+            ((q - figcraft_geom::Point::new(mid, g.y - g.size / 3.0)).hypot(), if q.x < mid { g.char_start } else { g.char_end })
+        });
+        near.min_by(|a, b| a.0.total_cmp(&b.0)).map_or(0, |(_, i)| i)
+    }
+
     /// The char index nearest to `(x, y)` (layout coordinates).
     pub fn hit(&self, x: f64, y: f64) -> usize {
+        if self.on_path.is_some() {
+            return self.hit_on_path(x, y);
+        }
         let Some((li, line)) =
             self.lines.iter().enumerate().find(|(_, l)| y < l.top + l.height).or_else(|| self.lines.iter().enumerate().next_back())
         else {

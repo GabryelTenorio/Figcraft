@@ -97,8 +97,67 @@ fn step_weight(s: &mut Session, p: &Value, up: bool) -> Result<Value> {
     })
 }
 
+/// Put a text layer on a path: the text takes the path layer's place, geometry and transform, and
+/// the path layer is removed.
+fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "text.onPath";
+    let doc = s.doc()?;
+    let is_text = |i: &NodeId| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_)));
+    let sel = targets(s, p);
+    let text =
+        id(p, "text").or_else(|| sel.iter().copied().find(is_text)).ok_or_else(|| bad(CMD, "select a text layer and a path (or pass `text`)"))?;
+    let path = id(p, "path")
+        .or_else(|| sel.iter().copied().find(|i| *i != text && !is_text(i)))
+        .ok_or_else(|| bad(CMD, "select a path or shape too (or pass `path`)"))?;
+    let pn = doc.get(path)?;
+    let geom = figcraft_doc::geometry::stroke_geometry(pn).filter(|g| !g.elements().is_empty()).ok_or_else(|| bad(CMD, "that layer has no path"))?;
+    if !is_text(&text) || doc.is_ancestor(path, text) {
+        return Err(bad(CMD, "`text` must be a text layer outside the path layer"));
+    }
+    let (parent, index) = (pn.parent.ok_or_else(|| bad(CMD, "pages have no path"))?, doc.index_in_parent(path));
+    let (transform, w, h) = (pn.transform, pn.width, pn.height);
+    let mut tp = TextPath::new(&geom);
+    tp.start = num(p, "start").filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
+    tp.flip = boolean(p, "flip").unwrap_or(false);
+    let doc = s.doc_mut()?;
+    doc.reparent(text, parent, index)?;
+    doc.remove(path)?;
+    let n = doc.get_mut(text)?;
+    n.transform = transform;
+    (n.width, n.height) = (w, h);
+    if let NodeKind::Text(t) = &mut n.kind {
+        t.path = Some(tp);
+    }
+    s.set_selection(vec![text]);
+    Ok(json!({ "id": text }))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
+        spec!(
+            "text.onPath",
+            "Text on path",
+            "{text? (text layer), path? (vector or shape layer; default: the selected text and other layer), start? (0..1 along the path), flip?}  the text follows the path and the path layer is removed → {id}",
+            true,
+            on_path
+        ),
+        spec!("text.pathOptions", "Text path options", "{start? (0..1 along the path), flip?, ids?}  for text on a path", true, |s, p| {
+            let start = num(p, "start").filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+            let flip = boolean(p, "flip");
+            para(s, p, |t| {
+                if let Some(tp) = &mut t.path {
+                    tp.start = start.unwrap_or(tp.start);
+                    tp.flip = flip.unwrap_or(tp.flip);
+                }
+            })
+        }),
+        spec!("text.removeFromPath", "Remove text from path", "{ids?}  text on a path back to a line of auto-width text", true, |s, p| {
+            para(s, p, |t| {
+                if t.path.take().is_some() {
+                    t.auto_resize = TextAutoResize::WidthAndHeight;
+                }
+            })
+        }),
         spec!("text.bold", "Bold", "{ids?}", true, toggle_bold),
         spec!("text.italic", "Italic", "{ids?}", true, toggle_italic),
         spec!("text.underline", "Underline", "{ids?}", true, |s, p| {

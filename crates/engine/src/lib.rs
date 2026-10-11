@@ -28,6 +28,8 @@ pub mod inspect;
 pub mod invite_links;
 pub mod keymap;
 pub mod library;
+pub mod library_server;
+pub mod library_swap;
 pub mod live;
 pub mod measure;
 pub mod params;
@@ -1207,6 +1209,8 @@ mod devcompare_tests;
 mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
+#[cfg(test)]
+mod draw_tools_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
