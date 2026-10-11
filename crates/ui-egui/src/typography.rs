@@ -12,6 +12,7 @@ use figcraft_doc::*;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
 use crate::right::{common, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular, semibold};
@@ -22,21 +23,25 @@ const SIZES: [f64; 15] = [10.0, 11.0, 12.0, 13.0, 14.0, 16.0, 20.0, 24.0, 32.0, 
 
 /// OpenType features offered in Type settings ▸ Details: (tag, label, on by default in fonts).
 const FEATURES: [(&str, &str, bool); 12] = [
-    ("liga", "Standard ligatures", true),
-    ("calt", "Contextual alternates", true),
-    ("tnum", "Tabular numbers", false),
-    ("frac", "Fractions", false),
-    ("case", "Case-sensitive forms", false),
-    ("zero", "Slashed zero", false),
-    ("ss01", "Stylistic set 1", false),
-    ("ss02", "Stylistic set 2", false),
-    ("ss03", "Stylistic set 3", false),
-    ("ss04", "Stylistic set 4", false),
-    ("ss05", "Stylistic set 5", false),
-    ("smcp", "Small capitals", false),
+    ("liga", tr_noop("Standard ligatures"), true),
+    ("calt", tr_noop("Contextual alternates"), true),
+    ("tnum", tr_noop("Tabular numbers"), false),
+    ("frac", tr_noop("Fractions"), false),
+    ("case", tr_noop("Case-sensitive forms"), false),
+    ("zero", tr_noop("Slashed zero"), false),
+    ("ss01", tr_noop("Stylistic set 1"), false),
+    ("ss02", tr_noop("Stylistic set 2"), false),
+    ("ss03", tr_noop("Stylistic set 3"), false),
+    ("ss04", tr_noop("Stylistic set 4"), false),
+    ("ss05", tr_noop("Stylistic set 5"), false),
+    ("smcp", tr_noop("Small capitals"), false),
 ];
 
-const MIXED: &str = "Mixed";
+/// Shown for differing values (translated where shown: `tr(MIXED)`).
+const MIXED: &str = tr_noop("Mixed");
+
+/// The Type settings tabs (Variable only for variable fonts).
+const TABS: [&str; 3] = [tr_noop("Basics"), tr_noop("Details"), tr_noop("Variable")];
 
 /// The value shared by every style, or None when they differ.
 fn uniform<T: PartialEq + Clone>(styles: &[TextStyle], f: impl Fn(&TextStyle) -> T) -> Option<T> {
@@ -85,14 +90,15 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     let styles = target_styles(doc, &ids, range);
     let apply_style = |app: &mut FigApp, key: &str, v: Value| commit_text(app, &ids, range, json!({ key: v }));
 
-    let hdr = widgets::section_header(ui, "Typography", &[(Icon::Variable, "Apply variable to text"), (Icon::Styles, "Text styles")], false);
+    let hdr =
+        widgets::section_header(ui, tr("Typography"), &[(Icon::Variable, tr("Apply variable to text")), (Icon::Styles, tr("Text styles"))], false);
     if hdr == Some(0) {
         crate::variable_ui::open_at_pointer(ui, &ids, "characters", VariableType::String);
     }
     if hdr == Some(1) {
         crate::style_picker::open(app, ui, &ids, crate::style_picker::StyleSlot::Text);
     }
-    crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text, "Text"), f32::INFINITY);
+    crate::variable_ui::bound_row(app, ui, &ids, "characters", VariableType::String, Lead::Icon(Icon::Text, tr("Text")), f32::INFINITY);
     // A text style: its chip stands for the font rows (they show again when the chars differ).
     crate::style_picker::chip(app, ui, doc, &ids, crate::style_picker::StyleSlot::Text);
     if !matches!(crate::style_picker::text_link(app, doc, &ids), Some(Some(_))) {
@@ -111,7 +117,7 @@ fn path_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], ids: 
         let other = sel.iter().find(|i| !ids.contains(i)).and_then(|i| doc.node(*i));
         if ids.len() == 1 && sel.len() == 2 && other.is_some_and(|n| figcraft_doc::geometry::stroke_geometry(n).is_some()) {
             row(ui, 32.0, |ui| {
-                if widgets::button(ui, "Put text on path", false, true).clicked() {
+                if widgets::button(ui, tr("Put text on path"), false, true).clicked() {
                     app.run("text.onPath", json!({ "ids": sel }));
                 }
             });
@@ -121,7 +127,7 @@ fn path_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], ids: 
     let start = paths.first().map(|p| p.0).filter(|s| paths.iter().all(|p| p.0 == *s));
     let flip = paths.iter().all(|p| p.1);
     row(ui, 32.0, |ui| {
-        let lead = Lead::Icon(Icon::Pen, "Start on path");
+        let lead = Lead::Icon(Icon::Pen, tr("Start on path"));
         match widgets::number_field(ui, Id::new("ty_path_start"), lead, start.map(|s| s * 100.0), "%", 96.0, 1.0) {
             Some(FieldEdit::Set(v)) => {
                 app.run("text.pathOptions", json!({"ids": ids, "start": v / 100.0}));
@@ -129,10 +135,10 @@ fn path_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], ids: 
             Some(FieldEdit::Scrub(v, done)) => live(app, "Start on path", "text.pathOptions", json!({"ids": ids, "start": v / 100.0}), done),
             None => {}
         }
-        if icons::button(ui, Icon::FlipV, 24.0, flip, "Flip text to the other side").clicked() {
+        if icons::button(ui, Icon::FlipV, 24.0, flip, tr("Flip text to the other side")).clicked() {
             app.run("text.pathOptions", json!({"ids": ids, "flip": !flip}));
         }
-        if icons::button(ui, Icon::Detach, 24.0, false, "Remove text from path").clicked() {
+        if icons::button(ui, Icon::Detach, 24.0, false, tr("Remove text from path")).clicked() {
             app.run("text.removeFromPath", json!({ "ids": ids }));
         }
     });
@@ -173,7 +179,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     let fstyle = uniform(styles, |s| s.font_style.clone());
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
-        let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(MIXED), w);
+        let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(tr(MIXED)), w);
         menu_popup(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
                 remember_family(ui.ctx(), &f);
@@ -186,13 +192,13 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     // Style + size.
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     row(ui, 32.0, |ui| {
-        let resp = widgets::elided_dropdown(ui, fstyle.as_deref().unwrap_or(MIXED), half);
+        let resp = widgets::elided_dropdown(ui, fstyle.as_deref().unwrap_or(tr(MIXED)), half);
         let fam = family.clone();
         menu_popup(&resp).width(200.0).show(|ui| match &fam {
             Some(fam) => {
                 let list = figcraft_text::family_styles(fam);
                 if list.is_empty() {
-                    widgets::label(ui, "Font not installed", t.text_tertiary);
+                    widgets::label(ui, tr("Font not installed"), t.text_tertiary);
                 }
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     for s in list {
@@ -208,7 +214,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
                     }
                 });
             }
-            None => widgets::label(ui, "Pick one font family first", t.text_tertiary),
+            None => widgets::label(ui, tr("Pick one font family first"), t.text_tertiary),
         });
         let size = uniform(styles, |s| s.font_size);
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -227,7 +233,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
             }
             None => {}
         }
-        let more = icons::button(ui, Icon::Chevron, 20.0, false, "Font size");
+        let more = icons::button(ui, Icon::Chevron, 20.0, false, tr("Font size"));
         menu_popup(&more).width(90.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 for v in SIZES {
@@ -244,16 +250,16 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     // Line height + letter spacing.
     row(ui, 32.0, |ui| {
         let lh = uniform(styles, |s| s.line_height);
-        let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
-        let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: "Line height" };
+        let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
+        let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: tr("Line height") };
         if let Some(v) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
             && let Some(v) = parse_line_height(&v, lh)
         {
             apply_style(app, "lineHeight", v);
         }
         let ls = uniform(styles, |s| s.letter_spacing);
-        let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| MIXED.into());
-        let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: "Letter spacing" };
+        let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
+        let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: tr("Letter spacing") };
         if let Some(v) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
             && let Some(v) = parse_letter_spacing(&v, ls)
         {
@@ -276,13 +282,14 @@ fn paragraph_rows(
     let ps = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_spacing.to_bits())).flatten().map(f64::from_bits);
     let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
     row(ui, 32.0, |ui| {
-        let ps_label = ps.map(trim_num).unwrap_or_else(|| MIXED.into());
-        if let Some(v) = lead_field(ui, Id::new("ty_ps"), LeadGlyph::ParagraphSpacing, &ps_label, half, "Paragraph spacing")
+        let ps_label = ps.map(trim_num).unwrap_or_else(|| tr(MIXED).into());
+        if let Some(v) = lead_field(ui, Id::new("ty_ps"), LeadGlyph::ParagraphSpacing, &ps_label, half, tr("Paragraph spacing"))
             && let Some(v) = widgets::eval(&v, ps)
         {
             app.set_props(ids, json!({"paragraphSpacing": v.clamp(0.0, 10_000.0)}));
         }
-        let items = [(Icon::Hug, "Auto width"), (Icon::LayoutV, "Auto height"), (Icon::Fixed, "Fixed size"), (Icon::Dots, "Truncate text")];
+        let items =
+            [(Icon::Hug, tr("Auto width")), (Icon::LayoutV, tr("Auto height")), (Icon::Fixed, tr("Fixed size")), (Icon::Dots, tr("Truncate text"))];
         let active = resize.map(|r| match r {
             TextAutoResize::WidthAndHeight => 0,
             TextAutoResize::Height => 1,
@@ -299,10 +306,10 @@ fn paragraph_rows(
     let align = common(doc, ids, |n| n.kind.text().map(|t| (t.align_h, t.align_v))).flatten();
     row(ui, 32.0, |ui| {
         let items = [
-            (Icon::TextAlignLeft, "Align left"),
-            (Icon::TextAlignCenter, "Align center"),
-            (Icon::TextAlignRight, "Align right"),
-            (Icon::TextAlignJustify, "Justify"),
+            (Icon::TextAlignLeft, tr("Align left")),
+            (Icon::TextAlignCenter, tr("Align center")),
+            (Icon::TextAlignRight, tr("Align right")),
+            (Icon::TextAlignJustify, tr("Justify")),
         ];
         let active = align.map(|(h, _)| match h {
             TextAlignH::Left => 0,
@@ -314,7 +321,7 @@ fn paragraph_rows(
             let v = ["left", "center", "right", "justified"].get(i).copied().unwrap_or("left");
             app.set_props(ids, json!({"textAlign": v}));
         }
-        let items = [(Icon::TextTop, "Align top"), (Icon::TextMiddle, "Align middle"), (Icon::TextBottom, "Align bottom")];
+        let items = [(Icon::TextTop, tr("Align top")), (Icon::TextMiddle, tr("Align middle")), (Icon::TextBottom, tr("Align bottom"))];
         let active = align.map(|(_, v)| match v {
             TextAlignV::Top => 0,
             TextAlignV::Middle => 1,
@@ -326,7 +333,7 @@ fn paragraph_rows(
         }
         let open_id = Id::new("ty_settings_open");
         let open = egui::Popup::is_id_open(ui.ctx(), open_id);
-        let more = icons::button(ui, Icon::Dots, 24.0, open, "Type settings");
+        let more = icons::button(ui, Icon::Dots, 24.0, open, tr("Type settings"));
         egui::Popup::from_toggle_button_response(&more)
             .id(open_id)
             .width(264.0)
@@ -373,12 +380,12 @@ fn type_settings(
     let t = Tokens::get(ui.ctx());
     let tab_id = Id::new("ty_settings_tab");
     let vf = variable_face(styles);
-    let tabs: &[&str] = if vf.is_some() { &["Basics", "Details", "Variable"] } else { &["Basics", "Details"] };
+    let tabs = &TABS[..if vf.is_some() { 3 } else { 2 }];
     let mut tab: usize = ui.data(|d| d.get_temp(tab_id)).filter(|i| *i < tabs.len()).unwrap_or(0);
     ui.horizontal(|ui| {
         for (i, l) in tabs.iter().enumerate() {
             let col = if tab == i { t.text } else { t.text_secondary };
-            let r = ui.add(egui::Label::new(egui::RichText::new(*l).font(semibold(11.5)).color(col)).sense(Sense::click()));
+            let r = ui.add(egui::Label::new(egui::RichText::new(tr(l)).font(semibold(11.5)).color(col)).sense(Sense::click()));
             if r.clicked() {
                 tab = i;
             }
@@ -389,16 +396,17 @@ fn type_settings(
     let w = ui.available_width();
     if tab == 0 {
         let deco = uniform(styles, |s| s.decoration);
-        caption(ui, "Decoration");
+        caption(ui, tr("Decoration"));
         let active = deco.map(|d| match d {
             TextDecoration::None => 0,
             TextDecoration::Underline => 1,
             TextDecoration::Strikethrough => 2,
         });
-        if let Some(i) = text_seg(ui, "deco", &[("—", "None"), ("U", "Underline"), ("S", "Strikethrough")], active, w) {
+        let items = [("—", tr_noop("None")), ("U", tr_noop("Underline")), ("S", tr_noop("Strikethrough"))];
+        if let Some(i) = text_seg(ui, "deco", &items, active, w) {
             apply_style(app, "textDecoration", json!((["none", "underline", "strikethrough"].get(i).copied().unwrap_or("none"))));
         }
-        caption(ui, "Letter case");
+        caption(ui, tr("Letter case"));
         let case = uniform(styles, |s| s.case);
         let active = case.map(|c| match c {
             TextCase::Original => 0,
@@ -407,24 +415,31 @@ fn type_settings(
             TextCase::Title => 3,
             TextCase::SmallCaps => 4,
         });
-        let items = [("—", "As typed"), ("AG", "Uppercase"), ("ag", "Lowercase"), ("Ag", "Title case"), ("Aɢ", "Small caps")];
+        let items = [
+            ("—", tr_noop("As typed")),
+            ("AG", tr_noop("Uppercase")),
+            ("ag", tr_noop("Lowercase")),
+            ("Ag", tr_noop("Title case")),
+            ("Aɢ", tr_noop("Small caps")),
+        ];
         if let Some(i) = text_seg(ui, "case", &items, active, w) {
             apply_style(app, "textCase", json!((["original", "upper", "lower", "title", "smallCaps"].get(i).copied().unwrap_or("original"))));
         }
-        caption(ui, "List style");
+        caption(ui, tr("List style"));
         let list = common(doc, ids, |n| n.kind.text().map(|t| t.list)).flatten();
         let active = list.map(|l| match l {
             ListStyle::None => 0,
             ListStyle::Bulleted => 1,
             ListStyle::Numbered => 2,
         });
-        if let Some(i) = text_seg(ui, "list", &[("—", "No list"), ("•", "Bulleted list"), ("1.", "Numbered list")], active, w) {
+        let items = [("—", tr_noop("No list")), ("•", tr_noop("Bulleted list")), ("1.", tr_noop("Numbered list"))];
+        if let Some(i) = text_seg(ui, "list", &items, active, w) {
             app.set_props(ids, json!({"listStyle": (["none", "bulleted", "numbered"].get(i).copied().unwrap_or("none"))}));
         }
         ui.add_space(6.0);
         let indent = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_indent.to_bits())).flatten().map(f64::from_bits);
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new("Paragraph indent").font(regular(11.0)).color(t.text)));
+            ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Paragraph indent")).font(regular(11.0)).color(t.text)));
             if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
                 widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", w - 118.0, 1.0)
             {
@@ -432,9 +447,9 @@ fn type_settings(
             }
         });
         let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
-        caption(ui, "Truncate text");
+        caption(ui, tr("Truncate text"));
         let active = resize.map(|r| usize::from(r == TextAutoResize::Truncate));
-        match text_seg(ui, "trunc", &[("Off", "Don't truncate"), ("…", "Truncate with an ellipsis")], active, w) {
+        match text_seg(ui, "trunc", &[(tr("Off"), tr_noop("Don't truncate")), ("…", tr_noop("Truncate with an ellipsis"))], active, w) {
             Some(1) => app.set_props(ids, json!({"textAutoResize": "truncate"})),
             Some(_) if resize != Some(TextAutoResize::Height) && resize != Some(TextAutoResize::WidthAndHeight) => {
                 app.set_props(ids, json!({"textAutoResize": "none"}))
@@ -446,9 +461,9 @@ fn type_settings(
             let max = common(doc, ids, |n| n.kind.text().map(|t| t.max_lines)).flatten();
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new("Max lines").font(regular(11.0)).color(t.text)));
+                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Max lines")).font(regular(11.0)).color(t.text)));
                 let shown = max.map(f64::from).filter(|m| *m > 0.0);
-                let empty = if max.is_some() { "Auto" } else { MIXED };
+                let empty = if max.is_some() { tr("Auto") } else { tr(MIXED) };
                 if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
                     widgets::number_field_or(ui, Id::new("ty_maxlines"), shown, empty, w - 118.0, 1.0)
                 {
@@ -461,14 +476,14 @@ fn type_settings(
     } else {
         // Which features the font has (first style shown).
         let face = uniform(styles, |s| (s.font_family.clone(), s.font_style.clone())).and_then(|(f, s)| figcraft_text::find_face(&f, &s));
-        let face_name = face.as_ref().map(|f| format!("{} {}", f.family, f.style)).unwrap_or_else(|| "Mixed fonts".into());
+        let face_name = face.as_ref().map(|f| format!("{} {}", f.family, f.style)).unwrap_or_else(|| tr("Mixed fonts").into());
         widgets::label(ui, &face_name, t.text_secondary);
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             for (tag, label, default_on) in FEATURES {
                 let state = common(doc, ids, |n| n.kind.text().map(|t| t.features.get(tag).copied())).flatten();
                 let on = state.map(|s| s.unwrap_or(default_on));
                 let supported = face.as_ref().is_none_or(|f| f.has_feature(tag.as_bytes().try_into().unwrap_or(b"    ")));
-                if feature_row(ui, tag, label, on, supported) {
+                if feature_row(ui, tag, tr(label), on, supported) {
                     let want = !on.unwrap_or(false);
                     // Back to the font's default clears the override.
                     let v = if want == default_on { Value::Null } else { json!(want) };
@@ -518,13 +533,15 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
             ui.spacing_mut().item_spacing.x = 6.0;
             let (lr, _) = ui.allocate_exact_size(vec2(label_w, FIELD_H), Sense::hover());
             let name = ui.painter().layout(axis.name.clone(), regular(11.0), t.text, label_w);
-            let tip = format!(
-                "{} ({}): {} – {}, default {}. Double-click the slider to go back to the style's value; Escape while dragging cancels.",
-                axis.name,
-                axis.tag,
-                trim_num(axis.min),
-                trim_num(axis.max),
-                trim_num(axis.default)
+            let tip = trf(
+                "{name} ({tag}): {min} – {max}, default {default}. Double-click the slider to go back to the style's value; Escape while dragging cancels.",
+                &[
+                    ("name", &axis.name),
+                    ("tag", &axis.tag),
+                    ("min", &trim_num(axis.min)),
+                    ("max", &trim_num(axis.max)),
+                    ("default", &trim_num(axis.default)),
+                ],
             );
             ui.interact(lr, Id::new(("ty_axis_label", &axis.tag)), Sense::hover()).on_hover_text(tip);
             ui.painter().galley(pos2(lr.min.x, lr.center().y - name.size().y / 2.0), name, t.text);
@@ -568,8 +585,8 @@ fn variable_axes(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextSt
     }
     if styles.iter().any(|s| !s.variations.is_empty()) {
         ui.add_space(8.0);
-        let r = ui.add(egui::Label::new(egui::RichText::new("Reset to style").font(regular(11.0)).color(t.accent)).sense(Sense::click()));
-        if r.on_hover_text("Back to the values the font style implies").clicked() {
+        let r = ui.add(egui::Label::new(egui::RichText::new(tr("Reset to style")).font(regular(11.0)).color(t.accent)).sense(Sense::click()));
+        if r.on_hover_text(tr("Back to the values the font style implies")).clicked() {
             app.run("text.setVariations", json!({"ids": ids, "variations": {}, "replace": true}));
         }
     }
@@ -591,14 +608,14 @@ fn named_instances(
     let current = uniform(styles, |s| (s.variations.is_empty(), s.font_style.clone()));
     let label = match &current {
         Some((true, st)) if face.instance(st).is_some() => st.clone(),
-        Some(_) => "Custom".to_string(),
-        None => MIXED.to_string(),
+        Some(_) => tr("Custom").to_string(),
+        None => tr(MIXED).to_string(),
     };
     ui.add_space(4.0);
     // An inline list (a menu would close the Type settings popover it opens from).
     let open_id = Id::new("ty_instances_open");
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-    if widgets::elided_dropdown(ui, &label, ui.available_width()).on_hover_text("Named instance").clicked() {
+    if widgets::elided_dropdown(ui, &label, ui.available_width()).on_hover_text(tr("Named instance")).clicked() {
         open = !open;
     }
     if open {
@@ -668,7 +685,8 @@ fn caption(ui: &mut Ui, s: &str) {
     ui.label(egui::RichText::new(s).font(regular(10.5)).color(t.text_secondary));
 }
 
-/// A segmented control with short text labels (decoration, case, list…). Returns the clicked index.
+/// A segmented control with short text labels (decoration, case, list…); `tip`s are English keys
+/// (matched below), translated where shown. Returns the clicked index.
 fn text_seg(ui: &mut Ui, salt: &str, items: &[(&str, &str)], active: Option<usize>, width: f32) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
@@ -677,8 +695,8 @@ fn text_seg(ui: &mut Ui, salt: &str, items: &[(&str, &str)], active: Option<usiz
     let mut out = None;
     for (i, (label, tip)) in items.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.min.x + i as f32 * cell, rect.min.y), vec2(cell, FIELD_H));
-        let resp = ui.interact(r, Id::new(("ty_seg", salt, i)), Sense::click()).on_hover_text(*tip);
-        crate::a11y::toggle(&resp, tip, active == Some(i));
+        let resp = ui.interact(r, Id::new(("ty_seg", salt, i)), Sense::click()).on_hover_text(tr(tip));
+        crate::a11y::toggle(&resp, tr(tip), active == Some(i));
         if active == Some(i) {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.panel);
             ui.painter().rect_stroke(r.shrink(2.0), CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
@@ -714,7 +732,7 @@ fn feature_row(ui: &mut Ui, tag: &str, label: &str, on: Option<bool>, supported:
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
-    let resp = if supported { resp } else { resp.on_hover_text("Not in this font") };
+    let resp = if supported { resp } else { resp.on_hover_text(tr("Not in this font")) };
     if resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(4), t.hover);
     }
@@ -811,7 +829,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
     paint_lead(ui.painter(), lead, glyph, t.icon_secondary);
     let started = editing.is_none() && resp.clicked();
     if started {
-        editing = Some(if value == MIXED { String::new() } else { value.to_string() });
+        editing = Some(if value == tr(MIXED) { String::new() } else { value.to_string() });
         ui.memory_mut(|m| m.request_focus(id.with("te")));
     }
     let mut out = None;
@@ -839,7 +857,7 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
             }
         }
         None => {
-            let col = if value == MIXED { t.text_tertiary } else { t.text };
+            let col = if value == tr(MIXED) { t.text_tertiary } else { t.text };
             ui.painter().text(pos2(text_rect.min.x + 2.0, rect.center().y), Align2::LEFT_CENTER, value, regular(11.0), col);
         }
     }
@@ -918,7 +936,7 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     if just_opened {
         q.clear();
     }
-    let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search fonts").desired_width(ui.available_width()).font(regular(11.5)));
+    let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text(tr("Search fonts")).desired_width(ui.available_width()).font(regular(11.5)));
     if just_opened {
         search.request_focus();
     }
@@ -933,13 +951,13 @@ pub(crate) fn font_picker(ui: &mut Ui, current: Option<&str>, just_opened: bool)
     if ql.is_empty() {
         let recent: Vec<String> = recent_families(ui.ctx()).into_iter().filter(|f| all.iter().any(|a| a.eq_ignore_ascii_case(f))).collect();
         if !recent.is_empty() {
-            rows.push(PickRow::Header("Recent"));
+            rows.push(PickRow::Header(tr("Recent")));
             rows.extend(recent.into_iter().map(PickRow::Family));
-            rows.push(PickRow::Header("All fonts"));
+            rows.push(PickRow::Header(tr("All fonts")));
         }
     }
     if matches.is_empty() {
-        widgets::label(ui, "No fonts match", t.text_tertiary);
+        widgets::label(ui, tr("No fonts match"), t.text_tertiary);
         return None;
     }
     rows.extend(matches.into_iter().map(PickRow::Family));

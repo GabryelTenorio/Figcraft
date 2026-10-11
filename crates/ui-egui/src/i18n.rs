@@ -1,0 +1,166 @@
+//! The UI language: lookups over the string catalogs in `crates/ui-egui/locales/` (one TOML file
+//! per language, baked in by build.rs; see docs/translating.md).
+//!
+//! Keys are the English text as written in the code: `tr("Fill")`,
+//! `trf("Delete {name}", &[("name", &name)])`, `trn("{n} layers", count)`. A key a catalog lacks
+//! shows its English text, so the UI never shows a raw key. Command labels are looked up by command
+//! id ([`command`]): ids, the CLI, MCP and the control channel stay English.
+
+use std::borrow::Cow;
+use std::fmt::Display;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// One catalog entry.
+pub enum Text {
+    Plain(&'static str),
+    /// Plural forms: `one` (when the language has it) and `other`.
+    Plural(Option<&'static str>, &'static str),
+}
+
+/// A language's catalog (generated from `locales/<code>.toml`).
+pub struct Lang {
+    pub code: &'static str,
+    /// The language's own name for itself (the language picker shows it untranslated).
+    pub name: &'static str,
+    /// Machine-drafted, waiting for a native speaker's review (`[meta] status`).
+    pub draft: bool,
+    /// UI strings by English text, sorted.
+    pub ui: &'static [(&'static str, Text)],
+    /// Command labels by command id, sorted.
+    pub commands: &'static [(&'static str, Text)],
+    /// Main-menu labels by command id where the menu words it differently ("Fill" in Select
+    /// matching for "Select same fill"), sorted.
+    pub menu: &'static [(&'static str, Text)],
+}
+
+include!(concat!(env!("OUT_DIR"), "/locales.rs"));
+
+/// Index into [`LANGS`] of the language the UI shows (0: English).
+static CURRENT: AtomicUsize = AtomicUsize::new(0);
+
+/// The languages the UI can show, English first.
+pub fn languages() -> &'static [Lang] {
+    LANGS
+}
+
+/// The language the UI shows.
+pub fn current() -> Option<&'static Lang> {
+    LANGS.get(CURRENT.load(Ordering::Relaxed))
+}
+
+/// Show the language of `pref` (a language code, or "system" for `system`, the OS or browser
+/// language). Unknown languages show English.
+pub fn set(pref: &str, system: Option<&str>) {
+    CURRENT.store(resolve(pref, system), Ordering::Relaxed);
+}
+
+/// The [`LANGS`] index for a preference: the exact tag ("pt-BR"), else its base language ("es"
+/// for "es_ES.UTF-8"), else English.
+fn resolve(pref: &str, system: Option<&str>) -> usize {
+    let want = if pref.is_empty() || pref == "system" { system.unwrap_or("en") } else { pref };
+    let tag = want.split(['.', '@']).next().unwrap_or("").replace('_', "-");
+    let base = tag.split('-').next().unwrap_or("");
+    let find = |t: &str| LANGS.iter().position(|l| l.code.eq_ignore_ascii_case(t));
+    find(&tag).or_else(|| find(base)).unwrap_or(0)
+}
+
+fn find(table: &'static [(&'static str, Text)], key: &str) -> Option<&'static Text> {
+    table.binary_search_by(|(k, _)| (*k).cmp(key)).ok().and_then(|i| table.get(i)).map(|(_, t)| t)
+}
+
+/// `key`'s entry in language `lang`, else in English.
+fn lookup(lang: usize, key: &str) -> Option<&'static Text> {
+    [lang, 0].iter().filter_map(|i| LANGS.get(*i)).find_map(|l| find(l.ui, key))
+}
+
+/// The UI string for `key` (its English text) in the current language. One English text that needs
+/// two translations gets a context after `|` ("Fill|sizing"); the English catalog maps it back.
+pub fn tr(key: &str) -> &str {
+    match lookup(CURRENT.load(Ordering::Relaxed), key) {
+        Some(Text::Plain(s) | Text::Plural(_, s)) => s,
+        None => key,
+    }
+}
+
+/// Mark a key for the catalog where the lookup happens later (`tr(label)` at display time), e.g. in
+/// a `const` table.
+pub const fn tr_noop(key: &str) -> &str {
+    key
+}
+
+/// [`tr`] with `{name}` placeholders filled from `args`.
+pub fn trf(key: &str, args: &[(&str, &dyn Display)]) -> String {
+    fill(tr(key), args)
+}
+
+/// The plural form of `key` (its English "other" form) for count `n`, with `{n}` and `args` filled.
+pub fn trn(key: &str, n: usize, args: &[(&str, &dyn Display)]) -> String {
+    let lang = CURRENT.load(Ordering::Relaxed);
+    let text = match lookup(lang, key) {
+        Some(Text::Plural(one, other)) => one.filter(|_| plural_one(lang, n)).unwrap_or(other),
+        Some(Text::Plain(s)) => s,
+        None => key,
+    };
+    let mut all: Vec<(&str, &dyn Display)> = vec![("n", &n)];
+    all.extend_from_slice(args);
+    fill(text, &all)
+}
+
+/// Whether count `n` takes the "one" form.
+// shortcut: n == 1 is CLDR's rule for English and Spanish (Spanish "many" for millions reads as
+// "other" here); add per-language rules when a language needs them (French: 0 and 1).
+fn plural_one(_lang: usize, n: usize) -> bool {
+    n == 1
+}
+
+/// Replace each `{name}` in `text` with its argument, in one pass (an argument's own braces stay).
+fn fill(text: &str, args: &[(&str, &dyn Display)]) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        let (before, tail) = rest.split_at(open);
+        out.push_str(before);
+        let arg = tail.find('}').and_then(|close| {
+            let name = tail.get(1..close)?;
+            args.iter().find(|(k, _)| *k == name).map(|(_, v)| (close, v))
+        });
+        match arg {
+            Some((close, v)) => {
+                out.push_str(&v.to_string());
+                rest = tail.get(close + 1..).unwrap_or("");
+            }
+            None => {
+                out.push('{');
+                rest = tail.get(1..).unwrap_or("");
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// A command's label in the current language: the catalog's by command id, else `english` (the
+/// engine's label).
+pub fn command<'a>(id: &str, english: &'a str) -> Cow<'a, str> {
+    label(false, id, english)
+}
+
+/// A main-menu item's label: the catalog's menu wording for the id, else the command's. An English
+/// label ending in "…" (opens a dialog) keeps it.
+pub fn menu_item<'a>(id: &str, english: &'a str) -> Cow<'a, str> {
+    label(true, id, english)
+}
+
+fn label<'a>(menu: bool, id: &str, english: &'a str) -> Cow<'a, str> {
+    let lang = LANGS.get(CURRENT.load(Ordering::Relaxed));
+    let text = lang.and_then(|l| menu.then(|| find(l.menu, id)).flatten().or_else(|| find(l.commands, id)));
+    match text {
+        Some(Text::Plain(s) | Text::Plural(_, s)) if english.ends_with('…') && !s.ends_with('…') => Cow::Owned(format!("{s}…")),
+        Some(Text::Plain(s) | Text::Plural(_, s)) => Cow::Borrowed(s),
+        None => Cow::Borrowed(english),
+    }
+}
+
+#[cfg(test)]
+#[path = "i18n_tests.rs"]
+mod tests;

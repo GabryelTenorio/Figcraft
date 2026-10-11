@@ -241,6 +241,18 @@ pub fn specs() -> Vec<CommandSpec> {
             s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
             Ok(json!({"name": s.prefs.user_name}))
         }),
+        spec!("pref.language", "Interface language", "{language: system|en|es|… (a language code; no catalog: English)}", false, |s, p| {
+            let lang = req_string("pref.language", p, "language")?;
+            let lang = lang.trim();
+            // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".
+            let tag = lang.len() <= 35
+                && lang.split(['-', '_']).all(|part| !part.is_empty() && part.len() <= 8 && part.chars().all(|c| c.is_ascii_alphanumeric()));
+            if !tag {
+                return Err(bad("pref.language", format!("`{lang}` is not a language code")));
+            }
+            s.prefs.language = lang.to_string();
+            Ok(json!({"language": s.prefs.language}))
+        }),
         spec!("app.preferences", "Preferences", "{}", false, |s, _| ui(s, "dialog.preferences")),
         spec!("app.actions", "Actions", "{}", false, |s, _| ui(s, "palette.actions")),
         spec!("help.shortcuts", "Keyboard shortcuts", "{}", false, |s, _| ui(s, "panel.shortcuts")),

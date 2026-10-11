@@ -26,6 +26,7 @@ pub mod frame_stats;
 pub mod guides;
 pub mod handles;
 pub mod home;
+pub mod i18n;
 pub mod icons;
 pub mod layers;
 pub mod layout_panel;
@@ -143,6 +144,10 @@ pub trait Services {
     /// The system asks for reduced motion (its accessibility setting).
     fn reduce_motion(&self) -> bool {
         false
+    }
+    /// The OS or browser language as a tag ("es-ES"), for the "system" language preference.
+    fn system_language(&self) -> Option<String> {
+        None
     }
 }
 
@@ -374,6 +379,8 @@ pub struct FigApp {
     fonts_installed: bool,
     /// System faces for scripts the built-in fonts lack were added (after the font scan).
     script_fonts: bool,
+    /// The language preference the UI strings follow (applied when it changes).
+    language: Option<String>,
     /// A field had the keyboard when the last frame ended.
     field_focus: bool,
     /// Control-channel requests waiting for the next frame.
@@ -394,6 +401,7 @@ impl FigApp {
             worker: None,
             fonts_installed: false,
             script_fonts: false,
+            language: None,
             field_focus: false,
             control_queue: Vec::new(),
             control_input: Vec::new(),
@@ -545,7 +553,7 @@ impl FigApp {
                     let y = r.data.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     comments::start_draft(self, x, y);
                 }
-                "dialog.unsaved" => self.toast("This file has unsaved changes"),
+                "dialog.unsaved" => self.toast(i18n::tr("This file has unsaved changes")),
                 "dialog.plugins" => self.ui.plugins_window = true,
                 _ => {}
             }
@@ -557,10 +565,10 @@ impl FigApp {
 
     pub fn save_as_dialog(&mut self) {
         let name = self.session.doc().map(|d| d.name.clone()).unwrap_or_else(|_| "Untitled".into());
-        if let Some(p) = self.services.pick_save("Save as", &format!("{name}.figcraft"), &["figcraft"]) {
+        if let Some(p) = self.services.pick_save(i18n::tr("Save as"), &format!("{name}.figcraft"), &["figcraft"]) {
             let ps = p.to_string_lossy().to_string();
             if self.run("file.saveAs", json!({"path": ps})).is_some() {
-                self.toast(format!("Saved {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
+                self.toast(i18n::trf("Saved {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
             }
         }
     }
@@ -570,7 +578,7 @@ impl FigApp {
         let tab = figcraft_engine::branches::file_tab(&self.session);
         if self.session.docs.get(tab).is_some_and(|d| d.path.is_some()) {
             if self.run("file.save", json!({})).is_some() {
-                self.toast("Saved");
+                self.toast(i18n::tr("Saved"));
             }
         } else {
             self.save_as_dialog();
@@ -578,7 +586,7 @@ impl FigApp {
     }
 
     pub fn open_dialog(&mut self) {
-        if let Some(p) = self.services.pick_open("Open", &["figcraft", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
+        if let Some(p) = self.services.pick_open(i18n::tr("Open"), &["figcraft", "json", "svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"]) {
             let ps = p.to_string_lossy().to_string();
             if self.run("file.open", json!({"path": ps})).is_some() {
                 self.ui.home = false;
@@ -592,7 +600,7 @@ impl FigApp {
         } else {
             &["svg", "png", "jpg", "jpeg", "webp", "gif", "tif", "tiff", "figcraft"]
         };
-        if let Some(p) = self.services.pick_open(if place { "Place image" } else { "Import" }, exts) {
+        if let Some(p) = self.services.pick_open(if place { i18n::tr("Place image") } else { i18n::tr("Import") }, exts) {
             let ps = p.to_string_lossy().to_string();
             self.run("file.import", json!({"path": ps}));
         }
@@ -603,7 +611,7 @@ impl FigApp {
         self.session.prefs.reduce_motion || self.services.reduce_motion()
     }
 
-    /// Per-frame logic that doesn't draw (control requests, theme).
+    /// Per-frame logic that doesn't draw (control requests, theme, language).
     pub fn logic(&mut self, ctx: &egui::Context) {
         if !self.fonts_installed {
             theme::install_fonts(ctx, false);
@@ -612,6 +620,10 @@ impl FigApp {
             // Once the system fonts are indexed: faces for names in scripts the UI fonts lack.
             self.script_fonts = true;
             theme::install_fonts(ctx, true);
+        }
+        if self.language.as_ref() != Some(&self.session.prefs.language) {
+            i18n::set(&self.session.prefs.language, self.services.system_language().as_deref());
+            self.language = Some(self.session.prefs.language.clone());
         }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,
@@ -702,7 +714,7 @@ impl FigApp {
                 .resizable(false)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
-                    a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Navigation, "Sidebar");
+                    a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Navigation, i18n::tr("Sidebar"));
                     layers::rail(self, ui)
                 });
         }
@@ -714,9 +726,9 @@ impl FigApp {
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     let label = match self.ui.left_tab {
-                        _ if self.ui.versions.open => "Version history",
-                        LeftTab::File => "Layers",
-                        LeftTab::Assets => "Assets",
+                        _ if self.ui.versions.open => i18n::tr("Version history"),
+                        LeftTab::File => i18n::tr("Layers"),
+                        LeftTab::Assets => i18n::tr("Assets"),
                     };
                     a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Pane, label);
                     layers::left_panel(self, ui)
@@ -730,9 +742,9 @@ impl FigApp {
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     let label = match self.ui.right_tab {
-                        RightTab::Design => "Design",
-                        RightTab::Prototype => "Prototype",
-                        RightTab::Inspect => "Dev Mode",
+                        RightTab::Design => i18n::tr("Design"),
+                        RightTab::Prototype => i18n::tr("Prototype"),
+                        RightTab::Inspect => i18n::tr("Dev Mode"),
                     };
                     a11y::region(&mut self.ui.nav, ui, a11y::Region::Properties, egui::accesskit::Role::Pane, label);
                     right::right_panel(self, ui)
@@ -745,7 +757,7 @@ impl FigApp {
             self.worker = Some(worker);
             if !hidden {
                 ui.scope_builder(egui::UiBuilder::new().id_salt("toolbar"), |ui| {
-                    a11y::container(ui, egui::accesskit::Role::Toolbar, "Tools");
+                    a11y::container(ui, egui::accesskit::Role::Toolbar, i18n::tr("Tools"));
                     toolbar::show(self, ui);
                 });
             }

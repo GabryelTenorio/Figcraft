@@ -11,6 +11,7 @@ use figcraft_geom::Point;
 
 use crate::FigApp;
 use crate::canvas::status_badge;
+use crate::i18n::tr;
 use crate::theme::{ACCENT, COMPONENT, Tokens, regular, semibold};
 
 /// Where a label goes on screen: the corner it starts at, the angle it reads along (radians,
@@ -143,7 +144,7 @@ pub fn draw(app: &FigApp, painter: &Painter, t: &Tokens, doc: &Document, id: Nod
         let height = (p01 - p00).length();
         if edge.len > 120.0 && height > 60.0 {
             let center = at(n.width / 2.0, n.height / 2.0);
-            painter.text(center, Align2::CENTER_CENTER, "Contents hidden", regular(11.0), t.text_tertiary);
+            painter.text(center, Align2::CENTER_CENTER, tr("Contents hidden"), regular(11.0), t.text_tertiary);
         }
     }
     let rot = Rot2::from_angle(edge.angle);

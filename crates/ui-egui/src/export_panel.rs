@@ -11,6 +11,7 @@ use figcraft_engine::cmd::file::export_jobs;
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::i18n::{tr, trf, trn};
 use crate::icons::{self, Icon};
 use crate::right::{common, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular};
@@ -28,8 +29,8 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let shared = common(doc, sel, |n| n.exports.clone());
     let mixed = shared.is_none() && sel.len() > 1;
     let list = shared.unwrap_or_default();
-    let tip = if mixed { "Replace mixed export settings" } else { "Add export setting" };
-    if widgets::section_header(ui, "Export", &[(Icon::Plus, tip)], list.is_empty()).is_some() {
+    let tip = if mixed { tr("Replace mixed export settings") } else { tr("Add export setting") };
+    if widgets::section_header(ui, tr("Export"), &[(Icon::Plus, tip)], list.is_empty()).is_some() {
         if mixed {
             app.set_props(&ids, json!({"exports": [ExportSetting::default()]}));
         } else {
@@ -37,7 +38,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
     }
     if mixed {
-        row(ui, 28.0, |ui| widgets::label(ui, "Click + to replace mixed content", t.text_secondary));
+        row(ui, 28.0, |ui| widgets::label(ui, tr("Click + to replace mixed content"), t.text_secondary));
     }
     for (i, e) in list.iter().enumerate() {
         setting_row(app, ui, &ids, i, e);
@@ -51,8 +52,8 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     }
     let layers: BTreeSet<NodeId> = jobs.iter().map(|j| j.id).collect();
     let label = match (layers.len(), layers.first().and_then(|i| doc.node(*i))) {
-        (1, Some(n)) => format!("Export {}", n.name),
-        (k, _) => format!("Export {k} layers"),
+        (1, Some(n)) => trf("Export {name}", &[("name", &n.name)]),
+        (k, _) => trn("Export {n} layers", k, &[]),
     };
     if wide_button(ui, &label) {
         export_layers(app, sel);
@@ -72,7 +73,7 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
         {
             app.run("export.update", json!({"ids": ids, "index": i, "size": s}));
         }
-        if let Some(sfx) = widgets::text_field(ui, Id::new(("export_suffix", i)), &e.suffix, suffix_w, "Suffix")
+        if let Some(sfx) = widgets::text_field(ui, Id::new(("export_suffix", i)), &e.suffix, suffix_w, tr("Suffix"))
             && sfx != e.suffix
         {
             app.run("export.update", json!({"ids": ids, "index": i, "suffix": sfx}));
@@ -86,7 +87,7 @@ fn setting_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, e: &Expo
                 }
             }
         });
-        if icons::button(ui, Icon::Minus, 24.0, false, "Remove export setting").clicked() {
+        if icons::button(ui, Icon::Minus, 24.0, false, tr("Remove export setting")).clicked() {
             app.run("export.remove", json!({"ids": ids, "index": i}));
         }
     });
@@ -108,7 +109,7 @@ fn print_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &PrintS
         let label = ui.painter().layout(print_summary(p), regular(11.0), t.text_secondary, r.width() - 32.0);
         ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - label.size().y / 2.0), label, t.text_secondary);
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.max.x - 12.0, r.center().y), vec2(14.0, 14.0)), Icon::Dots, t.icon_secondary);
-        egui::Popup::from_toggle_button_response(&resp.on_hover_text("PDF print settings"))
+        egui::Popup::from_toggle_button_response(&resp.on_hover_text(tr("PDF print settings")))
             .id(open_id)
             .width(216.0)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -127,17 +128,17 @@ fn print_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, p: &PrintS
 fn print_summary(p: &PrintSettings) -> String {
     let mut parts = Vec::new();
     if p.bleed() > 0.0 {
-        parts.push(format!("{} bleed", PrintSettings::length_label(p.bleed())));
+        parts.push(trf("{length} bleed", &[("length", &PrintSettings::length_label(p.bleed()))]));
     }
     if p.crop_marks {
-        parts.push("crop marks".to_string());
+        parts.push(tr("crop marks").to_string());
     }
     if p.bleed_marks && p.bleed() > 0.0 {
-        parts.push("bleed marks".to_string());
+        parts.push(tr("bleed marks").to_string());
     }
     parts.push(if p.cmyk { "CMYK" } else { "RGB" }.to_string());
     if p.bleed() <= 0.0 && !p.marks() {
-        parts.push("no bleed".to_string());
+        parts.push(tr("no bleed").to_string());
     }
     let s = parts.join(", ");
     let mut c = s.chars();
@@ -150,7 +151,7 @@ pub(crate) fn print_options(ui: &mut Ui, id: Id, p: &PrintSettings) -> Option<Pr
     let t = Tokens::get(ui.ctx());
     let mut next = *p;
     ui.horizontal(|ui| {
-        widgets::label(ui, "Bleed", t.text_secondary);
+        widgets::label(ui, tr("Bleed"), t.text_secondary);
         let w = (ui.available_width() - 4.0).max(48.0);
         if let Some(b) = widgets::text_field(ui, id.with("bleed"), &PrintSettings::length_label(p.bleed()), w, "0 mm")
             .and_then(|v| PrintSettings::parse_length(&v))
@@ -159,13 +160,13 @@ pub(crate) fn print_options(ui: &mut Ui, id: Id, p: &PrintSettings) -> Option<Pr
             next.bleed = b;
         }
     });
-    for (on, label) in [(&mut next.crop_marks, "Crop marks"), (&mut next.bleed_marks, "Bleed marks"), (&mut next.cmyk, "CMYK colour")] {
+    for (on, label) in [(&mut next.crop_marks, tr("Crop marks")), (&mut next.bleed_marks, tr("Bleed marks")), (&mut next.cmyk, tr("CMYK colour"))] {
         if widgets::checkbox(ui, *on, label) {
             *on = !*on;
         }
     }
     if p.bleed_marks && p.bleed() <= 0.0 {
-        widgets::label(ui, "Bleed marks need a bleed", t.text_secondary);
+        widgets::label(ui, tr("Bleed marks need a bleed"), t.text_secondary);
     }
     (next != *p).then_some(next)
 }
@@ -205,7 +206,7 @@ fn preview(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId) {
         }
         let icon = if open { Icon::Chevron } else { Icon::ChevronRight };
         icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 8.0, r.center().y), vec2(12.0, 12.0)), icon, t.icon_secondary);
-        ui.painter().text(pos2(r.min.x + 20.0, r.center().y), Align2::LEFT_CENTER, "Preview", regular(11.0), t.text);
+        ui.painter().text(pos2(r.min.x + 20.0, r.center().y), Align2::LEFT_CENTER, tr("Preview"), regular(11.0), t.text);
         if resp.clicked() {
             open = !open;
         }
@@ -277,10 +278,10 @@ pub(crate) fn export_layers(app: &mut FigApp, ids: &[NodeId]) {
         [] => {}
         [one] => save_one(app, &[one.id], &one.setting, &one.file),
         _ => {
-            let Some(dir) = app.services.pick_folder("Export") else { return };
+            let Some(dir) = app.services.pick_folder(tr("Export")) else { return };
             if let Some(r) = app.run("file.exportLayers", json!({"ids": ids, "dir": dir.to_string_lossy()})) {
                 let n = r["files"].as_array().map_or(0, Vec::len);
-                app.toast(format!("Exported {n} file{}", if n == 1 { "" } else { "s" }));
+                app.toast(trn("Exported {n} files", n, &[]));
             }
         }
     }
@@ -289,10 +290,10 @@ pub(crate) fn export_layers(app: &mut FigApp, ids: &[NodeId]) {
 /// Export `ids` together as one file with `setting`, through a save dialog suggesting `file`.
 pub(crate) fn save_one(app: &mut FigApp, ids: &[NodeId], setting: &ExportSetting, file: &str) {
     let ext = setting.format.ext();
-    let Some(p) = app.services.pick_save("Export", file, &[ext]) else { return };
+    let Some(p) = app.services.pick_save(tr("Export"), file, &[ext]) else { return };
     let path = p.to_string_lossy().to_string();
     if app.run("file.export", with_print(json!({"ids": ids, "format": ext, "size": setting.size, "path": path}), setting)).is_some() {
-        app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
+        app.toast(trf("Exported {name}", &[("name", &p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default())]));
     }
 }
 
@@ -305,11 +306,11 @@ pub(crate) fn suggested_name(doc: &Document, ids: &[NodeId], setting: &ExportSet
 
 /// The page's Export section: the whole page as one PNG.
 pub fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, page: NodeId) {
-    widgets::section_header(ui, "Export", &[], false);
-    if wide_button(ui, "Export page as PNG") {
+    widgets::section_header(ui, tr("Export"), &[], false);
+    if wide_button(ui, tr("Export page as PNG")) {
         let all: Vec<NodeId> = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
         let setting = ExportSetting::default();
-        let page_name = doc.node(page).map_or("Page", |p| p.name.as_str());
+        let page_name = doc.node(page).map_or(tr("Page"), |p| p.name.as_str());
         let file = format!("{page_name}.{}", setting.format.ext());
         save_one(app, &all, &setting, &file);
     }

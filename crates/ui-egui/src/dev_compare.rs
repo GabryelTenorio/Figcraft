@@ -11,6 +11,7 @@ use figcraft_engine::devcompare::{self, ChangeKind, Comparison, LayerChange};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::icons::Icon;
 use crate::theme::{ACCENT, DEV_CHANGED, Tokens, regular, semibold};
 use crate::widgets;
@@ -155,7 +156,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             ui.set_min_size(size);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let Some(cache) = view.cache.as_ref() else { return };
-            header(ui, &t, "Compare changes", &cache.cmp.name, &mut view.mode, &mut open);
+            header(ui, &t, tr("Compare changes"), &cache.cmp.name, &mut view.mode, &mut open);
             let body_h = size.y - BAR_H * 2.0 - 2.0;
             let top_down = egui::Layout::top_down(egui::Align::Min);
             ui.horizontal_top(|ui| {
@@ -163,13 +164,15 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 let (r, _) = ui.allocate_exact_size(vec2(images_w, body_h), Sense::hover());
                 if !cache.cmp.snapshot {
                     let msg = if cache.cmp.changed {
-                        "What this changed from isn't known: it changed before FigCraft kept a copy of ready-for-dev frames. Resolve the change (or mark it ready again) to compare from now on."
+                        tr(
+                            "What this changed from isn't known: it changed before FigCraft kept a copy of ready-for-dev frames. Resolve the change (or mark it ready again) to compare from now on.",
+                        )
                     } else {
-                        "Nothing changed since this was marked ready for dev."
+                        tr("Nothing changed since this was marked ready for dev.")
                     };
                     message(ui, &t, r, msg);
                 } else if let (Some(before), Some(after)) = (&cache.before, &cache.after) {
-                    images(ui, &t, r, [(before, "Before"), (after, "Now")], view.mode, &mut view.split, view.hovered);
+                    images(ui, &t, r, [(before, tr("Before")), (after, tr("Now"))], view.mode, &mut view.split, view.hovered);
                 }
                 let (line, _) = ui.allocate_exact_size(vec2(1.0, body_h), Sense::hover());
                 ui.painter().rect_filled(line, CornerRadius::ZERO, t.border);
@@ -189,7 +192,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         }
         Some(Action::Resolve) => {
             if app.run("dev.resolveChange", json!({"ids": [view.id]})).is_some() {
-                app.toast("Change resolved");
+                app.toast(tr("Change resolved"));
                 open = false;
             }
         }
@@ -217,7 +220,7 @@ pub(crate) fn header(ui: &mut Ui, t: &Tokens, title: &str, name: &str, mode: &mu
     let name = widgets::elide(ui, name, 320.0);
     ui.painter().text(pos2(r.min.x + 28.0 + tw, r.center().y), Align2::LEFT_CENTER, name, regular(12.0), t.text_secondary);
     // Side by side / overlay, as a two-way switch left of the close button.
-    let modes = [(Mode::SideBySide, "Side by side"), (Mode::Overlay, "Overlay")];
+    let modes = [(Mode::SideBySide, tr("Side by side")), (Mode::Overlay, tr("Overlay"))];
     let mut x = r.max.x - 48.0;
     for (m, label) in modes.iter().rev() {
         let g = ui.painter().layout_no_wrap((*label).into(), regular(11.0), t.text);
@@ -242,7 +245,7 @@ pub(crate) fn header(ui: &mut Ui, t: &Tokens, title: &str, name: &str, mode: &mu
         Id::new("compare_close"),
         Rect::from_center_size(pos2(r.max.x - 24.0, r.center().y), vec2(24.0, 24.0)),
         Icon::Close,
-        "Close",
+        tr("Close"),
     ) {
         *open = false;
     }
@@ -325,16 +328,16 @@ fn pane(p: &egui::Painter, t: &Tokens, place: Place, shot: &Shot, hovered: Optio
 fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>) -> Option<Action> {
     let mut out = None;
     let summary = if !cmp.snapshot {
-        "Changes unknown".to_string()
+        tr("Changes unknown").to_string()
     } else if cmp.changes.is_empty() {
-        "No changes".to_string()
+        tr("No changes").to_string()
     } else {
-        let parts: Vec<String> = [(cmp.modified, "changed"), (cmp.added, "added"), (cmp.removed, "removed")]
+        let parts: Vec<String> = [(cmp.modified, tr_noop("{n} changed")), (cmp.added, tr_noop("{n} added")), (cmp.removed, tr_noop("{n} removed"))]
             .iter()
             .filter(|(n, _)| *n > 0)
-            .map(|(n, w)| format!("{n} {w}"))
+            .map(|(n, key)| trn(key, *n, &[]))
             .collect();
-        format!("{} layer{} · {}", cmp.changes.len(), if cmp.changes.len() == 1 { "" } else { "s" }, parts.join(", "))
+        trn("{n} layers · {parts}", cmp.changes.len(), &[("parts", &parts.join(", "))])
     };
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, summary, semibold(11.0), t.text);
@@ -342,7 +345,7 @@ fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>)
     egui::ScrollArea::vertical().id_salt("compare_list").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         for c in &cmp.changes {
-            let tip = if c.change == ChangeKind::Removed { "Removed since it was marked" } else { "Select layer" };
+            let tip = if c.change == ChangeKind::Removed { tr("Removed since it was marked") } else { tr("Select layer") };
             let resp = change_row(ui, t, c.change, &c.name, c.depth, c.layers, false, tip);
             if resp.hovered() {
                 now_hovered = Some(c.id);
@@ -353,7 +356,7 @@ fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>)
             property_lines(ui, t, c.depth, c.properties.iter().map(|pc| pc.text.as_str()));
         }
         if cmp.truncated {
-            widgets::note(ui, &format!("Only the first {} changed layers are listed.", devcompare::MAX_CHANGES), t.text_secondary);
+            widgets::note(ui, &trf("Only the first {n} changed layers are listed.", &[("n", &devcompare::MAX_CHANGES)]), t.text_secondary);
         }
     });
     *hovered = now_hovered;
@@ -375,19 +378,19 @@ pub(crate) fn change_row(
     let indent = 16.0 + (depth.min(6) as f32) * 10.0;
     let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
     let resp = resp.on_hover_text(tip);
-    crate::a11y::list_item(&resp, &format!("{} {name}", kind.label()), selected);
+    crate::a11y::list_item(&resp, &format!("{} {name}", tr(kind.label())), selected);
     if selected {
         ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.selected_row);
     } else if resp.hovered() {
         ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.hover);
     }
     let col = kind_color(t, kind);
-    let tag = ui.painter().layout_no_wrap(kind.label().into(), semibold(9.0), col);
+    let tag = ui.painter().layout_no_wrap(tr(kind.label()).into(), semibold(9.0), col);
     let tag_r = Rect::from_min_size(pos2(row.max.x - 16.0 - tag.size().x - 10.0, row.center().y - 8.0), vec2(tag.size().x + 10.0, 16.0));
     ui.painter().rect_filled(tag_r, CornerRadius::same(4), col.gamma_multiply(0.15));
     ui.painter().galley(tag_r.center() - tag.size() / 2.0, tag, col);
     ui.painter().circle_filled(pos2(row.min.x + indent + 3.0, row.center().y), 3.0, col);
-    let name = if layers > 1 { format!("{name} ({layers} layers)") } else { name.to_string() };
+    let name = if layers > 1 { trf("{name} ({layers} layers)", &[("name", &name), ("layers", &layers)]) } else { name.to_string() };
     let name = widgets::elide(ui, &name, (tag_r.min.x - row.min.x - indent - 20.0).max(20.0));
     let strike = kind == ChangeKind::Removed;
     let galley = ui.painter().layout_no_wrap(name, regular(11.0), if strike { t.text_secondary } else { t.text });
@@ -423,12 +426,12 @@ fn footer(ui: &mut Ui, t: &Tokens, cmp: &Comparison) -> Option<Action> {
     let inner = Rect::from_min_max(pos2(r.min.x + 16.0, r.min.y + 1.0), pos2(r.max.x - 16.0, r.max.y));
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
-        let resolve = widgets::button(ui, "Resolve change", true, cmp.changed)
-            .on_hover_text("Back to Ready for dev: the next change compares with how it is now");
+        let resolve = widgets::button(ui, tr("Resolve change"), true, cmp.changed)
+            .on_hover_text(tr("Back to Ready for dev: the next change compares with how it is now"));
         if resolve.clicked() {
             out = Some(Action::Resolve);
         }
-        if widgets::button(ui, "Close", false, true).clicked() {
+        if widgets::button(ui, tr("Close"), false, true).clicked() {
             out = Some(Action::Close);
         }
     });

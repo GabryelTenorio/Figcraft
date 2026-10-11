@@ -6,6 +6,7 @@ use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::a11y::Tip;
+use crate::i18n::{tr, trf};
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular};
 use crate::{FigApp, TitleBar};
@@ -31,9 +32,9 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         let mut x = rect.min.x + if app.ui.title_bar == TitleBar::Inset { 76.0 } else { 8.0 };
         // Home.
         let hr = Rect::from_min_size(pos2(x, rect.min.y), vec2(44.0, HEIGHT));
-        let hresp = ui.interact(hr, ui.id().with("home"), Sense::click()).tip("Home");
+        let hresp = ui.interact(hr, ui.id().with("home"), Sense::click()).tip(tr("Home"));
         let home_active = app.ui.home || app.session.docs.is_empty();
-        crate::a11y::tab(&hresp, "Home", home_active);
+        crate::a11y::tab(&hresp, tr("Home"), home_active);
         if home_active {
             ui.painter().rect_filled(hr, CornerRadius::ZERO, t.tab_active);
         } else if hresp.hovered() {
@@ -80,7 +81,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             }
             let cr = Rect::from_center_size(pos2(r.max.x - 16.0, r.center().y), vec2(18.0, 18.0));
             if resp.hovered() || active {
-                let cresp = ui.interact(cr, ui.id().with(("tabclose", d.uid)), Sense::click()).tip("Close tab");
+                let cresp = ui.interact(cr, ui.id().with(("tabclose", d.uid)), Sense::click()).tip(tr("Close tab"));
                 if cresp.hovered() {
                     ui.painter().rect_filled(cr, CornerRadius::same(4), t.pressed);
                 }
@@ -100,7 +101,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         }
         // New tab.
         let nr = Rect::from_center_size(pos2(x + 20.0, rect.center().y), vec2(28.0, 28.0));
-        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).tip(crate::shortcuts::tip("New design file", "file.new"));
+        let nresp = ui.interact(nr, ui.id().with("newtab"), Sense::click()).tip(crate::shortcuts::tip(tr("New design file"), "file.new"));
         if nresp.hovered() {
             ui.painter().rect_filled(nr, CornerRadius::same(5), t.hover);
         }
@@ -110,12 +111,12 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             app.ui.home = false;
         }
         // Right side: theme toggle (left of the window buttons).
-        let tr = Rect::from_center_size(pos2(rect.max.x - buttons_w - 24.0, rect.center().y), vec2(28.0, 28.0));
-        let tresp = ui.interact(tr, ui.id().with("theme"), Sense::click()).tip("Toggle light/dark theme");
+        let theme_r = Rect::from_center_size(pos2(rect.max.x - buttons_w - 24.0, rect.center().y), vec2(28.0, 28.0));
+        let tresp = ui.interact(theme_r, ui.id().with("theme"), Sense::click()).tip(tr("Toggle light/dark theme"));
         if tresp.hovered() {
-            ui.painter().rect_filled(tr, CornerRadius::same(5), t.hover);
+            ui.painter().rect_filled(theme_r, CornerRadius::same(5), t.hover);
         }
-        icons::paint(ui.painter(), tr.shrink(7.0), if app.ui.dark { Icon::Sun } else { Icon::Moon }, t.icon);
+        icons::paint(ui.painter(), theme_r.shrink(7.0), if app.ui.dark { Icon::Sun } else { Icon::Moon }, t.icon);
         if tresp.clicked() {
             let cmd = if app.ui.dark { "view.themeLight" } else { "view.themeDark" };
             app.run(cmd, json!({}));
@@ -129,7 +130,10 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             let dirty = app.session.docs.get(i).is_some_and(|d| d.is_dirty() && d.branch_of.is_none());
             if dirty {
                 app.ui.find = None;
-                app.toast(format!("Unsaved changes: save first, or close again with {} to discard", crate::toolbar::pretty_shortcut("Alt")));
+                app.toast(trf(
+                    "Unsaved changes: save first, or close again with {key} to discard",
+                    &[("key", &crate::toolbar::pretty_shortcut("Alt"))],
+                ));
                 if ui.input(|inp| inp.modifiers.alt) {
                     app.run("file.close", json!({"index": i, "force": true}));
                 }
@@ -148,9 +152,13 @@ fn window_buttons(ui: &mut Ui, bar: Rect) -> f32 {
     let t = Tokens::get(ui.ctx());
     let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
     let buttons = [
-        (Icon::WinMinimize, "Minimize", egui::ViewportCommand::Minimized(true)),
-        (if max { Icon::WinRestore } else { Icon::WinMaximize }, if max { "Restore" } else { "Maximize" }, egui::ViewportCommand::Maximized(!max)),
-        (Icon::Close, "Close", egui::ViewportCommand::Close),
+        (Icon::WinMinimize, tr("Minimize"), egui::ViewportCommand::Minimized(true)),
+        (
+            if max { Icon::WinRestore } else { Icon::WinMaximize },
+            if max { tr("Restore") } else { tr("Maximize") },
+            egui::ViewportCommand::Maximized(!max),
+        ),
+        (Icon::Close, tr("Close"), egui::ViewportCommand::Close),
     ];
     for (k, (icon, tip, cmd)) in buttons.into_iter().enumerate() {
         let r = Rect::from_min_size(pos2(bar.max.x - W * (3 - k) as f32, bar.min.y), vec2(W, bar.height()));

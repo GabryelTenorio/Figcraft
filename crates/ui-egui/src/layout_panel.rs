@@ -9,6 +9,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::Tip;
+use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::right::{block, common, menu_item, menu_popup, row};
 use crate::theme::{ACCENT, Tokens, regular};
@@ -26,11 +27,11 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     let frames = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like()));
     let al = common(doc, sel, |n| n.layout.clone());
     let has_al = matches!(al, Some(Some(_)));
-    let title = if has_al { "Auto layout" } else { "Layout" };
+    let title = if has_al { tr("Auto layout") } else { tr("Layout") };
     let btns: Vec<(Icon, &str)> = if frames && !has_al {
-        vec![(Icon::Plus, crate::shortcuts::tip("Add auto layout", "layout.add"))]
+        vec![(Icon::Plus, crate::shortcuts::tip(tr("Add auto layout"), "layout.add"))]
     } else if has_al {
-        vec![(Icon::Minus, crate::shortcuts::tip("Remove auto layout", "layout.remove"))]
+        vec![(Icon::Minus, crate::shortcuts::tip(tr("Remove auto layout"), "layout.remove"))]
     } else {
         vec![]
     };
@@ -55,7 +56,7 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     if frames {
         let clip = common(doc, sel, |n| n.clip);
         row(ui, 32.0, |ui| {
-            if widgets::checkbox(ui, clip.unwrap_or(false), "Clip content") {
+            if widgets::checkbox(ui, clip.unwrap_or(false), tr("Clip content")) {
                 app.set_props(&ids, json!({"clip": !clip.unwrap_or(false)}));
             }
         });
@@ -64,7 +65,8 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
 
 fn direction(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     row(ui, 32.0, |ui| {
-        let items = [(Icon::LayoutV, "Vertical"), (Icon::LayoutH, "Horizontal"), (Icon::LayoutWrap, "Wrap"), (Icon::LayoutGrid, "Grid")];
+        let items =
+            [(Icon::LayoutV, tr("Vertical")), (Icon::LayoutH, tr("Horizontal")), (Icon::LayoutWrap, tr("Wrap")), (Icon::LayoutGrid, tr("Grid"))];
         let active = match (l.mode, l.wrap) {
             (LayoutMode::Vertical, _) => 0,
             (LayoutMode::Horizontal, false) => 1,
@@ -83,18 +85,40 @@ fn direction(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     });
 }
 
-/// One axis' sizing, min/max keys and labels.
+/// One axis' sizing, min/max keys and labels (the add-min and add-max menu items, the remove
+/// button, the min and max field leads).
 struct Axis {
     sizing: &'static str,
     min: &'static str,
     max: &'static str,
-    noun: &'static str,
-    letter: &'static str,
+    add_min: &'static str,
+    add_max: &'static str,
+    remove: &'static str,
+    min_lead: &'static str,
+    max_lead: &'static str,
 }
 
 const AXES: [Axis; 2] = [
-    Axis { sizing: "sizingH", min: "minWidth", max: "maxWidth", noun: "width", letter: "W" },
-    Axis { sizing: "sizingV", min: "minHeight", max: "maxHeight", noun: "height", letter: "H" },
+    Axis {
+        sizing: "sizingH",
+        min: "minWidth",
+        max: "maxWidth",
+        add_min: tr_noop("Add min width"),
+        add_max: tr_noop("Add max width"),
+        remove: tr_noop("Remove min and max width"),
+        min_lead: tr_noop("Min W"),
+        max_lead: tr_noop("Max W"),
+    },
+    Axis {
+        sizing: "sizingV",
+        min: "minHeight",
+        max: "maxHeight",
+        add_min: tr_noop("Add min height"),
+        add_max: tr_noop("Add max height"),
+        remove: tr_noop("Remove min and max height"),
+        min_lead: tr_noop("Min H"),
+        max_lead: tr_noop("Max H"),
+    },
 ];
 
 /// A node's min (`is_min`) or max limit on one axis.
@@ -113,14 +137,14 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
     let w = common(doc, sel, |n| (n.width * 100.0).round() / 100.0);
     let h = common(doc, sel, |n| (n.height * 100.0).round() / 100.0);
     let col = widgets::col_width(ui.available_width());
-    widgets::sublabels(ui, "Dimensions", None);
+    widgets::sublabels(ui, tr("Dimensions"), None);
     row(ui, 32.0, |ui| {
         let e = crate::variable_ui::number_field(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
         app.field(&ids, "width", e, |v| json!(v.max(0.0)));
         let e = crate::variable_ui::number_field(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
         app.field(&ids, "height", e, |v| json!(v.max(0.0)));
         let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
-        if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, "Constrain proportions").clicked() {
+        if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, tr("Constrain proportions")).clicked() {
             app.set_props(&ids, json!({"constrainProportions": !locked}));
         }
     });
@@ -139,7 +163,8 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
             let cur = common(doc, sel, |n| if horizontal { n.child_layout.sizing_h } else { n.child_layout.sizing_v });
             let any_limit =
                 sel.iter().filter_map(|i| doc.node(*i)).any(|n| limit(n, horizontal, true).is_some() || limit(n, horizontal, false).is_some());
-            let label = cur.map(|s| s.label()).unwrap_or("Mixed");
+            // "Fill" here is the sizing (fill the container), not the paint.
+            let label = cur.map(|s| if s == Sizing::Fill { tr("Fill|sizing") } else { tr(s.label()) }).unwrap_or(tr("Mixed"));
             let icon = match cur {
                 Some(Sizing::Hug) => Icon::Hug,
                 Some(Sizing::Fill) => Icon::FillContainer,
@@ -157,12 +182,12 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
             let current = first.map(|n| if horizontal { n.width } else { n.height }).unwrap_or(0.0);
             let ids2 = ids.clone();
             menu_popup(&resp).width(200.0).show(|ui| {
-                let mut opts = vec![("Fixed", "fixed")];
+                let mut opts = vec![(tr("Fixed"), "fixed")];
                 if has_al || is_text {
-                    opts.push(("Hug contents", "hug"));
+                    opts.push((tr("Hug contents"), "hug"));
                 }
                 if can_fill {
-                    opts.push(("Fill container", "fill"));
+                    opts.push((tr("Fill container"), "fill"));
                 }
                 for (l, v) in opts {
                     if menu_item(ui, l, "") {
@@ -173,15 +198,15 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
                 if can_limit {
                     ui.separator();
                     let (min, max) = (first.and_then(|n| limit(n, horizontal, true)), first.and_then(|n| limit(n, horizontal, false)));
-                    if min.is_none() && menu_item(ui, &format!("Add min {}", axis.noun), "") {
+                    if min.is_none() && menu_item(ui, tr(axis.add_min), "") {
                         app.set_props(&ids2, json!({axis.min: current}));
                         ui.close();
                     }
-                    if max.is_none() && menu_item(ui, &format!("Add max {}", axis.noun), "") {
+                    if max.is_none() && menu_item(ui, tr(axis.add_max), "") {
                         app.set_props(&ids2, json!({axis.max: current}));
                         ui.close();
                     }
-                    if any_limit && menu_item(ui, "Remove min and max", "") {
+                    if any_limit && menu_item(ui, tr("Remove min and max"), "") {
                         app.set_props(&ids2, json!({axis.min: null, axis.max: null}));
                         ui.close();
                     }
@@ -208,26 +233,26 @@ fn limit_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], hori
     let current = nodes.first().map(|n| if horizontal { n.width } else { n.height }).unwrap_or(0.0);
     row(ui, 32.0, |ui| {
         for (is_min, key) in [(true, axis.min), (false, axis.max)] {
-            let lead = format!("{} {}", if is_min { "Min" } else { "Max" }, axis.letter);
+            let (lead, add) = if is_min { (tr(axis.min_lead), tr(axis.add_min)) } else { (tr(axis.max_lead), tr(axis.add_max)) };
             if has(is_min) {
                 let v = common(doc, sel, |n| limit(n, horizontal, is_min).map(|v| (v * 100.0).round() / 100.0)).flatten();
-                let e = crate::variable_ui::number_field(app, ui, &ids, key, Id::new(("lay_limit", key)), Lead::Text(&lead), v, "", col);
+                let e = crate::variable_ui::number_field(app, ui, &ids, key, Id::new(("lay_limit", key)), Lead::Text(lead), v, "", col);
                 app.field(&ids, key, e, |v| json!(v.max(0.0)));
-            } else if add_slot(ui, &lead, col).clicked() {
+            } else if add_slot(ui, lead, add, col).clicked() {
                 app.set_props(&ids, json!({key: current}));
             }
         }
-        if icons::button(ui, Icon::Minus, 24.0, false, &format!("Remove min and max {}", axis.noun)).clicked() {
+        if icons::button(ui, Icon::Minus, 24.0, false, tr(axis.remove)).clicked() {
             app.set_props(&ids, json!({axis.min: null, axis.max: null}));
         }
     });
 }
 
-/// A quiet placeholder button the size of a field ("+ Max W").
-fn add_slot(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
+/// A quiet placeholder button the size of a field ("+ Max W") with the tooltip `tip`.
+fn add_slot(ui: &mut Ui, label: &str, tip: &str, width: f32) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::click());
-    let resp = resp.tip(format!("Add {}", label.to_lowercase()));
+    let resp = resp.tip(tip);
     let border = if resp.hovered() { t.field_hover_border } else { t.border };
     ui.painter().rect_stroke(r, CornerRadius::same(5), Stroke::new(1.0, border), StrokeKind::Inside);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 12.0, r.center().y), vec2(10.0, 10.0)), Icon::Plus, t.icon_secondary);
@@ -286,7 +311,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                     ids,
                     "columnGap",
                     Id::new("al_gap"),
-                    Lead::Icon(Icon::Gap, "Column gap"),
+                    Lead::Icon(Icon::Gap, tr("Column gap")),
                     Some(l.gap),
                     "",
                     96.0,
@@ -299,7 +324,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                     ids,
                     "rowGap",
                     Id::new("al_rowgap"),
-                    Lead::Icon(Icon::DistributeV, "Row gap"),
+                    Lead::Icon(Icon::DistributeV, tr("Row gap")),
                     Some(l.cross_gap),
                     "",
                     96.0,
@@ -315,20 +340,20 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 ids,
                 "gap",
                 Id::new("al_gap"),
-                Lead::Icon(gap_icon, "Gap between items"),
+                Lead::Icon(gap_icon, tr("Gap between items")),
                 if auto { None } else { Some(l.gap) },
                 "",
                 96.0,
             );
             app.field(ids, "gap", e, |v| json!(v));
             ui.add_space(8.0);
-            let resp = widgets::dropdown(ui, if auto { "Auto gap" } else { "Fixed gap" }, 96.0, None);
+            let resp = widgets::dropdown(ui, if auto { tr("Auto gap") } else { tr("Fixed gap") }, 96.0, None);
             menu_popup(&resp).show(|ui| {
-                if menu_item(ui, "Fixed", "") {
+                if menu_item(ui, tr("Fixed"), "") {
                     app.set_props(ids, json!({"mainAlign": "min"}));
                     ui.close();
                 }
-                if menu_item(ui, "Auto (space between)", "") {
+                if menu_item(ui, tr("Auto (space between)"), "") {
                     app.set_props(ids, json!({"mainAlign": "spaceBetween"}));
                     ui.close();
                 }
@@ -339,7 +364,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     if l.mode == LayoutMode::Horizontal {
         let on = l.cross_align == CrossAlign::Baseline;
         row(ui, 28.0, |ui| {
-            if widgets::checkbox(ui, on, "Align text baselines") {
+            if widgets::checkbox(ui, on, tr("Align text baselines")) {
                 app.set_props(ids, json!({"crossAlign": if on { "min" } else { "baseline" }}));
             }
         });
@@ -356,7 +381,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             ids,
             "paddingHorizontal",
             Id::new("al_padh"),
-            Lead::Icon(Icon::PaddingH, "Horizontal padding"),
+            Lead::Icon(Icon::PaddingH, tr("Horizontal padding")),
             (pl == pr).then_some(pl),
             "",
             col,
@@ -368,7 +393,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             ids,
             "paddingVertical",
             Id::new("al_padv"),
-            Lead::Icon(Icon::PaddingV, "Vertical padding"),
+            Lead::Icon(Icon::PaddingV, tr("Vertical padding")),
             (pt == pb).then_some(pt),
             "",
             col,
@@ -377,7 +402,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     });
     if l.mode == LayoutMode::Horizontal && l.wrap {
         // Wrapped rows: the gap between rows.
-        widgets::sublabels(ui, "Row gap", None);
+        widgets::sublabels(ui, tr("Row gap"), None);
         row(ui, 32.0, |ui| {
             let e = crate::variable_ui::number_field(
                 app,
@@ -385,7 +410,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 ids,
                 "crossGap",
                 Id::new("al_crossgap"),
-                Lead::Icon(Icon::DistributeV, "Gap between rows"),
+                Lead::Icon(Icon::DistributeV, tr("Gap between rows")),
                 Some(l.cross_gap),
                 "",
                 col,
@@ -394,7 +419,7 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
         });
     }
     if l.mode == LayoutMode::Grid {
-        widgets::sublabels(ui, "Columns", Some("Rows"));
+        widgets::sublabels(ui, tr("Columns"), Some(tr("Rows")));
         row(ui, 32.0, |ui| {
             let e = widgets::number_field(ui, Id::new("al_cols"), Lead::None, Some(f64::from(l.grid_columns)), "", col, 1.0);
             app.field(ids, "gridColumns", e, |v| json!(v.max(1.0)));
@@ -411,7 +436,7 @@ fn tracks(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId]) {
     let Some(g) = figcraft_layout::grid_geometry(doc, id) else { return };
     let col = widgets::col_width(ui.available_width());
     for (axis, specs, ranges) in [("columns", &l.column_tracks, &g.columns), ("rows", &l.row_tracks, &g.rows)] {
-        widgets::sublabels(ui, if axis == "columns" { "Column sizes" } else { "Row sizes" }, None);
+        widgets::sublabels(ui, if axis == "columns" { tr("Column sizes") } else { tr("Row sizes") }, None);
         for (i, (a, b)) in ranges.iter().enumerate().take(MAX_TRACK_ROWS) {
             let track = specs.get(i).copied().unwrap_or_default();
             let size = ((b - a) * 100.0).round() / 100.0;
@@ -440,13 +465,13 @@ fn tracks(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId]) {
                 let fill = track.sizing == Sizing::Fill;
                 app.field_run(e, "layout.setTrack", |v| with(if fill { "fill" } else { "fixed" }, Some(v.max(0.0))));
                 let (label, icon) = match track.sizing {
-                    Sizing::Fixed => ("Fixed", Icon::Fixed),
-                    Sizing::Hug => ("Hug", Icon::Hug),
-                    Sizing::Fill => ("Fill", Icon::FillContainer),
+                    Sizing::Fixed => (tr("Fixed"), Icon::Fixed),
+                    Sizing::Hug => (tr("Hug"), Icon::Hug),
+                    Sizing::Fill => (tr("Fill|sizing"), Icon::FillContainer),
                 };
                 let resp = widgets::dropdown(ui, label, col, Some(icon));
                 menu_popup(&resp).show(|ui| {
-                    for (l, v) in [("Fixed", "fixed"), ("Hug contents", "hug"), ("Fill (fr)", "fill")] {
+                    for (l, v) in [(tr("Fixed"), "fixed"), (tr("Hug contents"), "hug"), (tr("Fill (fr)"), "fill")] {
                         if menu_item(ui, l, "") {
                             app.run("layout.setTrack", with(v, None));
                             ui.close();
@@ -468,7 +493,7 @@ fn grid_cell(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             parent_of(doc, *id).and_then(|p| figcraft_layout::grid_geometry(doc, p.id)).and_then(|g| g.cells.into_iter().find(|c| c.id == *id))
     {
         let anchored = doc.node(*id).is_some_and(|n| n.child_layout.grid_column.is_some() || n.child_layout.grid_row.is_some());
-        widgets::sublabels(ui, "Column", Some("Row"));
+        widgets::sublabels(ui, tr("Column"), Some(tr("Row")));
         row(ui, 32.0, |ui| {
             // Moving on one axis pins the other where it is, so the child doesn't jump.
             let at = |c: f64, r: f64| json!({"ids": [id], "props": {"gridColumn": (c - 1.0).max(0.0), "gridRow": (r - 1.0).max(0.0)}});
@@ -477,14 +502,14 @@ fn grid_cell(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             app.field_run(e, "node.set", |v| at(v, r0));
             let e = widgets::number_field(ui, Id::new("al_cell_row"), Lead::None, Some(r0), "", col, 1.0);
             app.field_run(e, "node.set", |v| at(c0, v));
-            if anchored && icons::button(ui, Icon::Reset, 24.0, false, "Place automatically").clicked() {
+            if anchored && icons::button(ui, Icon::Reset, 24.0, false, tr("Place automatically")).clicked() {
                 app.set_props(&ids, json!({"gridColumn": null, "gridRow": null}));
             }
         });
     }
     let cs = common(doc, sel, |n| f64::from(n.child_layout.column_span()));
     let rs = common(doc, sel, |n| f64::from(n.child_layout.row_span()));
-    widgets::sublabels(ui, "Column span", Some("Row span"));
+    widgets::sublabels(ui, tr("Column span"), Some(tr("Row span")));
     row(ui, 32.0, |ui| {
         let e = widgets::number_field(ui, Id::new("al_span_c"), Lead::None, cs, "", col, 1.0);
         app.field(&ids, "gridColumnSpan", e, |v| json!(v.max(1.0)));

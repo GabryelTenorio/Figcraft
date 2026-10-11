@@ -182,6 +182,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   along the toolbar and through the layer rows, and Escape returns to the canvas (no-ops headless).
 - `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
   accessibility setting turns it on too). Prototype transitions still play.
+- `pref.language {language: system|en|es|…}`: the app's interface language, applied live ("system":
+  the OS or browser language; a language without a catalog shows English). Command ids, labels and
+  every result stay English.
 
 ### Editing vectors
 

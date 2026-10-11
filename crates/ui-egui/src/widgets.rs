@@ -4,6 +4,7 @@
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::a11y::{self, Tip};
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
 
@@ -24,8 +25,8 @@ impl Lead<'_> {
     /// The field's name for screen readers ("W" is "Width").
     pub fn name(&self) -> &str {
         match self {
-            Lead::Text("W") => "Width",
-            Lead::Text("H") => "Height",
+            Lead::Text("W") => tr("Width"),
+            Lead::Text("H") => tr("Height"),
             Lead::Text(s) => s,
             Lead::Icon(_, name) => name,
             Lead::None => "",
@@ -81,7 +82,7 @@ pub fn number_field_bindable(
     step: f64,
     binding: Option<Option<&str>>,
 ) -> (Option<FieldEdit>, Option<BindEvent>) {
-    number_field_impl(ui, id, lead, value, suffix, width, step, binding, "Mixed")
+    number_field_impl(ui, id, lead, value, suffix, width, step, binding, tr("Mixed"))
 }
 
 fn number_field_impl(
@@ -229,7 +230,7 @@ fn number_field_impl(
             }
             icons::paint(ui.painter(), br.shrink(3.0), Icon::Variable, t.icon_secondary);
         }
-        let bresp = bresp.tip("Apply variable");
+        let bresp = bresp.tip(tr("Apply variable"));
         if bresp.clicked() {
             bind = Some(BindEvent::Open(rect.left_bottom()));
         }
@@ -267,7 +268,7 @@ pub fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> O
     let short = name.rsplit('/').next().unwrap_or(name);
     let galley = ui.painter().layout_no_wrap(short.to_string(), regular(11.0), t.text);
     ui.painter().with_clip_rect(chip.shrink2(vec2(5.0, 0.0))).galley(pos2(chip.min.x + 5.0, chip.center().y - galley.size().y / 2.0), galley, t.text);
-    let dresp = ui.interact(dr, id.with("detach"), Sense::click()).tip("Detach variable");
+    let dresp = ui.interact(dr, id.with("detach"), Sense::click()).tip(tr("Detach variable"));
     if resp.hovered() || dresp.hovered() || dresp.has_focus() {
         if dresp.hovered() {
             ui.painter().rect_filled(dr, CornerRadius::same(4), t.hover);
@@ -368,7 +369,7 @@ pub fn combo_field(ui: &mut Ui, id: Id, value: &str, width: f32, options: &[Stri
     // The chevron sits on top of the field's right end.
     let chev = Rect::from_min_max(pos2(rect.max.x - 18.0, rect.min.y), rect.max);
     let resp = ui.interact(chev, id.with("menu"), Sense::click());
-    a11y::combo(&resp, "Presets", value, a11y::menu_open(&resp));
+    a11y::combo(&resp, tr("Presets"), value, a11y::menu_open(&resp));
     if resp.hovered() {
         ui.painter().rect_filled(chev.shrink(2.0), CornerRadius::same(4), t.hover);
     }
@@ -667,7 +668,7 @@ pub fn swatch(ui: &mut Ui, paint: &figcraft_color::Paint, size: f32) -> Response
     let (rect, resp) = ui.allocate_exact_size(vec2(size, size), Sense::click());
     // The value is only spelled out while a screen reader reads the tree.
     let value = if a11y::active(&resp.ctx) { paint_name(paint) } else { String::new() };
-    a11y::color(&resp, "Color", &value);
+    a11y::color(&resp, tr("Color"), &value);
     paint_swatch(ui.painter(), rect, paint);
     resp
 }
@@ -681,9 +682,9 @@ pub fn paint_name(paint: &figcraft_color::Paint) -> String {
             let alpha = color.a * paint.opacity;
             if alpha < 0.999 { format!("{hex} {}%", (alpha * 100.0).round()) } else { hex }
         }
-        PaintKind::Gradient(_) => "Gradient".into(),
-        PaintKind::Image(_) => "Image".into(),
-        PaintKind::Pattern(_) => "Pattern".into(),
+        PaintKind::Gradient(_) => tr("Gradient").into(),
+        PaintKind::Image(_) => tr("Image").into(),
+        PaintKind::Pattern(_) => tr("Pattern").into(),
     }
 }
 
@@ -791,7 +792,7 @@ pub fn text_field_inline(ui: &mut Ui, id: Id, value: &str, rect: Rect, font: egu
     let focused = ui.memory(|m| m.has_focus(te_id));
     let mut buf: Option<String> = ui.data(|d| d.get_temp(buf_id));
     let resp = ui.interact(rect, id.with("click"), Sense::click());
-    a11y::text(&resp, "Name", value);
+    a11y::text(&resp, tr("Name"), value);
     let started = buf.is_none() && (focused || resp.clicked());
     if started {
         buf = Some(value.to_string());

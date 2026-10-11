@@ -14,22 +14,27 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::{self, Tip};
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::icons::{self, Icon};
 use crate::right::{menu_item, menu_item_with, menu_popup};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
 /// In the browser: what joining needs (a page can't host, and https pages can't reach `ws://`).
-const BROWSER_NOTE: &str = "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS).";
+const BROWSER_NOTE: &str = tr_noop(
+    "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS).",
+);
 
 /// How undo works in a session (per person).
-const UNDO_NOTE: &str = "Undo takes back only your own changes; what others changed since stays.";
+const UNDO_NOTE: &str = tr_noop("Undo takes back only your own changes; what others changed since stays.");
 
 /// What a view link means for you.
-const VIEW_NOTE: &str = "View only: you see every change as it happens but can't edit. Leave to keep a copy you can edit.";
+const VIEW_NOTE: &str = tr_noop("View only: you see every change as it happens but can't edit. Leave to keep a copy you can edit.");
 
 /// What a published file's links are.
-const PUBLISHED_NOTE: &str = "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them.";
+const PUBLISHED_NOTE: &str = tr_noop(
+    "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them.",
+);
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;
@@ -195,7 +200,7 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
 /// A frame around the canvas in the followed person's colour, with their name at the top.
 fn follow_frame(painter: &egui::Painter, canvas: Rect, name: &str, fill: Color32) {
     painter.rect_stroke(canvas.shrink(1.0), CornerRadius::ZERO, Stroke::new(2.0, fill), egui::StrokeKind::Inside);
-    let text = format!("Following {name} · {} to stop", crate::toolbar::pretty_shortcut("Escape"));
+    let text = trf("Following {name} · {key} to stop", &[("name", &name), ("key", &crate::toolbar::pretty_shortcut("Escape"))]);
     let galley = painter.layout_no_wrap(text, semibold(11.0), text_on(fill));
     let r = Rect::from_center_size(pos2(canvas.center().x, canvas.min.y + 2.0 + (galley.size().y + 6.0) / 2.0), galley.size() + vec2(16.0, 6.0));
     painter.rect_filled(r, CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 }, fill);
@@ -228,7 +233,7 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
         x += STEP;
         let c = pos2(x, cy);
         let following = follow == Some(*id);
-        let tip = if following { format!("Stop following {name}") } else { format!("Follow {name}") };
+        let tip = if following { trf("Stop following {name}", &[("name", name)]) } else { trf("Follow {name}", &[("name", name)]) };
         let resp = ui.interact(Rect::from_center_size(c, vec2(2.0 * R, 2.0 * R)), ui.id().with(("live_avatar", id)), Sense::click()).tip(tip);
         ring(ui, c);
         avatar(ui.painter(), c, R, name, *fill);
@@ -248,18 +253,18 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     }
     let chev = Rect::from_center_size(pos2(x + R + 10.0, cy), vec2(16.0, 24.0));
     let cresp = ui.interact(chev, ui.id().with("live_people"), Sense::click());
-    a11y::menu_button(&cresp, "People in this file", a11y::menu_open(&cresp));
+    a11y::menu_button(&cresp, tr("People in this file"), a11y::menu_open(&cresp));
     if cresp.hovered() {
         ui.painter().rect_filled(chev, CornerRadius::same(4), t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(chev.center(), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
     menu_popup(&cresp).width(220.0).show(|ui| {
         let row = |ui: &mut Ui, label: &str, fill: Color32, check: bool| {
-            menu_item_with(ui, label, if check { "Following" } else { "" }, 22.0, |p, r, _| {
+            menu_item_with(ui, label, if check { tr("Following") } else { "" }, 22.0, |p, r, _| {
                 avatar(p, pos2(r.max.x - 15.0, r.center().y), 8.0, label, fill)
             })
         };
-        row(ui, &format!("{me_name} (you)"), me_fill, false);
+        row(ui, &trf("{name} (you)", &[("name", &me_name)]), me_fill, false);
         for (id, name, fill) in &peers {
             if row(ui, name, *fill, follow == Some(*id)) {
                 clicked = Some(*id);
@@ -267,7 +272,11 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
             }
         }
         if peers.is_empty() {
-            widgets::label(ui, if app.session.live.status.active() { "Nobody else is here yet" } else { "Not in a live session" }, t.text_secondary);
+            widgets::label(
+                ui,
+                if app.session.live.status.active() { tr("Nobody else is here yet") } else { tr("Not in a live session") },
+                t.text_secondary,
+            );
         }
     });
     if let Some(id) = clicked {
@@ -287,7 +296,7 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.add_space(4.0);
-            ui.label(egui::RichText::new("Live session").font(semibold(12.0)));
+            ui.label(egui::RichText::new(tr("Live session")).font(semibold(12.0)));
             let status = app.session.live.status.clone();
             let role = app.session.live.role();
             let others = app.session.live.peers.len();
@@ -295,15 +304,18 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
             // Connecting with a tab already chosen and nobody's welcome yet: the upload.
             let publishing = status == Status::Connecting && role.is_none() && app.session.live.doc_uid.is_some();
             let (line, col) = match (&status, role) {
-                (Status::Live, Some(Role::Host)) => (format!("Live · {}", people_count(others)), t.success),
-                (Status::Live, _) if published => (format!("Published · {}", people_count(others)), t.success),
-                (Status::Connecting, _) if publishing => ("Publishing…".to_string(), t.text_secondary),
+                (Status::Live, Some(Role::Host)) => (trf("Live · {people}", &[("people", &people_count(others))]), t.success),
+                (Status::Live, _) if published => (trf("Published · {people}", &[("people", &people_count(others))]), t.success),
+                (Status::Connecting, _) if publishing => (tr("Publishing…").to_string(), t.text_secondary),
                 (Status::Live, _) => {
                     let file = app.session.live.info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
-                    (if file.is_empty() { "Joined".to_string() } else { format!("Joined {file}") }, t.success)
+                    (if file.is_empty() { tr("Joined").to_string() } else { trf("Joined {file}", &[("file", &file)]) }, t.success)
+                }
+                (Status::Reconnecting { attempt }, _) => {
+                    (trf("Connection lost, reconnecting (attempt {attempt})…", &[("attempt", attempt)]), t.text_secondary)
                 }
                 (Status::Failed { .. }, _) => (status.label(), t.danger),
-                _ => (status.label(), t.text_secondary),
+                _ => (tr(&status.label()).to_string(), t.text_secondary),
             };
             widgets::label(ui, &line, col);
             match (&status, role) {
@@ -313,7 +325,7 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
             }
         });
         ui.separator();
-        if menu_item(ui, "Export…", "") {
+        if menu_item(ui, tr("Export…"), "") {
             app.ui.export_preview = true;
             ui.close();
         }
@@ -322,51 +334,50 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
 
 fn people_count(others: usize) -> String {
     match others {
-        0 => "nobody else here yet".into(),
-        1 => "1 person joined".into(),
-        n => format!("{n} people joined"),
+        0 => tr("nobody else here yet").into(),
+        n => trn("{n} people joined", n, &[]),
     }
 }
 
 /// Not in a session: your name, where to share, start; or join one.
 fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     ui.horizontal(|ui| {
-        widgets::label(ui, "Your name", t.text);
+        widgets::label(ui, tr("Your name"), t.text);
         let name = app.session.prefs.user_name.clone();
-        if let Some(n) = widgets::text_field(ui, egui::Id::new("live_name"), &name, 160.0, "Your name") {
+        if let Some(n) = widgets::text_field(ui, egui::Id::new("live_name"), &name, 160.0, tr("Your name")) {
             app.run("pref.userName", json!({"name": n}));
         }
     });
     if !app.session.live.can_host() {
-        widgets::label(ui, "Hosting a session needs the desktop app; here you can join one.", t.text_secondary);
-        if widgets::button(ui, "Join a session…", true, true).clicked() {
+        widgets::label(ui, tr("Hosting a session needs the desktop app; here you can join one."), t.text_secondary);
+        if widgets::button(ui, tr("Join a session…"), true, true).clicked() {
             open_join(app, "");
             ui.close();
         }
         return;
     }
-    if widgets::checkbox(ui, app.ui.live.lan, "Share on the local network") {
+    if widgets::checkbox(ui, app.ui.live.lan, tr("Share on the local network")) {
         app.ui.live.lan = !app.ui.live.lan;
     }
     let reach = if app.ui.live.lan {
-        "Anyone on your network who has the invite link can join."
+        tr("Anyone on your network who has the invite link can join.")
     } else {
-        "Only this computer can join (turn on network sharing to invite others)."
+        tr("Only this computer can join (turn on network sharing to invite others).")
     };
     widgets::label(ui, reach, t.text_secondary);
     ui.horizontal(|ui| {
-        if widgets::button(ui, "Start live session", true, true).clicked() {
+        if widgets::button(ui, tr("Start live session"), true, true).clicked() {
             let bind = if app.ui.live.lan { "lan" } else { "local" };
             app.run("collab.host", json!({"bind": bind}));
         }
-        if widgets::button(ui, "Join a session…", false, true).clicked() {
+        if widgets::button(ui, tr("Join a session…"), false, true).clicked() {
             open_join(app, "");
             ui.close();
         }
     });
     ui.separator();
-    widgets::label(ui, "Or keep the file on a FigCraft server and share links to edit or to view it.", t.text_secondary);
-    if widgets::button(ui, "Publish to server…", false, true).clicked() {
+    widgets::label(ui, tr("Or keep the file on a FigCraft server and share links to edit or to view it."), t.text_secondary);
+    if widgets::button(ui, tr("Publish to server…"), false, true).clicked() {
         open_publish(app);
         ui.close();
     }
@@ -375,11 +386,11 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
 /// Hosting: the invite link and URL to copy, and stop.
 fn host_ui(app: &mut FigApp, ui: &mut Ui) {
     let Some(info) = app.session.live.info.clone() else { return };
-    link_rows(app, ui, &[("Invite link", &info.link, "Invite link copied"), ("WebSocket URL", &info.url, "WebSocket URL copied")]);
+    link_rows(app, ui, &[(tr("Invite link"), &info.link, tr("Invite link copied")), (tr("WebSocket URL"), &info.url, tr("WebSocket URL copied"))]);
     let t = Tokens::get(ui.ctx());
-    widgets::label(ui, "The link carries the session's secret: share it only with people you invite.", t.text_secondary);
-    widgets::label(ui, UNDO_NOTE, t.text_secondary);
-    if widgets::button(ui, "Stop session", false, true).clicked() {
+    widgets::label(ui, tr("The link carries the session's secret: share it only with people you invite."), t.text_secondary);
+    widgets::label(ui, tr(UNDO_NOTE), t.text_secondary);
+    if widgets::button(ui, tr("Stop session"), false, true).clicked() {
         app.run("collab.stop", json!({}));
     }
 }
@@ -390,18 +401,18 @@ fn guest_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     let live = &app.session.live;
     let view = live.info.as_ref().is_some_and(|i| i.access == Access::View);
     if let Some(i) = live.info.as_ref() {
-        widgets::label(ui, &format!("{} · {}", i.address, if view { "View only" } else { "Can edit" }), t.text_secondary);
+        widgets::label(ui, &format!("{} · {}", i.address, if view { tr("View only") } else { tr("Can edit") }), t.text_secondary);
         if !i.pages.is_empty() {
             let pages: Vec<&str> = i.pages.iter().map(|p| p.name.as_str()).take(8).collect();
-            widgets::label(ui, &format!("Pages: {}", pages.join(", ")), t.text_secondary);
+            widgets::label(ui, &trf("Pages: {pages}", &[("pages", &pages.join(", "))]), t.text_secondary);
         }
     }
     if let Some(p) = live.published.clone() {
-        link_rows(app, ui, &[("Edit link", &p.edit, "Edit link copied"), ("View link", &p.view, "View link copied")]);
-        widgets::label(ui, PUBLISHED_NOTE, t.text_secondary);
+        link_rows(app, ui, &[(tr("Edit link"), &p.edit, tr("Edit link copied")), (tr("View link"), &p.view, tr("View link copied"))]);
+        widgets::label(ui, tr(PUBLISHED_NOTE), t.text_secondary);
     }
-    widgets::label(ui, if view { VIEW_NOTE } else { UNDO_NOTE }, t.text_secondary);
-    if widgets::button(ui, "Leave session", false, true).on_hover_text("Your copy of the file stays open").clicked() {
+    widgets::label(ui, tr(if view { VIEW_NOTE } else { UNDO_NOTE }), t.text_secondary);
+    if widgets::button(ui, tr("Leave session"), false, true).on_hover_text(tr("Your copy of the file stays open")).clicked() {
         app.run("collab.leave", json!({}));
     }
 }
@@ -417,7 +428,7 @@ fn link_rows(app: &mut FigApp, ui: &mut Ui, rows: &[(&str, &String, &str)]) {
                 widgets::label(ui, label, t.text_secondary);
                 ui.label(egui::RichText::new(widgets::elide(ui, value, w)).font(regular(10.5)).monospace());
             });
-            if widgets::button(ui, "Copy", false, true).on_hover_text(format!("Copy the {}", label.to_lowercase())).clicked() {
+            if widgets::button(ui, tr("Copy"), false, true).on_hover_text(trf("Copy the {label}", &[("label", &label.to_lowercase())])).clicked() {
                 app.services.clipboard_set_text(value);
                 app.toast(*what);
             }
@@ -459,24 +470,24 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
     let mut cancel = false;
     let mut go = false;
     let focus = std::mem::take(&mut app.ui.live.focus_join);
-    crate::dialogs::window("Join live session", ctx).open(&mut open).show(ctx, |ui| {
+    crate::dialogs::window(tr("Join live session"), ctx).id(egui::Id::new("Join live session")).open(&mut open).show(ctx, |ui| {
         ui.set_width(380.0);
-        widgets::label(ui, "Paste the invite link the host shared with you.", t.text);
+        widgets::label(ui, tr("Paste the invite link the host shared with you."), t.text);
         let resp = ui
             .add(egui::TextEdit::singleline(&mut link).hint_text("figcraft://join?host=…").desired_width(380.0).id(egui::Id::new("live_join_link")));
-        a11y::text(&resp, "Invite link", "");
+        a11y::text(&resp, tr("Invite link"), "");
         if focus {
             resp.request_focus();
         }
         go = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        widgets::label(ui, "You'll get the host's file as a new tab and edit it together.", t.text_secondary);
+        widgets::label(ui, tr("You'll get the host's file as a new tab and edit it together."), t.text_secondary);
         if !app.session.live.can_host() {
-            widgets::label(ui, BROWSER_NOTE, t.text_secondary);
+            widgets::label(ui, tr(BROWSER_NOTE), t.text_secondary);
         }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            go |= widgets::button(ui, "Join", true, !link.trim().is_empty()).clicked();
-            cancel = widgets::button(ui, "Cancel", false, true).clicked();
+            go |= widgets::button(ui, tr("Join"), true, !link.trim().is_empty()).clicked();
+            cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
     if go && !link.trim().is_empty() && app.run("collab.join", json!({"link": link.trim()})).is_some() {
@@ -490,7 +501,7 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
 /// Open the Publish to server dialog for the open file (the last address used this run in it).
 pub fn open_publish(app: &mut FigApp) {
     if !app.session.live.can_host() {
-        app.toast("Publishing to a server needs the desktop app; in the browser you can join a server's files");
+        app.toast(tr("Publishing to a server needs the desktop app; in the browser you can join a server's files"));
         return;
     }
     let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
@@ -506,14 +517,14 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
     let mut cancel = false;
     let mut go = false;
     let focus = std::mem::take(&mut app.ui.live.focus_publish);
-    crate::dialogs::window("Publish to server", ctx).open(&mut open).show(ctx, |ui| {
+    crate::dialogs::window(tr("Publish to server"), ctx).id(egui::Id::new("Publish to server")).open(&mut open).show(ctx, |ui| {
         ui.set_width(380.0);
         widgets::label(
             ui,
-            "Uploads this file to a FigCraft server and keeps this tab in sync with it. You get a link to edit and a link to view.",
+            tr("Uploads this file to a FigCraft server and keeps this tab in sync with it. You get a link to edit and a link to view."),
             t.text,
         );
-        widgets::label(ui, "Server address", t.text_secondary);
+        widgets::label(ui, tr("Server address"), t.text_secondary);
         let resp = ui.add(
             egui::TextEdit::singleline(&mut form.server)
                 .hint_text("ws://server:47900/?key=…")
@@ -521,21 +532,21 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
                 .id(egui::Id::new("live_publish_server")),
         );
         // The address carries the server key: it isn't read out.
-        a11y::text(&resp, "Server address", "");
+        a11y::text(&resp, tr("Server address"), "");
         if focus {
             resp.request_focus();
         }
         let enter = |ui: &Ui| ui.input(|i| i.key_pressed(egui::Key::Enter));
         go = resp.lost_focus() && enter(ui);
-        widgets::label(ui, "On the server's machine, `figcraft-server key` prints it.", t.text_secondary);
-        widgets::label(ui, "File name", t.text_secondary);
+        widgets::label(ui, tr("On the server's machine, `figcraft-server key` prints it."), t.text_secondary);
+        widgets::label(ui, tr("File name"), t.text_secondary);
         let nresp = ui.add(egui::TextEdit::singleline(&mut form.name).desired_width(380.0).id(egui::Id::new("live_publish_name")));
-        a11y::text(&nresp, "File name", &form.name);
+        a11y::text(&nresp, tr("File name"), &form.name);
         go |= nresp.lost_focus() && enter(ui);
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            go |= widgets::button(ui, "Publish", true, !form.server.trim().is_empty()).clicked();
-            cancel = widgets::button(ui, "Cancel", false, true).clicked();
+            go |= widgets::button(ui, tr("Publish"), true, !form.server.trim().is_empty()).clicked();
+            cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
     if go && !form.server.trim().is_empty() && app.run("collab.publish", json!({"server": form.server.trim(), "name": form.name.trim()})).is_some() {
