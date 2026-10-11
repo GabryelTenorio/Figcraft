@@ -269,6 +269,9 @@ fn every_command_survives_junk_params() {
         // Prototype expressions and gamepad keys as junk.
         json!({"id": -5, "expression": "x[\u{0}", "expr": {"op": {"op": "add", "args": [1]}}, "trigger": {"type": "keyPress", "key": "Gamepad \u{0}"}}),
         json!({"id": 1, "expr": {"inMode": {"variable": [], "mode": 1e308}}, "trigger": {"type": "keyPress", "key": 7}}),
+        // Keyboard steps (view.pan) and toggles as junk.
+        json!({"dx": 1e308, "dy": "NaN", "big": "yes", "on": 3}),
+        json!({"dx": -1e308, "dy": [1], "big": null, "on": null}),
     ];
     for spec in all_commands() {
         if matches!(

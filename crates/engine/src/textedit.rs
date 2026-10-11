@@ -145,6 +145,12 @@ fn list_key(s: &mut Session, key: &str, shift: bool) -> Result<bool> {
     Ok(true)
 }
 
+/// Cmd/Ctrl+] and Cmd/Ctrl+[ while editing: the selected list items a level deeper or out, like
+/// Tab and Shift+Tab. Returns whether anything changed (text that isn't a list stays as it is).
+pub fn list_indent(s: &mut Session, out: bool) -> Result<bool> {
+    list_key(s, "Tab", out)
+}
+
 /// The kind of word char `i` belongs to: 0 for spaces and punctuation, else its script, so a word
 /// ends where the script changes (Han, hiragana, katakana and Hangul runs are words of their own in
 /// text without spaces). Combining marks and voicing marks belong to the char before them.

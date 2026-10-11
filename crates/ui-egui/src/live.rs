@@ -229,9 +229,11 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
                 }
             }
         }
-        // Cursors: on your page of the session's document; before its welcome arrives (or with
-        // another document in front) they show in page coordinates on whatever page you look at.
+        // Cursors (unless View ▸ Multiplayer cursors is off): on your page of the session's
+        // document; before its welcome arrives (or with another document in front) they show in
+        // page coordinates on whatever page you look at.
         if let Some((pg, x, y)) = p.cursor
+            && ds.view.multiplayer_cursors
             && (pg == page || !shared)
         {
             cursors.push((*id, peer.name.clone(), fill, (x, y)));

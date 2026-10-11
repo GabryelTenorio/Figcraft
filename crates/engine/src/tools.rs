@@ -1064,7 +1064,8 @@ impl Session {
                         d.x = 0.0;
                     }
                 }
-                let snap_on = self.ds().map(|ds| ds.view.snap_objects).unwrap_or(true) && !ev.cmd;
+                // Cmd/Ctrl (and Control on macOS) held while dragging suspends snapping.
+                let snap_on = self.ds().map(|ds| ds.view.snap_objects).unwrap_or(true) && !ev.cmd && !ev.ctrl;
                 let mut guides = Vec::new();
                 if snap_on {
                     let (c, g2) = targets.snap_move(d, SNAP_PX / ev.zoom.max(1e-6));
@@ -1266,7 +1267,7 @@ impl Session {
 
     fn resize_drag(&mut self, ev: &PointerEvent, start: Point, r: &ResizeStart, scale_tool: bool) -> Result<()> {
         let page = self.page()?;
-        let snap = self.ds().map(|d| d.view.snap_objects).unwrap_or(true) && !ev.cmd;
+        let snap = self.ds().map(|d| d.view.snap_objects).unwrap_or(true) && !ev.cmd && !ev.ctrl;
         let ids: Vec<NodeId> = r.nodes.iter().map(|n| n.0).collect();
         let targets = if snap { Some(Targets::gather(self.doc()?, page, &ids)) } else { None };
         let mut p = ev.p();
@@ -1432,7 +1433,7 @@ impl Session {
         let tool = self.tool.tool;
         let mut p = ev.p();
         let mut guides = Vec::new();
-        if self.ds().map(|d| d.view.snap_objects).unwrap_or(true) && !ev.cmd {
+        if self.ds().map(|d| d.view.snap_objects).unwrap_or(true) && !ev.cmd && !ev.ctrl {
             let (dx, dy, g) = targets.snap_point(p.x, p.y, SNAP_PX / ev.zoom.max(1e-6));
             p.x += dx;
             p.y += dy;

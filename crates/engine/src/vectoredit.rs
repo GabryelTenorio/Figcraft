@@ -83,7 +83,7 @@ impl VTool {
             VTool::Move => "V",
             VTool::Pen => "P",
             VTool::Bend => "Cmd",
-            VTool::Paint => "B",
+            VTool::Paint => "Shift+B",
             VTool::Lasso => "Q",
             VTool::Cut => "X",
             VTool::Eraser => "Shift+E",

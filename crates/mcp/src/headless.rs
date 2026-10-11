@@ -177,7 +177,9 @@ impl Headless {
                     "ArrowUp" => (0, -1),
                     _ => (0, 1),
                 };
-                self.execute("transform.nudge", &json!({"dx": dx, "dy": dy, "big": m.shift}))
+                // With nothing selected the arrows pan the view.
+                let cmd = if self.session.selection().is_empty() { "view.pan" } else { "transform.nudge" };
+                self.execute(cmd, &json!({"dx": dx, "dy": dy, "big": m.shift}))
             }
             // Number keys set the selection's opacity.
             d if m.is_none() && d.len() == 1 && d.chars().all(|c| c.is_ascii_digit()) && self.session.prefs.number_keys_opacity => {

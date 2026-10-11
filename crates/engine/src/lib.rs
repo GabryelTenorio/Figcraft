@@ -143,6 +143,8 @@ pub struct ViewState {
     pub pixel_scale: u8,
     pub show_slices: bool,
     pub comments: bool,
+    /// Others' cursors in a live session (View ▸ Multiplayer cursors).
+    pub multiplayer_cursors: bool,
     pub frame_outlines: bool,
     /// Soft-proof sRGB: the canvas marks the colours of a Display P3 file that sRGB can't show.
     pub proof_srgb: bool,
@@ -170,6 +172,7 @@ impl Default for ViewState {
             pixel_scale: 1,
             show_slices: false,
             comments: true,
+            multiplayer_cursors: true,
             frame_outlines: false,
             proof_srgb: false,
             snap_geometry: true,
@@ -1403,6 +1406,8 @@ mod shapebuilder_strokes_tests;
 mod shapebuilder_tests;
 #[cfg(test)]
 mod shapes_behaviour_tests;
+#[cfg(test)]
+mod shortcut_parity_tests;
 #[cfg(test)]
 mod slot_tests;
 #[cfg(test)]

@@ -1596,6 +1596,16 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
         action = player(&mut pres, ui, ui.max_rect(), now, Chrome { keys: !typing, ..FULL }).or(action);
     });
+    // Keys the prototype left alone: C shows the comments, F fills the screen.
+    if !typing {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::C)) {
+            action = Some(BarAction::Comments);
+        }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F)) {
+            let full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
+        }
+    }
     match action {
         Some(BarAction::Comments) => pres.view.comments = !pres.view.comments,
         Some(BarAction::Inspect) => pres.view.inspect = !pres.view.inspect,
@@ -2440,14 +2450,21 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
                 _ => {}
             }
         }
-        // Arrow keys step through top-level frames when nothing else uses them.
-        if matches!(key, egui::Key::ArrowLeft | egui::Key::ArrowRight)
+        // The arrows (and Space or N forward) step through top-level frames when nothing else
+        // uses them.
+        let forward = match key {
+            egui::Key::ArrowRight => Some(true),
+            egui::Key::Space | egui::Key::N if mods.is_none() => Some(true),
+            egui::Key::ArrowLeft => Some(false),
+            _ => None,
+        };
+        if let Some(forward) = forward
             && p.overlays.is_empty()
             && let Some(base) = p.doc.as_ref()
         {
             let frames = base.top_frames(base.page_of(p.current).unwrap_or(p.current));
             if let Some(i) = frames.iter().position(|f| *f == p.current) {
-                let next = if *key == egui::Key::ArrowRight { frames.get(i + 1) } else { i.checked_sub(1).and_then(|j| frames.get(j)) };
+                let next = if forward { frames.get(i + 1) } else { i.checked_sub(1).and_then(|j| frames.get(j)) };
                 if let Some(n) = next.copied() {
                     p.go(n, Transition::Instant, 0.0, Easing::Linear, now, true, false);
                     consume_key(ctx, *key);

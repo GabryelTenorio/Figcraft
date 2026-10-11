@@ -201,7 +201,7 @@ Or in a project's `.mcp.json`:
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
-| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
+| `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity, arrows that pan the view when nothing is selected; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels, timings and the app's `windows` when attached). |
 
@@ -239,6 +239,11 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `view.designPrototype` (`Shift+E`), `view.devMode` (`Shift+D`) and `view.leftSidebar`
   (`Shift+Cmd+\`) switch the right panel's tab or hide the left sidebar in the app (no-ops headless).
 - `doc.nextTab` / `doc.previousTab` (`Ctrl+Tab` / `Ctrl+Shift+Tab`): the next or previous open file.
+- `view.pan {dx, dy, big?}`: the arrow keys with nothing selected (`key ArrowRight` does the same)
+  pan the view by 20 screen pixels a step, 200 with `big` (Shift).
+- `view.multiplayerCursors {on?}` (`Alt+Cmd+\`): show or hide others' cursors in a live session.
+- `text.listIndent` / `text.listOutdent` (`Cmd+]` / `Cmd+[` while editing text): the selected list
+  items a level deeper or out, like Tab and Shift+Tab.
 - `view.nextRegion` / `view.previousRegion` (`F6` / `Shift+F6`, live while editing text too): move
   the keyboard between the app's regions (toolbar, layers, canvas, properties). In the app, Tab and
   Shift+Tab then move between the region's controls, Enter or Space activate one, the arrows move

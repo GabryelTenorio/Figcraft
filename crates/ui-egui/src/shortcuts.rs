@@ -34,6 +34,33 @@ pub fn mods(m: Modifiers) -> keymap::Mods {
     keymap::Mods { shift: m.shift, alt: m.alt, cmd: m.command || m.mac_cmd, ctrl: m.ctrl }
 }
 
+/// Symbols a US keyboard types without Shift.
+const UNSHIFTED_SYMBOLS: [Key; 11] = [
+    Key::Slash,
+    Key::Backslash,
+    Key::Minus,
+    Key::Equals,
+    Key::Period,
+    Key::Comma,
+    Key::Quote,
+    Key::Semicolon,
+    Key::OpenBracket,
+    Key::CloseBracket,
+    Key::Backtick,
+];
+
+/// The binding a key fires in `context`. Shortcuts follow the character typed, named as on a US
+/// keyboard: a symbol another layout types with Shift (`/` is Shift+7 on a German keyboard, where
+/// the key's position differs from the symbol) counts without the Shift. Characters egui has no key
+/// for (`ü`, `ж`) already arrive as the key at that position.
+pub fn lookup(context: keymap::Context, key: Key, physical: Option<Key>, m: Modifiers) -> Option<&'static keymap::Binding> {
+    let mut held = mods(m);
+    if held.shift && physical.is_some_and(|p| p != key) && UNSHIFTED_SYMBOLS.contains(&key) {
+        held.shift = false;
+    }
+    keymap::lookup(platform(), context, key.name(), held)
+}
+
 /// The key a menu shows for a command.
 pub fn shortcut(id: &str) -> Option<&'static str> {
     keymap::primary(id, platform())
@@ -94,7 +121,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, typing: bool) {
             Event::Copy => crate::menus::invoke(app, "edit.copy"),
             Event::Cut => crate::menus::invoke(app, "edit.cut"),
             Event::Paste(text) => crate::menus::paste(app, Some(text)),
-            Event::Key { key, pressed: true, modifiers, repeat, .. } if key_event(app, *key, *modifiers, *repeat, now, ctx) => {
+            Event::Key { key, physical_key, pressed: true, modifiers, repeat }
+                if key_event(app, *key, *physical_key, *modifiers, *repeat, now, ctx) =>
+            {
                 // handled
             }
             _ => {}
@@ -120,7 +149,7 @@ pub fn run_binding(app: &mut FigApp, id: &str) {
     }
 }
 
-fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, ctx: &Context) -> bool {
+fn key_event(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers, repeat: bool, now: f64, ctx: &Context) -> bool {
     if key_box(app, key, m) {
         return true;
     }
@@ -138,7 +167,7 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, c
             return true;
         }
     }
-    if let Some(b) = keymap::lookup(platform(), keymap::Context::Canvas, key.name(), mods(m)) {
+    if let Some(b) = lookup(keymap::Context::Canvas, key, physical, m) {
         // Copy/cut/paste arrive as clipboard events on most platforms.
         if matches!(b.id, "edit.copy" | "edit.cut" | "edit.paste") {
             return true;
@@ -152,7 +181,7 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, c
     if app.ui.layers_focus && !m.command && !m.alt && crate::layers::key_nav(app, key, m.shift) {
         return true;
     }
-    // Arrow nudges.
+    // Arrow nudges; with nothing selected the arrows pan the view.
     let (dx, dy) = match key {
         Key::ArrowLeft => (-1.0, 0.0),
         Key::ArrowRight => (1.0, 0.0),
@@ -161,13 +190,13 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, c
         _ => (0.0, 0.0),
     };
     if (dx, dy) != (0.0, 0.0) && !m.alt {
-        if !app.session.selection().is_empty() {
-            if m.command {
-                // Cmd/Ctrl+arrows resize: right/down grow, left/up shrink.
-                app.run("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": m.shift}));
-            } else {
-                app.run("transform.nudge", json!({"dx": dx, "dy": dy, "big": m.shift}));
-            }
+        if app.session.selection().is_empty() {
+            app.run("view.pan", json!({"dx": dx, "dy": dy, "big": m.shift}));
+        } else if m.command {
+            // Cmd/Ctrl+arrows resize: right/down grow, left/up shrink.
+            app.run("transform.nudgeSize", json!({"dw": dx, "dh": dy, "big": m.shift}));
+        } else {
+            app.run("transform.nudge", json!({"dx": dx, "dy": dy, "big": m.shift}));
         }
         return true;
     }
@@ -182,12 +211,14 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, c
     false
 }
 
-/// Keys while a selection box drawn from the keyboard shows (`select.area`, F8): the arrows move
-/// it (with Shift they move its far corner, sizing it) by 10 screen pixels, Enter selects what it
-/// covers like a marquee (Shift toggles, Cmd/Ctrl takes nested layers), Escape drops it.
+/// Keys while a selection box drawn from the keyboard shows (`select.area`, Alt+Space or Ctrl+Space,
+/// F8): the arrows move it, Cmd/Ctrl+arrows or Shift+arrows move its far corner, sizing it (Shift
+/// with Cmd/Ctrl: five times as far), by 10 screen pixels; Enter selects what it covers like a
+/// marquee (Shift toggles, Cmd/Ctrl takes nested layers), Escape drops it.
 fn key_box(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
     let Some(mut b) = app.ui.key_box else { return false };
-    let step = 10.0 / app.session.ds().map_or(1.0, |d| d.view.zoom.max(1e-6));
+    let size = m.shift || m.command;
+    let step = if m.shift && m.command { 50.0 } else { 10.0 } / app.session.ds().map_or(1.0, |d| d.view.zoom.max(1e-6));
     let (dx, dy) = match key {
         Key::ArrowLeft => (-step, 0.0),
         Key::ArrowRight => (step, 0.0),
@@ -196,7 +227,7 @@ fn key_box(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
         _ => (0.0, 0.0),
     };
     if (dx, dy) != (0.0, 0.0) {
-        if !m.shift {
+        if !size {
             b[0] += dx;
             b[1] += dy;
         }
@@ -328,8 +359,8 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
                     }
                 }
             }
-            Event::Key { key, pressed: true, modifiers: m, .. } => {
-                if (m.command || m.alt || m.ctrl) && text_shortcut(app, *key, *m) {
+            Event::Key { key, physical_key, pressed: true, modifiers: m, .. } => {
+                if (m.command || m.alt || m.ctrl) && text_shortcut(app, *key, *physical_key, *m) {
                     skip_text = true;
                     continue;
                 }
@@ -382,8 +413,8 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
 }
 
 /// Shortcuts live while editing text (Bold, lists, alignment, size/weight/spacing steps, Save…).
-fn text_shortcut(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
-    match keymap::lookup(platform(), keymap::Context::Text, key.name(), mods(m)) {
+fn text_shortcut(app: &mut FigApp, key: Key, physical: Option<Key>, m: Modifiers) -> bool {
+    match lookup(keymap::Context::Text, key, physical, m) {
         Some(b) => {
             crate::menus::invoke(app, b.id);
             true

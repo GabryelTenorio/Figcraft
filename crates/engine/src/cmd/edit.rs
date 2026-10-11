@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "select.area",
             "Select area",
-            "{x, y, width, height (page units; a marquee from x, y), add? (toggle like a Shift marquee), deep? (nested layers, like Cmd/Ctrl)} → {selection}; with no box: draw one from the keyboard in the app (arrows move it, Shift+arrows size it, Enter selects, Escape cancels)",
+            "{x, y, width, height (page units; a marquee from x, y), add? (toggle like a Shift marquee), deep? (nested layers, like Cmd/Ctrl)} → {selection}; with no box: draw one from the keyboard in the app (arrows move it, Cmd/Ctrl+arrows or Shift+arrows size it, Enter selects, Escape cancels)",
             false,
             select_area
         ),

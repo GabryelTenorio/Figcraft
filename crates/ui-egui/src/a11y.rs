@@ -450,11 +450,10 @@ fn keys(app: &mut FigApp, ctx: &Context) {
 
 /// The first of the commands `ids` a key pressed this frame is bound to (canvas keys), with the key.
 fn binding_pressed(ctx: &Context, ids: &[&str]) -> Option<(&'static str, Key, Modifiers)> {
-    let platform = crate::shortcuts::platform();
     ctx.input(|i| {
         i.events.iter().find_map(|e| match e {
-            Event::Key { key, pressed: true, modifiers, .. } => {
-                keymap::lookup(platform, keymap::Context::Canvas, key.name(), crate::shortcuts::mods(*modifiers))
+            Event::Key { key, physical_key, pressed: true, modifiers, .. } => {
+                crate::shortcuts::lookup(keymap::Context::Canvas, *key, *physical_key, *modifiers)
                     .filter(|b| ids.contains(&b.id))
                     .map(|b| (b.id, *key, *modifiers))
             }

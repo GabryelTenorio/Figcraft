@@ -116,6 +116,8 @@ mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
+mod shortcut_keys_tests;
+#[cfg(test)]
 mod shortcuts_tests;
 #[cfg(test)]
 mod titlebar_tests;

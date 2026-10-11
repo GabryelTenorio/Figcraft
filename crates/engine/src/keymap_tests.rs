@@ -250,7 +250,7 @@ fn vector_edit_paint_bucket_is_b() {
     ex(&mut s, "vector.edit.begin", json!({"id": r}));
     assert!(crate::vectoredit::key(&mut s, "B", false, false, false).unwrap());
     assert_eq!(s.ds().unwrap().vector_edit.as_ref().unwrap().tool, VTool::Paint);
-    assert_eq!(VTool::Paint.shortcut(), "B");
+    assert_eq!(VTool::Paint.shortcut(), "Shift+B");
 }
 
 #[test]

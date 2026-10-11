@@ -87,6 +87,7 @@ pub static MENU: &[MenuItem] = &[
     m!("View", "Rulers", "view.rulers"),
     m!("View", "Slices", "view.slices"),
     m!("View", "Comments", "view.comments"),
+    m!("View", "Multiplayer cursors", "view.multiplayerCursors"),
     m!("View", SEP, ""),
     m!("View/Outlines", "Show outlines", "view.outlines"),
     m!("View/Outlines", "Show outlines for selection", "view.outlinesSelection"),

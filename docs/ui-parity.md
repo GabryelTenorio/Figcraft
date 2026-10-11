@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (keyboard shortcut parity suite and bindings; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -22,7 +22,7 @@ interaction feel not yet compared.
 | Actions palette (Cmd+K, Cmd+/) | done | commands; no assets search parity |
 | Context menus | done | canvas and layers; Shift+F10 opens them from the keyboard (at the focused layer row or below the canvas selection) and the menu takes the keyboard; the Menu key isn't delivered by the windowing layer (egui 0.36 has no key for it) |
 | Main menu from the logo | done | generated from `catalog.rs`; popups sized to content |
-| Keyboard shortcuts panel | done | docked, tabbed by group, searchable, per-platform keycaps |
+| Keyboard shortcuts panel | done | docked, tabbed by group like the documentation, searchable, per-platform keycaps; held keys, gestures and presentation keys listed beside the bindings |
 | Several windows | partial | File ▸ New window, Open in new window on a tab, a tab dragged off the strip; screen-reader tree in the main window only; positions not restored |
 | Multiplayer avatars, Share button | missing | waits for multiplayer |
 | Blend mode menus: the layer's (Design panel) and each paint's (colour picker) | done | Pass through and Normal are distinct (Normal isolates a group's or frame's children); paints have no pass-through; plus darker drawn exactly on the canvas |
@@ -56,13 +56,13 @@ interaction feel not yet compared.
 | Scale tool (K): handles about an anchor, live factor, panel | done | |
 | Nudge 1 / Shift 10 (preference), Cmd+arrows resize | done | arrows reorder auto layout children |
 | Smart guides: edges, centres, equal spacing (between two layers or continuing a row's gap, labelled), spacing labels, parent, layout grid, ruler guides | done | red, `snap.rs`; thresholds not yet compared with Figma's |
-| Ctrl to suspend snapping while dragging (macOS) | missing | |
+| Ctrl to suspend snapping while dragging (macOS) | done | Control on macOS (Cmd keeps working), Ctrl elsewhere; moving, resizing and drawing |
 | Measure (Alt hover, Cmd+Alt nested, Shift+Alt padding/gaps) | done | labels never overlap |
 | Pixel grid snapping, pixel preview, 2x preview | done | moves, resizes and new shapes land on whole pixels; the pixel grid shows from 400% (`view_behaviour_tests`) |
 | Numeric fields: arithmetic, scrubbing by dragging the label, mixed values | partial | check scrub speed and Shift/Alt steps |
 | Transform box at small sizes | done | a press inside a layer smaller than its handles moves it, the nearest handle wins, handles answer just outside and are hidden under 16 px on screen; cursors follow each handle and the box's rotation |
 | Locked layers | done | selectable from the layers panel; no handles, not dragged with the rest of a selection |
-| Keyboard box selection | done | F8 (`select.area`): a box around the selection or in the middle of the view; arrows move it, Shift+arrows size it, Enter selects like a marquee (Shift+Enter toggles, Cmd/Ctrl+Enter nested); our addition for keyboard-only users |
+| Keyboard box selection | done | Alt+Space on macOS, Ctrl+Space on Windows and Linux, or F8 (`select.area`): a box around the selection or in the middle of the view; arrows move it, Cmd/Ctrl+arrows or Shift+arrows size it (Shift with Cmd/Ctrl: farther), Enter selects like a marquee (Shift+Enter toggles, Cmd/Ctrl+Enter nested), Escape closes |
 
 ## Tools
 
@@ -103,6 +103,48 @@ interaction feel not yet compared.
 | Cursors per tool and modifier | partial | not compared |
 | Multiplayer cursors, cursor chat, spotlight | partial | in live sessions: named cursors, chat bubbles that fade, `/` to chat, spotlight from your avatar's menu with a banner; no audio or reactions |
 
+## Keyboard shortcuts
+
+One keymap (`figcraft_engine::keymap`) drives the menus, the canvas, the shortcuts panel, the
+control channel and MCP `key`. `crates/engine/src/shortcut_parity_tests.rs` holds one row per
+shortcut in the public documentation (the help centre's feature articles: keyboard layouts, text
+properties, alignment, frames, components, prototypes, plugins, keyboard navigation…), with the
+macOS and Windows/Linux keys, what does it here and a note in our words, and checks every row on
+both platforms; rows the documentation is silent on pin today's keys, so every default binding is
+in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a lookup can't prove.
+
+| | Count | Notes |
+|---|---|---|
+| Documented shortcuts (rows) | 129 | each with macOS and Windows/Linux keys |
+| Bound as documented | 126 (110 before this suite) | 107 keymap bindings, 13 held keys, gestures and presentation keys, 6 vector edit tool keys |
+| Bound on other keys (documented conflict) | 1 | Run last plugin: the documentation also gives Ctrl+Alt+P to pixel preview on Windows; the plugin takes Ctrl+Alt+Shift+P there |
+| Missing | 2 | moving the rotation origin (Alt+R); placing an object with Enter after choosing a tool from the toolbar |
+| Documented keys a platform keeps | 2 | Ctrl+Space (Windows/Linux keyboard box selection) switches some CJK input methods; F6 goes to a browser's address bar in the web build |
+| Undocumented bindings pinned | 48 | of which Cmd/Ctrl+W, Cmd/Ctrl+N and Ctrl+Tab are taken by browsers (web build) and Ctrl+Alt+T / Ctrl+Alt+L by some Linux desktops |
+
+- **Newly bound:** A for the Frame tool, Shift+' for the pixel grid (Cmd+' kept: the articles
+  disagree), Alt+Cmd+\ / Ctrl+Alt+\ for others' cursors (`view.multiplayerCursors`, new), Ctrl+F6
+  to the toolbar on Windows/Linux, Shift+Cmd+U to link text (Cmd+K kept), Cmd/Ctrl+] and [ to
+  nest list items while editing (`text.listIndent` / `text.listOutdent`, new), Cmd/Ctrl+Backspace
+  to ungroup, Alt+Space / Ctrl+Space for the keyboard box selection (F8 kept) with Cmd/Ctrl+arrows
+  drawing it out, Ctrl+Shift+A / Ctrl+Alt+Shift+A to suggest auto layout, Ctrl+Alt+Cmd+K /
+  Ctrl+Alt+Shift+K to go to the main component, the arrows panning the view when nothing is
+  selected (`view.pan`, new), Control suspending snapping on macOS, and Space, N, C and F while
+  presenting. The paint bucket's tooltip shows Shift+B (B still works).
+- **Where the documentation disagrees with itself** (noted per row): pixel grid (Shift+' or
+  Cmd+'), letter spacing (Alt or Cmd with < >; Cmd would be the font size keys, Alt bound),
+  Windows remove fill (Alt+/ or Alt+,; Alt+, is letter spacing), the Layers panel on Windows (Alt+1
+  or Ctrl+1), send to back / bring to front (one table shows only the bracket).
+- **Platform keys:** macOS rows use Cmd and Option, Windows/Linux rows Ctrl and Alt (tested: no
+  macOS glyph on Windows/Linux keycaps, no "Ctrl"/"Alt" words on macOS); no default binding uses a
+  chord the system keeps (Cmd+H/M/Q/Tab/Space, Ctrl+Space and the screenshot keys on macOS;
+  Alt+Space/Tab/F4, Ctrl+Esc, Ctrl+Alt+Delete and Linux workspace and terminal-switch keys).
+- **Keyboard layouts:** keys follow the character typed, named as on a US keyboard. Characters
+  egui has no key for (`ü`, `ж`) arrive as the key at that position (egui's fallback); a symbol
+  another layout types with Shift (`/` is Shift+7 on a German keyboard) now counts without the
+  Shift. Not done: per-layout tables like the documentation's (a German Shift+' types `"` and
+  reaches Shift+2).
+
 ## Accessibility (ours vs Figma's)
 
 | Item | Status | Notes |
@@ -118,6 +160,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Keyboard shortcut parity suite and bindings: a table of the 129 documented shortcuts per platform (126 bound, 1 moved for a documented conflict, 2 missing, 2 kept by a platform) plus 48 pinned undocumented bindings; 16 rows newly bound (see Keyboard shortcuts); Ctrl to suspend snapping on macOS done; keyboard box selection on Alt+Space / Ctrl+Space |
 | 2026-10-12 | minor | Multiplayer cursors, cursor chat and spotlight: missing → partial (live sessions: chat bubbles at the pointer that fade, `/` to chat, spotlight from your avatar's menu with a banner to stop or follow again) |
 | 2026-10-12 | minor | Layers and Assets panels behaviour suite and fixes: several layers dropped together land together, Collapse layers keeps the selection's rows open, dragging across eyes or padlocks sets several layers in one step, the toggles stay under the pointer, Rename layers dialog for several layers, pages dragged to reorder, dividers, "Copy of" duplicates, Assets folders by page, frame and slash names |
 | 2026-10-12 | minor | Vector multi-edit and the vector edit tail, with a behaviour suite written from the public documentation (5 tests, about 30 table rows and steps, and a junk-parameter sweep of every vector command in multi-edit mode): several vector layers are edited at once (Enter, double-click or `vector.edit.begin {ids}`; a press on another layer's point, handle or segment makes it the active layer; Shift-click, marquee and lasso select across layers; dragging, the arrows, Delete, delete and heal, mirroring, smoothing, corner radius and point caps and joins reach every layer's selected points in one undo step; the pen, bend, paint bucket, cut and eraser work in the active layer); several Bezier handles are selected with Shift-click and dragged together (`vector.edit.moveHandles`); a sharp point next to a curved segment rounds (the curve is cut where the arc meets it and keeps its shape); a point can have its own stroke cap and join (`vector.edit.strokeCap`, `vector.edit.strokeJoin`, the Point section of the Design panel; canvas, PNG, SVG and PDF, outline stroke); the Pen outside edit mode connects to one of its own points and ends the path, and continues a selected open path from an end point. Left: corner smoothing beyond rectangles, the transform box around points of several layers, per-point caps and joins on dashed, variable-width and brush strokes |

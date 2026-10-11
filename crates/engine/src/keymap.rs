@@ -179,7 +179,7 @@ pub static KEYS: &[Binding] = &[
     k(Tools, "tool.move", &["V"]),
     k(Tools, "tool.scale", &["K"]),
     k(Tools, "tool.hand", &["H"]),
-    k(Tools, "tool.frame", &["F"]),
+    k(Tools, "tool.frame", &["F", "A"]),
     k(Tools, "tool.section", &["Shift+S"]),
     k(Tools, "tool.slice", &["S"]),
     k(Tools, "tool.rectangle", &["R"]),
@@ -193,12 +193,14 @@ pub static KEYS: &[Binding] = &[
     k(Tools, "tool.comment", &["C"]),
     k(Tools, "tool.shapeBuilder", &["Shift+M"]),
     // View
-    k(View, "view.pixelGrid", &["Cmd+'"]),
+    // The documentation gives both keys for the pixel grid in different places.
+    k(View, "view.pixelGrid", &["Shift+'", "Cmd+'"]),
     k(View, "view.layoutGrids", &["Shift+G", "Ctrl+G"]).win(&["Shift+G", "Ctrl+Shift+4"]),
     k(View, "view.rulers", &["Shift+R"]),
     k(View, "view.outlines", &["Shift+Cmd+O"]),
     k(View, "view.pixelPreview", &["Ctrl+P"]).win(&["Ctrl+Alt+P"]),
     k(View, "view.comments", &["Shift+C"]),
+    k(View, "view.multiplayerCursors", &["Alt+Cmd+\\"]),
     k(View, "view.snapPixel", &["Shift+Cmd+'"]),
     k(View, "view.layers", &["Alt+1"]).label("Layers panel"),
     k(View, "view.assets", &["Alt+2"]).label("Assets panel"),
@@ -208,7 +210,7 @@ pub static KEYS: &[Binding] = &[
     k(View, "view.designPrototype", &["Shift+E"]),
     k(View, "view.devMode", &["Shift+D"]).label("Dev Mode on/off"),
     k(View, "view.leftSidebar", &["Shift+Cmd+\\"]),
-    k(View, "view.nextRegion", &["F6"]).label("Focus the next region (toolbar, layers, canvas, properties)").both(),
+    k(View, "view.nextRegion", &["F6"]).win(&["F6", "Ctrl+F6"]).label("Focus the next region (toolbar, layers, canvas, properties)").both(),
     k(View, "view.previousRegion", &["Shift+F6"]).label("Focus the previous region").both(),
     k(View, "view.contextMenu", &["Shift+F10"]).label("Context menu of the selection (the focused layer row or the canvas)"),
     k(View, "layers.collapseAll", &["Alt+L"]),
@@ -229,9 +231,11 @@ pub static KEYS: &[Binding] = &[
     k(Text, "text.italic", &["Cmd+I"]).both(),
     k(Text, "text.underline", &["Cmd+U"]).both(),
     k(Text, "text.strikethrough", &["Shift+Cmd+X"]).both(),
-    k(Text, "text.link", &["Cmd+K"]).text(),
+    k(Text, "text.link", &["Shift+Cmd+U", "Cmd+K"]).text(),
     k(Text, "text.bulletList", &["Shift+Cmd+8"]).both(),
     k(Text, "text.numberList", &["Shift+Cmd+7"]).both(),
+    k(Text, "text.listIndent", &["Cmd+]"]).text(),
+    k(Text, "text.listOutdent", &["Cmd+["]).text(),
     k(Text, "text.alignLeft", &["Alt+Cmd+L"]).both(),
     k(Text, "text.alignCenter", &["Alt+Cmd+T"]).both(),
     k(Text, "text.alignRight", &["Alt+Cmd+R"]).both(),
@@ -267,12 +271,15 @@ pub static KEYS: &[Binding] = &[
     k(Selection, "select.next", &["Tab"]),
     k(Selection, "select.previous", &["Shift+Tab"]),
     k(Selection, "object.group", &["Cmd+G"]),
-    k(Selection, "object.ungroup", &["Shift+Cmd+G"]),
+    k(Selection, "object.ungroup", &["Shift+Cmd+G", "Cmd+Delete"]),
     k(Selection, "object.frameSelection", &["Alt+Cmd+G"]),
     k(Selection, "object.toggleVisible", &["Shift+Cmd+H"]),
     k(Selection, "object.toggleLock", &["Shift+Cmd+L"]),
     k(Selection, "object.rename", &["Cmd+R", "F2"]),
-    k(Selection, "select.area", &["F8"]).label("Select with a box from the keyboard (arrows move it, Shift+arrows size it, Enter selects)"),
+    // Alt+Space opens the window menu on Windows; the documented Windows key is Ctrl+Space.
+    k(Selection, "select.area", &["Alt+Space", "F8"])
+        .win(&["Ctrl+Space", "F8"])
+        .label("Select with a box from the keyboard (arrows move it, Shift+arrows size it, Enter selects)"),
     // Edit
     k(Edit, "edit.undo", &["Cmd+Z"]),
     k(Edit, "edit.redo", &["Shift+Cmd+Z"]),
@@ -309,9 +316,11 @@ pub static KEYS: &[Binding] = &[
     k(Arrange, "arrange.tidy", &["Ctrl+Alt+T"]).win(&["Ctrl+Alt+Shift+T"]),
     k(Arrange, "layout.add", &["Shift+A"]),
     k(Arrange, "layout.remove", &["Alt+Shift+A"]),
+    k(Arrange, "layout.suggest", &["Ctrl+Shift+A"]).win(&["Ctrl+Alt+Shift+A"]),
     // Components
     k(Components, "component.create", &["Alt+Cmd+K"]),
     k(Components, "component.detach", &["Alt+Cmd+B"]),
+    k(Components, "component.goToMain", &["Ctrl+Alt+Cmd+K"]).win(&["Ctrl+Alt+Shift+K"]),
     k(Components, "view.assets", &["Shift+I"]).label("Insert a component (Assets)"),
     // Prototype
     k(Prototype, "proto.present", &["Alt+Cmd+Enter"]).label("Present"),
@@ -322,6 +331,7 @@ pub static KEYS: &[Binding] = &[
 /// dispatched from here): (group, label, macOS keys, Windows/Linux keys).
 pub static GESTURES: &[(Group, &str, &str, &str)] = &[
     (Tools, "Pan the canvas", "Space drag", "Space+drag"),
+    (Tools, "Pan with nothing selected (Shift: farther)", "← ↑ → ↓", "← ↑ → ↓"),
     (Zoom, "Zoom tool: click to zoom in, drag an area", "Hold Z", "Hold Z"),
     (Zoom, "Zoom tool: zoom out", "Hold ⌥Z", "Hold Alt+Z"),
     (Zoom, "Zoom around the pointer", "⌘ scroll", "Ctrl+scroll"),
@@ -332,7 +342,15 @@ pub static GESTURES: &[(Group, &str, &str, &str)] = &[
     (Transform, "Resize by the nudge amount", "⌘ arrows", "Ctrl+arrows"),
     (Transform, "Opacity 10%…90%, 0: 100%", "1…9, 0", "1…9, 0"),
     (Transform, "Exact opacity (4 then 5: 45%)", "Two digits", "Two digits"),
+    (Transform, "Suspend snapping while dragging", "Hold ⌃ or ⌘", "Hold Ctrl"),
+    (Prototype, "Presenting: next frame", "→, Space or N", "→, Space or N"),
+    (Prototype, "Presenting: previous frame", "←", "←"),
+    (Prototype, "Presenting: restart", "R", "R"),
+    (Prototype, "Presenting: cycle the size options", "Z", "Z"),
+    (Prototype, "Presenting: comments", "C or ⇧C", "C or Shift+C"),
+    (Prototype, "Presenting: full screen", "F", "F"),
     (View, "Next or previous control in the focused region", "⇥ / ⇧⇥", "Tab / Shift+Tab"),
+    (View, "Move along the toolbar or the layer rows", "← → ↑ ↓", "← → ↑ ↓"),
     (View, "Back to the canvas from a focused region", "Esc", "Esc"),
 ];
 

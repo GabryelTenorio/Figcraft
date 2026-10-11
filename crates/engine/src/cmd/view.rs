@@ -43,6 +43,20 @@ fn zoom_to(s: &mut Session, z: f64) -> Result<Value> {
     Ok(json!({"zoom": v.zoom}))
 }
 
+/// How far an arrow key pans the view with nothing selected (screen pixels; Shift: ten times).
+pub const PAN_STEP_PX: f64 = 20.0;
+
+/// `view.pan`: the arrow keys with nothing selected move the view by keyboard steps.
+fn pan(s: &mut Session, p: &Value) -> Result<Value> {
+    let step = if boolean(p, "big").unwrap_or(false) { PAN_STEP_PX * 10.0 } else { PAN_STEP_PX };
+    let dir = |k| num(p, k).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(-100.0, 100.0) * step;
+    let (dx, dy) = (dir("dx"), dir("dy"));
+    let v = view(s)?;
+    // Scrolling moves the content; panning right shows what is to the right.
+    v.scroll(-dx, -dy, false);
+    Ok(json!({"cx": v.cx, "cy": v.cy}))
+}
+
 /// Figma's zoom steps.
 const STEPS: &[f64] = &[0.02, 0.03, 0.06, 0.13, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0];
 
@@ -192,6 +206,10 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.rulers", "Rulers", "{on?}", false, |s, p| flag(s, p, |v| &mut v.rulers)),
         spec!("view.slices", "Slices", "{on?}", false, |s, p| flag(s, p, |v| &mut v.show_slices)),
         spec!("view.comments", "Comments", "{on?}", false, |s, p| flag(s, p, |v| &mut v.comments)),
+        spec!("view.multiplayerCursors", "Multiplayer cursors", "{on?}  others' cursors in a live session", false, |s, p| {
+            flag(s, p, |v| &mut v.multiplayer_cursors)
+        }),
+        spec!("view.pan", "Pan the view", "{dx, dy (arrow-key steps, e.g. 1 or -1), big? (ten times as far, like Shift)}", false, pan),
         spec!("view.outlines", "Outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.outlines)),
         spec!("view.outlinesSelection", "Outlines for selection", "{on?}  outline mode for the selected layers only", false, |s, p| {
             flag(s, p, |v| &mut v.outlines_selection)

@@ -402,6 +402,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 ok()
             }
         ),
+        spec!("text.listIndent", "Indent list", "{}  while editing: the selected list items a level deeper", true, |s, _| {
+            Ok(json!({"changed": textedit::list_indent(s, false)?}))
+        }),
+        spec!("text.listOutdent", "Outdent list", "{}  while editing: the selected list items a level out", true, |s, _| {
+            Ok(json!({"changed": textedit::list_indent(s, true)?}))
+        }),
         spec!("text.edit.caret", "Set caret", "{index, extend?}", false, |s, p| {
             let i = req_num("text.edit.caret", p, "index")?.max(0.0) as usize;
             textedit::set_caret(s, i, boolean(p, "extend").unwrap_or(false))?;
