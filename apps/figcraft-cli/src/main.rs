@@ -26,9 +26,10 @@ USAGE:
   figcraft-cli perf [--layers N[,N...]] [--instances N[,N...]]
   figcraft-cli help | --help | --version
 
-Files: .figcraft (native), .json (FigCraft JSON), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image
-layer). `export` writes one file per top-level frame into the <out> directory, or one file when <out>
-has an image extension or --node is given; PDFs take print options (a bleed like 3mm or 0.125in,
+Files: .figcraft (native), .json (FigCraft or REST API file JSON), .fig (best effort; `info` lists what
+wasn't imported), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image layer). `export` writes one file
+per top-level frame into the <out> directory, or one file when <out> has an image extension or --node
+is given; PDFs take print options (a bleed like 3mm or 0.125in,
 crop and bleed marks, CMYK colour). `run` executes a JSON array (or JSON lines) of
 {\"command\": id, \"params\": {...}} in a headless session and prints one JSON result line per step.
 See docs/cli.md and docs/mcp.md.";

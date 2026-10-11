@@ -1530,7 +1530,9 @@ name = "figcraft-format"
 version = "0.3.1"
 dependencies = [
  "figcraft-doc",
+ "flate2",
  "image",
+ "ruzstd",
  "serde",
  "serde_json",
  "sha2",
@@ -3906,6 +3908,12 @@ dependencies = [
  "unicode-properties",
  "unicode-script",
 ]
+
+[[package]]
+name = "ruzstd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a252f5e20f038fe7b4ea53e073e65398d652c864cc162fc77c56c2f13717b888"
 
 [[package]]
 name = "ryu"

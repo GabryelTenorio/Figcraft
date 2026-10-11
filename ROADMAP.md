@@ -1,8 +1,8 @@
 # FigCraft Roadmap
 
-**Stage: alpha** · next: beta, ~28 points and ~195–355 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
+**Stage: alpha** · next: beta, ~26 points and ~173–310 h away (one Opus 5.5 agent; ~35–70 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (`.fig` import, best effort; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -14,20 +14,20 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | | Value | Kind |
 |---|---|---|
 | Menu/command breadth | **100%** (204 / 204) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
-| Feature breadth | **~79%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
-| Ready for real work | **~47%** | estimated, same doc (written dimension weights and scores) |
-| Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
-| Mainstream practitioner | **~43%** | estimated: weekly areas 66.8% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
-| Remaining to beta | **~195–355 h** one agent | estimated |
-| Remaining to full parity | **~348–672 h** one agent (~92–160 h wall-clock with 5 agents) | estimated |
+| Feature breadth | **~80%** (core editor ~91%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
+| Ready for real work | **~49%** | estimated, same doc (written dimension weights and scores) |
+| Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
+| Mainstream practitioner | **~46%** | estimated: weekly areas 67.8% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
+| Remaining to beta | **~173–310 h** one agent | estimated |
+| Remaining to full parity | **~326–627 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~330–635 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~165–310 h | core editor depth incl. `.fig` import (83–163), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
-| Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
+| Full target (ready for real work) | ~49% | ~308–590 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
+| Mainstream practitioner | ~46% | ~143–265 h | core editor depth incl. the `.fig` import's tail (61–118), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Essentials user | ~57% | ~63–115 h | the `.fig` import's tail so the files people send open well (8–15), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
 per 1,000 added lines, 1–2.5 h per feature PR, ~7 h per honest depth point in the polish tail; see
@@ -45,9 +45,9 @@ lines, a typical feature PR 1–2.5 h). Details and what needs a human:
 
 **Alpha.** Core workflows exist end to end (frames, shapes, vectors, text, auto layout, components
 with variants and overrides, styles, variables, prototyping, Dev Mode, SVG/PNG/JPG/PDF), but
-FigCraft can't open Figma's own `.fig` files, has only a preview of multiplayer, and nothing has been checked
-against real Figma documents. Ready-for-real-work is ~47%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is missing, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
-~75% **and** reliable `.fig` import: the `.fig` reader (30–60 h), a real-file corpus with measured
+FigCraft opens `.fig` files only best effort, has only a preview of multiplayer, and nothing has been checked
+against real Figma documents. Ready-for-real-work is ~49%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is unproven on real files, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
+~75% **and** reliable `.fig` import: the `.fig` import's tail (8–15 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
 basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
 Figma's own languages on the landed localization layer (15–25 h).
@@ -58,7 +58,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 |---|---|---|---|
 | Features (depth) | 57% (core editor 67%) | 63–121 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
-| File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
+| File formats | 55% (`.fig` read best effort, no write) | 8–15 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 13% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links and team libraries; preview) | 49–98 | [collaboration-parity](docs/collaboration-parity.md) |
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
@@ -120,7 +120,7 @@ shaping, IME) already works. Detail: [`docs/localization-parity.md`](docs/locali
 
 Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
-1. `.fig` import, best effort, with a synthetic `.fig` corpus: 30–60 h.
+1. `.fig` import's tail: editable vector networks, the skipped layer kinds that matter, fixes from real files (the best-effort import landed 2026-10-11): 8–15 h.
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Languages on the landed localization layer: ja, ko, pt-BR, fr, de, and a native review of es: 15–30 h.
@@ -128,6 +128,11 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Progress log
 
+- **2026-10-11** · `.fig` import, best effort (gap 1): `file.open`, `file.import`, drag and drop, the CLI and
+  MCP open `.fig` files. A generic kiwi decoder reads each file's own schema, and the decoded nodes map by field name
+  onto the REST importer: layers, paints and styles, text runs, vectors as outlines, auto layout, components and
+  instances (expanded with their overrides and property values), variables, prototyping and images from the archive;
+  the rest is a warning. File formats 55%, ready ~49%.
 - **2026-10-11** · Gamut warnings (gap 18): the colour picker of a Display P3 file flags colours
   outside sRGB and View ▸ Soft-proof sRGB stripes them on the canvas. Showing P3 itself waits on
   eframe/egui-wgpu exposing the surface colour space wgpu 30 already supports.

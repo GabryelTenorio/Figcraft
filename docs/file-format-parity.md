@@ -1,20 +1,20 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (`.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every format Figma reads or writes, with FigCraft's support. Sources: `Info.plist` of
 `/Applications/Figma.app` (document types only; nothing inside the bundle's code was read), Figma's
 help center (image and video types, export formats), and FigCraft's source.
 
-**Summary (estimated):** ~40% ready. The core interchange formats (SVG, PNG, JPG, PDF) are solid
-and tested; Figma's own document, `.fig`, can't be read or written, which alone keeps FigCraft at
-alpha.
+**Summary (estimated):** ~55% ready. The core interchange formats (SVG, PNG, JPG, PDF) are solid
+and tested; Figma's own document, `.fig`, opens (best effort, not yet checked against real-world
+files) but can't be written.
 
 ## Documents
 
 | Format | Figma | FigCraft read | FigCraft write | Fidelity / testing | Hours |
 |---|---|---|---|---|---|
-| `.fig` (Figma Design, `com.figma.document`, `application/x-figma`) | native (cloud; "Save local copy") | **no** | **no** | none | read 30–60, write 15–30 |
+| `.fig` (Figma Design, `com.figma.document`, `application/x-figma`) | native (cloud; "Save local copy") | **yes, best effort** (`file.open`, `file.import`, drop, CLI, MCP) | **no** | `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors (as outlines), auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning. Vectors are outlines, not editable networks; sticky notes, connectors, tables and other non-design layers, set-variable and conditional actions and video fills are skipped with warnings. Tested on fixtures generated in code (`crates/format/src/fig/tests.rs`, fuzzed); no real-world files yet | read tail 8–15, write 15–30 |
 | `.jam` (FigJam), `.deck` (Slides) | native to other Figma products | no | no | out of scope | — |
 | REST API file JSON (`GET /v1/files/:key`) + local variables JSON + `images/` folder | the API's output | **yes** (`file.open`, `file.import`, CLI) | no | pages, layer tree, geometry, paints, strokes, effects, text runs, vectors, auto layout, constraints, grids, components, sets, instances with overrides, component properties, styles, prototyping (incl. conditionals and variable modes), variables with modes, aliases, scopes and bindings; warnings for what's skipped (video triggers and actions, modifier keys). Unit tests in `crates/format/src/rest/*_tests.rs` | — |
 | `.figcraft` (ours: zip of `document.json` + images, versions inside) | — | yes | yes | streamed JSON, 50k layers save ~0.09 s / load ~0.16 s (`cargo xtask bench`); old files keep opening (`large_tests.rs`) | — |
@@ -61,5 +61,6 @@ alpha.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | `.fig` import, best effort (gap 1): `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors (as outlines), auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning. Summary ~40% → ~55%; `.fig` read 30–60 h → 8–15 h (write 15–30 h unchanged) |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

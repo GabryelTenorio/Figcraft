@@ -61,7 +61,7 @@
     </td>
     <td width="25%" valign="top">
       <h3>🔌 Offline and private</h3>
-      Your files are plain <code>.figcraft</code> archives on your own disk. No account, no cloud, no telemetry. SVG, PNG, JPG, WebP and PDF in and out; designs exported as the public REST API file JSON import too, with their prototypes and variables.
+      Your files are plain <code>.figcraft</code> archives on your own disk. No account, no cloud, no telemetry. SVG, PNG, JPG, WebP and PDF in and out; <code>.fig</code> files open (best effort), and so do designs exported as the public REST API file JSON, with their prototypes and variables.
     </td>
     <td width="25%" valign="top">
       <h3>🤖 Agent-ready</h3>
@@ -169,7 +169,7 @@ New contributors and AI agents: start with [`AGENTS.md`](AGENTS.md), then [`docs
 Installers for macOS (universal, signed and notarized), Windows (x64, x86 and arm64), Linux (AppImage, `.deb`, `.rpm`, Flatpak and tarball), FreeBSD and the web are attached to each [GitHub release](https://github.com/storytold/figcraft/releases). Maintainers: [`docs/releasing.md`](docs/releasing.md) explains how releases are built, signed and published.
 
 > [!IMPORTANT]
-> **Status:** FigCraft is in **alpha**: about 47% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft can't open `.fig` files yet, has only a first preview of multiplayer (live sessions hosted from the app or a self-hosted server, with per-person undo and share links to edit or to view; no accounts, teams or cloud yet), runs its own WebAssembly plugins rather than Figma's, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
+> **Status:** FigCraft is in **alpha**: about 49% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft opens `.fig` files only best effort, has only a first preview of multiplayer (live sessions hosted from the app or a self-hosted server, with per-person undo and share links to edit or to view; no accounts, teams or cloud yet), runs its own WebAssembly plugins rather than Figma's, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
 
 ## The Crafting Apps
 
