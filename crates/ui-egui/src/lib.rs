@@ -8,6 +8,7 @@
 pub mod a11y;
 pub mod assets_panel;
 pub mod bidi;
+pub mod branch_ui;
 pub mod canvas;
 pub mod colorpicker;
 pub mod comments;
@@ -57,6 +58,8 @@ pub mod widgets;
 
 #[cfg(test)]
 mod a11y_tests;
+#[cfg(test)]
+mod branch_ui_tests;
 #[cfg(test)]
 mod canvas_drag_tests;
 #[cfg(test)]
@@ -266,6 +269,8 @@ pub struct UiState {
     pub left_collapsed: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
+    /// The branch review dialog, while open.
+    pub branch_review: Option<branch_ui::ReviewView>,
     /// Dev Mode: annotations on the canvas and the ready-for-dev list.
     pub dev: dev_mode::DevUi,
 
@@ -343,6 +348,7 @@ impl Default for UiState {
             left_collapsed: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
+            branch_review: None,
             dev: dev_mode::DevUi::default(),
 
             last_copy: None,
@@ -558,7 +564,9 @@ impl FigApp {
     }
 
     pub fn save(&mut self) {
-        if self.session.ds().map(|d| d.path.is_some()).unwrap_or(false) {
+        // A branch tab saves its main file.
+        let tab = figcraft_engine::branches::file_tab(&self.session);
+        if self.session.docs.get(tab).is_some_and(|d| d.path.is_some()) {
             if self.run("file.save", json!({})).is_some() {
                 self.toast("Saved");
             }
@@ -741,6 +749,7 @@ impl FigApp {
         present::show_pane(self, &ctx);
         comments::keys(self, &ctx);
         dev_compare::keys(self, &ctx);
+        branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
@@ -811,6 +820,7 @@ impl FigApp {
             "palette": self.ui.palette.is_some(),
             "variables": self.ui.variables.is_some(),
             "versionHistory": self.ui.versions.open,
+            "branchReview": self.ui.branch_review.as_ref().map(|r| json!({"id": r.id, "picks": r.picks, "mode": if r.mode == dev_compare::Mode::Overlay { "overlay" } else { "sideBySide" }})),
             "devCompare": self.ui.dev.compare.as_ref().map(|c| json!({"id": c.id, "mode": if c.mode == dev_compare::Mode::Overlay { "overlay" } else { "sideBySide" }, "split": c.split})),
             "devFocus": self.session.ds().ok().and_then(figcraft_engine::DocState::focused),
             "annotationFilter": self.ui.dev.categories.id(),

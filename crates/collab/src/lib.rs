@@ -15,6 +15,8 @@
 //!   writes back what the user's step replaced where nobody else wrote since. Refused batches
 //!   leave the history with a [`Notice`]. Offline, batches queue; on reconnect the server sends
 //!   what the client missed (or a snapshot) and the queue goes out ([`Client::reconnect`]).
+//! - [`merge`] is the three-way merge behind branches: what a branch and its main file changed
+//!   since the branch was made, their conflicts, and one merged into the other.
 //! - [`sim`] runs a server and several clients over in-memory links with random delays, dropped
 //!   connections and an undo checker (tests).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -25,6 +27,7 @@ mod diff;
 mod docprops;
 pub mod frac;
 mod history;
+pub mod merge;
 pub mod message;
 pub mod replica;
 pub mod server;
@@ -126,6 +129,8 @@ mod entry_ids_tests;
 mod frac_tests;
 #[cfg(test)]
 mod journal_tests;
+#[cfg(test)]
+mod merge_tests;
 #[cfg(test)]
 mod reconnect_tests;
 #[cfg(test)]

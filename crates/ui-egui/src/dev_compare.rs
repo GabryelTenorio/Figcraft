@@ -1,6 +1,7 @@
 //! Dev Mode's compare view: a ready-for-dev frame or section as it was when it was marked next to
 //! how it is now (side by side, or one over the other with a slider), the changed layers outlined,
-//! and the list of what changed (`dev.compare`). Rendered once per document version.
+//! and the list of what changed (`dev.compare`). Rendered once per document version. The branch
+//! review ([`crate::branch_ui`]) shows two versions with the same pieces.
 
 use std::sync::Arc;
 
@@ -15,9 +16,9 @@ use crate::theme::{ACCENT, DEV_CHANGED, Tokens, regular, semibold};
 use crate::widgets;
 
 /// Width of the list of changes.
-const LIST_W: f32 = 330.0;
+pub(crate) const LIST_W: f32 = 330.0;
 /// Height of the header and footer rows.
-const BAR_H: f32 = 48.0;
+pub(crate) const BAR_H: f32 = 48.0;
 /// Most texture pixels on an image's longer side.
 const TEXTURE_SIDE: f32 = 1400.0;
 
@@ -56,23 +57,24 @@ struct Cached {
 }
 
 /// One version rendered: its texture, the page area it shows and where each listed layer is.
-struct Shot {
+pub(crate) struct Shot {
     tex: egui::TextureHandle,
     area: figcraft_geom::Rect,
     boxes: Vec<(NodeId, ChangeKind, figcraft_geom::Rect)>,
 }
 
 impl Shot {
-    fn new(ctx: &egui::Context, doc: &Document, id: NodeId, changes: &[LayerChange], old: bool) -> Option<Self> {
+    /// Layer `id` of `doc` rendered, the layers `marks` outlined.
+    pub(crate) fn new(ctx: &egui::Context, doc: &Document, id: NodeId, marks: impl Iterator<Item = (NodeId, ChangeKind)>) -> Option<Self> {
         let area = figcraft_render::export_bounds(doc, id)?;
         let tex = crate::assets_panel::thumbnail(ctx, doc, id, TEXTURE_SIDE)?;
-        // The old version outlines what was removed, the new one what was added or changed.
-        let boxes = changes
-            .iter()
-            .filter(|c| c.depth > 0 && (c.change == ChangeKind::Removed) == old)
-            .filter_map(|c| doc.world_bounds(c.id).map(|b| (c.id, c.change, b)))
-            .collect();
+        let boxes = marks.filter_map(|(c, kind)| doc.world_bounds(c).map(|b| (c, kind, b))).collect();
         Some(Self { tex, area, boxes })
+    }
+
+    /// The old version outlines what was removed, the new one what was added or changed.
+    fn of_changes(ctx: &egui::Context, doc: &Document, id: NodeId, changes: &[LayerChange], old: bool) -> Option<Self> {
+        Self::new(ctx, doc, id, changes.iter().filter(|c| c.depth > 0 && (c.change == ChangeKind::Removed) == old).map(|c| (c.id, c.change)))
     }
 
     /// Its size in page units.
@@ -106,7 +108,7 @@ impl Place {
 }
 
 /// The colour a kind of change is marked with.
-fn kind_color(t: &Tokens, k: ChangeKind) -> Color32 {
+pub(crate) fn kind_color(t: &Tokens, k: ChangeKind) -> Color32 {
     match k {
         ChangeKind::Added => t.success,
         ChangeKind::Removed => t.danger,
@@ -131,8 +133,8 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     }
     if view.cache.as_ref().is_none_or(|c| !Arc::ptr_eq(&c.doc, &doc)) {
         let cmp = devcompare::compare(&doc, view.id);
-        let before = devcompare::before_doc(&doc, view.id).and_then(|b| Shot::new(ctx, &b, view.id, &cmp.changes, true));
-        let after = Shot::new(ctx, &doc, view.id, &cmp.changes, false);
+        let before = devcompare::before_doc(&doc, view.id).and_then(|b| Shot::of_changes(ctx, &b, view.id, &cmp.changes, true));
+        let after = Shot::of_changes(ctx, &doc, view.id, &cmp.changes, false);
         view.cache = Some(Cached { doc: doc.clone(), cmp, before, after });
     }
     let t = Tokens::get(ctx);
@@ -153,13 +155,22 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             ui.set_min_size(size);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let Some(cache) = view.cache.as_ref() else { return };
-            header(ui, &t, &cache.cmp, &mut view.mode, &mut open);
+            header(ui, &t, "Compare changes", &cache.cmp.name, &mut view.mode, &mut open);
             let body_h = size.y - BAR_H * 2.0 - 2.0;
             let top_down = egui::Layout::top_down(egui::Align::Min);
             ui.horizontal_top(|ui| {
                 let images_w = size.x - LIST_W - 1.0;
                 let (r, _) = ui.allocate_exact_size(vec2(images_w, body_h), Sense::hover());
-                images(ui, &t, r, cache, view.mode, &mut view.split, view.hovered);
+                if !cache.cmp.snapshot {
+                    let msg = if cache.cmp.changed {
+                        "What this changed from isn't known: it changed before FigCraft kept a copy of ready-for-dev frames. Resolve the change (or mark it ready again) to compare from now on."
+                    } else {
+                        "Nothing changed since this was marked ready for dev."
+                    };
+                    message(ui, &t, r, msg);
+                } else if let (Some(before), Some(after)) = (&cache.before, &cache.after) {
+                    images(ui, &t, r, [(before, "Before"), (after, "Now")], view.mode, &mut view.split, view.hovered);
+                }
                 let (line, _) = ui.allocate_exact_size(vec2(1.0, body_h), Sense::hover());
                 ui.painter().rect_filled(line, CornerRadius::ZERO, t.border);
                 ui.allocate_ui_with_layout(vec2(LIST_W, body_h), top_down, |ui| {
@@ -196,13 +207,14 @@ enum Action {
     Close,
 }
 
-fn header(ui: &mut Ui, t: &Tokens, cmp: &Comparison, mode: &mut Mode, open: &mut bool) {
+/// The title row: `title` and `name`, the side by side / overlay switch and the close button.
+pub(crate) fn header(ui: &mut Ui, t: &Tokens, title: &str, name: &str, mode: &mut Mode, open: &mut bool) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), BAR_H), Sense::hover());
     let p = ui.painter();
-    let title = p.layout_no_wrap("Compare changes".into(), semibold(13.0), t.text);
+    let title = p.layout_no_wrap(title.into(), semibold(13.0), t.text);
     let tw = title.size().x;
     p.galley(pos2(r.min.x + 16.0, r.center().y - title.size().y / 2.0), title, t.text);
-    let name = widgets::elide(ui, &cmp.name, 320.0);
+    let name = widgets::elide(ui, name, 320.0);
     ui.painter().text(pos2(r.min.x + 28.0 + tw, r.center().y), Align2::LEFT_CENTER, name, regular(12.0), t.text_secondary);
     // Side by side / overlay, as a two-way switch left of the close button.
     let modes = [(Mode::SideBySide, "Side by side"), (Mode::Overlay, "Overlay")];
@@ -238,21 +250,19 @@ fn header(ui: &mut Ui, t: &Tokens, cmp: &Comparison, mode: &mut Mode, open: &mut
     ui.painter().rect_filled(line, CornerRadius::ZERO, t.border);
 }
 
-/// The two versions in `r`.
-fn images(ui: &mut Ui, t: &Tokens, r: Rect, cache: &Cached, mode: Mode, split: &mut f32, hovered: Option<NodeId>) {
+/// `msg` in the middle of the images' area `r`.
+pub(crate) fn message(ui: &Ui, t: &Tokens, r: Rect, msg: &str) {
     let p = ui.painter_at(r);
     p.rect_filled(r, CornerRadius::ZERO, t.canvas);
-    if !cache.cmp.snapshot {
-        let msg = if cache.cmp.changed {
-            "What this changed from isn't known: it changed before FigCraft kept a copy of ready-for-dev frames. Resolve the change (or mark it ready again) to compare from now on."
-        } else {
-            "Nothing changed since this was marked ready for dev."
-        };
-        let g = p.layout(msg.into(), regular(12.0), t.text_secondary, (r.width() - 120.0).max(120.0));
-        p.galley(r.center() - g.size() / 2.0, g, t.text_secondary);
-        return;
-    }
-    let (Some(before), Some(after)) = (&cache.before, &cache.after) else { return };
+    let g = p.layout(msg.into(), regular(12.0), t.text_secondary, (r.width() - 120.0).max(120.0));
+    p.galley(r.center() - g.size() / 2.0, g, t.text_secondary);
+}
+
+/// The two versions (`[(old, its label), (new, its label)]`) in `r`.
+pub(crate) fn images(ui: &mut Ui, t: &Tokens, r: Rect, shots: [(&Shot, &str); 2], mode: Mode, split: &mut f32, hovered: Option<NodeId>) {
+    let p = ui.painter_at(r);
+    p.rect_filled(r, CornerRadius::ZERO, t.canvas);
+    let [(before, before_label), (after, after_label)] = shots;
     // Room for the labels above the images.
     let inner = r.shrink2(vec2(24.0, 20.0));
     let label_y = inner.min.y + 8.0;
@@ -262,7 +272,7 @@ fn images(ui: &mut Ui, t: &Tokens, r: Rect, cache: &Cached, mode: Mode, split: &
             let w = (area.width() - 24.0) / 2.0;
             let left = Rect::from_min_size(area.min, vec2(w, area.height()));
             let right = Rect::from_min_size(pos2(left.max.x + 24.0, area.min.y), vec2(w, area.height()));
-            for (shot, half, label) in [(before, left, "Before"), (after, right, "Now")] {
+            for (shot, half, label) in [(before, left, before_label), (after, right, after_label)] {
                 let place = Place::fit(half, shot.size());
                 p.text(pos2(place.min.x, label_y), Align2::LEFT_CENTER, label, semibold(11.0), t.text_secondary);
                 pane(&p, t, place, shot, hovered);
@@ -276,8 +286,8 @@ fn images(ui: &mut Ui, t: &Tokens, r: Rect, cache: &Cached, mode: Mode, split: &
             let split_x = img.min.x + img.width() * *split;
             pane(&p, t, place, after, hovered);
             pane(&p.with_clip_rect(Rect::from_min_max(r.min, pos2(split_x, r.max.y))), t, place, before, hovered);
-            p.text(pos2(img.min.x, label_y), Align2::LEFT_CENTER, "Before", semibold(11.0), t.text_secondary);
-            p.text(pos2(img.max.x, label_y), Align2::RIGHT_CENTER, "Now", semibold(11.0), t.text_secondary);
+            p.text(pos2(img.min.x, label_y), Align2::LEFT_CENTER, before_label, semibold(11.0), t.text_secondary);
+            p.text(pos2(img.max.x, label_y), Align2::RIGHT_CENTER, after_label, semibold(11.0), t.text_secondary);
             // The slider: a line with a knob, dragged (or clicked) anywhere over the images.
             let resp = ui.interact(img, Id::new("compare_split"), Sense::click_and_drag());
             if let Some(pos) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
@@ -332,46 +342,15 @@ fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>)
     egui::ScrollArea::vertical().id_salt("compare_list").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         for c in &cmp.changes {
-            let indent = 16.0 + (c.depth.min(6) as f32) * 10.0;
-            let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
-            let resp =
-                if c.change == ChangeKind::Removed { resp.on_hover_text("Removed since it was marked") } else { resp.on_hover_text("Select layer") };
-            crate::a11y::list_item(&resp, &format!("{} {}", c.change.label(), c.name), false);
+            let tip = if c.change == ChangeKind::Removed { "Removed since it was marked" } else { "Select layer" };
+            let resp = change_row(ui, t, c.change, &c.name, c.depth, c.layers, false, tip);
             if resp.hovered() {
-                ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.hover);
                 now_hovered = Some(c.id);
             }
-            let col = kind_color(t, c.change);
-            let tag = ui.painter().layout_no_wrap(c.change.label().into(), semibold(9.0), col);
-            let tag_r = Rect::from_min_size(pos2(row.max.x - 16.0 - tag.size().x - 10.0, row.center().y - 8.0), vec2(tag.size().x + 10.0, 16.0));
-            ui.painter().rect_filled(tag_r, CornerRadius::same(4), col.gamma_multiply(0.15));
-            ui.painter().galley(tag_r.center() - tag.size() / 2.0, tag, col);
-            ui.painter().circle_filled(pos2(row.min.x + indent + 3.0, row.center().y), 3.0, col);
-            let mut name = c.name.clone();
-            if c.layers > 1 {
-                name = format!("{name} ({} layers)", c.layers);
-            }
-            let name = widgets::elide(ui, &name, (tag_r.min.x - row.min.x - indent - 20.0).max(20.0));
-            let strike = c.change == ChangeKind::Removed;
-            let galley = ui.painter().layout_no_wrap(name, regular(11.0), if strike { t.text_secondary } else { t.text });
-            let at = pos2(row.min.x + indent + 12.0, row.center().y - galley.size().y / 2.0);
-            if strike {
-                let y = at.y + galley.size().y / 2.0;
-                ui.painter().line_segment([pos2(at.x, y), pos2(at.x + galley.size().x, y)], Stroke::new(1.0, t.text_secondary));
-            }
-            ui.painter().galley(at, galley, t.text);
             if resp.clicked() && c.change != ChangeKind::Removed {
                 out = Some(Action::Select(c.id));
             }
-            for pc in &c.properties {
-                let width = ui.available_width() - indent - 28.0;
-                let g = ui.painter().layout(pc.text.clone(), regular(10.0), t.text_secondary, width.max(40.0));
-                let (pr, _) = ui.allocate_exact_size(vec2(ui.available_width(), g.size().y + 4.0), Sense::hover());
-                ui.painter().galley(pos2(pr.min.x + indent + 12.0, pr.min.y + 2.0), g, t.text_secondary);
-            }
-            if !c.properties.is_empty() {
-                ui.add_space(4.0);
-            }
+            property_lines(ui, t, c.depth, c.properties.iter().map(|pc| pc.text.as_str()));
         }
         if cmp.truncated {
             widgets::note(ui, &format!("Only the first {} changed layers are listed.", devcompare::MAX_CHANGES), t.text_secondary);
@@ -379,6 +358,62 @@ fn list(ui: &mut Ui, t: &Tokens, cmp: &Comparison, hovered: &mut Option<NodeId>)
     });
     *hovered = now_hovered;
     out
+}
+
+/// One changed layer (or other object) in a list of changes: its name `depth` deep (`layers`: how
+/// many layers it is), tagged with the kind of change, `selected` when it is the one shown.
+pub(crate) fn change_row(
+    ui: &mut Ui,
+    t: &Tokens,
+    kind: ChangeKind,
+    name: &str,
+    depth: usize,
+    layers: usize,
+    selected: bool,
+    tip: &str,
+) -> egui::Response {
+    let indent = 16.0 + (depth.min(6) as f32) * 10.0;
+    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+    let resp = resp.on_hover_text(tip);
+    crate::a11y::list_item(&resp, &format!("{} {name}", kind.label()), selected);
+    if selected {
+        ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.selected_row);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(row.shrink2(vec2(8.0, 1.0)), CornerRadius::same(5), t.hover);
+    }
+    let col = kind_color(t, kind);
+    let tag = ui.painter().layout_no_wrap(kind.label().into(), semibold(9.0), col);
+    let tag_r = Rect::from_min_size(pos2(row.max.x - 16.0 - tag.size().x - 10.0, row.center().y - 8.0), vec2(tag.size().x + 10.0, 16.0));
+    ui.painter().rect_filled(tag_r, CornerRadius::same(4), col.gamma_multiply(0.15));
+    ui.painter().galley(tag_r.center() - tag.size() / 2.0, tag, col);
+    ui.painter().circle_filled(pos2(row.min.x + indent + 3.0, row.center().y), 3.0, col);
+    let name = if layers > 1 { format!("{name} ({layers} layers)") } else { name.to_string() };
+    let name = widgets::elide(ui, &name, (tag_r.min.x - row.min.x - indent - 20.0).max(20.0));
+    let strike = kind == ChangeKind::Removed;
+    let galley = ui.painter().layout_no_wrap(name, regular(11.0), if strike { t.text_secondary } else { t.text });
+    let at = pos2(row.min.x + indent + 12.0, row.center().y - galley.size().y / 2.0);
+    if strike {
+        let y = at.y + galley.size().y / 2.0;
+        ui.painter().line_segment([pos2(at.x, y), pos2(at.x + galley.size().x, y)], Stroke::new(1.0, t.text_secondary));
+    }
+    ui.painter().galley(at, galley, t.text);
+    resp
+}
+
+/// The property changes under a [`change_row`] (`width 120 → 136`).
+pub(crate) fn property_lines<'a>(ui: &mut Ui, t: &Tokens, depth: usize, lines: impl Iterator<Item = &'a str>) {
+    let indent = 16.0 + (depth.min(6) as f32) * 10.0;
+    let mut any = false;
+    for text in lines {
+        any = true;
+        let width = ui.available_width() - indent - 28.0;
+        let g = ui.painter().layout(text.to_string(), regular(10.0), t.text_secondary, width.max(40.0));
+        let (pr, _) = ui.allocate_exact_size(vec2(ui.available_width(), g.size().y + 4.0), Sense::hover());
+        ui.painter().galley(pos2(pr.min.x + indent + 12.0, pr.min.y + 2.0), g, t.text_secondary);
+    }
+    if any {
+        ui.add_space(4.0);
+    }
 }
 
 fn footer(ui: &mut Ui, t: &Tokens, cmp: &Comparison) -> Option<Action> {

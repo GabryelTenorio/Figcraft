@@ -5,8 +5,11 @@
 //! `images/<sha256>` for every image the document (or a saved version) uses, an optional
 //! `thumbnail.png` and an optional version history: `versions/index.json` (`{"versions": [{id,
 //! name, description, time, images}]}`, oldest first) plus one `versions/<id>.json` snapshot per
-//! version (a `document.json` of its own). A published file also holds its library (see
-//! [`library`]). Readers that don't know about versions or libraries ignore those entries. Plain
+//! version (a `document.json` of its own). Branches are kept the same way: `branches/index.json`
+//! (`{"branches": [{id, name, time, client, state, baseImages, headImages}]}`) plus
+//! `branches/<id>/base.json` and `branches/<id>/head.json`. A published file also holds its
+//! library (see [`library`]). Readers that don't know about versions, branches or libraries
+//! ignore those entries. Plain
 //! JSON (the `document.json` alone) also opens. Reading is lenient: structural problems are
 //! repaired (see [`Document::repair`]) and reported, damaged versions and libraries are skipped.
 //!
@@ -42,6 +45,9 @@ pub const MAX_VERSION_DESCRIPTION: usize = 2000;
 const MAX_VERSION_INDEX: u64 = 16 * 1024 * 1024;
 const MAX_VERSION_BYTES: u64 = 1024 * 1024 * 1024;
 const VERSION_INDEX: &str = "versions/index.json";
+const BRANCH_INDEX: &str = "branches/index.json";
+/// Most branches a file keeps: making more is refused, extra entries in a file are skipped.
+pub const MAX_BRANCHES: usize = 100;
 /// Deflate level of JSON members (see [`json_options`]).
 const JSON_LEVEL: i64 = 3;
 
@@ -123,6 +129,34 @@ impl Version {
     }
 }
 
+/// Where a branch is in its life.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BranchState {
+    Active,
+    /// Merged into the main file (and archived).
+    Merged,
+    /// Archived without merging.
+    Archived,
+}
+
+/// A branch of the file: a copy of the document to work on separately, and the main document as
+/// it was when the branch was made or last updated from it (its base).
+#[derive(Clone, Debug)]
+pub struct Branch {
+    /// Unique among the file's branches; a valid version id ([`is_valid_version_id`]).
+    pub id: String,
+    pub name: String,
+    /// When it was made (Unix seconds).
+    pub time: u64,
+    /// The client id space the branch makes ids in ([`Document::set_client_id`]), so they never
+    /// clash with ids made on the main file or on other branches.
+    pub client: u32,
+    pub state: BranchState,
+    pub base: Arc<Document>,
+    pub head: Arc<Document>,
+}
+
 /// Whether `id` can name a version (and its archive entry).
 pub fn is_valid_version_id(id: &str) -> bool {
     (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -140,11 +174,12 @@ pub struct Loaded {
     pub doc: Document,
     pub issues: Vec<String>,
     pub versions: Vec<Version>,
+    pub branches: Vec<Branch>,
 }
 
 impl From<Document> for Loaded {
     fn from(doc: Document) -> Self {
-        Self { doc, issues: Vec::new(), versions: Vec::new() }
+        Self { doc, issues: Vec::new(), versions: Vec::new(), branches: Vec::new() }
     }
 }
 
@@ -310,14 +345,25 @@ pub fn save_bytes(doc: &Document, thumbnail_png: Option<&[u8]>) -> Result<Vec<u8
 
 /// Write a `.figcraft` archive with a version history (oldest first) to bytes.
 pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, versions: &[Version]) -> Result<Vec<u8>, FormatError> {
+    save_bytes_with_history(doc, thumbnail_png, versions, &[])
+}
+
+/// Write a `.figcraft` archive with a version history (oldest first) and branches to bytes.
+pub fn save_bytes_with_history(
+    doc: &Document,
+    thumbnail_png: Option<&[u8]>,
+    versions: &[Version],
+    branches: &[Branch],
+) -> Result<Vec<u8>, FormatError> {
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
         let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         put_json(&mut z, "document.json", doc)?;
-        // Every image once, whether the document or a version uses it.
+        // Every image once, whether the document, a version or a branch uses it.
         let mut written = BTreeSet::new();
-        for (hash, img) in std::iter::once(&doc.images).chain(versions.iter().map(Version::images)).flatten() {
+        let branch_images = branches.iter().flat_map(|b| [&b.base.images, &b.head.images]);
+        for (hash, img) in std::iter::once(&doc.images).chain(versions.iter().map(Version::images)).chain(branch_images).flatten() {
             if written.insert(hash) {
                 put(&mut z, &format!("images/{hash}"), stored, &img.bytes)?;
             }
@@ -345,6 +391,21 @@ pub fn save_bytes_with_versions(doc: &Document, thumbnail_png: Option<&[u8]>, ve
                 index.push(entry);
             }
             put(&mut z, VERSION_INDEX, json_options(), &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
+        }
+        if !branches.is_empty() {
+            let mut ids = BTreeSet::new();
+            let mut index = Vec::with_capacity(branches.len());
+            for b in branches {
+                if !is_valid_version_id(&b.id) || !ids.insert(b.id.as_str()) {
+                    return Err(FormatError::Io(format!("invalid or duplicate branch id `{}`", b.id)));
+                }
+                put_json(&mut z, &format!("branches/{}/base.json", b.id), &b.base)?;
+                put_json(&mut z, &format!("branches/{}/head.json", b.id), &b.head)?;
+                let images = |d: &Document| d.images.keys().cloned().collect::<Vec<String>>();
+                index.push(json!({"id": b.id, "name": b.name, "time": b.time, "client": b.client, "state": b.state,
+                    "baseImages": images(&b.base), "headImages": images(&b.head)}));
+            }
+            put(&mut z, BRANCH_INDEX, json_options(), &serde_json::to_vec(&json!({"branches": index})).map_err(io_err)?)?;
         }
         if let Some(lib) = &doc.published {
             library::write(&mut z, lib, &written)?;
@@ -397,11 +458,17 @@ pub fn load_bytes_with_versions(bytes: &[u8]) -> Result<Loaded, FormatError> {
         Err(e) => issues.push(format!("the published library was skipped: {e}")),
     }
     let versions = read_versions(&mut z, &images, &mut issues);
-    // Images only the version history uses stay with the versions.
-    let version_only: BTreeSet<&String> =
-        versions.iter().flat_map(|v| v.images().keys()).filter(|h| own_images.as_ref().is_some_and(|o| !o.contains(*h))).collect();
-    doc.images = images.into_iter().filter(|(h, _)| !version_only.contains(h)).collect();
-    Ok(Loaded { doc, issues, versions })
+    let branches = read_branches(&mut z, &images, &mut issues);
+    // Images only the version history or branches use stay with them.
+    let branch_images = branches.iter().flat_map(|b| b.base.images.keys().chain(b.head.images.keys()));
+    let history_only: BTreeSet<&String> = versions
+        .iter()
+        .flat_map(|v| v.images().keys())
+        .chain(branch_images)
+        .filter(|h| own_images.as_ref().is_some_and(|o| !o.contains(*h)))
+        .collect();
+    doc.images = images.into_iter().filter(|(h, _)| !history_only.contains(h)).collect();
+    Ok(Loaded { doc, issues, versions, branches })
 }
 
 /// The version history of an archive (none when it has no index). Damaged entries are skipped and
@@ -461,6 +528,62 @@ fn read_versions<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<S
     out
 }
 
+/// The branches of an archive (none when it has no index), parsed. Damaged entries are skipped and
+/// reported in `issues`; nothing here fails the load.
+fn read_branches<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<String, ImageData>, issues: &mut Vec<String>) -> Vec<Branch> {
+    if z.index_for_name(BRANCH_INDEX).is_none() {
+        return Vec::new();
+    }
+    let index = match read_member(z, BRANCH_INDEX, MAX_VERSION_INDEX)
+        .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| FormatError::Corrupt(e.to_string())))
+    {
+        Ok(v) => v,
+        Err(e) => {
+            issues.push(format!("the branches were skipped: {e}"));
+            return Vec::new();
+        }
+    };
+    let entries = index.get("branches").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let mut out: Vec<Branch> = Vec::new();
+    let mut budget = MAX_VERSION_BYTES;
+    for e in entries {
+        if out.len() >= MAX_BRANCHES {
+            issues.push(format!("only the first {MAX_BRANCHES} branches were kept"));
+            break;
+        }
+        let id = e.get("id").and_then(Value::as_str).unwrap_or_default();
+        if !is_valid_version_id(id) || out.iter().any(|b| b.id == id) {
+            issues.push("a branch with an invalid id was skipped".into());
+            continue;
+        }
+        let mut snapshot = |part: &str, list: &str| -> Result<Arc<Document>, FormatError> {
+            let json = read_member(z, &format!("branches/{id}/{part}.json"), budget.min(MAX_MEMBER))?;
+            budget = budget.saturating_sub(json.len() as u64);
+            let (mut doc, _) = from_json(std::str::from_utf8(&json).map_err(|e| FormatError::Corrupt(e.to_string()))?)?;
+            let hashes = e.get(list).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str);
+            doc.images = hashes.filter_map(|h| images.get(h).map(|i| (h.to_string(), i.clone()))).collect();
+            Ok(Arc::new(doc))
+        };
+        let (base, head) = match (snapshot("base", "baseImages"), snapshot("head", "headImages")) {
+            (Ok(b), Ok(h)) => (b, h),
+            (Err(err), _) | (_, Err(err)) => {
+                issues.push(format!("branch `{id}` was skipped: {err}"));
+                continue;
+            }
+        };
+        out.push(Branch {
+            id: id.to_string(),
+            name: e.get("name").and_then(Value::as_str).map(|s| clip(s, MAX_VERSION_NAME)).unwrap_or_default(),
+            time: e.get("time").and_then(Value::as_u64).unwrap_or(0),
+            client: e.get("client").and_then(Value::as_u64).and_then(|c| u32::try_from(c).ok()).unwrap_or(0),
+            state: e.get("state").and_then(|s| BranchState::deserialize(s).ok()).unwrap_or(BranchState::Active),
+            base,
+            head,
+        });
+    }
+    out
+}
+
 /// Save atomically: write a temp file next to `path`, then rename over it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn save_file(doc: &Document, path: &std::path::Path, thumbnail_png: Option<&[u8]>) -> Result<(), FormatError> {
@@ -477,6 +600,8 @@ pub fn load_file(path: &std::path::Path) -> Result<(Document, Vec<String>), Form
     load_bytes(&bytes)
 }
 
+#[cfg(test)]
+mod branch_tests;
 #[cfg(test)]
 mod large_tests;
 #[cfg(test)]
