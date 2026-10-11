@@ -84,7 +84,7 @@ fn used_components(doc: &Document, root: NodeId) -> BTreeSet<NodeId> {
 }
 
 /// The instance swap properties of component `c`.
-fn swap_props(doc: &Document, c: NodeId) -> Vec<String> {
+pub(crate) fn swap_props(doc: &Document, c: NodeId) -> Vec<String> {
     match doc.node(c).map(|n| &n.kind) {
         Some(NodeKind::Component { props, .. }) => {
             props.iter().filter(|(_, d)| matches!(d, PropDef::InstanceSwap { .. })).map(|(k, _)| k.clone()).collect()
@@ -108,7 +108,8 @@ pub fn closure(doc: &Document, roots: &[NodeId]) -> Vec<NodeId> {
     out
 }
 
-fn style_links(n: &Node) -> impl Iterator<Item = &String> {
+/// The style ids a layer links to (fill, stroke, effect, grid, text).
+pub(crate) fn style_links(n: &Node) -> impl Iterator<Item = &String> {
     [&n.styles.fill, &n.styles.stroke, &n.styles.effect, &n.styles.grid, &n.styles.text].into_iter().flatten()
 }
 
@@ -177,11 +178,10 @@ pub fn publishable(doc: &Document) -> Selection {
     }
 }
 
-/// What a publish offers when nothing is chosen: the assets offered last time plus new ones, never
-/// assets named with a leading `.` or `_`.
-pub fn default_selection(doc: &Document) -> Selection {
+/// What a publish offers when nothing is chosen: the assets offered last time (by `prev`, the
+/// version published last) plus new ones, never assets named with a leading `.` or `_`.
+pub fn default_selection(doc: &Document, prev: Option<&LibraryManifest>) -> Selection {
     let all = publishable(doc);
-    let prev = doc.published.as_ref().map(|p| &p.manifest);
     let pick = |offered: Option<bool>, name: Option<&str>| offered.unwrap_or_else(|| name.is_some_and(|n| !hidden_name(n)));
     Selection {
         components: all
@@ -253,10 +253,11 @@ fn new_library_id(doc: &Document, seed: u64) -> String {
     h.get(..16).map(str::to_string).unwrap_or(h)
 }
 
-/// Publish `sel` (asset roots, styles and variable collections) of `doc` as a new library version.
+/// Publish `sel` (asset roots, styles and variable collections) of `doc` as the library version
+/// after `prev` (the file's last published version, here or on its server; `None`: the first).
 /// `seed` keeps a first publish's new id unique. Refused when there is nothing to publish or
 /// nothing changed.
-pub fn publish(doc: &Document, sel: &Selection, description: Option<String>, seed: u64) -> Result<PublishedLibrary> {
+pub fn publish(doc: &Document, prev: Option<&PublishedLibrary>, sel: &Selection, description: Option<String>, seed: u64) -> Result<PublishedLibrary> {
     let cmd = "library.publish";
     if sel.is_empty() {
         return Err(disabled(cmd, "nothing to publish: the file has no components, styles or variables to offer"));
@@ -316,7 +317,6 @@ pub fn publish(doc: &Document, sel: &Selection, description: Option<String>, see
     }
     snap.take_dirty();
     // Versions: an asset or style keeps the version it last changed in.
-    let prev = doc.published.as_deref();
     let version = prev.map_or(1, |p| p.manifest.version.saturating_add(1));
     let offered: BTreeSet<NodeId> = components.iter().copied().collect();
     let components = units
@@ -424,8 +424,15 @@ impl Cache {
         self.load_limited(path, MAX_LIBRARY_FILE)
     }
 
-    /// [`load`](Self::load), refusing files larger than `max_bytes`.
+    /// [`load`](Self::load), refusing files larger than `max_bytes`. A server library link gives
+    /// what was last fetched ([`Session::load_library`](crate::Session::load_library) fetches).
     pub fn load_limited(&mut self, path: &str, max_bytes: u64) -> Result<Arc<PublishedLibrary>> {
+        if crate::library_server::is_server_link(path) {
+            return match self.cached(path) {
+                Some(r) => r.cloned().map_err(|e| EngineError::Other(e.to_string())),
+                None => Err(EngineError::Other(crate::library_server::NOT_FETCHED.into())),
+            };
+        }
         let stamp = stat(path);
         // Checked before the cache: the limit is the caller's.
         if let Ok(st) = &stamp
@@ -452,6 +459,14 @@ impl Cache {
     /// What the last read of `path` gave (no file access).
     pub fn cached(&self, path: &str) -> Option<std::result::Result<&Arc<PublishedLibrary>, &str>> {
         self.entries.get(path).map(|e| e.result.as_ref().map_err(String::as_str))
+    }
+
+    /// Remember `result` for `path` (a library fetched from a server).
+    pub fn insert(&mut self, path: &str, result: std::result::Result<Arc<PublishedLibrary>, String>) {
+        if self.entries.len() >= MAX_CACHED && !self.entries.contains_key(path) {
+            self.entries.clear();
+        }
+        self.entries.insert(path.to_string(), Entry { stamp: None, result });
     }
 }
 

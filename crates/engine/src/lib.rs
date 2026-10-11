@@ -27,6 +27,8 @@ pub mod inspect;
 pub mod invite_links;
 pub mod keymap;
 pub mod library;
+pub mod library_server;
+pub mod library_swap;
 pub mod live;
 pub mod measure;
 pub mod params;

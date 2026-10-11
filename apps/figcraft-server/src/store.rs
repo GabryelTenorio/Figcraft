@@ -9,6 +9,8 @@
 //! <data>/files/<id>/links.json   share links: id, access, label, created, SHA-256 of the token
 //! <data>/files/<id>/snapshot.bin the session state at the last compaction
 //! <data>/files/<id>/log.bin      what changed since (see `disk`)
+//! <data>/files/<id>/library.bin  its team library, when one was published (a `.figcraft` archive)
+//! <data>/files/<id>/usage.json   how other files use that library, as their apps report it
 //! ```
 //!
 //! An open file appends its server's journal to its log; the hub has the store make the appends
@@ -20,22 +22,29 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::Write;
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, LinkInfo, NewLink};
+use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, FileUsage, LibraryReply, LibraryReq, LinkInfo, NewLink, Usage};
 use figcraft_collab::{Change, Replica, Server, same_secret};
 use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile};
 use figcraft_collab_net::token;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::disk::{self, LINKS, LOG, LOG_HEADER, META, SNAPSHOT};
+use crate::disk::{self, LIBRARY, LINKS, LOG, LOG_HEADER, META, SNAPSHOT, USAGE};
 
 pub const LOCK: &str = "LOCK";
 pub const KEY: &str = "server.key";
 pub const FILES: &str = "files";
+
+/// Most files whose usage of one library is kept (the least recently changed go first), and most
+/// components one file's report keeps.
+const MAX_USERS: usize = 500;
+const MAX_REPORTED: usize = 2_000;
+/// Largest `usage.json` read.
+const MAX_USAGE_FILE: u64 = 32 << 20;
 
 /// What the store enforces.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,6 +65,17 @@ struct Meta {
     updated: u64,
     #[serde(default)]
     seq: u64,
+    /// The team library published under the file, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    library: Option<LibraryMeta>,
+}
+
+/// What a file's team library is (`library.bin` holds it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct LibraryMeta {
+    id: String,
+    name: String,
+    version: u64,
 }
 
 /// A share link (`links.json`): the token itself is never stored.
@@ -313,7 +333,7 @@ impl Store {
         let t = now();
         let (edit, edit_token) = new_link(Access::Edit, "Published (edit)", t)?;
         let (view, view_token) = new_link(Access::View, "Published (view)", t)?;
-        let meta = Meta { name, created: t, updated: t, seq: 0 };
+        let meta = Meta { name, created: t, updated: t, seq: 0, library: None };
         let dir = self.dir(&id);
         let written = fs::create_dir_all(&dir)
             .map_err(|e| e.to_string())
@@ -385,6 +405,92 @@ impl Store {
             .map_err(|e| format!("it is no longer served, but its folder {} couldn't be deleted ({e}); delete it by hand", dir.display()))?;
         log::info!("removed file {file}");
         Ok(())
+    }
+
+    /// A file's team library, unless its version is `have`.
+    fn fetch_library(&mut self, file: &str, have: Option<u64>) -> Result<LibraryReply, String> {
+        let (path, max) = (self.dir(file).join(LIBRARY), self.cfg.max_file_bytes);
+        let Some(lib) = self.entry(file)?.meta.library.clone() else { return Ok(LibraryReply::Empty) };
+        if have == Some(lib.version) {
+            return Ok(LibraryReply::Unchanged { version: lib.version });
+        }
+        Ok(LibraryReply::Library { version: lib.version, archive: disk::read_capped(&path, max)? })
+    }
+
+    /// Keep `archive` as a file's team library: it must read as a library (with the limits files
+    /// using it read it with), be the file's library if it has one, and be a newer version.
+    // shortcut: the archive is checked on the hub thread (other files' sessions wait meanwhile);
+    // move it to a worker if large libraries make that noticeable.
+    pub fn publish_library(&mut self, file: &str, archive: &[u8]) -> Result<u64, String> {
+        let max = self.cfg.max_file_bytes;
+        if archive.len() as u64 > max {
+            return Err(format!("the library is {} MiB; this server keeps files up to {} MiB", archive.len() >> 20, max >> 20));
+        }
+        let lib = match figcraft_format::read_library(Cursor::new(archive)) {
+            Ok(Some(lib)) => lib,
+            Ok(None) => return Err("that isn't a published library".into()),
+            Err(e) => return Err(format!("the library can't be read: {e}")),
+        };
+        if lib.doc.node_count() > self.cfg.core.max_nodes {
+            return Err(format!("the library has more than {} layers", self.cfg.core.max_nodes));
+        }
+        let m = &lib.manifest;
+        let dir = self.dir(file);
+        let entry = self.entry(file)?;
+        if let Some(old) = &entry.meta.library {
+            if old.id != m.id {
+                return Err(format!("this file's library on the server is another one (\"{}\")", old.name));
+            }
+            if m.version <= old.version {
+                return Err(format!("version {} is on the server already: publish again to follow it", old.version));
+            }
+        }
+        // The archive first: a description never names a version whose library isn't there (a
+        // failed description write leaves the older number, which the next publish follows).
+        disk::write_atomic(&dir.join(LIBRARY), archive).map_err(|e| format!("couldn't keep the library: {e}"))?;
+        let before = entry.meta.library.replace(LibraryMeta { id: m.id.clone(), name: m.name.clone(), version: m.version });
+        if let Err(e) = write_json(&dir.join(META), &entry.meta) {
+            entry.meta.library = before;
+            return Err(format!("couldn't keep the library: {e}"));
+        }
+        log::info!("file {file}: published library version {} ({} bytes)", m.version, archive.len());
+        Ok(m.version)
+    }
+
+    /// The usage reports kept for a file's library (none when it has no library).
+    pub fn library_usage(&mut self, file: &str) -> Result<Vec<FileUsage>, String> {
+        let path = self.dir(file).join(USAGE);
+        if self.entry(file)?.meta.library.is_none() || !path.exists() {
+            return Ok(Vec::new());
+        }
+        serde_json::from_slice(&disk::read_capped(&path, MAX_USAGE_FILE)?).map_err(|e| format!("{USAGE} is damaged ({e})"))
+    }
+
+    /// Keep how one file uses a file's library (written only when it changed).
+    pub fn report_usage(&mut self, file: &str, usage: Usage) -> Result<(), String> {
+        let name = clean_name(&usage.file);
+        if name.is_empty() || self.entry(file)?.meta.library.is_none() {
+            return Ok(());
+        }
+        let mut components: Vec<_> = usage.components.into_iter().filter(|(_, n)| *n > 0).collect();
+        components.sort();
+        components.dedup_by_key(|c| c.0);
+        components.truncate(MAX_REPORTED);
+        // A damaged report list starts over (it is only statistics).
+        let mut all = self.library_usage(file).unwrap_or_default();
+        match all.iter_mut().find(|f| f.usage.file == name) {
+            Some(f) if f.usage.components == components => return Ok(()),
+            Some(f) => {
+                f.usage.components = components;
+                f.updated = now();
+            }
+            None => all.push(FileUsage { usage: Usage { file: name, components }, updated: now() }),
+        }
+        if all.len() > MAX_USERS {
+            all.sort_by_key(|f| std::cmp::Reverse(f.updated));
+            all.truncate(MAX_USERS);
+        }
+        write_json(&self.dir(file).join(USAGE), &all)
     }
 
     /// Load a file's session: its snapshot, then its log (a damaged end is dropped and reported).
@@ -606,6 +712,27 @@ impl Backend for Store {
                 };
                 Handled { reply, revoked: None, removed: Some(file) }
             }
+        }
+    }
+
+    fn library(&mut self, file: &str, access: Access, req: LibraryReq) -> LibraryReply {
+        let failed = |reason: String| LibraryReply::Failed { reason };
+        match req {
+            LibraryReq::Fetch { have, usage } => {
+                if let Some(u) = usage
+                    && let Err(e) = self.report_usage(file, u)
+                {
+                    log::warn!("file {file}: a library usage report couldn't be kept: {e}");
+                }
+                self.fetch_library(file, have).unwrap_or_else(failed)
+            }
+            LibraryReq::Publish { .. } if access != Access::Edit => {
+                failed("you can only view this file: publishing its library needs an edit link".into())
+            }
+            LibraryReq::Publish { archive } => {
+                self.publish_library(file, &archive).map_or_else(failed, |version| LibraryReply::Published { version })
+            }
+            LibraryReq::Usage => self.library_usage(file).map_or_else(failed, LibraryReply::Usage),
         }
     }
 

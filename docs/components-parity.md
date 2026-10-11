@@ -1,12 +1,12 @@
 # Components, variants, styles and variables parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the ROADMAP's components and variables items) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server, library usage and swapping a library; numbers here unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 Design systems are why teams adopt Figma. **Components: breadth ~95%, ready ~68%. Styles and
 variables: breadth ~85%, ready ~70% (estimated).** QA'd with a synthetic design system of ~300
 components used 2,000 times (`crates/engine/src/synthetic_ds.rs`, `components_scale_tests.rs`);
-not with real libraries. Remaining: 10–20 h here, plus shared libraries (10–20 h after
-multiplayer).
+not with real libraries. Remaining: 10–20 h here, plus team libraries' tail (4–8 h, partly after
+accounts).
 
 ## Components and variants
 
@@ -32,7 +32,9 @@ multiplayer).
 | Publish a file's components, sets, styles and variables (per-asset versions) | done | as local library files |
 | Enable a library in a file; read-only linked copies | done | |
 | Library updates available; overrides kept | done | |
-| Shared team/organization libraries, library analytics, swap library | missing | [gaps](gaps.md) #10 |
+| Team libraries: publish to a `figcraft-server` under the file, enable by a share link (a view link reads it), background update checks | done | [server.md](server.md#team-libraries); no team-wide library list or accounts ([gaps](gaps.md) #10) |
+| Library analytics | partial | instances per component and the files using them, as apps report them; nothing over time, no detach counts |
+| Swap library (instances, styles and variables to another library's of the same names, overrides kept) | done | what has no match stays and is listed; one undo step |
 
 ## Styles and variables
 
@@ -51,4 +53,5 @@ multiplayer).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Team libraries on `figcraft-server` (publish under the file, enable by a share link, updates with overrides kept), usage counts per component and file, and swapping a library by names (gap 10) |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

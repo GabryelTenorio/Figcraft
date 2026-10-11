@@ -294,9 +294,9 @@ flow with its description.
 
 ### Local libraries
 
-A `.figcraft` file can be published as a library and used from other files (local files only: no
-accounts, nothing on the network; the browser build has no file system, so there the commands that
-read library files return an error).
+A `.figcraft` file can be published as a library and used from other files (library files here;
+libraries kept on a `figcraft-server` for a team: [Team libraries](#team-libraries); the browser
+build has no file system, so there the commands that read library files return an error).
 
 - **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
   the file's components, component sets, styles and variable collections as a new version (by
@@ -339,6 +339,33 @@ name and sets them this way);
   same library, components the other file publishes as a library are used from it (and that
   library is enabled when the other file is saved), and other mains stay behind: the instance shows
   a missing main (`component.restoreMain` makes it a main here).
+
+### Team libraries
+
+A file kept on a `figcraft-server` ([`server.md`](server.md#team-libraries)) can hold a library that
+other files use through one of its share links. Each call waits for the server (a few seconds at
+most when it can't be reached).
+
+- `library.publishToServer {server?, key?, description?, include?, exclude?}` publishes the active
+  document's library as the next version of the one the server keeps under the file (selection and
+  per-asset versions as `library.publish`, following the server's version): `server` is an edit
+  link of the file, or omit it while the document is in a live session on a server with edit
+  access; with the server's address and key (`ws://host:47900/?key=…`, or `key`) the document is
+  kept there as a new file first and the result has its `file`, `edit` and `view` links. A view
+  link is refused. The document itself doesn't change (nothing to undo).
+- `library.add {path: <share link>}` enables it (a view link is enough); then `library.place`,
+  `library.applyStyle`, `library.bindVariable`… work as for library files. `library.list` and
+  `library.updates` ask the server for a newer version first (`"server": true` in the listing);
+  `library.acceptUpdates` takes it, overrides kept.
+- `library.usage {library?}` → `{id, name, instances, files: [{name, updated, instances}],
+  components: [{id, name, instances, files}]}`: what the files using it reported (each fetch
+  reports the asking document's name and its instances per component). `library` is an enabled
+  team library; omit it for the active document's own library on its server.
+- `library.swap {from, to}` (any two enabled libraries, files or team) re-points every instance,
+  style and variable copied from `from` to the published asset of the same name in `to` (variants
+  by name in their set, styles by name and type, variables by collection, name and type, modes by
+  name), keeping overrides; one undo step → `{components, styles, variables, unmatched: [names
+  still from `from`], removed (nothing of `from` was left, so it was removed)}`.
 
 ### Swapping instances
 

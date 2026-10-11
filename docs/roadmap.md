@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server and swapping a library: team libraries 40% → 70% breadth, full parity ~380–720 h; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -55,14 +55,15 @@ blockers.
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
 | M8 Hardening & performance (bench, retained canvas, accessibility, idle) | ~60% | real-file corpus, platform QA, GPU canvas, screen readers | 60–110 |
-| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, document sync between apps, cursors, selections, avatars, follow, `collab.*` commands); per-user undo, rejection handling, offline queue and resuming after a reconnect; styles, variables, collections, modes and comments created in a session get ids from their creator's space; others' text carets and selections on the canvas; the browser client (joins desktop-hosted sessions); `figcraft://` links open the app and join (Windows registers per user; macOS and Linux packages declare the scheme); the standalone `figcraft-server` (persistence with compaction, restarts that lose nothing confirmed, publishing from the app, share links to edit or view, revocable) | accounts, teams, TLS in the desktop app, packaging the server | 45–90 |
+| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, document sync between apps, cursors, selections, avatars, follow, `collab.*` commands); per-user undo, rejection handling, offline queue and resuming after a reconnect; styles, variables, collections, modes and comments created in a session get ids from their creator's space; others' text carets and selections on the canvas; the browser client (joins desktop-hosted sessions); `figcraft://` links open the app and join (Windows registers per user; macOS and Linux packages declare the scheme); the standalone `figcraft-server` (persistence with compaction, restarts that lose nothing confirmed, publishing from the app, share links to edit or view, revocable); team libraries kept on the server and enabled by a share link, with usage counts, and swapping a library | accounts, teams, TLS in the desktop app, packaging the server | 45–90 |
 | M10 Localization (new) | not started | layer + 11 languages | 60–100 |
 | M11 Plugins | runtime, API, menu, manager and SDK done (#101) | run-time plugin UI, settings storage, distribution, widgets; Figma plugin compatibility is an owner decision | 25–55 |
 | M12 AI features (new, owner decision) | not started | local models | 30–60 |
 
 ## Next, after the current focus
 
-- Shared libraries on top of the multiplayer server (10–20 h), branching (8–15 h).
+- Team libraries for a whole team (lists, accounts and permissions) and deeper library analytics (4–8 h, after
+  accounts), branching (8–15 h).
 - GPU canvas held to the CPU renderer (30–60 h).
 - Figma Draw tools (10–18 h).
 - Mobile viewer and prototype mirror (20–40 h).
@@ -71,6 +72,7 @@ blockers.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~385–730 h → ~380–720 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |

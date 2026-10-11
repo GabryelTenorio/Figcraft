@@ -19,6 +19,8 @@ workspace = true
 [dependencies]
 figcraft-collab = { workspace = true }
 figcraft-collab-net = { workspace = true }
+# Checking a team library before keeping it (read as files using it read it).
+figcraft-format = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -4,8 +4,7 @@
 //! that skips the check), the server restarts mid-session and everyone resumes without losing a
 //! confirmed edit, revoked links stop working at once, and fuzzed frames don't hurt it.
 
-use std::net::{SocketAddr, TcpStream};
-use std::path::Path;
+use std::net::TcpStream;
 use std::time::Duration;
 
 use figcraft_collab::message::{self, Access, Admin, AdminReply, ClientMsg, ServerMsg};
@@ -13,61 +12,14 @@ use figcraft_collab::sim::Rng;
 use figcraft_collab::{Client, VIEW_ONLY};
 use figcraft_collab_net::{Endpoint, Invite, NetLimits, manage};
 use figcraft_doc::NodeId;
-use figcraft_engine::Session;
-use figcraft_engine::live::{Published, Status};
+use figcraft_engine::live::Status;
 use serde_json::{Value, json};
-use tungstenite::{Bytes, Message, WebSocket};
+use tungstenite::{Bytes, Message};
 
-use crate::test_util::{TempDir, config, pump, same, session};
-
-fn key(dir: &Path) -> String {
-    std::fs::read_to_string(dir.join(crate::store::KEY)).unwrap().trim().to_string()
-}
+use crate::test_util::{Raw, TempDir, config, join, key, live, publish, pump, same, session};
 
 fn id_of(v: &Value) -> NodeId {
     NodeId(v["id"].as_u64().unwrap())
-}
-
-fn live(s: &Session) -> bool {
-    s.live.status == Status::Live && s.live.syncing()
-}
-
-/// `a` publishes its open file to the server at `addr`; the links.
-fn publish(a: &mut Session, dir: &Path, addr: SocketAddr) -> Published {
-    let r = a.execute("collab.publish", &json!({"server": format!("ws://{addr}/?key={}", key(dir)), "name": "Team file"})).unwrap();
-    assert_eq!(r["status"], "connecting");
-    assert_eq!(r["readOnly"], true, "read-only while it is on its way");
-    pump(&mut [a], "the publish", |s| live(s[0]) && s[0].live.published.is_some());
-    a.live.published.clone().unwrap()
-}
-
-fn join(link: &str, name: &str) -> Session {
-    let mut s = session(name);
-    s.execute("collab.join", &json!({"link": link})).unwrap();
-    s
-}
-
-/// A bare client: hello, then what it's told.
-struct Raw(WebSocket<TcpStream>);
-
-impl Raw {
-    fn connect(addr: SocketAddr) -> Raw {
-        let s = TcpStream::connect(addr).unwrap();
-        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-        Raw(tungstenite::client::client(format!("ws://{addr}/"), s).unwrap().0)
-    }
-
-    fn send(&mut self, m: &ClientMsg) {
-        self.0.send(Message::Binary(Bytes::from(message::encode(m).unwrap()))).unwrap();
-    }
-
-    fn next(&mut self) -> ServerMsg {
-        loop {
-            if let Message::Binary(b) = self.0.read().unwrap() {
-                return message::decode(&b, usize::MAX).unwrap();
-            }
-        }
-    }
 }
 
 #[test]
@@ -238,6 +190,16 @@ fn fuzzed_frames_dont_hurt_the_server() {
         Client::hello(&edit.file, &edit.token, "Fuzz", ""),
         ClientMsg::Manage(message::Manage { protocol: message::PROTOCOL, key: key(dir.path()), client_version: String::new() }),
         ClientMsg::Admin(Admin::Links { file: "0000000000000000".into() }),
+        ClientMsg::OpenLibrary(message::OpenLibrary {
+            protocol: message::PROTOCOL,
+            file: edit.file.clone(),
+            token: edit.token.clone(),
+            client_version: String::new(),
+        }),
+        ClientMsg::Library(message::LibraryReq::Fetch {
+            have: None,
+            usage: Some(message::Usage { file: "Fuzz".into(), components: vec![(NodeId(1), 2)] }),
+        }),
         ClientMsg::Ping,
     ]
     .iter()

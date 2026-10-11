@@ -242,7 +242,7 @@ pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A component to instantiate: the component itself, or a set's default (first) variant.
-fn main_of(doc: &Document, id: NodeId) -> Option<NodeId> {
+pub(crate) fn main_of(doc: &Document, id: NodeId) -> Option<NodeId> {
     let n = doc.node(id)?;
     match n.kind {
         NodeKind::Component { .. } => Some(id),
@@ -794,20 +794,28 @@ fn swap(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = req_targets(cmd, s, p)?;
     let doc = s.doc_mut()?;
     let c = main_of(doc, c).ok_or_else(|| bad(cmd, "`component` must be a component or component set"))?;
-    let defaults = doc.node(c).map(default_props).unwrap_or_default();
     for i in ids {
-        if doc.is_ancestor(c, i) {
-            return Err(bad(cmd, "an instance can't show the component it is inside"));
-        }
-        if let NodeKind::Instance { component, props } = &mut doc.get_mut(i)?.kind {
+        swap_instance(doc, i, c).map_err(|m| bad(cmd, m))?;
+    }
+    ok()
+}
+
+/// Make instance `i` show main component `c`, keeping the values of properties with the same names
+/// (the layers' overrides follow by name when the instance is rebuilt).
+pub(crate) fn swap_instance(doc: &mut Document, i: NodeId, c: NodeId) -> std::result::Result<(), String> {
+    if doc.is_ancestor(c, i) {
+        return Err("an instance can't show the component it is inside".into());
+    }
+    let defaults = doc.node(c).map(default_props).unwrap_or_default();
+    match doc.get_mut(i).map(|n| &mut n.kind) {
+        Ok(NodeKind::Instance { component, props }) => {
             *component = c;
             let old = std::mem::take(props);
             *props = defaults.iter().map(|(k, d)| (k.clone(), old.get(k).cloned().unwrap_or_else(|| d.clone()))).collect();
-        } else {
-            return Err(bad(cmd, format!("{i} is not an instance")));
+            Ok(())
         }
+        _ => Err(format!("{i} is not an instance")),
     }
-    ok()
 }
 
 /// Swap the instance under a page point to a component (`instance.swapAt`).

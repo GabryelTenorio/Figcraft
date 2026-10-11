@@ -1,14 +1,15 @@
 # Collaboration parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: the standalone server with share links to edit or view; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server: collaboration ~12% → ~13%, 49–98 h) · **Target:** Figma Design (desktop app 126.10.7)
 
-Figma is multiplayer first; FigCraft is local first. **Ready ~12% (estimated):** comments and version
+Figma is multiplayer first; FigCraft is local first. **Ready ~13% (estimated):** comments and version
 history work inside one file; the real-time collaboration core landed in #103 (sync model,
 server ordering, client reconciliation, convergence tests), and live sessions (preview) let
 several apps co-edit a file hosted by one desktop app or kept on a self-hosted `figcraft-server`
 with share links to edit or view, joined from the desktop app or the browser, with others'
-cursors, selections and text carets shown live ([`collab-protocol.md`](collab-protocol.md), [`server.md`](server.md)). Remaining: 55–110 h
-(multiplayer 45–90 h, shared libraries 10–20 h), plus branching 8–15 h.
+cursors, selections and text carets shown live ([`collab-protocol.md`](collab-protocol.md), [`server.md`](server.md)); a file's
+library kept on the server is used by other files through a share link. Remaining: 49–98 h
+(multiplayer 45–90 h, team libraries 4–8 h), plus branching 8–15 h.
 
 | Feature | Figma | FigCraft | Hours |
 |---|---|---|---|
@@ -19,13 +20,14 @@ cursors, selections and text carets shown live ([`collab-protocol.md`](collab-pr
 | Comments: pins on frames and layers, threads, reactions, @mentions, resolve, unread, search and filters, links, in the presenter | yes (shared) | **done, local**: stored in the file, your name from Preferences | (shared once multiplayer lands) |
 | Version history: named versions, autosave checkpoints, view before restore, restore, duplicate | yes (cloud) | **done**, saved in the `.figcraft` file | — |
 | Branching and merging | yes (paid plans) | no | 8–15 |
-| Team / organization libraries | yes | local library files only ([components-parity](components-parity.md)) | 10–20 |
+| Team / organization libraries | yes | **partial**: a file's library is published to `figcraft-server` under the file and enabled in other files by a share link (per-asset versions, background update checks, overrides kept), usage counts per component and file, swapping a library by names ([components-parity](components-parity.md), [server.md](server.md#team-libraries)). No team-wide library list, accounts or analytics over time | 4–8 |
 | Notifications, activity | yes | no | with sharing |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Team libraries on `figcraft-server` (gap 10): a file's library is published to the server under the file and enabled in other files by a share link, updates are noticed in the background and accepted with overrides kept, the server counts which files use which components, and a library can be swapped for another by names; team libraries 10–20 h → 4–8 h; ready ~12% → ~13% |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
