@@ -154,4 +154,6 @@ mod onpath_tests;
 #[cfg(test)]
 mod rtl_list_tests;
 #[cfg(test)]
+mod tail_tests;
+#[cfg(test)]
 mod tests;

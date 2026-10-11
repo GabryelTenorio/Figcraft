@@ -14,7 +14,7 @@ fn id(v: Value) -> NodeId {
 
 fn text_path(s: &Session, t: NodeId) -> Option<figcraft_doc::TextPath> {
     match &s.doc().unwrap().node(t)?.kind {
-        NodeKind::Text(td) => td.path.clone(),
+        NodeKind::Text(td) => td.path.as_deref().cloned(),
         _ => None,
     }
 }

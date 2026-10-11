@@ -1,6 +1,6 @@
 //! Text node data: characters plus a base style and styled runs.
 
-use figcraft_color::Paint;
+use figcraft_color::{Color, Paint};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -71,6 +71,33 @@ pub enum TextDecoration {
     None,
     Underline,
     Strikethrough,
+}
+
+/// How an underline or strikethrough is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum DecorationStyle {
+    #[default]
+    Solid,
+    Dotted,
+    Wavy,
+}
+
+/// A decoration length: `Auto` (the font's own value), pixels, or a percentage of the font size.
+pub type DecorationLength = LineHeight;
+
+/// How a decoration line looks; the default is the font's own solid line in the text's colour.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DecorationLook {
+    pub style: DecorationStyle,
+    pub thickness: DecorationLength,
+    /// Underlines: from the baseline down to the line's top edge (negative: above the baseline).
+    pub offset: DecorationLength,
+    /// Underlines break where descenders cross them.
+    pub skip_ink: bool,
+    /// The line's own colour (None: the text's fills).
+    pub color: Option<Color>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -178,6 +205,18 @@ pub enum ListStyle {
     Numbered,
 }
 
+/// Deepest list nesting (levels 0..=MAX_LIST_INDENT).
+pub const MAX_LIST_INDENT: u8 = 8;
+
+/// One paragraph's list settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ParaList {
+    pub list: ListStyle,
+    /// Nesting level (0 = outermost; plain paragraphs are always 0).
+    pub indent: u8,
+}
+
 /// Character style. In runs, every field is an override; `None` means "inherit the base".
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -189,6 +228,9 @@ pub struct TextStyle {
     pub line_height: LineHeight,
     pub letter_spacing: LetterSpacing,
     pub decoration: TextDecoration,
+    /// How the decoration looks (None: the default look; boxed to keep styles small).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoration_look: Option<Box<DecorationLook>>,
     pub case: TextCase,
     /// Run fills (None = node fills).
     pub fills: Option<Vec<Paint>>,
@@ -213,6 +255,7 @@ impl Default for TextStyle {
             line_height: LineHeight::Auto,
             letter_spacing: LetterSpacing::default(),
             decoration: TextDecoration::None,
+            decoration_look: None,
             case: TextCase::Original,
             fills: None,
             link: None,
@@ -253,6 +296,7 @@ impl TextStyle {
             && self.line_height == def.line_height
             && self.letter_spacing == def.letter_spacing
             && self.decoration == def.decoration
+            && self.decoration_look == def.decoration_look
             && self.case == def.case
             && self.variations == def.variations
     }
@@ -260,6 +304,18 @@ impl TextStyle {
     /// This style as a text style's definition (linked to nothing).
     pub fn as_text_style(&self) -> TextStyle {
         TextStyle { style_id: None, link: None, ..self.clone() }
+    }
+
+    /// How the decoration looks.
+    pub fn look(&self) -> DecorationLook {
+        self.decoration_look.as_deref().copied().unwrap_or_default()
+    }
+
+    /// Change how the decoration looks (the default look is stored as None).
+    pub fn set_look(&mut self, f: impl FnOnce(&mut DecorationLook)) {
+        let mut look = self.look();
+        f(&mut look);
+        self.decoration_look = (look != DecorationLook::default()).then(|| Box::new(look));
     }
 
     /// Switch to the named style, dropping custom values of the axes the name implies.
@@ -327,8 +383,22 @@ pub struct TextData {
     pub paragraph_spacing: f64,
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub paragraph_indent: f64,
+    /// The list style of paragraphs `paragraphs` doesn't cover (all of them when it's empty).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub list: ListStyle,
+    /// Per-paragraph list settings, by paragraph index; empty when every paragraph is `list` at
+    /// level 0. Kept in step with the characters by [`TextData::replace_range`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paragraphs: Vec<ParaList>,
+    /// Space between two items of a list (px), in place of the paragraph spacing.
+    #[serde(skip_serializing_if = "crate::node::is_default")]
+    pub list_spacing: f64,
+    /// Opening and closing punctuation at a line's aligned edge sits outside the box.
+    #[serde(skip_serializing_if = "crate::node::is_default")]
+    pub hanging_punctuation: bool,
+    /// List bullets and numbers sit outside the box; item text lines up with plain paragraphs.
+    #[serde(skip_serializing_if = "crate::node::is_default")]
+    pub hanging_list: bool,
     /// Vertical trim (`capHeight`: the box runs from the first line's cap height to the last
     /// line's baseline).
     #[serde(skip_serializing_if = "crate::node::is_default")]
@@ -339,9 +409,10 @@ pub struct TextData {
     /// OpenType feature toggles (e.g. "liga": false).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub features: std::collections::BTreeMap<String, bool>,
-    /// The path the text follows (text on a path); `None`: lines in the box.
+    /// The path the text follows (text on a path); `None`: lines in the box. Boxed to keep text
+    /// data small.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<TextPath>,
+    pub path: Option<Box<TextPath>>,
 }
 
 /// Text on a path: the baseline follows `d`. The text starts at `start` (aligned there by the
@@ -508,6 +579,17 @@ impl TextData {
         let (start, end) = (start.min(n), end.min(n).max(start.min(n)));
         let byte = |i: usize| self.characters.char_indices().nth(i).map(|(b, _)| b).unwrap_or(self.characters.len());
         let (bs, be) = (byte(start), byte(end));
+        if !self.paragraphs.is_empty() {
+            // Paragraphs merged by removed newlines take the first one's list; new ones copy it.
+            let p = self.para_of(start);
+            let removed = self.characters.get(bs..be).unwrap_or("").matches('\n').count();
+            let added = text.matches('\n').count();
+            self.fill_paragraphs();
+            let at = self.para_list(p);
+            let tail = (p + 1).min(self.paragraphs.len());
+            self.paragraphs.drain(tail..(p + 1 + removed).min(self.paragraphs.len()));
+            self.paragraphs.splice(tail..tail, std::iter::repeat_n(at, added));
+        }
         let mut s = String::with_capacity(self.characters.len() + text.len());
         s.push_str(self.characters.get(..bs).unwrap_or(""));
         s.push_str(text);
@@ -532,6 +614,62 @@ impl TextData {
             r.end = new_end;
         }
         self.normalize();
+    }
+
+    pub fn paragraph_count(&self) -> usize {
+        self.characters.matches('\n').count() + 1
+    }
+
+    /// The paragraph char index `i` is in.
+    pub fn para_of(&self, i: usize) -> usize {
+        self.characters.chars().take(i).filter(|c| *c == '\n').count()
+    }
+
+    /// Paragraph `p`'s list settings.
+    pub fn para_list(&self, p: usize) -> ParaList {
+        self.paragraphs.get(p).copied().unwrap_or(ParaList { list: self.list, indent: 0 })
+    }
+
+    /// Spell out every paragraph's list settings in `paragraphs` (and drop extra entries).
+    fn fill_paragraphs(&mut self) {
+        let n = self.paragraph_count();
+        let fill = ParaList { list: self.list, indent: 0 };
+        self.paragraphs.resize(n, fill);
+    }
+
+    /// The paragraphs chars `start..end` touch (a caret: its paragraph; a selection ending just
+    /// after a newline leaves the next paragraph out).
+    pub fn para_span(&self, start: usize, end: usize) -> (usize, usize) {
+        let (s, e) = (start.min(end), start.max(end));
+        let (a, b) = (self.para_of(s), self.para_of(e));
+        let ends_at_start = e > s && b > a && self.characters.chars().nth(e - 1) == Some('\n');
+        (a, if ends_at_start { b - 1 } else { b })
+    }
+
+    /// Apply `f` to the list settings of the paragraphs chars `start..end` touch (plain
+    /// paragraphs stay at level 0, levels stop at [`MAX_LIST_INDENT`]); one style for all with
+    /// no nesting folds back into `list`.
+    pub fn set_para_lists(&mut self, start: usize, end: usize, f: impl Fn(&mut ParaList)) {
+        let (a, b) = self.para_span(start, end);
+        self.fill_paragraphs();
+        for pl in self.paragraphs.get_mut(a..=b).unwrap_or(&mut []) {
+            f(pl);
+            pl.indent = if pl.list == ListStyle::None { 0 } else { pl.indent.min(MAX_LIST_INDENT) };
+        }
+        if let Some(first) = self.paragraphs.first().copied()
+            && first.indent == 0
+            && self.paragraphs.iter().all(|p| *p == first)
+        {
+            self.list = first.list;
+            self.paragraphs.clear();
+        }
+    }
+
+    /// The list settings shared by the paragraphs chars `start..end` touch, or None when they differ.
+    pub fn common_para_list(&self, start: usize, end: usize) -> Option<ParaList> {
+        let (a, b) = self.para_span(start, end);
+        let first = self.para_list(a);
+        (a..=b).all(|p| self.para_list(p) == first).then_some(first)
     }
 
     /// Link chars `start..end` (all of them when the range is empty or the whole text) to text

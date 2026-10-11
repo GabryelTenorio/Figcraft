@@ -269,7 +269,7 @@ fn on_path(cx: &mut Ctx, t: &usvg::Text, world: Affine, parent: NodeId) -> bool 
     td.align_h = align(line.anchor);
     let mut local = path.clone();
     local.apply_affine(Affine::translate((-bb.x0, -bb.y0)));
-    td.path = Some(figcraft_doc::TextPath { start: f64::from(tp.start_offset()) / len, ..figcraft_doc::TextPath::new(&local) });
+    td.path = Some(Box::new(figcraft_doc::TextPath { start: f64::from(tp.start_offset()) / len, ..figcraft_doc::TextPath::new(&local) }));
     let transform = world * Affine::translate((bb.x0, bb.y0));
     add_layer(cx, t, &[line], td, transform, (bb.width().max(1.0), bb.height().max(1.0)), world, 1.0, parent);
     true

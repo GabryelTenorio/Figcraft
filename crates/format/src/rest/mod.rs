@@ -899,7 +899,15 @@ fn override_group(field: &str) -> Option<&'static str> {
         | "textAlignVertical"
         | "textAutoResize"
         | "paragraphSpacing"
-        | "paragraphIndent" => "textStyle",
+        | "paragraphIndent"
+        | "listSpacing"
+        | "hangingPunctuation"
+        | "hangingList"
+        | "textDecorationStyle"
+        | "textDecorationThickness"
+        | "textDecorationOffset"
+        | "textDecorationSkipInk"
+        | "textDecorationColor" => "textStyle",
         "width" | "height" | "size" => "size",
         "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "horizontalPadding" | "verticalPadding" => "padding",
         "itemSpacing" | "counterAxisSpacing" => "gap",

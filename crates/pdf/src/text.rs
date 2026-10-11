@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use figcraft_doc::{Node, NodeKind, StrokeAlign, StrokeProps};
-use figcraft_geom::{Affine, BezPath, Shape};
+use figcraft_geom::{Affine, BezPath};
 use figcraft_text::fontdb::FontBytes;
 use figcraft_text::{Face, Glyph, TextLayout};
 use krilla::geom::Point;
@@ -53,7 +53,7 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
         let fills = layout.styles.get(k).and_then(|st| st.fills.as_ref()).unwrap_or(&n.fills);
         let mut decorations = BezPath::new();
         for d in layout.decorations.iter().filter(|d| d.style == k) {
-            decorations.extend(d.rect.to_path(0.1));
+            decorations.extend(d.path());
         }
         let mut outlines = BezPath::new();
         for g in layout.glyphs.iter().filter(|g| g.style == k) {

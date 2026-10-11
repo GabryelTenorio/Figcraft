@@ -403,24 +403,29 @@ pub fn scale_node(doc: &mut Document, id: NodeId, k: f64) -> Result<()> {
             }
         }
         if let NodeKind::Text(t) = &mut n.kind {
-            t.style.font_size *= k;
-            if let LineHeight::Pixels(v) = &mut t.style.line_height {
-                *v *= k;
-            }
-            if let LetterSpacing::Pixels(v) = &mut t.style.letter_spacing {
-                *v *= k;
-            }
+            let scale = |st: &mut TextStyle| {
+                st.font_size *= k;
+                if let LineHeight::Pixels(v) = &mut st.line_height {
+                    *v *= k;
+                }
+                if let LetterSpacing::Pixels(v) = &mut st.letter_spacing {
+                    *v *= k;
+                }
+                st.set_look(|l| {
+                    for m in [&mut l.thickness, &mut l.offset] {
+                        if let LineHeight::Pixels(v) = m {
+                            *v *= k;
+                        }
+                    }
+                });
+            };
+            scale(&mut t.style);
             for r in &mut t.runs {
-                r.style.font_size *= k;
-                if let LineHeight::Pixels(v) = &mut r.style.line_height {
-                    *v *= k;
-                }
-                if let LetterSpacing::Pixels(v) = &mut r.style.letter_spacing {
-                    *v *= k;
-                }
+                scale(&mut r.style);
             }
             t.paragraph_spacing *= k;
             t.paragraph_indent *= k;
+            t.list_spacing *= k;
         }
         if let NodeKind::Vector { network } = &mut n.kind {
             network.scale(k, k);

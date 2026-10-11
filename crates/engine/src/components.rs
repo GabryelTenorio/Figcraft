@@ -346,6 +346,7 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
             if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
                 b.characters = a.characters.clone();
                 b.runs = a.runs.clone();
+                b.paragraphs = a.paragraphs.clone();
             }
         }
         "textStyle" => {
@@ -358,6 +359,10 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
                 b.paragraph_spacing = a.paragraph_spacing;
                 b.paragraph_indent = a.paragraph_indent;
                 b.list = a.list;
+                b.paragraphs = a.paragraphs.clone();
+                b.list_spacing = a.list_spacing;
+                b.hanging_punctuation = a.hanging_punctuation;
+                b.hanging_list = a.hanging_list;
                 b.max_lines = a.max_lines;
                 b.features = a.features.clone();
             }
@@ -1025,6 +1030,10 @@ fn text_style_differs(x: &TextData, y: &TextData) -> bool {
         || x.paragraph_spacing != y.paragraph_spacing
         || x.paragraph_indent != y.paragraph_indent
         || x.list != y.list
+        || x.paragraphs != y.paragraphs
+        || x.list_spacing != y.list_spacing
+        || x.hanging_punctuation != y.hanging_punctuation
+        || x.hanging_list != y.hanging_list
         || x.max_lines != y.max_lines
         || x.features != y.features
 }

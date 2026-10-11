@@ -57,7 +57,7 @@ fn laid_out_glyphs_sit_on_the_path() {
     path.line_to((0.0, 1000.0));
     let mut t = TextData::new("Hello");
     t.style.font_size = 20.0;
-    t.path = Some(TextPath::new(&path));
+    t.path = Some(Box::new(TextPath::new(&path)));
     let l = crate::layout(&t, None, None);
     // Down the vertical line: every glyph is turned 90° and lies along x = 0.
     let ink = l.ink_bounds().unwrap();

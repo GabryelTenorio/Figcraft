@@ -3,7 +3,10 @@
 
 use std::sync::Arc;
 
-use figcraft_doc::{LeadingTrim, ListStyle, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, valid_feature_tag};
+use figcraft_doc::{
+    DecorationLength, DecorationStyle, LeadingTrim, ListStyle, ParaList, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle,
+    valid_feature_tag,
+};
 use figcraft_geom::{Affine, BezPath, Rect};
 use harfrust::{Direction, Feature, ShapeOptions, ShaperInstance, Tag, UnicodeBuffer, Variation};
 
@@ -62,8 +65,102 @@ pub struct Line {
 /// A decoration line (underline/strikethrough) to paint with the style's fills.
 #[derive(Clone, Debug)]
 pub struct Decoration {
+    /// Everything the line paints (a wavy line's band includes its swing).
     pub rect: Rect,
     pub style: usize,
+    pub kind: DecorationStyle,
+    pub thickness: f64,
+}
+
+/// Most dots or wave samples drawn for one decoration.
+const MAX_DECO_STEPS: usize = 20_000;
+
+impl Decoration {
+    /// The line's outline: a bar, a row of dots or a wave, `thickness` thick.
+    pub fn path(&self) -> BezPath {
+        use figcraft_geom::kurbo::Shape;
+        let (r, th) = (self.rect, self.thickness.max(0.01));
+        let cy = r.center().y;
+        match self.kind {
+            DecorationStyle::Solid => r.to_path(0.1),
+            DecorationStyle::Dotted => {
+                let mut p = BezPath::new();
+                let mut x = r.x0 + th / 2.0;
+                for _ in 0..MAX_DECO_STEPS {
+                    if x > r.x1 - th / 2.0 + 1e-9 && !p.elements().is_empty() {
+                        break;
+                    }
+                    p.extend(figcraft_geom::kurbo::Circle::new((x, cy), th / 2.0).to_path(0.05));
+                    x += th * 2.0;
+                }
+                p
+            }
+            DecorationStyle::Wavy => {
+                let (amp, period) = wave(th);
+                let n = (((r.width() / period) * 8.0).ceil() as usize).clamp(2, MAX_DECO_STEPS);
+                let at = |i: usize, side: f64| {
+                    let x = r.x0 + r.width() * i as f64 / n as f64;
+                    figcraft_geom::Point::new(x, cy + amp * (std::f64::consts::TAU * (x - r.x0) / period).sin() + side * th / 2.0)
+                };
+                let mut p = BezPath::new();
+                p.move_to(at(0, -1.0));
+                for i in 1..=n {
+                    p.line_to(at(i, -1.0));
+                }
+                for i in (0..=n).rev() {
+                    p.line_to(at(i, 1.0));
+                }
+                p.close_path();
+                p
+            }
+        }
+    }
+}
+
+/// A wavy line's swing either side of its centre and its wavelength, for a thickness.
+fn wave(th: f64) -> (f64, f64) {
+    let amp = th * 0.75 + 0.5;
+    (amp, amp * 6.0)
+}
+
+/// A decoration length in px (`auto`: what the font says).
+fn deco_len(m: DecorationLength, size: f64, auto: f64) -> f64 {
+    let v = match m {
+        DecorationLength::Auto => auto,
+        DecorationLength::Pixels(v) => v,
+        DecorationLength::Percent(p) => size * p / 100.0,
+    };
+    if v.is_finite() { v } else { auto }
+}
+
+/// Opening punctuation, which hangs outside a line's start.
+fn opens(c: char) -> bool {
+    matches!(c, '"' | '\'' | '\u{201C}' | '\u{2018}' | '\u{201E}' | '\u{201A}' | '\u{00AB}' | '\u{2039}' | '(' | '[' | '{' | '\u{00BF}' | '\u{00A1}')
+}
+
+/// Closing punctuation and stops, which hang outside a line's end.
+fn closes(c: char) -> bool {
+    matches!(
+        c,
+        '.' | ','
+            | ':'
+            | ';'
+            | '!'
+            | '?'
+            | '"'
+            | '\''
+            | '\u{201D}'
+            | '\u{2019}'
+            | '\u{00BB}'
+            | '\u{203A}'
+            | ')'
+            | ']'
+            | '}'
+            | '-'
+            | '\u{2013}'
+            | '\u{2014}'
+            | '\u{2026}'
+    )
 }
 
 #[derive(Clone, Debug, Default)]
@@ -258,48 +355,72 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
     }
 
-    // List markers sit in a gutter and wrapped lines hang at the text start; paragraph indent
+    // List markers sit in a gutter (one more per nesting level) and wrapped lines hang at the
+    // text start; a hanging list puts the outermost gutter outside the box. Paragraph indent
     // applies to plain paragraphs only. Right-to-left paragraphs mirror both: the gutter and the
     // indent are on the right, the text ends where they start.
-    let marker_width = list_gutter(text.list, &chars, styles.first(), faces.first().cloned().flatten().as_ref());
+    let lists: Vec<ParaList> = (0..text.paragraph_count()).map(|p| text.para_list(p)).collect();
+    let markers = list_markers(&lists);
+    let step = list_step(&lists, &markers, styles.first(), faces.first().cloned().flatten().as_ref());
+    let hang_list = if text.hanging_list { step } else { 0.0 };
     // Paragraph indent applies to start-aligned text only (left, or right for a right-to-left paragraph).
-    let indent_px = if text.list == ListStyle::None && text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
+    let indent_px = if text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
     let indent_at = |char_idx: usize| {
         let start_aligned = if rtl_para_at(char_idx) { text.align_h == TextAlignH::Right } else { text.align_h == TextAlignH::Left };
         if start_aligned { indent_px } else { 0.0 }
     };
+    let list_of = |p: usize| lists.get(p).copied().unwrap_or_default();
+    // The start indent of a line of paragraph `p` (`first`: its first line, starting at char `ci`).
+    let line_indent_of = |p: usize, first: bool, ci: usize| {
+        let pl = list_of(p);
+        match pl.list {
+            ListStyle::None if first => indent_at(ci),
+            ListStyle::None => 0.0,
+            _ => step * (f64::from(pl.indent) + 1.0) - hang_list,
+        }
+    };
+    // Hanging punctuation: at the start edge of left-aligned and justified lines, at the end edge
+    // of right-aligned and justified ones (left-to-right paragraphs).
+    let hang_start = text.hanging_punctuation && matches!(text.align_h, TextAlignH::Left | TextAlignH::Justified);
+    let hang_end = text.hanging_punctuation && matches!(text.align_h, TextAlignH::Right | TextAlignH::Justified);
 
     // Line breaking.
     let wrap = match text.auto_resize {
         TextAutoResize::WidthAndHeight => None,
         _ => box_width.filter(|w| w.is_finite() && *w > 0.0),
     };
-    let mut lines: Vec<(usize, usize, bool)> = Vec::new(); // item range, paragraph end
+    let mut lines: Vec<(usize, usize, bool, usize)> = Vec::new(); // item range, paragraph end, paragraph
     let mut line_start = 0;
     let mut i = 0;
     let mut x = 0.0;
     let mut last_break: Option<usize> = None;
     let mut para_first_line = true;
+    let mut para = 0;
     while i < items.len() {
         let Some(it) = items.get(i) else { break };
         if it.ch == '\n' {
-            lines.push((line_start, i + 1, true));
+            lines.push((line_start, i + 1, true, para));
             i += 1;
             line_start = i;
             x = 0.0;
             last_break = None;
             para_first_line = true;
+            para += 1;
             continue;
         }
-        let line_indent = marker_width + if para_first_line { indent_at(it.char_start) } else { 0.0 };
+        let line_indent = line_indent_of(para, para_first_line, it.char_start);
         let w = it.adv;
+        // Hanging punctuation takes no room inside the box.
+        let ltr = !rtl_para_at(it.char_start);
+        let hung = items.get(line_start).filter(|f| hang_start && ltr && opens(f.ch)).map_or(0.0, |f| f.adv)
+            + if hang_end && ltr && closes(it.ch) { w } else { 0.0 };
         if let Some(maxw) = wrap
-            && x + w > maxw - line_indent + 1e-6
+            && x + w > maxw - line_indent + hung + 1e-6
             && i > line_start
             && !it.is_space()
         {
             let brk = last_break.filter(|b| *b >= line_start).map(|b| b + 1).unwrap_or(i);
-            lines.push((line_start, brk, false));
+            lines.push((line_start, brk, false, para));
             line_start = brk;
             i = brk;
             x = 0.0;
@@ -314,7 +435,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         i += 1;
     }
     if line_start < items.len() || lines.is_empty() || lines.last().is_some_and(|l| l.2) {
-        lines.push((line_start, items.len(), true));
+        lines.push((line_start, items.len(), true, para));
     }
 
     // Line metrics and positions.
@@ -338,7 +459,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
     };
     let mut first_cap = 0.0;
-    for (li, (s, e, para_end)) in lines.iter().enumerate() {
+    for (li, (s, e, para_end, para)) in lines.iter().enumerate() {
         if li >= max_lines {
             out.truncated = true;
             break;
@@ -360,7 +481,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             first_cap = cap;
         }
         if para_start_line && li > 0 {
-            y += text.paragraph_spacing.max(0.0);
+            // Between two items of a list: the list spacing.
+            let in_list = |p: usize| list_of(p).list != ListStyle::None;
+            let gap = if in_list(*para) && para.checked_sub(1).is_some_and(in_list) { text.list_spacing } else { text.paragraph_spacing };
+            y += if gap.is_finite() { gap.clamp(0.0, 10_000.0) } else { 0.0 };
         }
         let baseline = y + (lh - (asc + desc)) / 2.0 + asc;
         // Trailing spaces don't count for width/alignment.
@@ -371,12 +495,16 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let width: f64 = items.get(*s..vis_end).unwrap_or(&[]).iter().map(|it| it.adv).sum();
         let first_char = items.get(*s).map(|it| it.char_start).unwrap_or(0);
         let rtl_line = rtl_para_at(first_char);
-        let line_indent = marker_width + if para_start_line { indent_at(first_char) } else { 0.0 };
+        let line_indent = line_indent_of(*para, para_start_line, first_char);
+        // Hanging punctuation at the line's edges (the visible text's first and last chars).
+        let hang_l = items.get(*s).filter(|it| hang_start && !rtl_line && vis_end > *s && opens(it.ch)).map_or(0.0, |it| it.adv);
+        let hang_r =
+            items.get(vis_end.wrapping_sub(1)).filter(|it| hang_end && !rtl_line && vis_end > *s + 1 && closes(it.ch)).map_or(0.0, |it| it.adv);
         let gstart = out.glyphs.len();
         // Justify: extra space per gap.
         let gaps = items.get(*s..vis_end).unwrap_or(&[]).iter().filter(|it| it.is_space()).count();
         let justify_extra = match (text.align_h, wrap) {
-            (TextAlignH::Justified, Some(maxw)) if !para_end && gaps > 0 => ((maxw - line_indent - width) / gaps as f64).max(0.0),
+            (TextAlignH::Justified, Some(maxw)) if !para_end && gaps > 0 => ((maxw - line_indent + hang_l + hang_r - width) / gaps as f64).max(0.0),
             _ => 0.0,
         };
         // Where the visible text ends once justified.
@@ -390,39 +518,45 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             .filter(|it| it.ch != '\n')
             .map(|it| it.adv + if it.is_space() { justify_extra } else { 0.0 })
             .sum();
-        let mut pen = if rtl_line { -trailing } else { line_indent };
+        let mut pen = if rtl_line { -trailing } else { line_indent - hang_l };
         // List marker (before the line's text; zero-length char range so carets skip it).
-        if para_start_line && text.list != ListStyle::None {
-            let marker = match text.list {
-                ListStyle::Bulleted => "•".to_string(),
-                _ => format!("{}.", count_paragraphs_before(&chars, items.get(*s).map(|it| it.char_start).unwrap_or(0)) + 1),
-            };
+        let pl = list_of(*para);
+        if para_start_line && pl.list != ListStyle::None {
+            let marker = markers.get(*para).cloned().unwrap_or_default();
             let st_idx = items.get(*s).map(|it| it.style).unwrap_or(0);
             let at = items.get(*s).map(|it| it.char_start).unwrap_or(chars.len());
             // The marker takes the paragraph style's own font (not a fallback the line's first
-            // char needed, e.g. for Hebrew), so every bullet and number of a list matches.
-            let own = faces.get(st_idx).cloned().flatten().filter(|f| marker.chars().all(|c| f.has_char(c)));
+            // char needed, e.g. for Hebrew), so every bullet and number of a list matches; a
+            // nested bullet the font lacks comes from a fallback font.
+            let has = |f: &Arc<Face>| marker.chars().all(|c| f.has_char(c));
+            let own = faces.get(st_idx).cloned().flatten().filter(has);
             let marker_face = match (own, styles.get(st_idx)) {
                 (Some(f), Some(st)) => {
                     let coords = f.coords(&f.axis_values(st));
                     Some((f, coords))
                 }
-                _ => items.get(*s).map(|it| (it.face.clone(), it.coords.clone())).or_else(|| default_face.clone().map(|f| (f, no_coords()))),
+                _ => fallbacks
+                    .iter()
+                    .find(|f| has(f))
+                    .map(|f| (f.clone(), no_coords()))
+                    .or_else(|| items.get(*s).map(|it| (it.face.clone(), it.coords.clone())))
+                    .or_else(|| default_face.clone().map(|f| (f, no_coords()))),
             };
             if let (Some(st), Some((face, coords))) = (styles.get(st_idx), marker_face) {
                 let size = sanitize_size(st.font_size);
                 let k = size / face.upem;
-                let numbered = text.list == ListStyle::Numbered;
+                let numbered = pl.list == ListStyle::Numbered;
                 // Right to left, the number reads "1." with its full stop on the left (".1").
                 let marker = if rtl_line && numbered { format!(".{}", marker.trim_end_matches('.')) } else { marker };
                 let advance = marker_advance(&face, &coords, &marker, size);
                 // Numbers end (start, right to left) half an em from the text; bullets sit at the
                 // gutter's outer edge.
+                let gutter = step * f64::from(pl.indent) - hang_list;
                 let mut mx = match (rtl_line, numbered) {
-                    (false, true) => (marker_width - size * 0.5 - advance).max(0.0),
-                    (false, false) => 0.0,
+                    (false, true) => gutter + (step - size * 0.5 - advance).max(0.0),
+                    (false, false) => gutter,
                     (true, true) => text_end + size * 0.5,
-                    (true, false) => text_end + (marker_width - advance).max(0.0),
+                    (true, false) => text_end + (step - advance).max(0.0),
                 };
                 for c in marker.chars() {
                     let gid = face.glyph_for(c);
@@ -491,7 +625,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             top: y,
             height: lh,
             baseline,
-            width: width + line_indent,
+            width: width + line_indent - hang_l - hang_r,
             x: 0.0,
             para_end: *para_end,
             rtl: rtl_line,
@@ -556,8 +690,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         }
     }
 
-    // Decorations per contiguous glyph run of the same style on a line.
+    // Decorations per contiguous glyph run of the same style on a line; a decoration colour
+    // paints with a style of its own, added after the glyphs' styles.
     let mut decos = Vec::new();
+    let mut deco_styles: Vec<TextStyle> = Vec::new();
     for line in &out.lines {
         let gl = out.glyphs.get(line.glyph_start..line.glyph_end).unwrap_or(&[]);
         let mut j = 0;
@@ -581,38 +717,139 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                 // The style's own font and size (not a fallback face or a small-cap scale), so the
                 // line runs at one height and weight through mixed scripts.
                 let f = faces.get(g0.style).and_then(Option::as_ref).unwrap_or(&g0.face);
-                let s = sanitize_size(st.font_size) / f.upem;
-                let th = (f.underline_thickness * s).max(0.5);
-                let yy = match st.decoration {
-                    TextDecoration::Underline => line.baseline - f.underline_pos * s,
-                    _ => line.baseline - f.strike_pos * s,
+                let size = sanitize_size(st.font_size);
+                let s = size / f.upem;
+                let look = st.look();
+                let th = deco_len(look.thickness, size, (f.underline_thickness * s).max(0.5)).clamp(0.1, size);
+                let underline = st.decoration == TextDecoration::Underline;
+                // The line's top edge (an underline's own offset is measured from the baseline).
+                let top = match look.offset {
+                    DecorationLength::Auto => line.baseline - if underline { f.underline_pos } else { f.strike_pos } * s - th / 2.0,
+                    m if underline => line.baseline + deco_len(m, size, 0.0).clamp(-size, size),
+                    _ => line.baseline - f.strike_pos * s - th / 2.0,
                 };
-                decos.push(Decoration { rect: Rect::new(x0, yy - th / 2.0, x1, yy + th / 2.0), style: g0.style });
+                let style = match look.color {
+                    Some(c) => {
+                        let own = TextStyle { fills: Some(vec![figcraft_doc::color::Paint::solid(c)]), ..st.clone() };
+                        let k = deco_styles.iter().position(|d| *d == own).unwrap_or_else(|| {
+                            deco_styles.push(own);
+                            deco_styles.len() - 1
+                        });
+                        out.styles.len() + k
+                    }
+                    None => g0.style,
+                };
+                let swing = if look.style == DecorationStyle::Wavy { wave(th).0 } else { 0.0 };
+                // Skip ink: the underline stops a little before each glyph crossing it.
+                let gap = th.max(1.0);
+                let cuts = if underline && look.skip_ink {
+                    ink_cuts(gl.get(j..k).unwrap_or(&[]), top - gap / 2.0 - swing, top + th + gap / 2.0 + swing, gap)
+                } else {
+                    Vec::new()
+                };
+                let mut from = x0;
+                for (c0, c1) in cuts.into_iter().chain([(x1, x1)]) {
+                    if c0.min(x1) > from + 0.5 {
+                        let rect = Rect::new(from, top - swing, c0.min(x1), top + th + swing);
+                        decos.push(Decoration { rect, style, kind: look.style, thickness: th });
+                    }
+                    from = from.max(c1);
+                }
             }
             j = k;
         }
     }
     out.decorations = decos;
+    out.styles.extend(deco_styles);
     if let Some(tp) = &text.path {
         crate::onpath::place(&mut out, tp, text.align_h);
     }
     out
 }
 
-/// Width of the list marker gutter: room for the widest marker plus a gap.
-fn list_gutter(list: ListStyle, chars: &[char], style: Option<&TextStyle>, face: Option<&Arc<Face>>) -> f64 {
-    let size = style.map(|s| sanitize_size(s.font_size)).unwrap_or(12.0);
-    match list {
-        ListStyle::None => 0.0,
-        ListStyle::Bulleted => size * 1.5,
-        ListStyle::Numbered => {
-            let paras = chars.iter().filter(|c| **c == '\n').count() + 1;
-            let widest = face
-                .map(|f| marker_advance(f, &no_coords(), &format!("{paras}."), size))
-                .unwrap_or(size * 0.6 * (paras.to_string().len() + 1) as f64);
-            (widest + size * 0.5).max(size * 1.5)
+/// The markers of a text's paragraphs ("" for plain ones). Numbers count the items of one list at
+/// one level, restarting after a plain paragraph, a shallower item or the other kind of list;
+/// levels go 1. a. i. and • ◦ ▪, then round again.
+pub(crate) fn list_markers(lists: &[ParaList]) -> Vec<String> {
+    const BULLETS: [&str; 3] = ["\u{2022}", "\u{25E6}", "\u{25AA}"];
+    let mut count = [(ListStyle::None, 0usize); figcraft_doc::MAX_LIST_INDENT as usize + 1];
+    lists
+        .iter()
+        .map(|pl| {
+            if pl.list == ListStyle::None {
+                count.fill((ListStyle::None, 0));
+                return String::new();
+            }
+            let d = usize::from(pl.indent).min(count.len() - 1);
+            for c in count.iter_mut().skip(d + 1) {
+                *c = (ListStyle::None, 0);
+            }
+            let Some(c) = count.get_mut(d) else { return String::new() };
+            *c = if c.0 == pl.list { (pl.list, c.1 + 1) } else { (pl.list, 1) };
+            match (pl.list, d % 3) {
+                (ListStyle::Numbered, 1) => format!("{}.", alpha(c.1)),
+                (ListStyle::Numbered, 2) => format!("{}.", roman(c.1)),
+                (ListStyle::Numbered, _) => format!("{}.", c.1),
+                _ => BULLETS.get(d % 3).copied().unwrap_or("\u{2022}").to_string(),
+            }
+        })
+        .collect()
+}
+
+/// a, b, ... z, aa, ab, ...
+fn alpha(mut n: usize) -> String {
+    let mut out = Vec::new();
+    while n > 0 {
+        n -= 1;
+        out.push(char::from(b'a' + (n % 26) as u8));
+        n /= 26;
+    }
+    out.iter().rev().collect()
+}
+
+/// Lower-case roman numerals (past 3999: the number).
+fn roman(mut n: usize) -> String {
+    if n == 0 || n > 3999 {
+        return n.to_string();
+    }
+    let mut out = String::new();
+    for (v, r) in [
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
+    ] {
+        while n >= v {
+            out.push_str(r);
+            n -= v;
         }
     }
+    out
+}
+
+/// The width of one list level's gutter: room for the widest number plus half an em, at least one
+/// and a half ems (0 without lists).
+fn list_step(lists: &[ParaList], markers: &[String], style: Option<&TextStyle>, face: Option<&Arc<Face>>) -> f64 {
+    if lists.iter().all(|l| l.list == ListStyle::None) {
+        return 0.0;
+    }
+    let size = style.map(|s| sanitize_size(s.font_size)).unwrap_or(12.0);
+    let widest = lists
+        .iter()
+        .zip(markers)
+        .filter(|(l, _)| l.list == ListStyle::Numbered)
+        .map(|(_, m)| face.map(|f| marker_advance(f, &no_coords(), m, size)).unwrap_or(size * 0.6 * m.chars().count() as f64))
+        .fold(0.0, f64::max);
+    (widest + size * 0.5).max(size * 1.5)
 }
 
 fn marker_advance(face: &Face, coords: &Coords, s: &str, size: f64) -> f64 {
@@ -620,8 +857,45 @@ fn marker_advance(face: &Face, coords: &Coords, s: &str, size: f64) -> f64 {
     s.chars().map(|c| face.advance_at(face.glyph_for(c), coords) * k).sum()
 }
 
-fn count_paragraphs_before(chars: &[char], pos: usize) -> usize {
-    chars.iter().take(pos).filter(|c| **c == '\n').count()
+/// Where glyphs' outlines cross the band `y0..y1`: one x range per glyph, widened by `gap`.
+fn ink_cuts(glyphs: &[Glyph], y0: f64, y1: f64, gap: f64) -> Vec<(f64, f64)> {
+    let mut cuts: Vec<(f64, f64)> = Vec::new();
+    for g in glyphs {
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut prev: Option<figcraft_geom::Point> = None;
+        figcraft_geom::kurbo::flatten(g.path().iter(), 0.25, |el| {
+            use figcraft_geom::kurbo::PathEl;
+            let p = match el {
+                PathEl::MoveTo(p) => {
+                    prev = Some(p);
+                    return;
+                }
+                PathEl::LineTo(p) => p,
+                _ => return,
+            };
+            if let Some(a) = prev {
+                // The part of segment a-p inside the band.
+                let (t0, t1) = if (p.y - a.y).abs() < 1e-12 {
+                    if (y0..=y1).contains(&a.y) { (0.0, 1.0) } else { (1.0, 0.0) }
+                } else {
+                    let (ta, tb) = ((y0 - a.y) / (p.y - a.y), (y1 - a.y) / (p.y - a.y));
+                    (ta.min(tb).max(0.0), ta.max(tb).min(1.0))
+                };
+                if t0 <= t1 {
+                    for t in [t0, t1] {
+                        let x = a.x + (p.x - a.x) * t;
+                        (lo, hi) = (lo.min(x), hi.max(x));
+                    }
+                }
+            }
+            prev = Some(p);
+        });
+        if lo <= hi {
+            cuts.push((lo - gap, hi + gap));
+        }
+    }
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    cuts
 }
 
 fn add_ellipsis(out: &mut TextLayout, wrap: Option<f64>) {
@@ -953,29 +1227,8 @@ impl TextLayout {
             p.extend(g.path());
         }
         for d in &self.decorations {
-            p.extend(figcraft_geom::rounded_rect(d.rect.width(), d.rect.height(), [0.0; 4], 0.0).iter().map(|el| {
-                let mut e = el;
-                e.apply_affine(Affine::translate((d.rect.x0, d.rect.y0)));
-                e
-            }));
+            p.extend(d.path());
         }
         p
-    }
-}
-
-trait ApplyAffine {
-    fn apply_affine(&mut self, a: Affine);
-}
-
-impl ApplyAffine for figcraft_geom::kurbo::PathEl {
-    fn apply_affine(&mut self, a: Affine) {
-        use figcraft_geom::kurbo::PathEl::*;
-        *self = match *self {
-            MoveTo(p) => MoveTo(a * p),
-            LineTo(p) => LineTo(a * p),
-            QuadTo(p1, p2) => QuadTo(a * p1, a * p2),
-            CurveTo(p1, p2, p3) => CurveTo(a * p1, a * p2, a * p3),
-            ClosePath => ClosePath,
-        };
     }
 }

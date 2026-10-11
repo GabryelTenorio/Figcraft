@@ -1,6 +1,6 @@
 //! On-canvas text editing: caret, selection, typing. A whole editing session is one undo step.
 
-use figcraft_doc::{Document, NodeId, NodeKind, TextData};
+use figcraft_doc::{Document, ListStyle, NodeId, NodeKind, TextData};
 
 use crate::{EngineError, Preedit, Result, Session, TextEdit};
 
@@ -93,10 +93,56 @@ pub fn insert(s: &mut Session, text: &str) -> Result<()> {
     }
     edit(s, |t, te| {
         let (a, b) = range(te);
+        // "- ", "* " or "1. " typed at the start of a plain paragraph starts a list.
+        if text == " " && a == b && t.para_list(t.para_of(a)).list == ListStyle::None {
+            let chars: Vec<char> = t.characters.chars().collect();
+            let start = line_start(&chars, a);
+            let typed: String = chars.get(start..a).unwrap_or(&[]).iter().collect();
+            let list = match typed.as_str() {
+                "-" | "*" => ListStyle::Bulleted,
+                "1." => ListStyle::Numbered,
+                _ => ListStyle::None,
+            };
+            if list != ListStyle::None {
+                t.replace_range(start, a, "");
+                t.set_para_lists(start, start, |pl| pl.list = list);
+                (te.caret, te.anchor) = (start, start);
+                return;
+            }
+        }
         t.replace_range(a, b, &text);
         te.caret = a + text.chars().count();
         te.anchor = te.caret;
     })
+}
+
+/// List keys: Tab nests the selected list items a level deeper; Shift+Tab, Backspace at an item's
+/// start and Enter on an empty item move it a level out (at the top: out of the list). Returns
+/// whether the key was taken.
+fn list_key(s: &mut Session, key: &str, shift: bool) -> Result<bool> {
+    let Some(te) = s.ds()?.text_edit.clone() else { return Ok(false) };
+    let t = text_of(s, te.id)?;
+    let (a, b) = range(&te);
+    let chars: Vec<char> = t.characters.chars().collect();
+    let at_start = a == b && line_start(&chars, a) == a;
+    let item = t.para_list(t.para_of(a)).list != ListStyle::None;
+    let (pa, pb) = t.para_span(a, b);
+    let any_item = (pa..=pb).any(|p| t.para_list(p).list != ListStyle::None);
+    let deeper = match key {
+        "Tab" if any_item => !shift,
+        "Backspace" if item && at_start => false,
+        "Enter" if item && at_start && chars.get(a).is_none_or(|c| *c == '\n') => false,
+        _ => return Ok(false),
+    };
+    edit(s, |t, _| {
+        t.set_para_lists(a, b, |pl| match pl.list {
+            ListStyle::None => {}
+            _ if deeper => pl.indent = pl.indent.saturating_add(1),
+            _ if pl.indent > 0 => pl.indent -= 1,
+            _ => pl.list = ListStyle::None,
+        })
+    })?;
+    Ok(true)
 }
 
 /// The kind of word char `i` belongs to: 0 for spaces and punctuation, else its script, so a word
@@ -166,6 +212,9 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
     let t = text_of(s, te.id)?;
     let chars: Vec<char> = t.characters.chars().collect();
     let n = chars.len();
+    if matches!(key, "Tab" | "Backspace" | "Enter") && !word && !line && list_key(s, key, shift)? {
+        return Ok(());
+    }
     match key {
         "Escape" => return end(s),
         "Enter" => return insert(s, "\n"),

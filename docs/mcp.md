@@ -141,6 +141,19 @@ Or in a project's `.mcp.json`:
   `text.setVariations {variations, replace?}` merges instead. `text.fonts {family, style?, axes: true}`
   lists a font's axes and named instances (named instances are also valid `fontStyle` values).
   OpenType features: `features {"liga": false, "tnum": true}`.
+  Decorations: `textDecorationStyle` (`solid`, `dotted`, `wavy`), `textDecorationThickness` and
+  `textDecorationOffset` (`auto`, px, or `"10%"` of the font size; the offset runs from the baseline
+  down to an underline's top edge), `textDecorationSkipInk` (underlines break around descenders) and
+  `textDecorationColor` (a colour, or `auto` for the text's) are character props too.
+- **Lists** are per paragraph: `listStyle` (`none`, `bulleted`, `numbered`) and `indentation` (the
+  nesting level, 0–8) apply to the paragraphs chars `start`..`end` touch (all of them without a
+  range); `get_node` reports one `listStyle` for the layer, or `lineTypes` and `lineIndentations`
+  per paragraph. `text.bulletList`, `text.numberList` and `text.listStyle` act on the selected
+  paragraphs while text is edited. Layer props: `listSpacing` (px between list items, in place of
+  `paragraphSpacing`), `hangingList` (markers outside the box) and `hangingPunctuation`. While
+  editing, `key` Tab / Shift+Tab nest an item or move it out, Enter on an empty item and Backspace
+  at an item's start step out of the list, and typing `- `, `* ` or `1. ` at a paragraph's start
+  starts one.
 - **Text styles** link chars, not just layers: `style.apply {style, ids?, start?, end?}` with a text
   style links chars `start`..`end` (while text is edited, the selected chars; else whole layers), and
   `style.detach {which: "text", start?, end?}` unlinks them (values stay). A layer's `styles.text` is

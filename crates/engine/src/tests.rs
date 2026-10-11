@@ -256,6 +256,8 @@ fn every_command_survives_junk_params() {
         json!({"id": "nope", "x": "NaN", "props": 5}),
         json!([1, 2, 3]),
         json!({"variations": {"wght": 1e308, "": "x", "slnt": null}, "props": {"fontVariations": [1], "variationSettings": {"wdth": "-1e9"}}, "text": 7, "cursor": -3}),
+        json!({"style": 3, "props": {"listStyle": 5, "indentation": 1e308, "listSpacing": "NaN", "hangingList": "yes", "start": -5, "end": 1e12,
+               "textDecorationThickness": {"unit": "pixels", "value": "x"}, "textDecorationOffset": -1e308, "textDecorationColor": [1]}}),
     ];
     for spec in all_commands() {
         if matches!(

@@ -489,9 +489,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 by_style.entry(g.style).or_default().extend(g.path().elements().iter().copied());
             }
             for d in &layout.decorations {
-                let mut r = d.rect.to_path(0.1);
-                r.apply_affine(Affine::IDENTITY);
-                by_style.entry(d.style).or_default().extend(r.elements().iter().copied());
+                by_style.entry(d.style).or_default().extend(d.path().elements().iter().copied());
             }
             let mut keys: Vec<usize> = by_style.keys().copied().collect();
             keys.sort_unstable();

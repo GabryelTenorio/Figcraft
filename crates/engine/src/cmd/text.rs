@@ -60,6 +60,31 @@ fn para(s: &mut Session, p: &Value, f: impl Fn(&mut TextData)) -> Result<Value> 
     ok()
 }
 
+/// Run `f` on each targeted text with the chars whose paragraphs a list command changes: the
+/// edited paragraphs while editing, else all of them.
+fn para_range(s: &mut Session, p: &Value, f: impl Fn(&mut TextData, usize, usize)) -> Result<Value> {
+    let range = textedit::selected_range(s);
+    para(s, p, |t| {
+        let (a, b) = range.map_or((0, t.char_count()), |(_, a, b)| (a, b));
+        f(t, a, b)
+    })
+}
+
+/// A list command: every targeted paragraph becomes `l`, or (`toggle`) plain when all already are.
+fn set_list(s: &mut Session, p: &Value, l: ListStyle, toggle: bool) -> Result<Value> {
+    let range = textedit::selected_range(s);
+    let ids = range.map_or_else(|| targets(s, p), |(id, _, _)| vec![id]);
+    let doc = s.doc()?;
+    let all = ids.iter().all(|i| {
+        doc.node(*i).and_then(|n| n.kind.text()).is_some_and(|t| {
+            let (a, b) = range.map_or((0, t.char_count()), |(_, a, b)| (a, b));
+            t.common_para_list(a, b).is_some_and(|pl| pl.list == l)
+        })
+    });
+    let l = if toggle && all { ListStyle::None } else { l };
+    para_range(s, p, |t, a, b| t.set_para_lists(a, b, |pl| pl.list = l))
+}
+
 /// Whether every targeted char has `pred` (to decide toggle direction).
 fn all_have(s: &Session, p: &Value, pred: impl Fn(&TextStyle) -> bool) -> bool {
     let Ok(doc) = s.doc() else { return false };
@@ -126,7 +151,7 @@ fn on_path(s: &mut Session, p: &Value) -> Result<Value> {
     n.transform = transform;
     (n.width, n.height) = (w, h);
     if let NodeKind::Text(t) = &mut n.kind {
-        t.path = Some(tp);
+        t.path = Some(Box::new(tp));
     }
     s.set_selection(vec![text]);
     Ok(json!({ "id": text }))
@@ -172,10 +197,18 @@ pub fn specs() -> Vec<CommandSpec> {
             let url = req_string("text.link", p, "url")?;
             style(s, p, |st| st.link = Some(url.clone()))
         }),
-        spec!("text.bulletList", "Bulleted list", "{ids?}", true, |s, p| para(s, p, |t| t.list =
-            if t.list == ListStyle::Bulleted { ListStyle::None } else { ListStyle::Bulleted })),
-        spec!("text.numberList", "Numbered list", "{ids?}", true, |s, p| para(s, p, |t| t.list =
-            if t.list == ListStyle::Numbered { ListStyle::None } else { ListStyle::Numbered })),
+        spec!("text.bulletList", "Bulleted list", "{ids?}  while editing: the selected paragraphs", true, |s, p| set_list(
+            s,
+            p,
+            ListStyle::Bulleted,
+            true
+        )),
+        spec!("text.numberList", "Numbered list", "{ids?}  while editing: the selected paragraphs", true, |s, p| set_list(
+            s,
+            p,
+            ListStyle::Numbered,
+            true
+        )),
         spec!("text.alignLeft", "Align left", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Left)),
         spec!("text.alignCenter", "Align center", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Center)),
         spec!("text.alignRight", "Align right", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Right)),
@@ -222,12 +255,12 @@ pub fn specs() -> Vec<CommandSpec> {
                 .ok_or_else(|| bad("text.decoration", "`decoration`: none|underline|strikethrough"))?;
             style(s, p, |st| st.decoration = d)
         }),
-        spec!("text.listStyle", "List style", "{style: none|bulleted|numbered, ids?}", true, |s, p| {
+        spec!("text.listStyle", "List style", "{style: none|bulleted|numbered, ids?}  while editing: the selected paragraphs", true, |s, p| {
             let l: ListStyle = get(p, "style")
                 .or_else(|| get(p, "list"))
                 .and_then(super::props::enum_of)
                 .ok_or_else(|| bad("text.listStyle", "`style`: none|bulleted|numbered"))?;
-            para(s, p, |t| t.list = l)
+            set_list(s, p, l, false)
         }),
         spec!("text.paragraphIndent", "Paragraph indent", "{indent (px), ids?}", true, |s, p| {
             let v = finite(req_num("text.paragraphIndent", p, "indent")?).clamp(0.0, 10_000.0);
@@ -361,7 +394,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.edit.key",
             "Text key",
-            "{key: Backspace|Delete|Left|Right|Up|Down|Home|End|Enter|Escape|SelectAll, shift?, alt?, cmd?}",
+            "{key: Backspace|Delete|Left|Right|Up|Down|Home|End|Enter|Tab|Escape|SelectAll, shift?, alt?, cmd?}  in a list, Tab nests the item and Shift+Tab, Enter on an empty item or Backspace at its start move it out",
             true,
             |s, p| {
                 let k = req_string("text.edit.key", p, "key")?;

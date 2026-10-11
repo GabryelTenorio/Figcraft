@@ -4,7 +4,8 @@
 use std::collections::BTreeMap;
 
 use figcraft_doc::{
-    LetterSpacing, LineHeight, ListStyle, StyleRun, TextAlignH, TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle,
+    DecorationLength, DecorationStyle, LetterSpacing, LineHeight, ListStyle, ParaList, StyleRun, TextAlignH, TextAlignV, TextAutoResize, TextCase,
+    TextData, TextDecoration, TextStyle,
 };
 use serde_json::Value;
 
@@ -27,7 +28,7 @@ pub(super) fn text_data(cx: &mut Ctx, v: &Value) -> TextData {
     paragraph(style_json, &mut td);
     td.runs = runs(cx, v, &td);
     td.normalize();
-    td.list = list_style(v);
+    lists(v, &mut td);
     td
 }
 
@@ -57,6 +58,9 @@ fn paragraph(s: &Value, td: &mut TextData) {
     td.max_lines = num(s, "maxLines").filter(|n| *n >= 1.0).map_or(0, |n| n.min(10_000.0) as u32);
     td.paragraph_spacing = len(s, "paragraphSpacing").unwrap_or(0.0);
     td.paragraph_indent = len(s, "paragraphIndent").unwrap_or(0.0);
+    td.list_spacing = len(s, "listSpacing").unwrap_or(0.0).min(10_000.0);
+    td.hanging_punctuation = flag(s, "hangingPunctuation").unwrap_or(false);
+    td.hanging_list = flag(s, "hangingList").unwrap_or(false);
     if text(s, "leadingTrim") == Some("CAP_HEIGHT") {
         td.leading_trim = figcraft_doc::LeadingTrim::CapHeight;
     }
@@ -116,6 +120,7 @@ fn type_style(cx: &mut Ctx, s: &Value, base: &TextStyle) -> TextStyle {
         Some("STRIKETHROUGH") => t.decoration = TextDecoration::Strikethrough,
         _ => {}
     }
+    decoration_look(s, &mut t);
     if let Some(f) = paints(cx, s, "fills") {
         t.fills = Some(f);
     }
@@ -200,14 +205,52 @@ fn runs(cx: &mut Ctx, v: &Value, td: &TextData) -> Vec<StyleRun> {
     out
 }
 
-/// A list style for the whole node from `lineTypes` (bullets win over numbers).
-fn list_style(v: &Value) -> ListStyle {
+/// Each paragraph's list type and nesting level from `lineTypes` and `lineIndentations`.
+fn lists(v: &Value, td: &mut TextData) {
     let types = list(v, "lineTypes");
-    if types.iter().any(|t| t.as_str() == Some("UNORDERED")) {
-        ListStyle::Bulleted
-    } else if types.iter().any(|t| t.as_str() == Some("ORDERED")) {
-        ListStyle::Numbered
-    } else {
-        ListStyle::None
-    }
+    let indents = list(v, "lineIndentations");
+    td.paragraphs = types
+        .iter()
+        .enumerate()
+        .map(|(i, t)| ParaList {
+            list: match t.as_str() {
+                Some("UNORDERED") => ListStyle::Bulleted,
+                Some("ORDERED") => ListStyle::Numbered,
+                _ => ListStyle::None,
+            },
+            indent: indents.get(i).and_then(Value::as_f64).filter(|d| d.is_finite()).map_or(0, |d| d.clamp(0.0, 255.0) as u8),
+        })
+        .collect();
+    // Clamp the levels and fold one style for all back into the layer's list style.
+    td.set_para_lists(0, td.char_count(), |_| {});
+}
+
+/// The decoration's style, thickness, offset, skip ink and colour (`{value, unit}` lengths with
+/// `AUTO`, `PIXELS` or `PERCENT`; a colour as a solid paint, or `AUTO`).
+fn decoration_look(s: &Value, t: &mut TextStyle) {
+    let length = |k: &str| {
+        let m = s.get(k)?;
+        let v = num(m, "value").filter(|x| x.abs() <= 10_000.0);
+        match text(m, "unit") {
+            Some("PIXELS") => v.map(DecorationLength::Pixels),
+            Some("PERCENT") => v.map(DecorationLength::Percent),
+            Some("AUTO") => Some(DecorationLength::Auto),
+            _ => None,
+        }
+    };
+    let style = match text(s, "textDecorationStyle") {
+        Some("DOTTED") => Some(DecorationStyle::Dotted),
+        Some("WAVY") => Some(DecorationStyle::Wavy),
+        Some("SOLID") => Some(DecorationStyle::Solid),
+        _ => None,
+    };
+    let (thickness, offset, skip) = (length("textDecorationThickness"), length("textDecorationOffset"), flag(s, "textDecorationSkipInk"));
+    let color = s.get("textDecorationColor").map(|c| c.get("value").and_then(|p| p.get("color")).and_then(super::props::color));
+    t.set_look(|l| {
+        l.style = style.unwrap_or(l.style);
+        l.thickness = thickness.unwrap_or(l.thickness);
+        l.offset = offset.unwrap_or(l.offset);
+        l.skip_ink = skip.unwrap_or(l.skip_ink);
+        l.color = color.unwrap_or(l.color);
+    });
 }

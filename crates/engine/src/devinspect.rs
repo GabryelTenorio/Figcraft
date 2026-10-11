@@ -605,7 +605,17 @@ fn typography(doc: &Document, n: &Node, t: &TextData) -> Section {
     };
     rows.push(prop("Align", align));
     if s.decoration != TextDecoration::None {
-        rows.push(prop("Decoration", if s.decoration == TextDecoration::Underline { "underline" } else { "strikethrough" }));
+        let l = s.look();
+        let style = match l.style {
+            figcraft_doc::DecorationStyle::Solid => "",
+            figcraft_doc::DecorationStyle::Dotted => ", dotted",
+            figcraft_doc::DecorationStyle::Wavy => ", wavy",
+        };
+        let kind = if s.decoration == TextDecoration::Underline { "underline" } else { "strikethrough" };
+        rows.push(prop("Decoration", format!("{kind}{style}")));
+    }
+    if t.list_spacing > 0.0 {
+        rows.push(prop("List spacing", num(t.list_spacing)));
     }
     if variable(doc, n, "characters").is_some() {
         rows.push(prop("Content", t.characters.chars().take(80).collect::<String>()).token(variable(doc, n, "characters")));

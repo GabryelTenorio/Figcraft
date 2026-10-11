@@ -406,6 +406,9 @@ fn type_settings(
         if let Some(i) = text_seg(ui, "deco", &items, active, w) {
             apply_style(app, "textDecoration", json!((["none", "underline", "strikethrough"].get(i).copied().unwrap_or("none"))));
         }
+        if let Some(d @ (TextDecoration::Underline | TextDecoration::Strikethrough)) = deco {
+            decoration_details(app, ui, styles, apply_style, d == TextDecoration::Underline, w);
+        }
         caption(ui, tr("Letter case"));
         let case = uniform(styles, |s| s.case);
         let active = case.map(|c| match c {
@@ -426,7 +429,15 @@ fn type_settings(
             apply_style(app, "textCase", json!((["original", "upper", "lower", "title", "smallCaps"].get(i).copied().unwrap_or("original"))));
         }
         caption(ui, tr("List style"));
-        let list = common(doc, ids, |n| n.kind.text().map(|t| t.list)).flatten();
+        // While editing: the selected paragraphs' list.
+        let range = figcraft_engine::textedit::selected_range(&app.session);
+        let list = common(doc, ids, |n| {
+            n.kind.text().and_then(|t| {
+                let (a, b) = range.filter(|r| r.0 == n.id).map_or((0, t.char_count()), |(_, a, b)| (a, b));
+                t.common_para_list(a, b).map(|p| p.list)
+            })
+        })
+        .flatten();
         let active = list.map(|l| match l {
             ListStyle::None => 0,
             ListStyle::Bulleted => 1,
@@ -434,9 +445,18 @@ fn type_settings(
         });
         let items = [("—", tr_noop("No list")), ("•", tr_noop("Bulleted list")), ("1.", tr_noop("Numbered list"))];
         if let Some(i) = text_seg(ui, "list", &items, active, w) {
-            app.set_props(ids, json!({"listStyle": (["none", "bulleted", "numbered"].get(i).copied().unwrap_or("none"))}));
+            app.run("text.listStyle", json!({"ids": ids, "style": (["none", "bulleted", "numbered"].get(i).copied().unwrap_or("none"))}));
         }
         ui.add_space(6.0);
+        let spacing = common(doc, ids, |n| n.kind.text().map(|t| t.list_spacing.to_bits())).flatten().map(f64::from_bits);
+        field_row(ui, tr("List spacing"), |ui, fw| {
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+                widgets::number_field(ui, Id::new("ty_list_spacing"), Lead::None, spacing, "", fw, 1.0)
+            {
+                app.set_props(ids, json!({"listSpacing": v.clamp(0.0, 10_000.0)}));
+            }
+        });
+        ui.add_space(4.0);
         let indent = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_indent.to_bits())).flatten().map(f64::from_bits);
         // Indent applies to start-aligned text only; elsewhere the field stays visible but off.
         let start_aligned =
@@ -452,6 +472,15 @@ fn type_settings(
             .response
             .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
         });
+        ui.add_space(4.0);
+        for (key, label) in [("hangingPunctuation", tr("Hanging punctuation")), ("hangingList", tr("Hanging list"))] {
+            let all_on = ids.iter().all(|i| {
+                doc.node(*i).and_then(|n| n.kind.text()).is_some_and(|t| if key == "hangingList" { t.hanging_list } else { t.hanging_punctuation })
+            });
+            if widgets::checkbox(ui, all_on, label) {
+                app.set_props(ids, json!({ key: !all_on }));
+            }
+        }
         caption(ui, tr("Vertical trim"));
         let trim = common(doc, ids, |n| n.kind.text().map(|t| usize::from(t.leading_trim == LeadingTrim::CapHeight))).flatten();
         let items = [(tr("Standard"), tr_noop("Standard")), ("Ag", tr_noop("Cap height to baseline"))];
@@ -504,6 +533,86 @@ fn type_settings(
             }
         });
     }
+}
+
+/// A Type settings row: a label, then `add` with the rest of the width.
+fn field_row<R>(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui, f32) -> R) -> R {
+    let t = Tokens::get(ui.ctx());
+    let w = ui.available_width();
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(label).font(regular(11.0)).color(t.text)));
+        add(ui, w - 118.0)
+    })
+    .inner
+}
+
+/// How the decoration looks: style, thickness, (underlines) offset and skip ink, and colour.
+fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply_style: &dyn Fn(&mut FigApp, &str, Value), underline: bool, w: f32) {
+    caption(ui, tr("Decoration style"));
+    let active = uniform(styles, |s| s.look().style as usize);
+    let items = [(tr("Solid"), tr_noop("Solid")), (tr("Dotted"), tr_noop("Dotted")), (tr("Wavy"), tr_noop("Wavy"))];
+    if let Some(i) = text_seg(ui, "deco_style", &items, active, w) {
+        apply_style(app, "textDecorationStyle", json!((["solid", "dotted", "wavy"].get(i).copied().unwrap_or("solid"))));
+    }
+    ui.add_space(4.0);
+    let mut lengths = vec![("textDecorationThickness", tr("Thickness"), uniform(styles, |s| s.look().thickness))];
+    if underline {
+        lengths.push(("textDecorationOffset", tr("Offset"), uniform(styles, |s| s.look().offset)));
+    }
+    for (key, label, value) in lengths {
+        field_row(ui, label, |ui, fw| {
+            let (shown, empty) = match value {
+                Some(DecorationLength::Pixels(v)) => (Some(v), String::new()),
+                Some(DecorationLength::Percent(p)) => (None, format!("{}%", trim_num(p))),
+                Some(DecorationLength::Auto) => (None, tr("Auto").to_string()),
+                None => (None, tr(MIXED).to_string()),
+            };
+            let auto = value == Some(DecorationLength::Auto);
+            let field_w = if auto { fw } else { fw - 36.0 };
+            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+                widgets::number_field_or(ui, Id::new(("ty_deco", key)), shown, &empty, field_w, 0.5)
+            {
+                // A thickness of 0 or less goes back to the font's.
+                let v = if key == "textDecorationThickness" && v <= 0.0 { json!("auto") } else { json!(v.clamp(-1000.0, 1000.0)) };
+                apply_style(app, key, v);
+            }
+            let tip = tr("Back to the font's value");
+            if !auto
+                && ui
+                    .add(
+                        egui::Label::new(egui::RichText::new(tr("Auto")).font(regular(11.0)).color(Tokens::get(ui.ctx()).accent))
+                            .sense(Sense::click()),
+                    )
+                    .on_hover_text(tip)
+                    .clicked()
+            {
+                apply_style(app, key, json!("auto"));
+            }
+        });
+    }
+    if underline {
+        let skip = uniform(styles, |s| s.look().skip_ink);
+        if widgets::checkbox(ui, skip == Some(true), tr("Skip ink")) {
+            apply_style(app, "textDecorationSkipInk", json!(skip != Some(true)));
+        }
+    }
+    let color = uniform(styles, |s| s.look().color.map(|c| format!("#{}", c.to_hex())));
+    field_row(ui, tr("Colour"), |ui, fw| {
+        let (value, hint) = match &color {
+            Some(c) => (c.clone().unwrap_or_default(), tr("Auto")),
+            None => (String::new(), tr(MIXED)),
+        };
+        if let Some(s) = widgets::text_field(ui, Id::new("ty_deco_color"), &value, fw, hint) {
+            let s = s.trim();
+            if s.is_empty() || s.eq_ignore_ascii_case("auto") {
+                apply_style(app, "textDecorationColor", json!("auto"));
+            } else if let Some(c) = figcraft_color::Color::parse_css(s).or_else(|| figcraft_color::Color::from_hex(s)) {
+                apply_style(app, "textDecorationColor", json!(format!("#{}", c.to_hex())));
+            } else {
+                app.toast(trf("{value} isn't a colour", &[("value", &s)]));
+            }
+        }
+    });
 }
 
 /// Type settings ▸ Variable: the font's named instances, then a slider and a field per visible

@@ -21,8 +21,11 @@ columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTra
 gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill), \
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
-(widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
-listStyle (none|bulleted|numbered), leadingTrim (vertical trim: none|capHeight), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
+(widthAndHeight|height|none|truncate), textDecoration, textDecorationStyle (solid|dotted|wavy), textDecorationThickness / textDecorationOffset \
+(auto|px|\"10%\" of the font size; the offset runs from the baseline down to an underline's top edge), textDecorationSkipInk (underlines break around descenders), \
+textDecorationColor (colour, or auto/null: the text's), textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
+listStyle (none|bulleted|numbered; with start/end: the paragraphs those chars touch), indentation (list nesting level 0-8, same range rule), \
+listSpacing (px between list items, in place of paragraphSpacing), hangingPunctuation, hangingList (markers outside the box), leadingTrim (vertical trim: none|capHeight), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
 fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}; null = none), pointCount, innerRadius, arcStart, arcSweep, \
 arcInner, booleanOperation (a boolean group's operation, or an operand's own; null: the group's), operandOperation (a layer in a boolean \
 group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}";
@@ -586,8 +589,23 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 t.replace_range(0, len, &s);
                 n.overrides.insert("characters".into());
             }
-            "fontFamily" | "fontStyle" | "fontWeight" | "fontSize" | "lineHeight" | "letterSpacing" | "textDecoration" | "textCase" | "hyperlink"
-            | "textFills" | "fontVariations" | "variationSettings" => {
+            "fontFamily"
+            | "fontStyle"
+            | "fontWeight"
+            | "fontSize"
+            | "lineHeight"
+            | "letterSpacing"
+            | "textDecoration"
+            | "textCase"
+            | "hyperlink"
+            | "textFills"
+            | "fontVariations"
+            | "variationSettings"
+            | "textDecorationStyle"
+            | "textDecorationThickness"
+            | "textDecorationOffset"
+            | "textDecorationSkipInk"
+            | "textDecorationColor" => {
                 let n = doc.get_mut(id)?;
                 let t = text_mut(cmd, n)?;
                 let (start, end) = range_of(props, t.char_count());
@@ -605,7 +623,23 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "paragraphSpacing" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_spacing = f64_of(v).unwrap_or(0.0).max(0.0),
             "paragraphIndent" => text_mut(cmd, doc.get_mut(id)?)?.paragraph_indent = f64_of(v).unwrap_or(0.0).max(0.0),
-            "listStyle" => text_mut(cmd, doc.get_mut(id)?)?.list = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?,
+            "listStyle" | "indentation" => {
+                let t = text_mut(cmd, doc.get_mut(id)?)?;
+                let (start, end) = range_of(props, t.char_count());
+                if k == "listStyle" {
+                    let l: ListStyle = enum_of(v).ok_or_else(|| bad(cmd, "listStyle: none|bulleted|numbered"))?;
+                    t.set_para_lists(start, end, |p| p.list = l);
+                } else {
+                    let d = f64_of(v).filter(|d| d.is_finite()).ok_or_else(|| bad(cmd, "indentation: a list level 0-8"))?;
+                    t.set_para_lists(start, end, |p| p.indent = d.clamp(0.0, f64::from(MAX_LIST_INDENT)) as u8);
+                }
+            }
+            "listSpacing" => text_mut(cmd, doc.get_mut(id)?)?.list_spacing = f64_of(v).filter(|s| s.is_finite()).unwrap_or(0.0).clamp(0.0, 10_000.0),
+            "hangingPunctuation" | "hangingList" => {
+                let on = v.as_bool().ok_or_else(|| bad(cmd, format!("`{k}` must be true or false")))?;
+                let t = text_mut(cmd, doc.get_mut(id)?)?;
+                *if k == "hangingList" { &mut t.hanging_list } else { &mut t.hanging_punctuation } = on;
+            }
             "leadingTrim" => text_mut(cmd, doc.get_mut(id)?)?.leading_trim = enum_of(v).ok_or_else(|| bad(cmd, "leadingTrim: none|capHeight"))?,
             "maxLines" => text_mut(cmd, doc.get_mut(id)?)?.max_lines = f64_of(v).unwrap_or(0.0).clamp(0.0, 10_000.0) as u32,
             "features" | "textFeatures" | "fontFeatures" | "openTypeFeatures" => {
@@ -755,7 +789,8 @@ pub fn override_group(k: &str) -> &'static str {
         "visible" => "visible",
         "name" => "name",
         "characters" | "text" => "characters",
-        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "maxLines" | "variationSettings" => "textStyle",
+        "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "indentation" | "listSpacing" | "maxLines" | "variationSettings"
+        | "hangingPunctuation" | "hangingList" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
         "gap" | "itemSpacing" | "columnGap" | "crossGap" | "counterAxisSpacing" | "rowGap" => "gap",
@@ -841,6 +876,26 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
         "textDecoration" => {
             let d: TextDecoration = enum_of(v).ok_or_else(|| bad(cmd, "textDecoration: none|underline|strikethrough"))?;
             t.restyle(start, end, |s| s.decoration = d);
+        }
+        "textDecorationStyle" => {
+            let d: DecorationStyle = enum_of(v).ok_or_else(|| bad(cmd, "textDecorationStyle: solid|dotted|wavy"))?;
+            t.restyle(start, end, |s| s.set_look(|l| l.style = d));
+        }
+        "textDecorationThickness" | "textDecorationOffset" => {
+            let m = line_height(v)
+                .filter(|m| !matches!(m, LineHeight::Pixels(x) | LineHeight::Percent(x) if !x.is_finite() || x.abs() > 10_000.0))
+                .ok_or_else(|| bad(cmd, format!("{k}: auto | px | \"10%\"")))?;
+            let thickness = k == "textDecorationThickness";
+            t.restyle(start, end, |s| s.set_look(|l| *if thickness { &mut l.thickness } else { &mut l.offset } = m));
+        }
+        "textDecorationSkipInk" => {
+            let on = v.as_bool().ok_or_else(|| bad(cmd, "textDecorationSkipInk must be true or false"))?;
+            t.restyle(start, end, |s| s.set_look(|l| l.skip_ink = on));
+        }
+        "textDecorationColor" => {
+            let auto = v.is_null() || v.as_str().is_some_and(|s| s.eq_ignore_ascii_case("auto"));
+            let c = if auto { None } else { Some(color_of(v).ok_or_else(|| bad(cmd, "textDecorationColor: a colour, or auto"))?) };
+            t.restyle(start, end, |s| s.set_look(|l| l.color = c));
         }
         "textCase" => {
             let c: TextCase = enum_of(v).ok_or_else(|| bad(cmd, "textCase: original|upper|lower|title|smallCaps"))?;

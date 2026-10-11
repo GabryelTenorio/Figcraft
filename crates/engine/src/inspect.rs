@@ -180,6 +180,30 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if t.style.decoration != TextDecoration::None {
                 o.insert("textDecoration".into(), json!(t.style.decoration));
             }
+            if let Some(l) = t.style.decoration_look.as_deref() {
+                o.insert("textDecorationStyle".into(), json!(l.style));
+                o.insert("textDecorationThickness".into(), json!(l.thickness.label()));
+                o.insert("textDecorationOffset".into(), json!(l.offset.label()));
+                o.insert("textDecorationSkipInk".into(), json!(l.skip_ink));
+                o.insert("textDecorationColor".into(), l.color.map_or(json!("auto"), |c| json!(format!("#{}", c.to_hex()))));
+            }
+            // Lists: one style for the layer, or each paragraph's type and nesting level.
+            if t.paragraphs.is_empty() {
+                if t.list != figcraft_doc::ListStyle::None {
+                    o.insert("listStyle".into(), json!(t.list));
+                }
+            } else {
+                o.insert("lineTypes".into(), t.paragraphs.iter().map(|p| json!(p.list)).collect());
+                o.insert("lineIndentations".into(), t.paragraphs.iter().map(|p| json!(p.indent)).collect());
+            }
+            if t.list_spacing != 0.0 {
+                o.insert("listSpacing".into(), json!(t.list_spacing));
+            }
+            for (k, on) in [("hangingPunctuation", t.hanging_punctuation), ("hangingList", t.hanging_list)] {
+                if on {
+                    o.insert(k.into(), json!(true));
+                }
+            }
             if t.leading_trim != figcraft_doc::LeadingTrim::None {
                 o.insert("leadingTrim".into(), json!(t.leading_trim));
             }

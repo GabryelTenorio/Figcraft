@@ -446,6 +446,34 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
             TextDecoration::Underline => put("text-decoration", "underline".into()),
             TextDecoration::Strikethrough => put("text-decoration", "line-through".into()),
         }
+        if s.decoration != TextDecoration::None {
+            let l = s.look();
+            let len = |m: LineHeight| match m {
+                LineHeight::Auto => None,
+                LineHeight::Pixels(v) => Some(px(v)),
+                LineHeight::Percent(p) => Some(format!("{}%", num(p))),
+            };
+            match l.style {
+                figcraft_doc::DecorationStyle::Solid => {}
+                figcraft_doc::DecorationStyle::Dotted => put("text-decoration-style", "dotted".into()),
+                figcraft_doc::DecorationStyle::Wavy => put("text-decoration-style", "wavy".into()),
+            }
+            if let Some(v) = len(l.thickness) {
+                put("text-decoration-thickness", v);
+            }
+            if let Some(c) = l.color {
+                put("text-decoration-color", c.to_css());
+            }
+            if s.decoration == TextDecoration::Underline {
+                if let Some(v) = len(l.offset) {
+                    put("text-underline-offset", v);
+                }
+                // Browsers skip ink by default; the canvas only when asked.
+                if !l.skip_ink {
+                    put("text-decoration-skip-ink", "none".into());
+                }
+            }
+        }
         if tx.leading_trim == figcraft_doc::LeadingTrim::CapHeight {
             put("text-box", "trim-both cap alphabetic".into());
         }

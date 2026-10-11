@@ -215,6 +215,8 @@ fn single_line(t: &TextData) -> bool {
     t.auto_resize == TextAutoResize::WidthAndHeight
         && t.runs.is_empty()
         && t.list == ListStyle::None
+        && t.paragraphs.is_empty()
+        && !t.hanging_punctuation
         && t.paragraph_indent == 0.0
         && !t.characters.contains(['\n', '\r', '\u{2028}', '\u{2029}'])
 }
