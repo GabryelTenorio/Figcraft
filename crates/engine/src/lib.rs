@@ -296,8 +296,9 @@ pub struct DocState {
     /// The document under a live text preview (a hovered text style or font instance, a dragged
     /// axis slider): `doc` shows the preview until [`textpreview::end`] puts this back.
     pub text_preview: Option<Arc<Document>>,
-    /// The document as of the last version saved (or as opened): autosaves only follow changes.
-    checkpoint: Arc<Document>,
+    /// The document as of the last version saved or restored (none yet): autosaves, restores and
+    /// merges only add a checkpoint for changes since.
+    checkpoint: Option<Arc<Document>>,
     /// Dev Mode focus view: the frame or section shown alone on the canvas (see [`Self::focused`]).
     pub focus: Option<NodeId>,
     /// The ruler guide clicked last: its page or frame and index (see [`Self::selected_guide`]).
@@ -334,7 +335,7 @@ impl DocState {
         let page = doc.current_page.filter(|p| doc.pages.contains(p)).or_else(|| doc.first_page()).unwrap_or(NodeId(0));
         let doc = Arc::new(doc);
         let mut st = Self {
-            checkpoint: doc.clone(),
+            checkpoint: None,
             saved_doc: doc.clone(),
             doc,
             selection: Vec::new(),
@@ -398,14 +399,16 @@ impl DocState {
         &mut self.versions
     }
 
-    /// The document changed since the last version was saved (or since it was opened).
+    /// The document changed since the last version was saved or restored (always, before one).
     pub fn changed_since_checkpoint(&self) -> bool {
-        !Arc::ptr_eq(self.preview.as_ref().map_or(&self.doc, |p| &p.doc), &self.checkpoint)
+        let doc = self.preview.as_ref().map_or(&self.doc, |p| &p.doc);
+        // Normalising after a command can copy a document without changing it: compare contents then.
+        self.checkpoint.as_ref().is_none_or(|c| !Arc::ptr_eq(doc, c) && **doc != **c)
     }
 
-    /// Note that a version of the current document was just saved.
+    /// Note that a version of the current document was just saved (or restored).
     pub(crate) fn mark_checkpoint(&mut self) {
-        self.checkpoint = self.doc.clone();
+        self.checkpoint = Some(self.doc.clone());
     }
 
     /// Push a snapshot undo step: the document was `before` (shown with `selection` on `page`).
@@ -1293,6 +1296,8 @@ mod frames_behaviour_tests;
 mod fx_behaviour_tests;
 #[cfg(test)]
 mod gesture_preview_tests;
+#[cfg(test)]
+mod history_behaviour_tests;
 #[cfg(test)]
 mod html_codegen_tests;
 #[cfg(test)]

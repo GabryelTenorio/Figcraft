@@ -56,7 +56,7 @@ fn save_list_restore_and_undo() {
     // By index.
     s.execute("version.restore", &json!({"index": 1})).unwrap();
     assert_eq!(count(&s), one + 1);
-    assert_eq!(list(&mut s).len(), 2, "restoring keeps the history");
+    assert_eq!(list(&mut s).len(), 3, "restoring keeps the history (plus a checkpoint of what the first restore replaced)");
 }
 
 #[test]
@@ -168,6 +168,7 @@ fn versions_persist_in_the_file() {
     assert!(t.ds().unwrap().is_dirty());
     t.execute("file.save", &json!({})).unwrap();
     t.execute("file.revert", &json!({})).unwrap();
-    assert!(list(&mut t).is_empty());
+    // Only the checkpoint the restore made of the file as opened is left.
+    assert_eq!(list(&mut t).iter().map(|v| v["auto"] == true).collect::<Vec<_>>(), vec![true]);
     let _ = std::fs::remove_dir_all(&dir);
 }

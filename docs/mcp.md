@@ -695,7 +695,8 @@ sort? (date|page), query?, frame?}` returns the threads with their position, `fr
 `figcraft://comment/<id>`: `comment.link {id}` returns one, `comment.open {id | link, view?}` goes
 to its page, zooms to its frame (`fit`, the default; `center` keeps the zoom; `keep` doesn't move)
 and opens it in the app, and `comment.next {id?, dir?, …list params}` steps to the next or previous
-thread of a list the same way. `comment.zoom {ids}` zooms in on a group of pins.
+thread of a list the same way. `comment.zoom {ids}` zooms in on a group of pins. Comment ids made in
+a live session are large numbers (their creator's id space): pass them back as given.
 
 ### Version history
 
@@ -703,8 +704,11 @@ Named snapshots of the document, kept in the `.figcraft` file (they persist once
 a new, renamed or deleted version marks the file as changed). Driven with `run_command`:
 `file.saveVersion {name?, description?}` (returns `{id, index, name, description, time}`; untitled
 versions are named "Version N"), `version.list` (oldest first; `time` is Unix seconds),
-`version.restore {id | index}` (replaces the document with the version as one undo step; the file
-name stays), `version.rename {id | index, name, description?}`, `version.delete {id | index}` and
+`version.restore {id | index}` (replaces the design with the version as one undo step; the file
+name and the comments stay, comments on layers the version lacks staying where they were, and the
+design it replaces is first kept as an autosave unless a version of it was just saved or restored),
+`version.rename {id | index, name, description?}` (a titled autosave becomes a named version),
+`version.delete {id | index}` and
 `version.duplicate {id | index}` (opens the version as a new document tab).
 `version.preview {id | index}` shows a version in place of the document, read-only: edits, undo and
 gestures are refused until `version.restore` keeps it or `version.exitPreview` goes back. Saving,
@@ -713,7 +717,10 @@ closing or saving a version ends the preview first, and `version.list` marks the
 (a negative or out-of-range index is an error). A file keeps at most 100 versions.
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
-and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
+and a file keeps the newest 20 autosaves (user versions are never dropped for them). Merging a
+branch adds the main file as it was (an autosave, when it changed since its last version) and then
+`Merged “<branch>”`. `file.versionHistory` returns the same list and opens the panel in the app.
+Versions stay with the person who saved them: in a live session they aren't shared.
 
 ### Branches
 

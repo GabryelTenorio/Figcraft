@@ -331,7 +331,11 @@ fn combine(s: &mut Session, p: &Value, from: Side) -> Result<Value> {
     if from == Side::Branch {
         let m = s.docs.get_mut(mi).ok_or(EngineError::NoDocument)?;
         let (selection, page) = (m.selection.clone(), m.page);
+        // The main file's history keeps it as it was before the merge, then the merge itself.
+        crate::cmd::file::keep_in_history(m);
         show(m, doc);
+        let name = m.branches.get(bi).map(|b| b.name.clone()).unwrap_or_default();
+        crate::cmd::file::add_version(m, &format!("Merged “{name}”"), "", false);
         if let Some(b) = m.branches_mut().get_mut(bi) {
             b.state = BranchState::Merged;
         }

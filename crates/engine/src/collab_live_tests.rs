@@ -32,8 +32,8 @@ struct Person {
 }
 
 /// A session server (the host's, minus the sockets) and several people joined as guests.
-struct Room {
-    server: Server,
+pub(crate) struct Room {
+    pub(crate) server: Server,
     people: Vec<Person>,
     rng: Rng,
 }
@@ -43,7 +43,7 @@ fn welcome_of(out: &[Outgoing], id: u32) -> ServerMsg {
 }
 
 impl Room {
-    fn new(doc: Document, n: usize, seed: u64) -> Room {
+    pub(crate) fn new(doc: Document, n: usize, seed: u64) -> Room {
         let mut room = Room { server: Server::new(doc, "t", Limits::default()), people: Vec::new(), rng: Rng::new(seed) };
         for _ in 0..n {
             let mut s = Session::new();
@@ -62,7 +62,7 @@ impl Room {
         room
     }
 
-    fn s(&mut self, i: usize) -> &mut Session {
+    pub(crate) fn s(&mut self, i: usize) -> &mut Session {
         &mut self.people[i].s
     }
 
@@ -118,7 +118,7 @@ impl Room {
         true
     }
 
-    fn settle(&mut self) {
+    pub(crate) fn settle(&mut self) {
         let mut n = 0;
         while self.step() {
             n += 1;
@@ -151,7 +151,7 @@ impl Room {
     }
 
     /// Everyone holds the server's document, in the session and on the canvas.
-    fn check(&self) {
+    pub(crate) fn check(&self) {
         for (i, p) in self.people.iter().enumerate() {
             let c = p.s.live.client().unwrap();
             assert_eq!(c.pending(), 0, "person {i}");
@@ -162,7 +162,7 @@ impl Room {
 }
 
 /// The shared file's first frame and one of its rectangles.
-fn frame_and_rect(doc: &Document) -> (NodeId, NodeId) {
+pub(crate) fn frame_and_rect(doc: &Document) -> (NodeId, NodeId) {
     let page = doc.first_page().unwrap();
     let f = doc.node(page).unwrap().children[0];
     (f, doc.node(f).unwrap().children[0])

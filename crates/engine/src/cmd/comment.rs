@@ -220,7 +220,8 @@ pub fn follow_anchors(doc: &mut Document, before: &Document) {
 fn req_comment(cmd: &str, s: &Session, p: &Value) -> crate::Result<u64> {
     let id = match get(p, "link").and_then(Value::as_str) {
         Some(l) => parse_link(l).ok_or_else(|| bad(cmd, format!("not a comment link: {l}")))?,
-        None => req_index(cmd, p, "id")? as u64,
+        // Ids made in a live session sit in their creator's id space, far above small indexes.
+        None => id(p, "id").map(|i| i.0).ok_or_else(|| bad(cmd, "`id` must be a comment id"))?,
     };
     if s.doc()?.comment(id).is_none() {
         return Err(bad(cmd, format!("no comment {id}")));
@@ -553,7 +554,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let (page, filter, sort, text) = list_params("comment.next", s, p)?;
                 let ids: Vec<u64> =
                     query(doc, &Query { page, frame: id(p, "frame"), filter, sort, text: &text }, &who).iter().map(|c| c.id).collect();
-                let at = num(p, "id").and_then(|i| ids.iter().position(|x| *x as f64 == i));
+                let at = id(p, "id").and_then(|i| ids.iter().position(|x| *x == i.0));
                 let next = match at {
                     Some(i) if dir < 0.0 => ids.get(i.saturating_sub(1)),
                     Some(i) => ids.get(i + 1).or(ids.get(i)),
