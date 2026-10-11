@@ -204,6 +204,7 @@ fn variables_resolve_modes_and_aliases() {
         id: "c1".into(),
         name: "Theme".into(),
         modes: vec![Mode { id: "light".into(), name: "Light".into() }, Mode { id: "dark".into(), name: "Dark".into() }],
+        extends: None,
     });
     let mut vals = std::collections::BTreeMap::new();
     vals.insert("light".to_string(), VariableValue::Color(Color::WHITE));
@@ -217,6 +218,8 @@ fn variables_resolve_modes_and_aliases() {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     let mut alias = std::collections::BTreeMap::new();
     alias.insert("light".to_string(), VariableValue::Alias("bg".into()));
@@ -229,6 +232,8 @@ fn variables_resolve_modes_and_aliases() {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     let mut modes = std::collections::BTreeMap::new();
     assert_eq!(v.resolve("surface", &modes), Some(VariableValue::Color(Color::WHITE)));
@@ -246,6 +251,8 @@ fn variables_resolve_modes_and_aliases() {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     assert_eq!(v.resolve("loop", &std::collections::BTreeMap::new()), None);
 }

@@ -1036,6 +1036,7 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
             list.push(figcraft_color::Paint::solid(if fills { figcraft_color::Color::DEFAULT_SHAPE } else { figcraft_color::Color::BLACK }));
         }
         let Some(slot) = list.get_mut(at) else { return Err(bad(cmd, format!("no paint at index {at}"))) };
+        let old = slot.clone();
         if let Some(np) = &new_paint {
             *slot = np.clone();
         }
@@ -1054,6 +1055,7 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
         if let Some(b) = blend(p, "blend") {
             slot.blend = b;
         }
+        super::lists::remap_stop_bindings(n, fills, at, &old);
         if fills {
             n.styles.fill = None;
         } else {

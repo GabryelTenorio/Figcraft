@@ -598,14 +598,14 @@ pub fn import_variables(
                     && version > r.version
                     && let Some(slot) = doc.variables.collections.iter_mut().find(|x| x.id == r.local)
                 {
-                    *slot = Collection { id: r.local.clone(), ..c.clone() };
+                    *slot = Collection { id: r.local.clone(), extends: None, ..c.clone() };
                     set_record(&mut doc.libraries_mut().collections, ImportedRecord { version, ..r.clone() });
                 }
                 r.local
             }
             None => {
                 let local = local_key(lid, key, |l| exists(doc, l));
-                doc.variables.collections.push(Collection { id: local.clone(), ..c.clone() });
+                doc.variables.collections.push(Collection { id: local.clone(), extends: None, ..c.clone() });
                 let rec = ImportedRecord { library: lid.to_string(), key: key.clone(), local: local.clone(), version };
                 set_record(&mut doc.libraries_mut().collections, rec);
                 local
@@ -649,7 +649,7 @@ pub fn import_variables(
             };
             values.insert(mode.clone(), val);
         }
-        let copy = Variable { id: local.clone(), collection, values, ..v.clone() };
+        let copy = Variable { id: local.clone(), collection, values, extends: None, overrides: Default::default(), ..v.clone() };
         match doc.variables.variables.iter_mut().find(|x| x.id == local).filter(|_| !new) {
             Some(slot) => *slot = copy,
             None => doc.variables.variables.push(copy),
@@ -853,10 +853,26 @@ pub fn accept_updates(doc: &mut Document, lib: &PublishedLibrary) -> Result<Pend
     if !p.styles.is_empty() {
         import_styles(doc, lib, &p.styles.iter().map(|r| r.key.clone()).collect(), true);
     }
-    if !p.variables.is_empty() || !p.collections.is_empty() {
+    // Extended collections also get the variables their library collection gained.
+    // shortcut: `pending` doesn't count those, so they arrive with the library's next other update;
+    // upgrade if extended collections need them on their own.
+    let extended: BTreeSet<&str> = doc
+        .variables
+        .collections
+        .iter()
+        .filter_map(|c| doc.libraries.collection_import(c.extends.as_deref()?))
+        .filter(|r| r.library == lib.manifest.id)
+        .map(|r| r.key.as_str())
+        .collect();
+    let extended: BTreeSet<VariableId> =
+        published_variables(lib).filter(|v| extended.contains(v.collection.as_str())).map(|v| v.id.clone()).collect();
+    if !p.variables.is_empty() || !p.collections.is_empty() || !extended.is_empty() {
         let keys = |list: &[ImportedRecord]| list.iter().map(|r| r.key.clone()).collect::<BTreeSet<_>>();
-        import_variables(doc, lib, &keys(&p.variables), &keys(&p.collections), true);
+        let mut vars = keys(&p.variables);
+        vars.extend(extended);
+        import_variables(doc, lib, &vars, &keys(&p.collections), true);
     }
+    crate::cmd::variables::sync_extensions(doc);
     let m = &lib.manifest;
     if let Some(l) = doc.libraries_mut().enabled.iter_mut().find(|l| l.id == m.id)
         && (l.version != m.version || l.name != m.name)
@@ -901,10 +917,11 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
         doc.styles.retain(|s| !unused.contains(&s.id));
         doc.libraries_mut().styles.retain(|r| !unused.contains(&r.local));
     }
-    // Variables layers bind or set, and local variables alias (with what those alias).
+    // Variables layers bind or set, local variables alias or extend (with what those alias).
     let seeds = doc
         .nodes()
         .flat_map(|n| n.bound.values().map(String::as_str).chain(action_variables(n)))
+        .chain(doc.variables.variables.iter().filter_map(|v| v.extends.as_deref()))
         .map(str::to_string)
         .chain(doc.variables.variables.iter().filter(|v| !is_remote_variable(doc, &v.id)).flat_map(|v| v.values.values()).filter_map(|x| match x {
             VariableValue::Alias(a) => Some(a.clone()),
@@ -930,6 +947,7 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
         .iter()
         .map(|v| &v.collection)
         .chain(doc.nodes().flat_map(|n| n.var_modes.keys()))
+        .chain(doc.variables.collections.iter().filter_map(|c| c.extends.as_ref()))
         .chain(action_modes)
         .cloned()
         .collect();

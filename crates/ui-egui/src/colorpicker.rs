@@ -468,6 +468,8 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 }
                 let mut changed = false;
                 let mut done = false;
+                // The bar first, so the stops on it take their own clicks.
+                let bresp = ui.interact(bar, Id::new("cp_bar"), Sense::click());
                 for (i, s) in g.stops.clone().iter().enumerate() {
                     let x = bar.min.x + s.position * bar.width();
                     let r = Rect::from_center_size(pos2(x, bar.center().y), vec2(12.0, 18.0));
@@ -494,7 +496,6 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     }
                 }
                 // Click on the bar adds a stop.
-                let bresp = ui.interact(bar, Id::new("cp_bar"), Sense::click());
                 if bresp.clicked()
                     && let Some(p) = bresp.interact_pointer_pos()
                 {
@@ -537,6 +538,24 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                         write(app, &target, &paint, false);
                     }
                 });
+                // The selected stop's colour can come from a colour variable.
+                if let PickerTarget::Paint { fills, index, ids } = &target {
+                    let field = format!("{}/{index}/stops/{sel}/color", if *fills { "fills" } else { "strokes" });
+                    let stop = g.stops.get(sel).map(|s| s.color);
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        crate::variable_ui::bindable(app, ui, ids, &field, figcraft_doc::VariableType::Color, 208.0, |_, ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(208.0, widgets::FIELD_H), Sense::hover());
+                            ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
+                            let sw = Rect::from_center_size(pos2(r.min.x + 13.0, r.center().y), vec2(14.0, 14.0));
+                            if let Some(c) = stop {
+                                widgets::paint_swatch(ui.painter(), sw, &Paint::solid(c));
+                                let text = format!("Stop {}  {}", sel + 1, c.to_hex());
+                                ui.painter().text(pos2(sw.max.x + 8.0, r.center().y), Align2::LEFT_CENTER, text, regular(11.0), t.text);
+                            }
+                        });
+                    });
+                }
             }
             if let PaintKind::Image(img) = &paint.kind {
                 let mut img = img.clone();

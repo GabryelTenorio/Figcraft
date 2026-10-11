@@ -17,12 +17,15 @@ pub(crate) fn vars() -> Variables {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     };
     Variables {
         collections: vec![Collection {
             id: "c".into(),
             name: "Theme".into(),
             modes: vec![Mode { id: "light".into(), name: "Light".into() }, Mode { id: "dark".into(), name: "Dark".into() }],
+            extends: None,
         }],
         variables: vec![
             var("n", VariableType::Number, values(VariableValue::Number(3.0), VariableValue::Number(7.0))),

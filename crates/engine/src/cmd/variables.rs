@@ -1,5 +1,6 @@
 //! Editing variables, modes and collections (the Variables editor): rename, describe, scope,
-//! duplicate and delete; alias checks; and which scope a bindable property belongs to.
+//! duplicate and delete; extended collections (overrides, keeping them in step with what they
+//! extend); alias checks; and which scope a bindable property belongs to.
 
 use std::collections::BTreeSet;
 
@@ -31,7 +32,35 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             delete_collection
         ),
+        spec!(
+            "variable.resetOverride",
+            "Reset variable override",
+            "{variable (a variable of an extended collection inherited from the collection it extends), mode? (id or name; every overridden mode when omitted)}  the value follows the inherited one again",
+            true,
+            reset_override
+        ),
     ]
+}
+
+/// The first of `base`, `base 2`, `base 3`… that no collection is named.
+pub(crate) fn free_collection_name(doc: &Document, base: &str) -> String {
+    (1..1000)
+        .map(|k| if k == 1 { base.to_string() } else { format!("{base} {k}") })
+        .find(|n| !doc.variables.collections.iter().any(|c| c.name == *n))
+        .unwrap_or_else(|| base.to_string())
+}
+
+/// The error for editing what an extended collection inherits.
+fn inherited(cmd: &str, what: &str) -> crate::EngineError {
+    bad(cmd, format!("{what} comes from the collection it extends (edit it there)"))
+}
+
+/// Refuse mode edits of extended collections (they have the modes of the collection they extend).
+pub(crate) fn check_modes_editable(doc: &Document, cmd: &str, collection: &str) -> Result<()> {
+    match doc.variables.collection(collection) {
+        Some(c) if c.extends.is_some() => Err(inherited(cmd, "an extended collection's modes")),
+        _ => Ok(()),
+    }
 }
 
 /// A variable name with each `/`-separated group part trimmed; None when nothing is left.
@@ -47,6 +76,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = s.doc_mut()?;
     let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
     let name = match string(p, "name") {
+        Some(_) if var.extends.is_some() => return Err(inherited(cmd, "an inherited variable's name")),
         Some(n) => {
             let n = clean_name(&n).ok_or_else(|| bad(cmd, "name can't be empty"))?;
             if doc.variables.variables.iter().any(|x| x.id != var.id && x.collection == var.collection && x.name == n) {
@@ -102,6 +132,9 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad(cmd, "too many copies"))?;
     copy.id = doc.new_variable_id();
     copy.name = name;
+    // A copy of an inherited variable is the extended collection's own.
+    copy.extends = None;
+    copy.overrides.clear();
     let id = copy.id.clone();
     doc.variables.variables.insert(pos + 1, copy);
     Ok(json!({"id": id}))
@@ -123,6 +156,7 @@ fn mode_of(doc: &Document, cmd: &str, p: &Value) -> Result<(usize, ModeId)> {
         .and_then(|c| c.modes.iter().find(|x| x.id == m || x.name == m))
         .map(|x| x.id.clone())
         .ok_or_else(|| bad(cmd, "no such mode"))?;
+    check_modes_editable(doc, cmd, doc.variables.collections.get(ci).map_or("", |c| &c.id))?;
     Ok((ci, mode))
 }
 
@@ -194,6 +228,105 @@ fn delete_collection(s: &mut Session, p: &Value) -> Result<Value> {
         n.bound.retain(|_, v| !gone.contains(v));
     }
     Ok(json!({"deletedVariables": gone.len()}))
+}
+
+fn reset_override(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "variable.resetOverride";
+    let v = req_string(cmd, p, "variable")?;
+    let doc = s.doc_mut()?;
+    let var = doc.variables.get(&v).cloned().ok_or_else(|| bad(cmd, "no such variable"))?;
+    let parent = var.extends.as_deref().and_then(|x| doc.variables.get(x)).cloned();
+    let parent = parent.ok_or_else(|| bad(cmd, "only variables an extended collection inherits have overrides"))?;
+    let modes: Vec<ModeId> = match string(p, "mode") {
+        Some(m) => {
+            let coll = doc.variables.collection(&var.collection).ok_or_else(|| bad(cmd, "variable has no collection"))?;
+            vec![coll.find_mode(&m).ok_or_else(|| bad(cmd, "no such mode"))?.id.clone()]
+        }
+        None => var.overrides.iter().cloned().collect(),
+    };
+    if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == var.id) {
+        for m in modes {
+            slot.overrides.remove(&m);
+            if let Some(val) = parent.values.get(&m) {
+                slot.values.insert(m, val.clone());
+            }
+        }
+    }
+    ok()
+}
+
+/// Keep extended collections in step with the collections they extend (after extending one or
+/// updating library copies): the same modes, one inheriting variable per variable of the parent
+/// (named like it, with its values in every mode not overridden) and values in every mode for
+/// their own variables. When a parent collection or variable is gone, what extended it becomes a
+/// plain collection or variable, keeping its values.
+pub fn sync_extensions(doc: &mut Document) {
+    let exts: Vec<(CollectionId, Option<Collection>)> = doc
+        .variables
+        .collections
+        .iter()
+        .filter_map(|c| Some((c.id.clone(), c.extends.as_ref().map(|p| doc.variables.collections.iter().find(|x| x.id == *p).cloned())?)))
+        .collect();
+    for (cid, parent) in exts {
+        let vars = &mut doc.variables.variables;
+        // shortcut: an extension of an extension isn't followed (extending is offered for library
+        // collections only), upgrade if extended collections get published and extended again.
+        let Some(parent) = parent.filter(|p| p.extends.is_none()) else {
+            for v in vars.iter_mut().filter(|v| v.collection == cid) {
+                v.extends = None;
+                v.overrides.clear();
+            }
+            if let Some(c) = doc.variables.collections.iter_mut().find(|c| c.id == cid) {
+                c.extends = None;
+            }
+            continue;
+        };
+        let parents: Vec<Variable> = vars.iter().filter(|v| v.collection == parent.id).cloned().collect();
+        let modes: Vec<ModeId> = parent.modes.iter().map(|m| m.id.clone()).collect();
+        for v in vars.iter_mut().filter(|v| v.collection == cid) {
+            match v.extends.as_ref().map(|e| parents.iter().find(|p| p.id == *e)) {
+                Some(Some(p)) => {
+                    if v.kind != p.kind {
+                        v.kind = p.kind;
+                        v.overrides.clear();
+                    }
+                    v.name.clone_from(&p.name);
+                    v.overrides.retain(|m| modes.contains(m));
+                    let own = std::mem::take(&mut v.values);
+                    v.values =
+                        p.values.iter().map(|(m, x)| (m.clone(), own.get(m).filter(|_| v.overrides.contains(m)).unwrap_or(x).clone())).collect();
+                }
+                Some(None) => {
+                    v.extends = None;
+                    v.overrides.clear();
+                }
+                None => {}
+            }
+            // Its own variables (and orphans) keep a value in every mode: new modes start with the
+            // default mode's.
+            if v.extends.is_none() {
+                let first = modes.iter().find_map(|m| v.values.get(m)).or_else(|| v.values.values().next()).cloned();
+                v.values.retain(|m, _| modes.contains(m));
+                if let Some(f) = first {
+                    for m in &modes {
+                        v.values.entry(m.clone()).or_insert_with(|| f.clone());
+                    }
+                }
+            }
+        }
+        let missing: Vec<Variable> =
+            parents.into_iter().filter(|p| !vars.iter().any(|v| v.collection == cid && v.extends.as_ref() == Some(&p.id))).collect();
+        if let Some(c) = doc.variables.collections.iter_mut().find(|c| c.id == cid)
+            && c.modes != parent.modes
+        {
+            c.modes = parent.modes.clone();
+        }
+        for p in missing {
+            let id = doc.new_variable_id();
+            let extends = Some(p.id.clone());
+            doc.variables.variables.push(Variable { id, collection: cid.clone(), extends, hidden_from_publishing: false, ..p });
+        }
+    }
 }
 
 /// Check that `var` may alias `target` (id or name): it exists, has the same type and doesn't

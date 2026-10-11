@@ -827,11 +827,14 @@ pub(crate) fn swap_at(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Whether instance `id` has a component property `name` that a `kind` variable can drive (a
-/// boolean property takes a boolean variable, a text property a string one).
+/// boolean property takes a boolean variable, a text or variant property a string one).
 pub(crate) fn check_prop_binding(doc: &Document, id: NodeId, name: &str, kind: VariableType) -> std::result::Result<(), String> {
     let Some(NodeKind::Instance { component, .. }) = doc.node(id).map(|n| &n.kind) else {
         return Err(format!("{id} is not an instance (component properties are bound on instances)"));
     };
+    if variant_set(doc, *component).is_some_and(|set| variant_options(doc, set).iter().any(|(o, _)| o == name)) {
+        return if kind == VariableType::String { Ok(()) } else { Err(format!("`{name}` is a variant property: bind a string variable")) };
+    }
     match (prop_defs(doc, *component).get(name), kind) {
         (Some(PropDef::Boolean { .. }), VariableType::Boolean) | (Some(PropDef::Text { .. }), VariableType::String) => Ok(()),
         (Some(PropDef::Boolean { .. }), _) => Err(format!("`{name}` is a boolean property: bind a boolean variable")),
@@ -841,9 +844,31 @@ pub(crate) fn check_prop_binding(doc: &Document, id: NodeId, name: &str, kind: V
     }
 }
 
-/// Write bound variable values into instance `id`'s boolean and text property values (only what
-/// changed; the instance then follows its new values like after `instance.setProperties`).
+/// Write bound variable values into instance `id`'s boolean and text property values, and switch
+/// it to the variant its bound variant properties name (only what changed; the instance then
+/// follows like after `instance.setProperties`). A value that names no variant changes nothing.
 pub(crate) fn apply_prop_bindings(doc: &mut Document, id: NodeId, sets: &[(String, VariableValue)]) {
+    let Some(NodeKind::Instance { component, .. }) = doc.node(id).map(|n| &n.kind) else { return };
+    let component = *component;
+    if let Some(set) = variant_set(doc, component) {
+        let options = variant_options(doc, set);
+        let current = doc.node(component).map(|c| variant_props(&c.name)).unwrap_or_default();
+        let mut wanted = current.clone();
+        for (name, val) in sets {
+            if let VariableValue::String(t) = val
+                && options.iter().any(|(o, vals)| o == name && vals.contains(t))
+            {
+                wanted.insert(name.clone(), t.clone());
+            }
+        }
+        if wanted != current
+            && let Some(target) = find_variant(doc, set, &wanted)
+            && let Ok(n) = doc.get_mut(id)
+            && let NodeKind::Instance { component: c, .. } = &mut n.kind
+        {
+            *c = target;
+        }
+    }
     let Some(NodeKind::Instance { component, props }) = doc.node(id).map(|n| &n.kind) else { return };
     let Some(NodeKind::Component { props: defs, .. }) = doc.node(*component).map(|c| &c.kind) else { return };
     let mut next = props.clone();

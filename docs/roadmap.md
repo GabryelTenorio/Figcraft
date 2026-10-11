@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; collaboration polish: collision-free ids, remote text carets; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (styles & variables: extended collections, variables import/export, gradient stop and variant bindings; area 12 re-scored, headline totals unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -49,7 +49,7 @@ blockers.
 | M0.9 CLI + MCP, web build, release packaging, PDF export | done (v0.2.0 released 2026-10-10 for every platform) | — | — |
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~75% | Open recent, outline mode variants, keyboard box selection, interaction pass | 8–14 + pass |
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
-| M3 Components & styles depth | ~75% | extended collections, variables import/export, real libraries | 10–20 |
+| M3 Components & styles depth | ~78% | real libraries, component playground | 7–14 |
 | M4 Vector & text depth | ~70% | live booleans, spell check, Figma Draw (brushes, pressure, text on a path, patterns) | 24–40 |
 | M5 Prototype & present | ~85% | media, gamepad, separate window | 5–9 |
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
@@ -71,6 +71,7 @@ blockers.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Styles & variables: extended collections, variables import/export and gradient stop and variant property bindings landed (area 12 breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; M3 10–20 h → 7–14 h); weighted and headline totals (under half a point, a few hours) left for the next re-measure |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

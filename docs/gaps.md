@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; collaboration polish: collision-free ids, remote text carets; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (gap 14: extended collections, variables import/export, gradient stop and variant bindings landed; its hours 4–8 → 1–2, headline totals left for the next re-measure) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -27,7 +27,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video and animated GIF fills; HEIC/TIFF images | File format | 6–12 | [file-format-parity](file-format-parity.md) |
 | 13 | Live boolean editing and the vector tail | Feature | 6–10 | [target-app-parity](target-app-parity.md) |
-| 14 | Variables: extended collections, import/export | Feature | 4–8 | [components-parity](components-parity.md) |
+| 14 | Variables: extended collections' tail | Feature | 1–2 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
 | 16 | Dev Mode: Code Connect, editor integrations | Feature | 4–8 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching and merging | Feature | 8–15 | [collaboration-parity](collaboration-parity.md) |
@@ -164,10 +164,16 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   fields, shape builder on strokes and open paths, one-sided variable widths.
 - **Estimate:** 6–10 h.
 
-### 14. Variables: extended collections, import/export
-- **Missing:** extended collections (a library collection extended with overrides), variables
-  import/export, variant properties and gradient stops bound to variables.
-- **Estimate:** 4–8 h.
+### 14. Variables: extended collections' tail
+- **Landed:** extended collections (`library.extendCollection`: a library collection's modes and
+  variables in a collection of this file, values overridden per mode with reset, following library
+  updates, variables of its own), variables import/export (`variable.export` / `variable.import`:
+  the REST local variables JSON, merged by name; CSS custom properties), gradient stops and variant
+  properties bound to variables.
+- **Missing:** variables a library adds to an extended collection arrive only with the library's
+  next other update (they don't count as an update of their own); an extended collection can't be
+  extended again; checked with synthetic files only.
+- **Estimate:** 1–2 h.
 
 ### 15. Prototyping: media triggers and actions, gamepad
 - **Missing:** video triggers (on media hit/end) and play/pause/mute/seek actions; gamepad input.
@@ -218,6 +224,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Gap 14: extended collections, variables import/export and gradient stop and variant property bindings landed; what's left is the tail (1–2 h, was 4–8). Headline totals (a few hours, under half a point) left for the next re-measure |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

@@ -131,6 +131,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             set_mode
         ),
+        spec!(
+            "library.extendCollection",
+            "Extend library collection",
+            "{library, collection (id or name of a published collection), name? (default \"<name> (extended)\")}  → {id}: a collection of this file with the library collection's modes and variables (they follow its updates); override their values per mode with variable.set (variable.resetOverride goes back to the inherited value) and add variables of its own",
+            true,
+            extend
+        ),
     ]
 }
 
@@ -217,6 +224,28 @@ fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
     let local = map.collections.get(&key).cloned().ok_or_else(|| EngineError::Other("the collection didn't import".into()))?;
     super::styles::set_mode(s, &with(p, &["ids", "id"], json!({"collection": local, "mode": mode})))?;
     Ok(json!({"collection": local}))
+}
+
+fn extend(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.extendCollection";
+    let (link, lib) = library(s, cmd, p)?;
+    let key = req_string(cmd, p, "collection")?;
+    let coll = published_collections(&lib)
+        .find(|c| c.id == key)
+        .or_else(|| published_collections(&lib).find(|c| c.name == key))
+        .cloned()
+        .ok_or_else(|| bad(cmd, format!("\"{}\" publishes no variable collection `{key}`", link.name)))?;
+    let vars: BTreeSet<VariableId> = published_variables(&lib).filter(|v| v.collection == coll.id).map(|v| v.id.clone()).collect();
+    let doc = s.doc_mut()?;
+    let map = import_variables(doc, &lib, &vars, &BTreeSet::from([coll.id.clone()]), false);
+    let parent = map.collections.get(&coll.id).cloned().ok_or_else(|| EngineError::Other("the collection didn't import".into()))?;
+    let base = string(p, "name").map(|n| n.trim().chars().take(200).collect::<String>()).filter(|n| !n.is_empty());
+    let base = base.unwrap_or_else(|| format!("{} (extended)", coll.name));
+    let name = super::variables::free_collection_name(doc, &base);
+    let id = doc.new_collection_id();
+    doc.variables.collections.push(Collection { id: id.clone(), name, modes: Vec::new(), extends: Some(parent) });
+    super::variables::sync_extensions(doc);
+    Ok(json!({"id": id}))
 }
 
 fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {

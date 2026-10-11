@@ -103,6 +103,7 @@ fn create_everything(doc: &mut Document, who: usize, round: usize) {
         id: cid.clone(),
         name: name.clone(),
         modes: vec![Mode { id: format!("{cid}/mode1"), name: "Light".into() }],
+        extends: None,
     });
     if let Some(m) = doc.new_mode_id(&cid)
         && let Some(c) = doc.variables.collections.iter_mut().find(|c| c.id == cid)
@@ -119,6 +120,8 @@ fn create_everything(doc: &mut Document, who: usize, round: usize) {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     let k = doc.new_comment_id();
     let c = comment(k, doc);

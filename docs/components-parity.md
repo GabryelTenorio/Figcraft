@@ -1,11 +1,11 @@
 # Components, variants, styles and variables parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the ROADMAP's components and variables items) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
 
 Design systems are why teams adopt Figma. **Components: breadth ~95%, ready ~68%. Styles and
-variables: breadth ~85%, ready ~70% (estimated).** QA'd with a synthetic design system of ~300
+variables: breadth ~92%, ready ~72% (estimated).** QA'd with a synthetic design system of ~300
 components used 2,000 times (`crates/engine/src/synthetic_ds.rs`, `components_scale_tests.rs`);
-not with real libraries. Remaining: 10–20 h here, plus shared libraries (10–20 h after
+not with real libraries. Remaining: 7–14 h here, plus shared libraries (10–20 h after
 multiplayer).
 
 ## Components and variants
@@ -42,13 +42,14 @@ multiplayer).
 | Variables: colour, number, string, boolean; collections, modes, aliases, scopes, groups | done | |
 | Bindings: fills, strokes, effects, opacity, padding, gaps, sizes, radius, font size, line height, letter spacing, text, visibility, layout grids, instance properties | done | |
 | Explicit modes per frame, library collections' modes | done | |
-| Gradient stops and variant properties bound to variables | missing | |
-| Extended collections | missing | [gaps](gaps.md) #14 |
-| Variables import/export (JSON) | missing | REST variables JSON is read on import |
+| Gradient stops and variant properties bound to variables | done | a stop's binding follows it when earlier stops are removed |
+| Extended collections | done | library collections; overrides per mode with reset; follow library updates; modes inherited. New library variables arrive with the next other update ([gaps](gaps.md) #14) |
+| Variables import/export (JSON) | done | the REST local variables shape (round-trips; merges by collection, mode and variable name); CSS custom properties export |
 | Expressions in prototype set-variable actions | done | see [prototyping-parity](prototyping-parity.md) |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Extended collections, variables import/export (JSON, CSS) and gradient stop and variant property bindings landed: styles and variables breadth ~85% → ~92%, ready ~70% → ~72%; remaining here 10–20 h → 7–14 h |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

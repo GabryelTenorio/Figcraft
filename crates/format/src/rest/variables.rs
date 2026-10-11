@@ -1,11 +1,12 @@
 //! Variables: the local variables response (`GET /v1/files/:key/variables/local`, whose `meta`
 //! holds `variableCollections` and `variables`), embedded next to the file JSON or passed on its
-//! own, and the layers' `boundVariables` and `explicitVariableModes`.
+//! own, and the layers' `boundVariables` and `explicitVariableModes`. [`export`] writes
+//! collections back in the same shape.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use figcraft_doc::{Collection, Mode, Node, NodeKind, Variable, VariableType, VariableValue, normalize_scopes};
-use serde_json::{Map, Value};
+use figcraft_doc::{ALL_SCOPES, Collection, Mode, Node, NodeKind, Variable, VariableType, VariableValue, Variables, normalize_scopes};
+use serde_json::{Map, Value, json};
 
 use super::Ctx;
 use super::props::{clip_str, color, list, text};
@@ -49,6 +50,64 @@ pub(super) fn value(kind: VariableType, v: &Value) -> Option<VariableValue> {
         VariableType::String => VariableValue::String(v.as_str()?.chars().take(MAX_STRING).collect()),
         VariableType::Boolean => VariableValue::Boolean(v.as_bool()?),
     })
+}
+
+/// `collections` of `vars` (with their variables) as a local variables response, which
+/// [`Ctx::variables`] reads back. Aliases to variables outside them are written as the value they
+/// resolve to in the default modes.
+pub fn export(vars: &Variables, collections: &[&Collection]) -> Value {
+    let ids: BTreeSet<&str> = collections.iter().map(|c| c.id.as_str()).collect();
+    let members: Vec<&Variable> = vars.variables.iter().filter(|v| ids.contains(v.collection.as_str())).collect();
+    let exported: BTreeSet<&str> = members.iter().map(|v| v.id.as_str()).collect();
+    let mut colls = Map::new();
+    for c in collections {
+        let modes: Vec<Value> = c.modes.iter().map(|m| json!({"modeId": m.id, "name": m.name})).collect();
+        let var_ids: Vec<&str> = members.iter().filter(|v| v.collection == c.id).map(|v| v.id.as_str()).collect();
+        colls.insert(
+            c.id.clone(),
+            json!({"id": c.id, "name": c.name, "key": c.id, "modes": modes, "defaultModeId": c.default_mode(), "remote": false,
+                   "hiddenFromPublishing": false, "variableIds": var_ids}),
+        );
+    }
+    let mut out = Map::new();
+    for v in members {
+        let mut values = Map::new();
+        for (mode, val) in &v.values {
+            let val = match val {
+                VariableValue::Alias(a) if !exported.contains(a.as_str()) => match vars.resolve(a, &BTreeMap::new()) {
+                    Some(r) => r,
+                    None => continue,
+                },
+                other => other.clone(),
+            };
+            values.insert(mode.clone(), raw(&val));
+        }
+        let kind = match v.kind {
+            VariableType::Color => "COLOR",
+            VariableType::Number => "FLOAT",
+            VariableType::String => "STRING",
+            VariableType::Boolean => "BOOLEAN",
+        };
+        let scopes = v.scopes.clone().unwrap_or_else(|| vec![ALL_SCOPES.to_string()]);
+        out.insert(
+            v.id.clone(),
+            json!({"id": v.id, "name": v.name, "key": v.id, "variableCollectionId": v.collection, "resolvedType": kind, "valuesByMode": values,
+                   "remote": false, "description": v.description, "hiddenFromPublishing": v.hidden_from_publishing, "scopes": scopes,
+                   "codeSyntax": {}}),
+        );
+    }
+    json!({"status": 200, "error": false, "meta": {"variableCollections": colls, "variables": out}})
+}
+
+/// A value as the variables JSON writes it (the inverse of [`value`]).
+fn raw(v: &VariableValue) -> Value {
+    match v {
+        VariableValue::Color(c) => json!({"r": c.r, "g": c.g, "b": c.b, "a": c.a}),
+        VariableValue::Number(x) => json!(x),
+        VariableValue::String(s) => json!(s),
+        VariableValue::Boolean(b) => json!(b),
+        VariableValue::Alias(a) => json!({"type": "VARIABLE_ALIAS", "id": a}),
+    }
 }
 
 fn objects<'v>(v: &'v Value, key: &str, max: usize) -> impl Iterator<Item = (&'v String, &'v Value)> {
@@ -102,7 +161,7 @@ impl Ctx<'_> {
         }
         let name = text(c, "name").filter(|s| !s.trim().is_empty()).map_or("Collection", clip_str).to_string();
         self.var_modes.insert(id.clone(), modes.iter().map(|m| m.id.clone()).collect());
-        self.doc.variables.collections.push(Collection { id, name, modes });
+        self.doc.variables.collections.push(Collection { id, name, modes, extends: None });
     }
 
     fn variable(&mut self, key: &str, v: &Value) -> Option<Variable> {
@@ -146,6 +205,8 @@ impl Ctx<'_> {
             description: text(v, "description").map(|s| s.chars().take(MAX_STRING).collect()).unwrap_or_default(),
             scopes: scopes.flatten(),
             hidden_from_publishing: v.get("hiddenFromPublishing").and_then(Value::as_bool).unwrap_or(false),
+            extends: None,
+            overrides: Default::default(),
         })
     }
 
