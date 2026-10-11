@@ -99,6 +99,43 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
         font_rows(app, ui, &ids, &styles, editing, &apply_style);
     }
     paragraph_rows(app, ui, doc, &ids, &styles, &apply_style);
+    path_row(app, ui, doc, sel, &ids);
+}
+
+/// Text on a path: where the text starts, which side it runs on, and taking it off the path; or,
+/// with a text and a path selected, putting the text on the path.
+fn path_row(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], ids: &[NodeId]) {
+    let paths: Option<Vec<(f64, bool)>> =
+        ids.iter().map(|i| doc.node(*i).and_then(|n| n.kind.text()).and_then(|t| t.path.as_ref()).map(|p| (p.start(), p.flip))).collect();
+    let Some(paths) = paths else {
+        let other = sel.iter().find(|i| !ids.contains(i)).and_then(|i| doc.node(*i));
+        if ids.len() == 1 && sel.len() == 2 && other.is_some_and(|n| figcraft_doc::geometry::stroke_geometry(n).is_some()) {
+            row(ui, 32.0, |ui| {
+                if widgets::button(ui, "Put text on path", false, true).clicked() {
+                    app.run("text.onPath", json!({ "ids": sel }));
+                }
+            });
+        }
+        return;
+    };
+    let start = paths.first().map(|p| p.0).filter(|s| paths.iter().all(|p| p.0 == *s));
+    let flip = paths.iter().all(|p| p.1);
+    row(ui, 32.0, |ui| {
+        let lead = Lead::Icon(Icon::Pen, "Start on path");
+        match widgets::number_field(ui, Id::new("ty_path_start"), lead, start.map(|s| s * 100.0), "%", 96.0, 1.0) {
+            Some(FieldEdit::Set(v)) => {
+                app.run("text.pathOptions", json!({"ids": ids, "start": v / 100.0}));
+            }
+            Some(FieldEdit::Scrub(v, done)) => live(app, "Start on path", "text.pathOptions", json!({"ids": ids, "start": v / 100.0}), done),
+            None => {}
+        }
+        if icons::button(ui, Icon::FlipV, 24.0, flip, "Flip text to the other side").clicked() {
+            app.run("text.pathOptions", json!({"ids": ids, "flip": !flip}));
+        }
+        if icons::button(ui, Icon::Detach, 24.0, false, "Remove text from path").clicked() {
+            app.run("text.removeFromPath", json!({ "ids": ids }));
+        }
+    });
 }
 
 /// Set character `props` on the selected chars of the text being edited, else on whole layers

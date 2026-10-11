@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (text on a path and pattern fills: gap 9 down to brushes and pressure; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -22,7 +22,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 6 | Plugins: no run-time UI, distribution or widgets; Figma's plugins don't run | Ecosystem | 25–55 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
-| 9 | Figma Draw: brushes, pressure, text on a path, pattern fills | Feature | 10–18 | [target-app-parity](target-app-parity.md) |
+| 9 | Figma Draw: stretch and scatter brushes, pen pressure (text on a path and pattern fills landed) | Feature | 5–10 | [target-app-parity](target-app-parity.md) |
 | 10 | Shared (team) libraries | Feature | 10–20 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video and animated GIF fills; HEIC/TIFF images | File format | 6–12 | [file-format-parity](file-format-parity.md) |
@@ -137,13 +137,15 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).
 
-### 9. Figma Draw: brushes, pressure, text on a path, pattern fills
-- **Missing:** stretch and scatter brushes, pen pressure for the pencil and brushes, text on a
-  path, pattern fills, multi-edit.
-- **Evidence:** `PaintKind` has solid, gradient and image only (`crates/color/src/lib.rs`); no
-  pressure input anywhere; SVG text on a path imports as outlines.
+### 9. Figma Draw: brushes and pressure
+- **Missing:** stretch and scatter brushes, pen pressure for the pencil and brushes, multi-edit.
+- **Landed:** text on a path (`text.onPath`, `text.pathOptions`, `text.removeFromPath`; the
+  Design panel's Typography section; canvas, PNG, SVG and PDF as outlines; SVG `<textPath>` imports
+  as text on a path) and pattern fills (`PaintKind::Pattern`, `fill.pattern`, the colour picker's
+  Pattern tab; SVG `<pattern>`, PDF tiling patterns).
+- **Evidence:** no pressure input anywhere; strokes have uniform and variable widths only.
 - **Impact:** illustration-flavoured work moved into Figma Draw in 2025.
-- **Estimate:** 10–18 h.
+- **Estimate:** 5–10 h.
 
 ### 10. Shared (team) libraries
 - **Missing:** libraries shared across people and files without copying them around; library
@@ -239,6 +241,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |

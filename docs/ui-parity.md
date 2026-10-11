@@ -60,7 +60,8 @@ interaction feel not yet compared.
 | Text: point, auto height, fixed; caret, words, lines, IME | done | no spell check |
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
-| Brushes, text on a path (Figma Draw) | missing | |
+| Text on a path (Figma Draw) | done | put on from the Design panel or `text.onPath`, not by clicking a path with the Text tool; the path is edited by resizing only |
+| Brushes (Figma Draw) | missing | |
 | Image crop handles | done | |
 
 ## Canvas

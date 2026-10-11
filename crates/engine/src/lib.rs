@@ -1179,6 +1179,8 @@ mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
 #[cfg(test)]
+mod draw_tools_tests;
+#[cfg(test)]
 mod effects_tests;
 #[cfg(test)]
 mod frame_guides_tests;

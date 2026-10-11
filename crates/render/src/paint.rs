@@ -81,9 +81,10 @@ fn diamond_pixmap(g: &Gradient, opacity: f32) -> Option<Arc<Pixmap>> {
     Some(Arc::new(p))
 }
 
-/// Build the shader for `paint` on a `w`×`h` local box. Returns `None` when the paint draws
-/// nothing (invisible, fully transparent, missing image).
-pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared> {
+/// Build the shader for `paint` on a `w`×`h` local box shown at `scale` device pixels per unit
+/// (the resolution pattern tiles are drawn at). Returns `None` when the paint draws nothing
+/// (invisible, fully transparent, missing image or pattern source).
+pub fn prepare(paint: &Paint, w: f64, h: f64, scale: f64, doc: &Document) -> Option<Prepared> {
     if !paint.visible || paint.opacity <= 0.0 {
         return None;
     }
@@ -131,6 +132,7 @@ pub fn prepare(paint: &Paint, w: f64, h: f64, doc: &Document) -> Option<Prepared
             let transform = Transform::from_translate(-1.0, -1.0).post_concat(transform);
             Some(Prepared::Pattern { pixmap: padded, mode: SpreadMode::Pad, quality: FilterQuality::Bicubic, opacity: op, transform })
         }
+        PaintKind::Pattern(pt) => crate::pattern::prepare(doc, pt, w, h, scale, op),
     }
 }
 

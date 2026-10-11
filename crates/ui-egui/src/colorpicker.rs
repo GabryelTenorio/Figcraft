@@ -1,8 +1,10 @@
 //! The colour picker popover: paint type, saturation/brightness square, hue and alpha sliders,
-//! hex and RGB fields, gradient stops, image fills and document colours.
+//! hex and RGB fields, gradient stops, image and pattern fills and document colours.
 
 use egui::{Align2, Color32, CornerRadius, Id, Mesh, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use figcraft_color::{Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImageScaleMode, Paint, PaintKind};
+use figcraft_color::{
+    Color, ColorStop, Gradient, GradientKind, Hsb, ImageFilters, ImageScaleMode, Paint, PaintKind, PatternAlign, PatternPaint, PatternTile,
+};
 use figcraft_doc::{NodeId, NodeKind};
 use serde_json::json;
 
@@ -154,7 +156,7 @@ fn set_color(app: &mut FigApp, target: &PickerTarget, paint: &mut Paint, c: Colo
                 s.color = c;
             }
         }
-        PaintKind::Image(_) => return,
+        PaintKind::Image(_) | PaintKind::Pattern(_) => return,
     }
     write(app, target, paint, false);
 }
@@ -400,6 +402,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     (Icon::Rotate, "Angular"),
                     (Icon::Instance, "Diamond"),
                     (Icon::Image, "Image"),
+                    (Icon::ViewGrid, "Pattern"),
                 ];
                 let active = match &paint.kind {
                     PaintKind::Solid { .. } => 0,
@@ -410,10 +413,11 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                         GradientKind::Diamond => 4,
                     },
                     PaintKind::Image(_) => 5,
+                    PaintKind::Pattern(_) => 6,
                 };
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
-                    if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 34.0) {
+                    if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 30.0) {
                         let base = paint.preview_color();
                         paint.kind = match i {
                             0 => PaintKind::Solid { color: base.with_alpha(1.0) },
@@ -433,6 +437,13 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                                     None => paint.kind.clone(),
                                 }
                             }
+                            6 => match pattern_sources(app, &target).first() {
+                                Some((id, _)) => Paint::pattern(id.0).kind,
+                                None => {
+                                    app.toast("Add a layer or component to tile first".to_string());
+                                    paint.kind.clone()
+                                }
+                            },
                             k => {
                                 let kind = [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond][k - 1];
                                 match &paint.kind {
@@ -620,6 +631,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                     });
                 }
             }
+            if let PaintKind::Pattern(pt) = paint.kind.clone() {
+                pattern_controls(app, ui, &target, &mut paint, pt);
+            }
             if let Some(color) = edit_color {
                 let mut hsb = ui
                     .data(|d| d.get_temp::<(f32, f32, f32, [u8; 4])>(Id::new("cp_hsb")))
@@ -680,7 +694,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                                 s.color = nc;
                             }
                         }
-                        PaintKind::Image(_) => {}
+                        PaintKind::Image(_) | PaintKind::Pattern(_) => {}
                     }
                     write(app, &target, &paint, !done);
                 }
@@ -727,6 +741,121 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         app.ui.picker = None;
     }
     let _ = Pos2::ZERO;
+}
+
+/// Layers a pattern can tile: the file's components and the current page's top-level layers, but
+/// the painted layers, what they contain and what contains them (at most 64).
+fn pattern_sources(app: &FigApp, target: &PickerTarget) -> Vec<(NodeId, String)> {
+    let Ok(doc) = app.session.doc() else { return Vec::new() };
+    let painted = match target {
+        PickerTarget::Paint { ids, .. } => ids.clone(),
+        PickerTarget::TextRange { id, .. } => vec![*id],
+        _ => Vec::new(),
+    };
+    let top = app.session.page().ok().and_then(|p| doc.node(p)).map(|p| p.children.clone()).unwrap_or_default();
+    let comps = doc.nodes().filter(|n| matches!(n.kind, NodeKind::Component { .. })).map(|n| n.id);
+    let mut out: Vec<(NodeId, String)> = Vec::new();
+    for id in comps.chain(top) {
+        let related = painted.iter().any(|t| doc.is_ancestor(*t, id) || doc.is_ancestor(id, *t));
+        if !related
+            && !out.iter().any(|(o, _)| *o == id)
+            && let Some(n) = doc.node(id)
+        {
+            out.push((id, n.name.clone()));
+        }
+        if out.len() >= 64 {
+            break;
+        }
+    }
+    out
+}
+
+/// The pattern tab: source, tile type, alignment, scale and spacing.
+fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &mut Paint, mut pt: PatternPaint) {
+    use widgets::{FieldEdit, Lead};
+    // Some(live): changed, as part of a drag when live.
+    let mut changed: Option<bool> = None;
+    let name = app.session.doc().ok().and_then(|d| d.node(NodeId(pt.source)).map(|n| n.name.clone())).unwrap_or_else(|| "Missing layer".into());
+    let sources = pattern_sources(app, target);
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let resp = widgets::elided_dropdown(ui, &name, 208.0);
+        crate::a11y::combo(&resp, "Pattern source", &name, crate::a11y::menu_open(&resp));
+        crate::right::menu_popup(&resp).show(|ui| {
+            for (id, label) in &sources {
+                if crate::right::menu_check(ui, id.0 == pt.source, label, "") {
+                    pt.source = id.0;
+                    changed = Some(false);
+                    ui.close();
+                }
+            }
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let tiles = [("Grid", PatternTile::Grid), ("Horizontal hex", PatternTile::HorizontalHex), ("Vertical hex", PatternTile::VerticalHex)];
+        let label = tiles.iter().find(|t| t.1 == pt.tile).map_or("Grid", |t| t.0);
+        let resp = widgets::dropdown(ui, label, 120.0, Some(Icon::ViewGrid));
+        crate::a11y::combo(&resp, "Tile type", label, crate::a11y::menu_open(&resp));
+        crate::right::menu_popup(&resp).show(|ui| {
+            for (l, v) in tiles {
+                if crate::right::menu_check(ui, v == pt.tile, l, "") {
+                    pt.tile = v;
+                    changed = Some(false);
+                    ui.close();
+                }
+            }
+        });
+        let aligns = [("Start", PatternAlign::Start), ("Center", PatternAlign::Center), ("End", PatternAlign::End)];
+        let label = aligns.iter().find(|a| a.1 == pt.align).map_or("Start", |a| a.0);
+        let resp = widgets::dropdown(ui, label, 80.0, None);
+        crate::a11y::combo(&resp, "Pattern alignment", label, crate::a11y::menu_open(&resp));
+        crate::right::menu_popup(&resp).show(|ui| {
+            for (l, v) in aligns {
+                if crate::right::menu_check(ui, v == pt.align, l, "") {
+                    pt.align = v;
+                    changed = Some(false);
+                    ui.close();
+                }
+            }
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let field = |ui: &mut Ui, key: &str, lead: Lead, value: f64, suffix: &str| match widgets::number_field(
+            ui,
+            Id::new(key),
+            lead,
+            Some(value),
+            suffix,
+            64.0,
+            1.0,
+        ) {
+            Some(FieldEdit::Set(v)) => Some((v, false)),
+            Some(FieldEdit::Scrub(v, end)) => Some((v, !end)),
+            None => None,
+        };
+        if let Some((v, live)) = field(ui, "cp_pattern_scale", Lead::Icon(Icon::Scale, "Pattern scale"), pt.scale * 100.0, "%") {
+            let (lo, hi) = PatternPaint::SCALE_RANGE;
+            pt.scale = (v / 100.0).clamp(lo, hi);
+            changed = Some(live);
+        }
+        if let Some((v, live)) = field(ui, "cp_pattern_gap_x", Lead::Icon(Icon::PaddingH, "Horizontal spacing"), pt.spacing.0, "") {
+            pt.spacing.0 = v.clamp(0.0, PatternPaint::MAX_SPACING);
+            changed = Some(live);
+        }
+        if let Some((v, live)) = field(ui, "cp_pattern_gap_y", Lead::Icon(Icon::PaddingV, "Vertical spacing"), pt.spacing.1, "") {
+            pt.spacing.1 = v.clamp(0.0, PatternPaint::MAX_SPACING);
+            changed = Some(live);
+        }
+    });
+    if let Some(live) = changed {
+        paint.kind = PaintKind::Pattern(pt);
+        write(app, target, paint, live);
+        if !live {
+            finish(app);
+        }
+    }
 }
 
 /// What the image preset row was asked to do.

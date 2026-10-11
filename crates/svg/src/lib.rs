@@ -206,7 +206,48 @@ impl W<'_> {
                 let op = if p.opacity < 0.999 { format!(" fill-opacity=\"{}\"", num(f64::from(p.opacity))) } else { String::new() };
                 Some(format!("fill=\"url(#{pid})\"{op}{blend}"))
             }
+            PaintKind::Pattern(pt) => {
+                let (tiles, cell) = self.pattern_tiles(pt, w, h)?;
+                let pid = self.id("pattern");
+                let _ = write!(
+                    self.defs,
+                    "<pattern id=\"{pid}\" patternUnits=\"userSpaceOnUse\" width=\"{}\" height=\"{}\" patternTransform=\"translate({} {})\">{tiles}</pattern>",
+                    num(cell.size.0),
+                    num(cell.size.1),
+                    num(cell.origin.0),
+                    num(cell.origin.1)
+                );
+                let op = if p.opacity < 0.999 { format!(" fill-opacity=\"{}\"", num(f64::from(p.opacity))) } else { String::new() };
+                Some(format!("fill=\"url(#{pid})\"{op}{blend}"))
+            }
         }
+    }
+
+    /// One cell of pattern `pt` on a `w`×`h` box: the source's vectors at each tile, or (a source
+    /// with effects, which draw as page-placed images) an image of the cell.
+    fn pattern_tiles(&mut self, pt: &figcraft_color::PatternPaint, w: f64, h: f64) -> Option<(String, figcraft_color::PatternCell)> {
+        let doc = self.doc;
+        let src = doc.node(NodeId(pt.source)).filter(|n| !n.is_page())?;
+        if doc.subtree(src.id).iter().filter_map(|i| doc.node(*i)).any(|n| n.effects.iter().any(|e| e.visible)) {
+            let (pix, cell, _) = figcraft_render::pattern::cell_pixmap(doc, pt, w, h, RASTER_SCALE)?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(figcraft_render::encode_png(&pix).ok()?);
+            let img = format!(
+                "<image width=\"{}\" height=\"{}\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,{b64}\"/>",
+                num(cell.size.0),
+                num(cell.size.1)
+            );
+            return Some((img, cell));
+        }
+        let cell = pt.cell(src.width, src.height, w, h)?;
+        let unrotated = src.transform.inverse();
+        let page_body = std::mem::take(&mut self.body);
+        let _ = figcraft_render::pattern::nested(|| {
+            for (tx, ty) in &cell.tiles {
+                self.node(src.id, Affine::translate((*tx, *ty)) * Affine::scale(cell.scale) * unrotated, 0);
+            }
+            Some(())
+        });
+        Some((std::mem::replace(&mut self.body, page_body), cell))
     }
 
     /// The layer's filter: drop shadows (but those drawn as `exact` geometry: see

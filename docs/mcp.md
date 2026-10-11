@@ -424,6 +424,30 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.merge","params":{"ids":[2,3],"points":[[120,80],[160,80]]}}}}
 ```
 
+### Text on a path and pattern fills
+
+- **Text on a path**: `text.onPath {text?, path?, start?, flip?}` (default: the selected text layer
+  and the other selected layer) puts a text layer on a vector's or shape's path: the text takes the
+  path layer's place, transform and box, and the path layer is removed (`edit.undo` brings it back).
+  The baseline follows the path from `start` (0..1 of its length); the text's horizontal alignment
+  places it there (left starts, centre centres, right ends at it); `flip` runs it on the other side
+  the other way. Glyphs past an open path's end are hidden; a closed path (ellipse, rectangle) wraps
+  them around; only the first subpath is followed. `text.pathOptions {start?, flip?, ids?}` changes
+  them, `text.removeFromPath {ids?}` makes it plain auto-width text again. Resizing the layer
+  scales the path. The text stays editable (`text.edit.*`, `type_text`); `get_node` shows
+  `textPath {d (SVG path data in the layer's space), start, flip}`. Exports draw it as outlines
+  (PDF too: not selectable); underline and strikethrough aren't drawn on a path.
+- **Pattern fills**: `fill.pattern {source (layer id), ids?, index?, tile? (grid|horizontalHex|
+  verticalHex), scale?, spacing? [x, y], align? (start|center|end), opacity?}` makes the fill at
+  `index` (default the top one) the source layer repeated, at `scale` × its own size with `spacing`
+  between tiles; hex tiles shift every other row (column) by half a tile; `align` puts a tile in the
+  box's top-left corner, centre or bottom-right corner. The fill is `{type: "pattern", source,
+  tile, scale, spacing, align}` and can also be set with `fill.set {paint}`. It updates as the
+  source changes; a layer can't tile itself or a layer containing it (a pattern nested more than
+  two deep draws nothing). Copies made together with their source tile the copied source. Exports:
+  SVG `<pattern>` and PDF tiling patterns of the source's vectors (a source with effects as an image
+  of the tile); the canvas draws one tile at the zoom it shows (at most 2048 px a side) and repeats it.
+
 ### Importing SVG
 
 `open_file {path}` opens an SVG as a new document; `run_command {command: "file.import", params:
@@ -438,7 +462,8 @@ and masks as luminance or alpha masks; shadow and blur filters (`feDropShadow`, 
 flood / composite chains, colour-matrix shadows, inner shadows, `feMorphology` spread) as drop
 shadows, inner shadows and layer blurs; opacity and `mix-blend-mode`; text as text layers (fonts
 the SVG names when installed, anchors, letter spacing, styled `<tspan>` runs, stacked lines as one
-layer); images as image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
+layer; text on one `<textPath>` as text on a path, with its start offset and anchor); images as
+image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
 and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list what was left out
 (filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
 Linked files are never read, only data URIs; documents nested more than 512 elements deep are

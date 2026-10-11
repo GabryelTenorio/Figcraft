@@ -63,8 +63,9 @@ fn fill_with(
     doc: &Document,
     mask: Option<&Mask>,
 ) {
+    let scale = xf.determinant().abs().sqrt();
     for p in paints {
-        let Some(prep) = prepare(p, w, h, doc) else { continue };
+        let Some(prep) = prepare(p, w, h, scale, doc) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
         pix.fill_path(path, &paint, rule, ts_transform(xf), mask);
     }

@@ -504,9 +504,10 @@ impl TextOnScreen {
         Some(Self { layout, chars: t.char_count(), dy, world: doc.world_transform(id) })
     }
 
-    /// Layout point `(x, y)` on screen.
+    /// Layout point `(x, y)` on screen (on the path, for text on a path).
     pub(crate) fn at(&self, app: &FigApp, x: f64, y: f64) -> Pos2 {
-        let p = self.world * Point::new(x, y + self.dy);
+        let q = self.layout.warp_point(x, y);
+        let p = self.world * Point::new(q.x, q.y + self.dy);
         app.to_screen(p.x, p.y)
     }
 

@@ -9,12 +9,14 @@
 pub mod display;
 pub mod fontdb;
 mod layout;
+mod onpath;
 
 pub use fontdb::{
     Axis, CRAFT_FONTS, Coords, Face, FontDb, NamedInstance, axis_label, db, face_with_char, family_names, family_styles, find_face, no_coords,
     scan_system_fonts, system_fonts_scanned,
 };
 pub use layout::{Decoration, Glyph, Line, TextLayout, layout};
+pub use onpath::OnPath;
 
 use figcraft_doc::{Node, NodeKind, TextAlignV, TextAutoResize};
 
@@ -106,6 +108,10 @@ pub fn layout_cached(t: &figcraft_doc::TextData, w: Option<f64>, h: Option<f64>)
 /// offset that applies its vertical alignment.
 pub fn layout_node(n: &Node) -> Option<(std::sync::Arc<TextLayout>, f64)> {
     let NodeKind::Text(t) = &n.kind else { return None };
+    // Text on a path has no box: one line per paragraph, placed by its path.
+    if t.path.is_some() {
+        return Some((layout_cached(t, None, None), 0.0));
+    }
     let l = layout_cached(t, Some(n.width), Some(n.height));
     let dy = match (t.auto_resize, t.align_v) {
         (TextAutoResize::WidthAndHeight | TextAutoResize::Height, _) => 0.0,
@@ -119,6 +125,9 @@ pub fn layout_node(n: &Node) -> Option<(std::sync::Arc<TextLayout>, f64)> {
 /// The box size a text node should have after its content or style changed, per its resize mode.
 pub fn auto_size(n: &Node) -> Option<(f64, f64)> {
     let NodeKind::Text(t) = &n.kind else { return None };
+    if t.path.is_some() {
+        return None;
+    }
     match t.auto_resize {
         TextAutoResize::WidthAndHeight => {
             let l = layout_cached(t, None, None);
@@ -136,6 +145,8 @@ pub fn auto_size(n: &Node) -> Option<(f64, f64)> {
 mod cache_tests;
 #[cfg(test)]
 mod list_tests;
+#[cfg(test)]
+mod onpath_tests;
 #[cfg(test)]
 mod rtl_list_tests;
 #[cfg(test)]

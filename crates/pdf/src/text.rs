@@ -67,7 +67,9 @@ pub(crate) fn draw_text(ex: &mut Exporter, s: &mut Surface, n: &Node, xf: Affine
             }
             let embeddable = matches!(&p.kind, PaintKind::Solid { .. })
                 || matches!(&p.kind, PaintKind::Gradient(g) if matches!(g.kind, GradientKind::Linear | GradientKind::Radial));
-            if embeddable && !real_text_written && !ex.opts.outline_text {
+            // shortcut: text on a path is written as outlines (not selectable); turn each glyph
+            // with its own text matrix when selectable path text is asked for.
+            if embeddable && !real_text_written && !ex.opts.outline_text && layout.on_path.is_none() {
                 // The first fill writes the text itself; the rest paint its outlines on top.
                 real_text_written = true;
                 let mut rest = glyph_runs(ex, s, &layout, k, &chars, p, w, h, gxf);

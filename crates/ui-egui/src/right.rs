@@ -1387,6 +1387,7 @@ fn paint_label(p: &Paint) -> String {
         PaintKind::Solid { color } => color.to_hex(),
         PaintKind::Gradient(g) => format!("{:?}", g.kind),
         PaintKind::Image(_) => "Image".into(),
+        PaintKind::Pattern(_) => "Pattern".into(),
     }
 }
 

@@ -24,7 +24,7 @@ alpha.
 
 | Format | Figma | FigCraft | Notes | Hours |
 |---|---|---|---|---|
-| SVG | editable vectors | **yes**, editable | corpus of 21 synthetic files with hand-computed expected pixels, structure and round-trip checks; gradients, patterns as image fills, clip paths, masks, shadow/blur filters, blend modes, text as text layers; other filters dropped with a warning; text on a path as outlines; fuzzed | 2–4 (filters) |
+| SVG | editable vectors | **yes**, editable | corpus of 21 synthetic files with hand-computed expected pixels, structure and round-trip checks; gradients, patterns as image fills, clip paths, masks, shadow/blur filters, blend modes, text as text layers; other filters dropped with a warning; text on one path as text on a path (on several paths as outlines); fuzzed | 2–4 (filters) |
 | PNG, JPG | yes | yes | | — |
 | GIF | yes (animated) | first frame only | | 2–4 |
 | WebP | yes | yes | | — |

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (text on a path and pattern fills: gap 9 down to brushes and pressure; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -19,7 +19,7 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~43%** | estimated: weekly areas 66.8% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~200–365 h** one agent | estimated |
-| Remaining to full parity | **~380–725 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~375–715 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
@@ -81,7 +81,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Effects | 100% | 72% | 3–6 | [target-app-parity](docs/target-app-parity.md) |
 | Frames, groups, sections, masks | 95% | 75% | 2–4 | [target-app-parity](docs/target-app-parity.md) |
 | Auto layout & constraints | 95% | 68% | 6–12 | [auto-layout-parity](docs/auto-layout-parity.md) |
-| Text | 85% | 64% | 8–14 | [target-app-parity](docs/target-app-parity.md) |
+| Text | 85% | 64% | 7–13 | [target-app-parity](docs/target-app-parity.md) |
 | Components & variants | 95% | 68% | 6–12 | [components-parity](docs/components-parity.md) |
 | Styles & variables | 92% | 72% | 1–2 | [components-parity](docs/components-parity.md) |
 | Prototyping | 88% | 70% | 5–9 | [prototyping-parity](docs/prototyping-parity.md) |
@@ -91,7 +91,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Multiplayer & sharing | 15% | 5% | 45–90 | [collaboration-parity](docs/collaboration-parity.md) |
 | Plugins & widgets | 35% | 20% | 25–55 | [plugins](docs/plugins.md) |
 | Team libraries | 40% | 25% | 10–20 | [components-parity](docs/components-parity.md) |
-| Figma Draw extras | 45% | 30% | 10–18 | [gaps](docs/gaps.md) |
+| Figma Draw extras | 65% | 45% | 5–10 | [gaps](docs/gaps.md) |
 | AI features | 0% | 0% | 30–60 | [gaps](docs/gaps.md) |
 
 ## Languages
@@ -164,6 +164,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
