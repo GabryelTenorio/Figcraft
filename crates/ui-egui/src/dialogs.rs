@@ -208,7 +208,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             ui.horizontal(|ui| {
                 ui.label(tr("Language"));
                 // Each language by its own name; System follows the OS (the browser on the web).
-                let langs = i18n::languages().iter().map(|l| (l.code, l.name));
+                let langs = i18n::languages().iter().filter(|l| crate::cjk::can_show(l.code)).map(|l| (l.code, l.name));
                 for (code, name) in [("system", tr("System"))].into_iter().chain(langs) {
                     if ui.selectable_label(app.session.prefs.language.eq_ignore_ascii_case(code), name).clicked() {
                         app.run("pref.language", json!({"language": code}));

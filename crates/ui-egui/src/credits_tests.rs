@@ -43,7 +43,7 @@ struct Ui {
 impl Ui {
     fn new() -> Self {
         let ctx = egui::Context::default();
-        crate::theme::install_fonts(&ctx, false);
+        crate::theme::install_fonts(&ctx, false, 0);
         crate::theme::apply(&ctx, Tokens::light());
         let mut u = Self { ctx, time: 0.0 };
         // Fonts set now take effect on the next frame.

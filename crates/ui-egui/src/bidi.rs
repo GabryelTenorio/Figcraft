@@ -298,9 +298,7 @@ pub fn script_fallbacks(have: &dyn Fn(char) -> bool) -> Vec<(String, egui::FontD
             continue;
         }
         let Some(face) = figcraft_text::face_with_char(c, &FAMILIES) else { continue };
-        let mut data = egui::FontData::from_owned(face.bytes.data().to_vec());
-        data.index = face.index;
-        out.push((format!("system-{}-{}", face.family, face.style), data));
+        out.push((format!("system-{}-{}", face.family, face.style), crate::theme::font_data(&face)));
         taken.push(face);
     }
     out

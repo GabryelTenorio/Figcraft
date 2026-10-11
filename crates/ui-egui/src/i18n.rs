@@ -61,13 +61,14 @@ fn resolve(pref: &str, system: Option<&str>) -> usize {
 }
 
 /// The [`LANGS`] index for one tag: the exact tag ("pt-BR"), else its base language ("es" for
-/// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT").
+/// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT"). A language the
+/// UI can't draw (CJK on the web without CJK faces built in) doesn't count.
 fn resolve_one(want: &str) -> Option<usize> {
     let tag = want.trim().split(['.', '@']).next().unwrap_or("").replace('_', "-");
     let base = tag.split('-').next().unwrap_or("");
     let find = |t: &str| LANGS.iter().position(|l| l.code.eq_ignore_ascii_case(t));
     let regional = || LANGS.iter().position(|l| !base.is_empty() && l.code.split('-').next().is_some_and(|b| b.eq_ignore_ascii_case(base)));
-    find(&tag).or_else(|| find(base)).or_else(regional)
+    find(&tag).or_else(|| find(base)).or_else(regional).filter(|i| LANGS.get(*i).is_some_and(|l| crate::cjk::can_show(l.code)))
 }
 
 fn find(table: &'static [(&'static str, Text)], key: &str) -> Option<&'static Text> {
@@ -112,13 +113,16 @@ pub fn trn(key: &str, n: usize, args: &[(&str, &dyn Display)]) -> String {
     fill(text, &all)
 }
 
-/// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, 1 elsewhere
-/// (CLDR's integer rules).
+/// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, never in
+/// Japanese and Korean (no plural forms: always "other"), 1 elsewhere (CLDR's integer rules).
 // shortcut: CLDR's "many" (French, Spanish and Portuguese millions) reads as "other" here; add it
 // when a language needs a third form.
 fn plural_one(lang: usize, n: usize) -> bool {
-    let zero_is_one = LANGS.get(lang).is_some_and(|l| matches!(l.code, "fr" | "pt-BR"));
-    n == 1 || (n == 0 && zero_is_one)
+    match LANGS.get(lang).map(|l| l.code) {
+        Some("ja" | "ko") => false,
+        Some("fr" | "pt-BR") => n <= 1,
+        _ => n == 1,
+    }
 }
 
 /// Replace each `{name}` in `text` with its argument, in one pass (an argument's own braces stay).

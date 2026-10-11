@@ -10,6 +10,7 @@ pub mod assets_panel;
 pub mod bidi;
 pub mod branch_ui;
 pub mod canvas;
+pub mod cjk;
 pub mod colorpicker;
 pub mod comments;
 pub mod component_panel;
@@ -406,8 +407,11 @@ pub struct FigApp {
     pub services: Box<dyn Services>,
     worker: Option<render_worker::Worker>,
     fonts_installed: bool,
-    /// System faces for scripts the built-in fonts lack were added (after the font scan).
-    script_fonts: bool,
+    /// System faces for scripts the built-in fonts lack were added (after the font scan), with
+    /// faces for these CJK scripts ([`cjk`]).
+    script_fonts: Option<u8>,
+    /// The tab (uid) and revision whose names were last checked for CJK scripts.
+    cjk_checked: Option<(u64, u64)>,
     /// The language preference the UI strings follow (applied when it changes).
     language: Option<String>,
     /// A field had the keyboard when the last frame ended.
@@ -433,7 +437,8 @@ impl FigApp {
             services,
             worker: None,
             fonts_installed: false,
-            script_fonts: false,
+            script_fonts: None,
+            cjk_checked: None,
             language: None,
             field_focus: false,
             control_queue: Vec::new(),
@@ -663,19 +668,51 @@ impl FigApp {
         self.session.prefs.reduce_motion || self.services.reduce_motion()
     }
 
+    /// The CJK scripts the UI shows: the language's, the language picker's (Preferences open),
+    /// typed text's, and those in the open file's names and comments (read when it changes, not
+    /// mid-drag). Nothing is checked once every script has a face.
+    fn cjk_needed(&mut self, ctx: &egui::Context, installed: u8) -> u8 {
+        if installed == cjk::KANA | cjk::HANGUL | cjk::HAN {
+            return installed;
+        }
+        let mut need = i18n::current().map_or(0, |l| cjk::language(l.code));
+        if self.ui.preferences {
+            need |= i18n::languages().iter().filter(|l| cjk::can_show(l.code)).fold(0, |m, l| m | cjk::language(l.code));
+        }
+        need |= ctx.input(|i| {
+            i.events.iter().fold(0, |m, e| match e {
+                egui::Event::Text(t) | egui::Event::Ime(egui::ImeEvent::Preedit { text: t, .. } | egui::ImeEvent::Commit(t)) => m | cjk::scripts(t),
+                _ => m,
+            })
+        });
+        let dragging = ctx.input(|i| i.pointer.any_down());
+        if let Some(d) = self.session.docs.get(self.session.active).filter(|d| !dragging && self.cjk_checked != Some((d.uid, d.revision))) {
+            self.cjk_checked = Some((d.uid, d.revision));
+            let doc = &d.doc;
+            let comments = doc.comments.iter().flat_map(|c| std::iter::once(&c.first).chain(&c.replies)).flat_map(|m| [&m.author, &m.text]);
+            need |= std::iter::once(&doc.name).chain(doc.nodes().map(|n| &n.name)).chain(comments).fold(0, |m, s| m | cjk::scripts(s));
+        }
+        need
+    }
+
     /// Per-frame logic that doesn't draw (control requests, theme, language).
     pub fn logic(&mut self, ctx: &egui::Context) {
-        if !self.fonts_installed {
-            theme::install_fonts(ctx, false);
-            self.fonts_installed = true;
-        } else if !self.script_fonts && figcraft_text::system_fonts_scanned() {
-            // Once the system fonts are indexed: faces for names in scripts the UI fonts lack.
-            self.script_fonts = true;
-            theme::install_fonts(ctx, true);
-        }
         if self.language.as_ref() != Some(&self.session.prefs.language) {
             i18n::set(&self.session.prefs.language, self.services.system_language().as_deref());
             self.language = Some(self.session.prefs.language.clone());
+        }
+        if !self.fonts_installed {
+            theme::install_fonts(ctx, false, 0);
+            self.fonts_installed = true;
+        } else if figcraft_text::system_fonts_scanned() {
+            // Once the system fonts are indexed: faces for names in scripts the UI fonts lack, and
+            // for each CJK script once something shows it.
+            let installed = self.script_fonts.unwrap_or(0);
+            let cjk = installed | self.cjk_needed(ctx, installed);
+            if self.script_fonts != Some(cjk) {
+                self.script_fonts = Some(cjk);
+                theme::install_fonts(ctx, true, cjk);
+            }
         }
         let dark = match self.session.prefs.theme.as_str() {
             "dark" => true,

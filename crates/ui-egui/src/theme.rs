@@ -227,8 +227,9 @@ pub fn on_dark<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
 }
 
 /// UI fonts: Inter (from the craft-fonts build input) when present, else egui's defaults; with
-/// `system`, also system faces for scripts those lack (Hebrew, joined Arabic) so names in them show.
-pub fn install_fonts(ctx: &Context, system: bool) {
+/// `system`, also system faces for scripts those lack (Hebrew, joined Arabic) so names in them show,
+/// and faces for the CJK scripts in `cjk` ([`crate::cjk`]).
+pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     let mut fonts = FontDefinitions::default();
     let find = |family: &str, style: &str| figcraft_text::CRAFT_FONTS.iter().find(|f| f.family == family && f.style == style).map(|f| f.bytes);
     let regular = find("Inter", "Regular");
@@ -251,9 +252,10 @@ pub fn install_fonts(ctx: &Context, system: bool) {
     }
     semi.extend(fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     fonts.families.insert(FontFamily::Name("semibold".into()), semi);
-    // CJK and other scripts from craft-fonts as fallbacks.
+    // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGCRAFT_EMBED_CJK).
+    const BUILT_IN: [&str; 4] = ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic"];
     for f in figcraft_text::CRAFT_FONTS.iter().filter(|f| f.family != "Inter" && f.style == "Regular") {
-        if matches!(f.family, "BIZ UDPGothic" | "Noto Sans Arabic") {
+        if BUILT_IN.contains(&f.family) {
             let key = format!("craft-{}", f.family);
             fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(f.bytes)));
             for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
@@ -266,13 +268,15 @@ pub fn install_fonts(ctx: &Context, system: bool) {
     if system {
         // What the built-in faces above already draw.
         let embedded = |c: char| {
-            ["Inter", "BIZ UDPGothic", "Noto Sans Arabic"]
+            BUILT_IN
                 .into_iter()
                 .filter(|f| figcraft_text::CRAFT_FONTS.iter().any(|cf| cf.family == *f))
                 .filter_map(|f| figcraft_text::find_face(f, "Regular"))
                 .any(|x| x.has_char(c))
         };
-        let extra = crate::bidi::script_fallbacks(&embedded);
+        let mut extra = crate::bidi::script_fallbacks(&embedded);
+        let lang = crate::i18n::current().map_or("en", |l| l.code);
+        extra.extend(crate::cjk::faces(cjk, lang, &embedded).iter().map(|f| (format!("system-{}-{}", f.family, f.style), font_data(f))));
         for (key, data) in extra {
             fonts.font_data.insert(key.clone(), Arc::new(data));
             for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
@@ -283,6 +287,19 @@ pub fn install_fonts(ctx: &Context, system: bool) {
         }
     }
     ctx.set_fonts(fonts);
+}
+
+/// egui font data over a face's bytes, without copying them (CJK faces are 10–20 MB). Font
+/// database faces are never dropped, so a system face's shared bytes are kept for good: leaking
+/// one more reference to them costs a pointer and gives egui the `'static` slice it needs.
+pub fn font_data(face: &figcraft_text::Face) -> FontData {
+    let bytes: &'static [u8] = match &face.bytes {
+        figcraft_text::fontdb::FontBytes::Static(b) => b,
+        figcraft_text::fontdb::FontBytes::Shared(v) => Box::leak(Box::new(v.clone())).as_slice(),
+    };
+    let mut data = FontData::from_static(bytes);
+    data.index = face.index;
+    data
 }
 
 pub fn semibold(size: f32) -> FontId {

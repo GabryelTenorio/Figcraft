@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~26 points and ~162–292 h away (one Opus 5.5 agent; ~33–67 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -15,17 +15,17 @@ start with [`docs/gaps.md`](docs/gaps.md).
 |---|---|---|
 | Menu/command breadth | **100%** (204 / 204) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
 | Feature breadth | **~84%** (core editor ~94%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
-| Ready for real work | **~52%** | estimated, same doc (written dimension weights and scores) |
+| Ready for real work | **~53%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~49%** | estimated: weekly areas 72.6% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
-| Remaining to beta | **~162–292 h** one agent | estimated |
-| Remaining to full parity | **~276–538 h** one agent (~85–148 h wall-clock with 5 agents) | estimated |
+| Remaining to beta | **~155–280 h** one agent | estimated |
+| Remaining to full parity | **~268–528 h** one agent (~83–145 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~52% | ~281–540 h | multiplayer (42–84), localization (40–65), plugins (10–30), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
+| Full target (ready for real work) | ~53% | ~273–530 h | multiplayer (42–84), localization (32–55), plugins (10–30), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
 | Mainstream practitioner | ~49% | ~130–244 h | core editor depth incl. the `.fig` import's tail (49–98), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~60–110 h | the `.fig` import's tail so the files people send open well (5–10), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -46,11 +46,11 @@ lines, a typical feature PR 1–2.5 h). Details and what needs a human:
 **Alpha.** Core workflows exist end to end (frames, shapes, vectors, text, auto layout, components
 with variants and overrides, styles, variables, prototyping, Dev Mode, SVG/PNG/JPG/PDF), but
 FigCraft opens `.fig` files only best effort, has only a preview of multiplayer, and nothing has been checked
-against real Figma documents. Ready-for-real-work is ~52%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is unproven on real files, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
+against real Figma documents. Ready-for-real-work is ~53%, inside alpha's ~40–75% band, and the alpha gate passes: every daily core workflow (design screens, build a design system, prototype, hand off to developers) works end to end on FigCraft's own files, which save and reopen; review works only asynchronously and `.fig` import is unproven on real files, both beta gaps ([alpha gate](docs/roadmap.md#alpha-gate)). Beta needs
 ~75% **and** reliable `.fig` import: the `.fig` import's tail (5–10 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
-basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
-Figma's last two languages, Japanese and Korean, on the landed localization layer (7–12 h).
+basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h);
+native speakers' reviews of the six language drafts need people.
 
 ## By dimension
 
@@ -63,7 +63,7 @@ Figma's last two languages, Japanese and Korean, on the landed localization laye
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 60% | 10–21 | [hardware-parity](docs/hardware-parity.md) |
-| Localization | 30% (layer; English; Spanish, French, German, Brazilian Portuguese drafts) | 40–65 | [localization-parity](docs/localization-parity.md) |
+| Localization | 35% (layer; English; Spanish, French, German, Brazilian Portuguese, Japanese, Korean drafts; CJK UI fonts) | 32–55 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
 | Ecosystem / plugins | 34% (own WASM plugins with panels, settings and widgets) | 10–30 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -106,14 +106,15 @@ Figma's last two languages, Japanese and Korean, on the landed localization laye
 | French | fr | 100% | draft (needs native review) |
 | Portuguese (Brazil) | pt-BR | 100% | draft (needs native review) |
 | Indonesian | id | 0% | none |
-| Japanese | ja | 0% | none |
+| Japanese | ja | 100% | draft (needs native review) |
 | German | de | 100% | draft (needs native review) |
-| Korean | ko | 0% | none |
+| Korean | ko | 100% | draft (needs native review) |
 | Vietnamese | vi | 0% | none |
 
 No other languages. Figma ships English, Japanese, Korean, French, German, Spanish and Portuguese
-(Brazil); FigCraft has the localization layer, English and Spanish, French, German and Brazilian
-Portuguese drafts (Preferences ▸ Language; adding a language:
+(Brazil); FigCraft has the localization layer, English and Spanish, French, German, Brazilian
+Portuguese, Japanese and Korean drafts (Preferences ▸ Language; CJK UI text uses an installed CJK
+font, loaded only when needed; adding a language:
 [`docs/translating.md`](docs/translating.md)). Document text in any script (bidi, Arabic shaping,
 IME) already works. Detail: [`docs/localization-parity.md`](docs/localization-parity.md).
 
@@ -124,7 +125,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 1. `.fig` import's tail: fixes from real files, connector labels, table cells, filled areas with their own fills (the best-effort import, editable vector networks, the other layer kinds and variable prototype actions landed 2026-10-11): 5–10 h.
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
-4. Languages on the landed localization layer: ja and ko (7–12 h), and native reviews of the es, fr, de and pt-BR drafts (people).
+4. Languages: native reviews of the es, fr, de, pt-BR, ja and ko drafts (people), Latin American Spanish (1–2 h), then Simplified Chinese (3–5 h).
 5. Multiplayer (M9): accounts and teams on top of the live sessions and the standalone server (transport, hosting, invite links that open the app, document sync, presence with remote text carets, cursor chat and spotlight, per-user undo, reconnect with offline edits, collision-free ids for styles, variables and comments, the browser client, `figcraft-server` with persistence and share links to edit or view, team libraries on the server landed): 42–84 h.
 
 ## Progress log
@@ -229,6 +230,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Japanese and Korean draft catalogs and CJK UI fonts (gap 5): `ja.toml` and `ko.toml` translate every UI string (1,351 keys; plurals give only `other`, and `plural_one` never picks "one" in either), command label (519) and menu wording (29), machine-drafted and marked as drafts awaiting native review; Preferences ▸ Language lists 日本語 and 한국어, System picks ja* and ko*. CJK UI text renders: once the UI language, the open file's names or comments, typed text or the language picker needs Japanese kana, Hangul or Han, the desktop app appends one installed face per script to egui's fallbacks (Windows Yu Gothic UI / Meiryo / Malgun Gothic / Microsoft YaHei, macOS Hiragino Sans / Apple SD Gothic Neo / PingFang SC, Linux Noto Sans CJK; the craft-fonts build's BIZ UDPGothic first), reading only that face's file and sharing its bytes with egui (English users load none: startup and memory unchanged); the web shows Japanese and Korean only when built with craft-fonts' Noto Sans CJK (`FIGCRAFT_EMBED_CJK`), else it keeps them out of the picker and System. Localization 30% → 35%, 40–65 h → 32–55 h; ready for real work ~52% → ~53% (52.9 → 53.1); full parity ~284–554 h → ~276–544 h; beta ~162–292 h → ~155–280 h |
 | 2026-10-12 | minor | Plugin widgets and the panel tail (gap 6, plugin API 3; v1 and v2 plugins unchanged): a plugin marked as a widget puts a layer of its own on the canvas from Plugins ▸ Widgets or `widget.insert`: it describes the layer (frames with auto layout, text, rectangles, ellipses, images it carries) and FigCraft validates the description (size, layer count, depth, numbers, colours, text and image sizes) and builds it as a frame with locked layers inside; a click on a part the plugin named (on the canvas with the Move tool, a pointing hand over it, or `widget.click`) calls the plugin back in a fresh, metered sandbox with the widget's state, as one undo step, and the widget is redrawn; the state lives in the widget's own layer data, so widgets survive save and reload, copying, undo, export and live sessions; no plugin can write that data or call `widget.*`. `widget.list` lists them. A Counter example widget. Plugin panels of different plugins open side by side, and a colour field's swatch opens the colour picker (the plugin hears of the colour when a drag ends). Plugins & widgets 45%/28% → 55%/32%, 15–40 h → 10–30 h; Ecosystem dimension 28% → 34%; weighted totals unchanged at this rounding; full parity ~286–558 h → ~281–548 h |
 | 2026-10-12 | minor | French, German and Brazilian Portuguese draft catalogs (gap 5): every UI string, command label and menu wording (1,899 entries) machine-drafted in each and marked as drafts awaiting native review, falling back to English per key (new strings need only English and Spanish); 0 counts as singular in French and Brazilian Portuguese; System picks the first OS language with a catalog (pt-PT and pt read pt-BR); long translations elide with a tooltip in dropdowns, two-column labels and the home cards. Localization 20% → 30%, 45–75 h → 40–65 h; ready for real work unchanged (~52%); full parity ~289–564 h → ~284–554 h; beta ~170–305 h → ~162–292 h |
 | 2026-10-12 | minor | Cursor chat and spotlight in live sessions: `/` opens a chat bubble at your pointer that everyone sees as you type and that fades a few seconds after the last change; a spotlight (your avatar's menu, `collab.spotlight`) makes everyone follow your view and page until they move their own. Ephemeral presence the host validates and rate-limits, passed only to clients that read it (older clients keep working). Multiplayer & sharing breadth 15% → 17%, ready unchanged (5%), 45–90 h → 42–84 h; collaboration 13% unchanged, 49–98 h → 46–92 h; feature breadth (~84%) and ready for real work (~51%) unchanged at this rounding; full parity ~301–587 h → ~298–581 h |

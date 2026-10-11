@@ -329,6 +329,20 @@ fn french_and_portuguese_count_zero_as_singular() {
 }
 
 #[test]
+fn japanese_and_korean_have_no_plural_forms() {
+    let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
+    assert_eq!(code("system", Some("ja-JP")), "ja");
+    assert_eq!(code("system", Some("ko_KR.UTF-8")), "ko");
+    assert_eq!(code("system", Some("ja,en-US")), "ja");
+    for code in ["ja", "ko"] {
+        let lang = LANGS.iter().position(|l| l.code == code).unwrap();
+        assert!(!plural_one(lang, 0) && !plural_one(lang, 1) && !plural_one(lang, 2), "{code}");
+        let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural(Some(_), _))).map(|(k, _)| k).collect();
+        assert!(ones.is_empty(), "{code}: plural entries give only `other`: {ones:?}");
+    }
+}
+
+#[test]
 fn the_key_scanner_reads_rust_literals() {
     let src = r#"x(tr("A \"b\"")); trf(
         "C {n}", &[]); attr("no"); tr_noop("D\

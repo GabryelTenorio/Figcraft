@@ -271,7 +271,7 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   nested layers), Escape or a click drops it.
 - `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
   accessibility setting turns it on too). Prototype transitions still play.
-- `pref.language {language: system|en|es|fr|de|pt-BR|…}`: the app's interface language, applied live ("system":
+- `pref.language {language: system|en|es|fr|de|pt-BR|ja|ko|…}`: the app's interface language, applied live ("system":
   the OS or browser language; a language without a catalog shows English). Command ids, labels and
   every result stay English.
 

@@ -1,12 +1,14 @@
 //! Embeds the optional craft-fonts build input (`CRAFT_FONTS_DIR`): both `fonts/manifest.txt` and the
 //! opt-in Latin presentation fonts in `fonts/latin-manifest.txt` (Inter, Roboto, …). Unset or missing,
 //! `CRAFT_FONTS` is empty and the app uses system fonts. Recipe: craft-fonts `docs/integration.md`.
+//! Noto Sans CJK only with `FIGCRAFT_EMBED_CJK` set (the web build's only way to show CJK UI text).
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
+    println!("cargo::rerun-if-env-changed=FIGCRAFT_EMBED_CJK");
     let mut src = String::from("pub static CRAFT_FONTS: &[CraftFont] = &[\n");
     if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from) {
         let mut ok = false;
@@ -37,7 +39,6 @@ fn craft_fonts(dir: &std::path::Path, manifest_rel: &str) -> Result<String, Stri
     let manifest = dir.join(manifest_rel);
     println!("cargo::rerun-if-changed={}", manifest.display());
     let text = std::fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-    // Web builds have a size budget: embed only Inter (the default UI and document font) there.
     let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
     let mut out = String::new();
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
@@ -45,11 +46,14 @@ fn craft_fonts(dir: &std::path::Path, manifest_rel: &str) -> Result<String, Stri
         let [family, style, file, scripts, ..] = f.as_slice() else {
             return Err(format!("malformed manifest line: {line}"));
         };
-        if wasm && *family != "Inter" {
+        // CJK fonts are large; the desktop app finds system CJK fonts instead unless asked.
+        let cjk = scripts.contains("Hans");
+        if cjk && std::env::var_os("FIGCRAFT_EMBED_CJK").is_none() {
             continue;
         }
-        // CJK fonts are large; the desktop app finds system CJK fonts instead unless asked.
-        if scripts.contains("Hans") && std::env::var_os("FIGCRAFT_EMBED_CJK").is_none() {
+        // Web builds have a size budget: Inter, plus Noto Sans CJK (every CJK script, for CJK UI
+        // text) when asked.
+        if wasm && *family != "Inter" && !cjk {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;

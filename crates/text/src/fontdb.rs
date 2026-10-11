@@ -321,6 +321,12 @@ fn norm_style(s: &str) -> String {
     s.to_lowercase().replace([' ', '-', '_'], "")
 }
 
+/// A style name's weight before its file is read: the usual names, and Hiragino's "W3" (300).
+fn pending_weight(style: &str) -> i32 {
+    let w = norm_style(style).strip_prefix('w').and_then(|n| n.parse::<i32>().ok()).filter(|n| (0..=9).contains(n));
+    w.map_or(i32::from(figcraft_doc::style_weight(style)), |n| n * 100)
+}
+
 /// The axes (user-space ranges) and named instances of a variable font.
 fn variation_info(f: &skrifa::FontRef) -> (Vec<Axis>, Vec<NamedInstance>) {
     let all = f.axes();
@@ -455,7 +461,7 @@ impl FontDb {
 
     /// Style names of a family, by weight then italic.
     pub fn styles(&mut self, family: &str) -> Vec<String> {
-        self.load_family(family);
+        self.load_family(family, None);
         let Some((_, idx)) = self.families.get(&family.to_lowercase()) else { return vec![] };
         // (weight, italic, order in the font, name): named instances keep the font's order.
         let mut v: Vec<(u16, bool, usize, String)> = Vec::new();
@@ -482,9 +488,30 @@ impl FontDb {
         self.families.contains_key(&k) || self.pending.contains_key(&k)
     }
 
-    fn load_family(&mut self, family: &str) {
+    /// Read a system family's faces from disk; with `only`, just the face nearest that style (the
+    /// rest stay pending).
+    fn load_family(&mut self, family: &str, only: Option<&str>) {
         let key = family.to_lowercase();
-        let Some((_, entries)) = self.pending.remove(&key) else { return };
+        let entries = match only {
+            None => match self.pending.remove(&key) {
+                Some((_, entries)) => entries,
+                None => return,
+            },
+            Some(style) => {
+                let Some((_, pending)) = self.pending.get_mut(&key) else { return };
+                let (want, want_w) = (norm_style(style), pending_weight(style));
+                let cost = |e: &Pending| {
+                    let italic = if e.style.to_lowercase().contains("italic") { 1000 } else { 0 };
+                    if norm_style(&e.style) == want { 0 } else { 1 + (pending_weight(&e.style) - want_w).abs() + italic }
+                };
+                let Some(i) = pending.iter().enumerate().min_by_key(|(_, e)| cost(e)).map(|(i, _)| i) else { return };
+                let one = pending.remove(i);
+                if pending.is_empty() {
+                    self.pending.remove(&key);
+                }
+                vec![one]
+            }
+        };
         let mut by_path: BTreeMap<std::path::PathBuf, Arc<Vec<u8>>> = BTreeMap::new();
         for e in entries {
             let bytes = match by_path.get(&e.path) {
@@ -506,7 +533,22 @@ impl FontDb {
 
     /// The best face for `family` + `style` (exact style name, else nearest weight/italic).
     pub fn find(&mut self, family: &str, style: &str) -> Option<Arc<Face>> {
-        self.load_family(family);
+        self.load_family(family, None);
+        self.best(family, style)
+    }
+
+    /// [`find`](Self::find), but a system family not loaded yet reads only its face nearest
+    /// `style`: a fallback for missing characters needs one face, not every file of a CJK family
+    /// (10–20 MB each). The family's other faces load when it is used by name.
+    pub fn find_one(&mut self, family: &str, style: &str) -> Option<Arc<Face>> {
+        if !self.families.contains_key(&family.to_lowercase()) {
+            self.load_family(family, Some(style));
+        }
+        self.best(family, style)
+    }
+
+    /// The loaded face of `family` nearest `style`.
+    fn best(&self, family: &str, style: &str) -> Option<Arc<Face>> {
         let (_, idx) = self.families.get(&family.to_lowercase())?;
         let faces: Vec<&Arc<Face>> = idx.iter().filter_map(|i| self.faces.get(*i)).collect();
         let want = norm_style(style);
@@ -714,5 +756,9 @@ pub fn system_fonts_scanned() -> bool {
 /// that needs a font for a script its own fonts lack.
 pub fn face_with_char(c: char, families: &[&str]) -> Option<Arc<Face>> {
     let mut db = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
-    families.iter().filter_map(|f| db.find(f, "Regular")).find(|f| f.has_char(c))
+    families.iter().filter_map(|f| db.find_one(f, "Regular")).find(|f| f.has_char(c))
 }
+
+#[cfg(test)]
+#[path = "fontdb_tests.rs"]
+mod tests;

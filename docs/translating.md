@@ -8,8 +8,9 @@ a catalog (the browser's language on the web): a regional tag reads its language
 (`fr-CA` → `fr`), and a language with only a regional catalog reads that one (`pt-PT` → `pt-BR`).
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
-The catalogs: English (`en`, the source), and Spanish (`es`), French (`fr`), German (`de`) and
-Brazilian Portuguese (`pt-BR`), machine-drafted and waiting for native speakers' review.
+The catalogs: English (`en`, the source), and Spanish (`es`), French (`fr`), German (`de`),
+Brazilian Portuguese (`pt-BR`), Japanese (`ja`) and Korean (`ko`), machine-drafted and waiting for
+native speakers' review.
 
 ## The catalogs
 
@@ -29,7 +30,15 @@ A key a catalog lacks shows its English text, so a partial catalog is safe to sh
 
 Typography follows each language: French puts a no-break space (`\u00A0` in the TOML) before
 `:` `;` `?` `!`, inside « » and before `%`; German uses „ “ and formal address (Sie); Brazilian
-Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European ones.
+Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European ones. Japanese is
+concise, without です/ます endings, with full-width （）「」：、。 where Japanese UI text has them;
+Korean labels end without 합니다 (instructions in -세요). Neither has plural forms.
+
+CJK text needs a CJK font, which egui and Inter lack: the desktop app adds an installed one when
+something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build has no system fonts,
+so Japanese and Korean appear there only in a build with craft-fonts and `FIGCRAFT_EMBED_CJK=1`
+(Noto Sans CJK, +16 MB); otherwise they are left out of the picker. A new CJK or other non-Latin
+language also needs its script in `cjk::language`.
 
 ## Adding a language
 
@@ -38,13 +47,14 @@ Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European one
 2. Translate every value; keep the keys. Keep `{placeholders}` exactly, "…" where English has it,
    brand names and keyboard glyphs. English labels of commands: `figcraft-cli commands`.
 3. Plurals: give `one` only if the language has a singular form (Japanese, Korean and Chinese give
-   only `other`). `trn` picks `one` for a count of 1, and also for 0 in French and Brazilian
-   Portuguese (keep `{n}` in their `one` forms); a language with other rules needs its rule in
+   only `other`, and `plural_one` returns false for them). `trn` picks `one` for a count of 1, and
+   also for 0 in French and Brazilian Portuguese (keep `{n}` in their `one` forms); a language with other rules needs its rule in
    `plural_one` in [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs).
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language, so only Spanish is there:
-   French, German and Brazilian Portuguese are complete today but registered as drafts, and a
+   French, German, Brazilian Portuguese, Japanese and Korean are complete today but registered as
+   drafts, and a
    string added later shows English in them until it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
