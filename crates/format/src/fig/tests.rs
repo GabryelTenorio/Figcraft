@@ -692,15 +692,14 @@ fn instances_inside_their_own_main_stop() {
     assert!(doc.nodes().any(|n| n.name == "Self"));
 }
 
-const SAMPLES: &str = "../../../figcraft/plan/figma/samples";
-
+/// `.fig` files in the folder `FIGCRAFT_FIG_SAMPLES` names (none when it's unset).
 fn samples() -> Vec<std::path::PathBuf> {
-    let dir = std::fs::read_dir(SAMPLES).into_iter().flatten().flatten();
+    let Some(dir) = std::env::var_os("FIGCRAFT_FIG_SAMPLES") else { return Vec::new() };
+    let dir = std::fs::read_dir(dir).into_iter().flatten().flatten();
     dir.map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "fig")).collect()
 }
 
-/// Local only (the owner's sample files are not in the repository): every sample imports without
-/// warnings.
+/// Local only (`FIGCRAFT_FIG_SAMPLES`): every file imports without warnings.
 #[test]
 fn local_samples_import() {
     for p in samples() {

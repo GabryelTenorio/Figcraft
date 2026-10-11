@@ -1,13 +1,11 @@
 //! `.fig` files through the file commands. The importer's own tests (fixtures built in code) are
-//! in `figcraft_format::fig`; the sample checks here run only where the owner's synthetic sample
-//! files are checked out next to the repository.
+//! in `figcraft_format::fig`; the local check here runs only when `FIGCRAFT_FIG_SAMPLES` names a
+//! folder of `.fig` files with their frames' PNG exports next to them.
 
 use figcraft_doc::{ExportFormat, NodeKind};
 use serde_json::json;
 
 use crate::Session;
-
-const SAMPLES: &str = "../../../figcraft/plan/figma/samples";
 
 #[test]
 fn damaged_fig_files_fail_cleanly() {
@@ -21,11 +19,12 @@ fn damaged_fig_files_fail_cleanly() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Local only: each sample opens without warnings, instances link to their mains, and each top
-/// frame's 1× PNG export is close to the export saved next to the sample.
+/// Local only (`FIGCRAFT_FIG_SAMPLES`): each file opens without warnings, instances link to their
+/// mains, and each top frame's 1× PNG export is close to the export saved next to the file.
 #[test]
 fn local_samples_match_their_exports() {
-    let Ok(dir) = std::fs::read_dir(SAMPLES) else { return };
+    let Some(dir) = std::env::var_os("FIGCRAFT_FIG_SAMPLES") else { return };
+    let Ok(dir) = std::fs::read_dir(dir) else { return };
     for p in dir.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "fig")) {
         let mut s = Session::new();
         let r = s.execute("file.open", &json!({"path": p.to_string_lossy()})).unwrap();
