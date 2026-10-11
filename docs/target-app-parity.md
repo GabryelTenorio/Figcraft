@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (spell check while editing text on Windows and macOS; menu breadth 201/204; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -15,7 +15,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 
 | Number | Value | Kind |
 |---|---|---|
-| Menu/command breadth | **98.5%** (200 / 203 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, re-checked from source on 2026-10-10) |
+| Menu/command breadth | **98.5%** (201 / 204 catalogued menu items have a live command) | **measured** (`cargo xtask parity`, re-checked from source on 2026-10-10) |
 | Feature breadth (does each Figma Design feature exist, weighted) | **~79%** (core editor areas 1–16: ~90%) | estimated from the area table below |
 | Ready for real work | **~47%** | estimated (dimension table below: written weights × written per-dimension scores) |
 | Essentials user | **~53%** | estimated ([below](#essentials-user): core features 77.8% × discounts 0.92 × 0.92 × 0.8) |
@@ -36,7 +36,7 @@ tool; presence was being graded as behaviour in places.
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
 | Full target (ready for real work) | ~47% | ~370–695 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (91–177), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (88–173), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -103,7 +103,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 7 | Effects | 4 | 100% | 72% | Glass and progressive blur tuned side by side | 3–6 |
 | 8 | Frames, groups, sections, masks | 5 | 95% | 75% | Visual QA with real files | 2–4 |
 | 9 | Auto layout & constraints | 9 | 95% | 68% | Grid `fr` rows around fixed children; behaviour against real Figma files ([auto-layout-parity](auto-layout-parity.md)) | 6–12 |
-| 10 | Text | 8 | 85% | 64% | Spell check, text on a path, CJK text QA, real-file text metrics | 8–14 |
+| 10 | Text | 8 | 88% | 66% | Spell check on Linux, FreeBSD and the web and in other languages (Windows and macOS use the system's checker), text on a path, CJK text QA, real-file text metrics | 5–10 |
 | 11 | Components & variants | 9 | 95% | 68% | Real (not synthetic) libraries, `.fig` libraries, component playground ([components-parity](components-parity.md)) | 6–12 |
 | 12 | Styles & variables | 5 | 85% | 70% | Extended collections, variables import/export, gradient stops and variant properties bound | 4–8 |
 | 13 | Prototyping | 6 | 88% | 70% | Video triggers and media actions, gamepad triggers, real prototype QA ([prototyping-parity](prototyping-parity.md)) | 5–9 |
@@ -115,14 +115,14 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 19 | Team libraries & organization | 2 | 40% | 25% | Local library files exist; no shared/cloud library, no library analytics | 10–20 |
 | 20 | Figma Draw extras | 2 | 45% | 30% | Have: variable width, lasso, shape builder, noise/texture. Missing: brushes (stretch/scatter), pressure, text on a path, pattern fills, multi-edit | 10–18 |
 | 21 | AI features | 3 | 0% | 0% | First draft, rename layers, image edit/remove background, visual search, Make: needs local models (owner decision) | 30–60 |
-| | **Weighted (÷113)** | 113 | **~79%** | **~57%** | | **211–420** |
-| | Core editor only (1–16, ÷94) | 94 | ~90% | ~67% | | 91–177 |
+| | **Weighted (÷113)** | 113 | **~79%** | **~57%** | | **208–416** |
+| | Core editor only (1–16, ÷94) | 94 | ~90% | ~67% | | 88–173 |
 
 ## By dimension (ready for real work)
 
 | Dimension | Weight | Ready | Hours | Evidence | Doc |
 |---|---|---|---|---|---|
-| Features (depth) | 35 | 57% | 71–135 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
+| Features (depth) | 35 | 57% | 68–131 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
 | UI/UX fidelity | 15 | 58% | 40–60 | Look & feel compared side by side with UI3 (~65% by the builders); tool-by-tool interaction (cursors, modifiers while dragging, hover states, popovers) not yet compared; accessibility names and keyboard navigation landed | [ui-parity](ui-parity.md) |
 | File formats | 12 | 40% | 30–60 | No `.fig` read or write; REST JSON import, SVG in/out, PNG/JPG/WebP/PDF export solid | [file-format-parity](file-format-parity.md) |
 | Collaboration | 10 | 12% | 55–110 | Local comments and version history; the multiplayer core (sync model, server ordering, client reconciliation, convergence tests) landed in #103, and live sessions (preview) co-edit a file hosted by a desktop app or kept on a self-hosted `figcraft-server` with edit and view links, joined from the app or the browser (`docs/collab-protocol.md`) | [collaboration-parity](collaboration-parity.md) |
@@ -153,7 +153,7 @@ graphic or a simple mockup. Same method, with the core features a casual user to
 | Select, move, resize, rotate, align, group, duplicate | 15 | 75% | not yet compared tool by tool |
 | Frames with device presets | 8 | 80% | |
 | Rectangle, ellipse, line, arrow, corner radius | 8 | 80% | |
-| Text: type, font, size, weight, colour, alignment | 12 | 70% | no spell check |
+| Text: type, font, size, weight, colour, alignment | 12 | 70% | spell check on Windows and macOS only |
 | Colour picker, fills and strokes; place and crop images | 10 | 72% | no HEIC images |
 | Layers panel: rename, hide, lock, reorder | 7 | 80% | |
 | Basic auto layout (add, gap, padding) | 6 | 70% | |
@@ -577,6 +577,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Spell check while editing text: misspelled words underlined, suggestions, Ignore and Add to dictionary in the context menu, Text ▸ Spelling ▸ Check spelling (the system's checker on Windows and macOS, in the system's language; none on Linux, FreeBSD or the web yet). Text 85% → 88% breadth, 64% → 66% ready, 8–14 h → 5–10 h; menu breadth 200/203 → 201/204 (98.5%); gap 11 narrowed to the remaining platforms and languages (4–8 h → 2–5 h); weighted percentages unchanged, hour totals down 3–4 h (headline ranges unchanged within their rounding) |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |

@@ -120,6 +120,12 @@ fn main() -> eframe::Result {
     // default, never a build from source unless asked).
     session.live.links = figcraft_collab_net::links::system();
     session.invite_links_startup();
+    // shortcut: no spell check on Linux and FreeBSD (their checkers are C libraries), add a
+    // hunspell/enchant checker when Linux users ask.
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        session.spelling.checker = Some(Box::new(services::SystemSpelling::default()));
+    }
     if session.docs.is_empty() {
         let _ = session.execute("file.new", &json!({}));
     }

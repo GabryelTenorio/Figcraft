@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (spell check while editing text on Windows and macOS; menu breadth 201/204; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -57,7 +57,7 @@ interaction feel not yet compared.
 | Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | hit-tested by the operands, not the result |
-| Text: point, auto height, fixed; caret, words, lines, IME | done | no spell check |
+| Text: point, auto height, fixed; caret, words, lines, IME; spell check | done | spell check uses the system's checker on Windows and macOS only, in its language |
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
 | Brushes, text on a path (Figma Draw) | missing | |
@@ -91,5 +91,6 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Spell check while editing text: misspelled words underlined, suggestions, Ignore and Add to dictionary in the context menu, Text ▸ Spelling ▸ Check spelling (the system's checker on Windows and macOS, in the system's language; none on Linux, FreeBSD or the web yet). Text 85% → 88% breadth, 64% → 66% ready, 8–14 h → 5–10 h; menu breadth 200/203 → 201/204 (98.5%); gap 11 narrowed to the remaining platforms and languages (4–8 h → 2–5 h); weighted percentages unchanged, hour totals down 3–4 h (headline ranges unchanged within their rounding) |
 | 2026-10-11 | minor | Design panel arc fields, live boolean editing (operands on the canvas, live results, per-operand operations), shape builder on strokes and open paths, one-sided widths (Alt-drag a width handle) |
 | 2026-10-10 | major | Created from the ROADMAP's look-and-feel and interaction items, the keymap and the canvas code |

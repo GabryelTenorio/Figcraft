@@ -465,6 +465,17 @@ visibility, text, font properties, single solid fills and strokes) and `explicit
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
 
+### Spell check
+
+While a text layer is being edited, the desktop app underlines misspelled words (the system's
+checker on Windows and macOS, in the system's language; the headless server and the browser have
+none, so nothing is flagged there). `text.spelling {on?}` switches it (saved in preferences;
+`available` says whether a checker is installed). With text being edited,
+`text.spellingSuggestions {index}` returns the word at char `index` with `misspelled` and up to five
+`suggestions` (null between words), and `text.replaceWord {index, with}` replaces that word (part of
+the editing session's undo step). `spelling.addWord {word}` never flags a word again (saved in
+preferences) and `spelling.ignore {word}` stops flagging it until the app quits.
+
 ### Comments
 
 Comment threads live in the file, pinned to a page point or to a layer (`anchor`: a node id, or

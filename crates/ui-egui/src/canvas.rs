@@ -141,6 +141,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     input(app, ui, &resp);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
+    app.session.sync_spelling();
     request_render(app, worker, ppp);
     // Every finished render is shown, even when a newer one is already on its way: renders finish
     // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
@@ -453,6 +454,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
 /// open the context menu there.
 pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
     let p = app.to_page(pos);
+    app.ui.context_spelling = misspelled_at(app, p).map(|(i, w, sugg)| (pos, i, w, sugg));
     if let Ok(ds) = app.session.ds() {
         let (doc, page, sel, zoom) = (ds.doc.clone(), ds.page, ds.selection.clone(), ds.view.zoom.max(1e-6));
         if let Some(leaf) = app.session.hit(&doc, page, p, 2.0 / zoom) {
@@ -463,6 +465,23 @@ pub fn open_context_menu(app: &mut FigApp, pos: Pos2, deep: bool) {
         }
     }
     app.ui.context_menu = Some((pos, app.session.selection()));
+}
+
+/// The misspelled word at page point `p` of the text being edited: its char index, the word and
+/// the checker's suggestions.
+fn misspelled_at(app: &mut FigApp, p: Point) -> Option<(usize, String, Vec<String>)> {
+    let ds = app.session.ds().ok()?;
+    let id = ds.text_edit.as_ref()?.id;
+    if !ds.doc.world_bounds(id).is_some_and(|b| b.contains(p)) {
+        return None;
+    }
+    let index = app.session.text_index_at(id, p).ok()?;
+    let r = app.session.execute("text.spellingSuggestions", &json!({"index": index})).ok()?;
+    if r["misspelled"] != true {
+        return None;
+    }
+    let suggestions = r["suggestions"].as_array()?.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+    Some((index, r["word"].as_str()?.to_string(), suggestions))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -512,6 +531,29 @@ impl TextOnScreen {
         rects.iter().map(|r| [self.at(app, r.x0, r.y0), self.at(app, r.x1, r.y0), self.at(app, r.x1, r.y1), self.at(app, r.x0, r.y1)]).collect()
     }
 
+    /// A line just below the baseline under characters `a..b` (their glyphs only), one screen
+    /// segment per line.
+    pub(crate) fn underline(&self, app: &FigApp, a: usize, b: usize) -> Vec<[Pos2; 2]> {
+        let layout = &self.layout;
+        let rects = layout.selection_rects(a, b);
+        rects
+            .iter()
+            .filter_map(|r| {
+                let line = layout.lines.iter().find(|l| (l.top - r.y0).abs() < 1e-6)?;
+                let x1 = layout
+                    .glyphs
+                    .get(line.glyph_start..line.glyph_end)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter(|g| g.char_end > g.char_start && g.char_start >= a && g.char_end <= b)
+                    .map(|g| g.x + g.advance)
+                    .fold(r.x0, f64::max);
+                let y = line.baseline + (line.top + line.height - line.baseline) * 0.35;
+                Some([self.at(app, r.x0, y), self.at(app, x1, y)])
+            })
+            .collect()
+    }
+
     /// The caret before character `index`: its top and bottom on screen (an empty layer: a line
     /// of default height at its origin).
     pub(crate) fn caret(&self, app: &FigApp, index: usize, zoom: f64) -> [Pos2; 2] {
@@ -535,6 +577,20 @@ pub(crate) fn node_quad(app: &FigApp, doc: &Document, id: NodeId) -> Option<[Pos
         let p = w * c;
         app.to_screen(p.x, p.y)
     }))
+}
+
+/// A wavy line along screen segment `[p0, p1]` (misspelled words).
+fn squiggle(painter: &egui::Painter, [p0, p1]: [Pos2; 2], col: Color32) {
+    let d = p1 - p0;
+    let len = d.length();
+    if !len.is_finite() || len < 2.0 {
+        return;
+    }
+    let (u, n) = (d / len, vec2(-d.y, d.x) / len);
+    let steps = ((len / 3.0) as usize).min(4000);
+    let step = len / steps as f32;
+    let pts = (0..=steps).map(|i| p0 + u * (i as f32 * step) + n * if i % 2 == 0 { -1.5 } else { 1.5 }).collect();
+    painter.add(Shape::line(pts, stroke(col, 1.0)));
 }
 
 fn quad(painter: &egui::Painter, q: [Pos2; 4], s: Stroke) {
@@ -830,7 +886,6 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     if let Some(te) = editing
         && let Some(text) = TextOnScreen::of(edoc, te.id)
     {
-        let layout = &text.layout;
         if let Some(q) = node_quad(app, edoc, te.id) {
             quad(painter, q, stroke(ACCENT, 1.0));
         }
@@ -841,19 +896,15 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             }
         }
         if let Some(p) = preedit {
-            for r in layout.selection_rects(p.range.0, p.range.1) {
-                // Underline just below the baseline, across the composed chars only.
-                let Some(line) = layout.lines.iter().find(|l| (l.top - r.y0).abs() < 1e-6) else { continue };
-                let x1 = layout
-                    .glyphs
-                    .get(line.glyph_start..line.glyph_end)
-                    .unwrap_or(&[])
-                    .iter()
-                    .filter(|g| g.char_end > g.char_start && g.char_start >= p.range.0 && g.char_end <= p.range.1)
-                    .map(|g| g.x + g.advance)
-                    .fold(r.x0, f64::max);
-                let y = line.baseline + (line.top + line.height - line.baseline) * 0.35;
-                painter.line_segment([text.at(app, r.x0, y), text.at(app, x1, y)], stroke(t.text, 1.0));
+            for seg in text.underline(app, p.range.0, p.range.1) {
+                painter.line_segment(seg, stroke(t.text, 1.0));
+            }
+        } else {
+            // Misspelled words, except the one being typed.
+            for &(a, b) in app.session.misspelled().iter().filter(|(a, b)| !(*a..=*b).contains(&te.caret)) {
+                for seg in text.underline(app, a, b) {
+                    squiggle(painter, seg, t.danger);
+                }
             }
         }
         let caret = preedit.map(|p| p.cursor).unwrap_or(te.caret);

@@ -183,7 +183,8 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
             }
             last_sep = false;
             let enabled = available(m.id);
-            if item(ui, m.label, crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
+            let checked = m.id == "text.spelling" && app.session.prefs.spell_check;
+            if item(ui, m.label, crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, checked, &t) && enabled {
                 clicked = Some(m.id);
             }
         } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
@@ -363,6 +364,9 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
         let mut close = false;
         let area = egui::Area::new(Id::new("ctx_menu")).fixed_pos(pos).order(egui::Order::Foreground).constrain(true).show(ctx, |ui| {
             menu_frame(ui, &t, |ui| {
+                if spelling_entries(app, ui, pos, &t) {
+                    close = true;
+                }
                 if select_layer_menu(app, ui, pos, &t) {
                     close = true;
                 }
@@ -459,6 +463,30 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
     }
     crate::colorpicker::show(app, ctx);
     palette(app, ctx);
+}
+
+/// The context menu's entries for the misspelled word it was opened on at `pos`: its suggestions,
+/// Ignore and Add to dictionary. Returns whether one was picked.
+fn spelling_entries(app: &mut FigApp, ui: &mut Ui, pos: egui::Pos2, t: &Tokens) -> bool {
+    let Some((_, index, word, suggestions)) = app.ui.context_spelling.clone().filter(|c| c.0 == pos) else { return false };
+    let mut picked = None;
+    if suggestions.is_empty() {
+        item(ui, "No suggestions", "", false, false, t);
+    }
+    for s in &suggestions {
+        if item(ui, s, "", true, false, t) {
+            picked = Some(("text.replaceWord", json!({"index": index, "with": s})));
+        }
+    }
+    separator(ui);
+    if item(ui, "Ignore", "", true, false, t) {
+        picked = Some(("spelling.ignore", json!({"word": word})));
+    }
+    if item(ui, "Add to dictionary", "", true, false, t) {
+        picked = Some(("spelling.addWord", json!({"word": word})));
+    }
+    separator(ui);
+    picked.map(|(id, p)| app.run(id, p)).is_some()
 }
 
 fn select_layer_id() -> Id {

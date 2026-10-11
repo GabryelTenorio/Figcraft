@@ -198,6 +198,8 @@ pub static MENU: &[MenuItem] = &[
     m!("Text/Case", "Uppercase", "text.caseUpper"),
     m!("Text/Case", "Lowercase", "text.caseLower"),
     m!("Text/Case", "Title case", "text.caseTitle"),
+    m!("Text", SEP, ""),
+    m!("Text/Spelling", "Check spelling", "text.spelling"),
     // Arrange
     m!("Arrange", "Align left", "align.left"),
     m!("Arrange", "Align horizontal centers", "align.hcenter"),

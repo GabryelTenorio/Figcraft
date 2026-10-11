@@ -230,6 +230,9 @@ pub struct UiState {
     pub preview: Option<present::Pane>,
     pub picker: Option<colorpicker::PickerTarget>,
     pub context_menu: Option<(egui::Pos2, Vec<NodeId>)>,
+    /// The misspelled word the context menu at that position was opened on (while editing text):
+    /// its char index, the word and the suggestions that head the menu.
+    pub context_spelling: Option<(egui::Pos2, usize, String, Vec<String>)>,
     /// Layers panel search: open, the filter text, the shift-click range anchor and the selection
     /// the tree last revealed (ancestors expand and the row scrolls into view when it changes).
     pub layer_search: bool,
@@ -321,6 +324,7 @@ impl Default for UiState {
             preview: None,
             picker: None,
             context_menu: None,
+            context_spelling: None,
             layer_search: false,
             layer_filter: String::new(),
             layer_anchor: None,

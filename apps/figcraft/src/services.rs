@@ -160,6 +160,22 @@ impl Services for Desktop {
     }
 }
 
+/// The system's spell checker, connected on first use from the UI thread (on Windows, COM is set
+/// up there once the window exists).
+#[cfg(any(windows, target_os = "macos"))]
+#[derive(Default)]
+pub struct SystemSpelling(Option<os_spellcheck::SpellChecker>);
+
+#[cfg(any(windows, target_os = "macos"))]
+impl figcraft_engine::spelling::SpellChecker for SystemSpelling {
+    fn misspelled(&mut self, word: &str) -> bool {
+        !self.0.get_or_insert_with(os_spellcheck::SpellChecker::new).check(word).is_empty()
+    }
+    fn suggest(&mut self, word: &str) -> Vec<String> {
+        self.0.get_or_insert_with(os_spellcheck::SpellChecker::new).suggestions(word)
+    }
+}
+
 /// The window icon from the bundled app icon (if present).
 pub fn window_icon() -> Option<egui::IconData> {
     let bytes = include_bytes!("../../../assets/app-icon/figcraft-256.png");

@@ -29,5 +29,9 @@ env_logger = { version = "0.11", default-features = false, features = ["auto-col
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", default-features = false, features = ["UI_ViewManagement"] }
 
+# The system's spell checker (ISpellChecker, NSSpellChecker).
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+os-spellcheck = "0.2"
+
 [build-dependencies]
 winresource = "0.1"

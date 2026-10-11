@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (spell check while editing text on Windows and macOS; menu breadth 201/204; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -24,7 +24,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
 | 9 | Figma Draw: brushes, pressure, text on a path, pattern fills | Feature | 10–18 | [target-app-parity](target-app-parity.md) |
 | 10 | Shared (team) libraries | Feature | 10–20 | [components-parity](components-parity.md) |
-| 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
+| 11 | Spell check on Linux, FreeBSD and the web; one language | Feature | 2–5 | [target-app-parity](target-app-parity.md) |
 | 12 | Video and animated GIF fills; HEIC/TIFF images | File format | 6–12 | [file-format-parity](file-format-parity.md) |
 | 13 | Boolean groups hit-tested by their operands (the rest of the vector tail landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections, import/export | Feature | 4–8 | [components-parity](components-parity.md) |
@@ -153,11 +153,15 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Impact:** design-system teams. Builds on multiplayer's server.
 - **Estimate:** 10–20 h after gap 2.
 
-### 11. Spell check
-- **Missing:** spelling underline and suggestions while editing text.
-- **Evidence:** no spell-check code in the repo.
-- **Estimate:** 4–8 h with a permissively licensed dictionary and checker (provenance per
-  `ATTRIBUTION.md`).
+### 11. Spell check on Linux, FreeBSD and the web; one language
+- **Have:** misspelled words in the text being edited get a wavy underline; right-click one for
+  suggestions, Ignore (until the app quits) and Add to dictionary (saved in preferences); Text ▸
+  Spelling ▸ Check spelling, on by default (`crates/engine/src/spelling.rs`). The desktop app uses
+  the system's checker on Windows and macOS, in the system's language.
+- **Missing:** a checker on Linux and FreeBSD (hunspell or enchant) and in the browser; choosing the
+  language (Text ▸ Spelling ▸ Language); text in scripts written without spaces (CJK, Thai) isn't
+  checked; Add to dictionary doesn't reach the system's dictionary.
+- **Estimate:** 2–5 h.
 
 ### 12. Video and animated GIF fills; HEIC/TIFF images
 - **Missing:** Figma takes JPG, PNG, HEIC, WebP, GIF and TIFF images and MP4, MOV and WebM video
@@ -230,6 +234,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Spell check while editing text: misspelled words underlined, suggestions, Ignore and Add to dictionary in the context menu, Text ▸ Spelling ▸ Check spelling (the system's checker on Windows and macOS, in the system's language; none on Linux, FreeBSD or the web yet). Text 85% → 88% breadth, 64% → 66% ready, 8–14 h → 5–10 h; menu breadth 200/203 → 201/204 (98.5%); gap 11 narrowed to the remaining platforms and languages (4–8 h → 2–5 h); weighted percentages unchanged, hour totals down 3–4 h (headline ranges unchanged within their rounding) |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |

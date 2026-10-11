@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (spell check while editing text on Windows and macOS; menu breadth 201/204; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -13,7 +13,7 @@ start with [`docs/gaps.md`](docs/gaps.md).
 
 | | Value | Kind |
 |---|---|---|
-| Menu/command breadth | **98.5%** (200 / 203) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
+| Menu/command breadth | **98.5%** (201 / 204) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
 | Feature breadth | **~79%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
 | Ready for real work | **~47%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
@@ -26,7 +26,7 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
 | Full target (ready for real work) | ~47% | ~370–695 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (91–177), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (88–173), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -56,7 +56,7 @@ the localization layer with Figma's own languages (20–35 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 67%) | 71–135 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 67%) | 68–131 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 12% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -81,7 +81,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Effects | 100% | 72% | 3–6 | [target-app-parity](docs/target-app-parity.md) |
 | Frames, groups, sections, masks | 95% | 75% | 2–4 | [target-app-parity](docs/target-app-parity.md) |
 | Auto layout & constraints | 95% | 68% | 6–12 | [auto-layout-parity](docs/auto-layout-parity.md) |
-| Text | 85% | 64% | 8–14 | [target-app-parity](docs/target-app-parity.md) |
+| Text | 88% | 66% | 5–10 | [target-app-parity](docs/target-app-parity.md) |
 | Components & variants | 95% | 68% | 6–12 | [components-parity](docs/components-parity.md) |
 | Styles & variables | 85% | 70% | 4–8 | [components-parity](docs/components-parity.md) |
 | Prototyping | 88% | 70% | 5–9 | [prototyping-parity](docs/prototyping-parity.md) |
@@ -157,6 +157,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Spell check while editing text: misspelled words underlined, suggestions, Ignore and Add to dictionary in the context menu, Text ▸ Spelling ▸ Check spelling (the system's checker on Windows and macOS, in the system's language; none on Linux, FreeBSD or the web yet). Text 85% → 88% breadth, 64% → 66% ready, 8–14 h → 5–10 h; menu breadth 200/203 → 201/204 (98.5%); gap 11 narrowed to the remaining platforms and languages (4–8 h → 2–5 h); weighted percentages unchanged, hour totals down 3–4 h (headline ranges unchanged within their rounding) |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
