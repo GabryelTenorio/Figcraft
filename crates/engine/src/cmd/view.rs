@@ -210,6 +210,23 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Dev Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),
+        // Several windows: the desktop app opens and focuses them (no-ops headless and in the browser).
+        spec!(
+            "window.new",
+            "New window",
+            "{path?, index?}  a new window with a new file, the file at `path`, or open file `index` moved into it",
+            false,
+            |s, p| {
+                let index = if num(p, "index").is_some() { Some(req_index("window.new", p, "index")?) } else { None };
+                s.request_ui("window.new", json!({"path": string(p, "path"), "index": index}));
+                ok()
+            }
+        ),
+        spec!("window.focus", "Bring window to front", "{id}  a window id (control channel `window.list`)", false, |s, p| {
+            let id = req_index("window.focus", p, "id")?;
+            s.request_ui("window.focus", json!({"id": id}));
+            ok()
+        }),
         spec!("view.nextRegion", "Focus next region", "{}", false, |s, _| region(s, 1)),
         spec!("view.previousRegion", "Focus previous region", "{}", false, |s, _| region(s, -1)),
         spec!("view.themeLight", "Light theme", "{}", false, |s, _| {

@@ -55,6 +55,7 @@ pub mod variables_panel;
 pub mod vector_panel;
 pub mod versions;
 pub mod widgets;
+pub mod windows;
 
 #[cfg(test)]
 mod a11y_tests;
@@ -108,6 +109,8 @@ mod shortcuts_tests;
 mod titlebar_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
+#[cfg(test)]
+mod windows_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -144,6 +147,8 @@ pub trait Services {
     fn reduce_motion(&self) -> bool {
         false
     }
+    /// After a panic in a frame: keep recovery copies of unsaved files.
+    fn emergency_save(&mut self, _session: &Session) {}
 }
 
 /// No-op services (tests, headless screenshots).
@@ -291,6 +296,8 @@ pub struct UiState {
     pub plugin_form: Option<plugins_ui::PluginForm>,
     /// Live sessions: remote cursors as drawn, the Join dialog.
     pub live: live::LiveUi,
+    /// The window was asked to close with unsaved changes: the question shows.
+    pub confirm_close: bool,
 }
 
 impl Default for UiState {
@@ -360,6 +367,7 @@ impl Default for UiState {
             plugins_window: false,
             plugin_form: None,
             live: live::LiveUi::default(),
+            confirm_close: false,
         }
     }
 }
@@ -382,6 +390,10 @@ pub struct FigApp {
     pub control_input: Vec<egui::Event>,
     /// Frames drawn and what asked for them (`ui.inspect`).
     pub frame_stats: frame_stats::FrameStats,
+    /// The other windows (desktop app).
+    pub windows: windows::Windows,
+    /// `window.new` / `window.focus` asked for by commands, for the end of the frame.
+    window_requests: Vec<figcraft_engine::UiRequest>,
 }
 
 impl FigApp {
@@ -398,6 +410,8 @@ impl FigApp {
             control_queue: Vec::new(),
             control_input: Vec::new(),
             frame_stats: frame_stats::FrameStats::default(),
+            windows: windows::Windows::default(),
+            window_requests: Vec::new(),
         }
     }
 
@@ -547,6 +561,7 @@ impl FigApp {
                 }
                 "dialog.unsaved" => self.toast("This file has unsaved changes"),
                 "dialog.plugins" => self.ui.plugins_window = true,
+                "window.new" | "window.focus" => self.window_requests.push(r),
                 _ => {}
             }
         }
@@ -646,7 +661,7 @@ impl FigApp {
         repaint_in(ctx, AUTOSAVE_SECS);
     }
 
-    /// Draw the whole UI.
+    /// Draw the whole UI: the main window (the other windows draw themselves).
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         #[cfg(not(target_arch = "wasm32"))]
         let t0 = std::time::Instant::now();
@@ -660,6 +675,29 @@ impl FigApp {
             ctx.request_repaint();
             return;
         }
+        // What happened in a live session (the network woke us for it).
+        if self.session.live_poll()
+            && let Some(m) = self.session.message.take()
+        {
+            self.toast(m);
+        }
+        windows::begin(self, &ctx);
+        let (files, prefs) = (self.session.docs.len(), self.session.prefs.clone());
+        self.frame(ui);
+        windows::settle(self, &ctx, files);
+        if self.session.prefs != prefs {
+            windows::repaint_others(self, &ctx);
+        }
+        windows::show(self, &ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
+    }
+
+    /// One frame of the window drawing now.
+    pub(crate) fn frame(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         let t = theme::Tokens::get(&ctx);
         // A field that had the keyboard when the frame began keeps its keys from the shortcuts
         // even if it lets go during the frame (Enter commits it), or as it began (egui drops the
@@ -667,12 +705,7 @@ impl FigApp {
         let typing = std::mem::take(&mut self.field_focus) || a11y::field_focused(&ctx);
         // Control requests run first so their results reflect this frame.
         control::drain(self, &ctx);
-        // What happened in a live session (the network woke us for it).
-        if self.session.live_poll()
-            && let Some(m) = self.session.message.take()
-        {
-            self.toast(m);
-        }
+        windows::requests(self, &ctx);
         // Before any widget: the navigation keys (F6, Tab, arrows, Escape) move the keyboard.
         a11y::begin(self, &ctx);
         if self.ui.title_bar == TitleBar::Custom {
@@ -688,10 +721,11 @@ impl FigApp {
             present::show(self, ui);
             return;
         }
-        if self.session.docs.is_empty() || self.ui.home {
+        if !self.has_files() || self.ui.home {
             tabs::tab_bar(self, ui);
             home::show(self, ui);
             dialogs::show(self, &ctx);
+            windows::requests(self, &ctx);
             return;
         }
         let hidden = self.session.ds().map(|d| d.view.ui_hidden).unwrap_or(false);
@@ -771,11 +805,11 @@ impl FigApp {
         }
         a11y::end(self, &ctx);
         self.field_focus = a11y::field_focused(&ctx);
-        // Your pointer, selection and view to the others in a live session (when they changed).
-        self.session.live_sync();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.ui.frame_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        windows::requests(self, &ctx);
+        // Your pointer, selection and view to the others in a live session (when they changed),
+        // from the window with its file.
+        if self.session.live.doc_uid.map_or(0, |u| self.windows.of(u)) == self.windows.current {
+            self.session.live_sync();
         }
     }
 
@@ -856,6 +890,8 @@ impl FigApp {
                 }),
             },
             "live": live::inspect(self),
+            "window": self.windows.current,
+            "windows": windows::list(self),
             "tool": self.session.tool_info(),
             "status": self.session.status(),
             "lastError": self.ui.last_error,

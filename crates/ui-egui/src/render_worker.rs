@@ -82,6 +82,8 @@ impl Worker {
         let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
         let finished = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let done_with = finished.clone();
+        // The window that renders with it (each window has its own worker).
+        let viewport = ctx.viewport_id();
         let spawned = std::thread::Builder::new().name("figcraft-render".into()).spawn(move || {
             let mut retained = Retained::default();
             while let Ok((mut seq, mut job)) = jobs.recv() {
@@ -103,7 +105,7 @@ impl Worker {
                 {
                     break;
                 }
-                ctx.request_repaint();
+                ctx.request_repaint_of(viewport);
                 done_with.store(seq, std::sync::atomic::Ordering::Release);
             }
         });

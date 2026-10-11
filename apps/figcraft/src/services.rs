@@ -150,6 +150,9 @@ impl Services for Desktop {
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
     }
+    fn emergency_save(&mut self, session: &Session) {
+        emergency_save(session);
+    }
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)
     }

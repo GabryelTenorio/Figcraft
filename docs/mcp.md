@@ -134,13 +134,13 @@ Or in a project's `.mcp.json`:
 | `get_node {id, depth}` | One layer as JSON. |
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
-| `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
+| `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
-| `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
+| `inspect_ui {}` | Tool, view and status (and panels, timings and the app's `windows` when attached). |
 
 ### Sections, handoff and arrow keys
 
@@ -632,6 +632,16 @@ save)}` returns `{changes, count, bytes}`: the change batch a live session would
 `docs/collab-protocol.md`) and its binary size. It changes nothing. In a live session, where undo
 is per user (`edit.undo` / `edit.redo` take back only your own steps, see
 `docs/collab-protocol.md`), only `saved` applies.
+
+### Windows
+
+The attached desktop app can show files in several windows, each with its own tabs; the files,
+preferences, libraries and clipboard are shared. `run_command` with `window.new {path?, index?}`
+opens one (a new file, the file at `path`, or open file `index` moved out of its window) and
+`window.focus {id}` brings one to the front; `inspect_ui` lists them as `windows` (`id`, `main`,
+`title`, `files`, `active`, `focused`). Tools act on the window in front (the last one opened, focused or clicked):
+focus a window before working on its files, and pass its id to `screenshot {window}` to see it.
+Headless (one session, no windows) and in the browser the two commands do nothing.
 
 ### Live sessions
 
