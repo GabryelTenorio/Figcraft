@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: the standalone server with share links to edit or view; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -15,7 +15,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | # | Gap | Kind | Hours | Doc |
 |---|---|---|---|---|
 | 1 | `.fig` files can't be opened (**beta blocker**) | File format | 30–60 | [file-format-parity](file-format-parity.md) |
-| 2 | No real-time multiplayer or sharing (**beta blocker**) | Feature | 45–90 | [collaboration-parity](collaboration-parity.md) |
+| 2 | Multiplayer and sharing are a preview, without accounts (**beta blocker**) | Feature | 45–90 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
 | 5 | No localization layer; English only | Localization | 60–100 | [localization-parity](localization-parity.md) |
@@ -54,20 +54,25 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   model), with a corpus of synthetic `.fig` files saved from the installed Figma. Export to `.fig`
   is a further 15–30 h and lower priority.
 
-### 2. No real-time multiplayer or sharing
-- **Missing:** co-editing, live cursors and selections, observation mode, cursor chat, spotlight,
-  audio, share links and permissions. Comments and versions are local to the file.
+### 2. Multiplayer and sharing are a preview, without accounts
+- **Missing:** accounts, teams and projects, per-person permissions, spotlight, cursor chat, audio,
+  shared comments and version history, TLS in the desktop app. Comments and versions are local to
+  the file.
 - **Evidence:** the core landed in #103 (`crates/collab`: client-scoped ids, change sets, server
   ordering and validation, client reconciliation, binary messages, randomized convergence tests over
   real commands), and live sessions run over the network (`crates/collab-net`: hosting from the
   app, invite links that open the app, document sync between apps, live cursors, selections,
   avatars and follow, and the browser build joins) with per-person undo, refused edits rolled back
-  with a reason, and reconnects that resume and send what was made offline; but sessions are plain
-  `ws://` (no TLS, so an https page can only join on the same computer), and there are no share
-  links or permissions (`docs/collab-protocol.md`).
+  with a reason, and reconnects that resume and send what was made offline; a standalone
+  `figcraft-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
+  confirmed), takes files published from the app and hands out share links that let people edit
+  or only view (`docs/server.md`). But there are no accounts (a link is the access), and the
+  desktop app speaks only plain `ws://` (TLS comes from a reverse proxy, which only the browser
+  can use so far) (`docs/collab-protocol.md`).
 - **Impact:** Figma's defining feature; most teams use it every day. Solo designers can work
   without it.
-- **Estimate:** 45–90 h: sharing and permissions and a standalone server with TLS.
+- **Estimate:** 45–90 h: accounts, teams and per-person permissions, TLS in the desktop app,
+  shared comments and versions (numbers from before the server landed; re-measured next).
 
 ### 3. Nothing checked against real Figma files
 - **Missing:** a corpus of real documents (design systems, app screens, prototypes) imported and
@@ -217,6 +222,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

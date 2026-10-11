@@ -381,7 +381,8 @@ impl Store {
         let entry = self.files.remove(file).ok_or("this file isn't on the server (it may have been removed)")?;
         drop(entry);
         let dir = self.dir(file);
-        fs::remove_dir_all(&dir).map_err(|e| format!("it is no longer served, but its folder {} couldn't be deleted ({e}); delete it by hand", dir.display()))?;
+        fs::remove_dir_all(&dir)
+            .map_err(|e| format!("it is no longer served, but its folder {} couldn't be deleted ({e}); delete it by hand", dir.display()))?;
         log::info!("removed file {file}");
         Ok(())
     }

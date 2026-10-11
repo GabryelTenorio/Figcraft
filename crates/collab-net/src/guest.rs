@@ -141,7 +141,8 @@ struct Conn {
 /// Upload the document; the join settings for the new file and its links.
 fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published), String> {
     let snapshot = Replica::new((*job.doc).clone()).snapshot().map_err(|e| e.to_string())?;
-    let replies = manage::request(&job.server, &job.key, vec![Admin::Publish { name: job.name.clone(), snapshot }], &cfg.limits, cfg.connect_timeout)?;
+    let replies =
+        manage::request(&job.server, &job.key, vec![Admin::Publish { name: job.name.clone(), snapshot }], &cfg.limits, cfg.connect_timeout)?;
     let (file, edit, view) = match replies.into_iter().next() {
         Some(AdminReply::Published { file, edit, view }) => (file, edit, view),
         Some(AdminReply::Failed { reason }) => return Err(reason),

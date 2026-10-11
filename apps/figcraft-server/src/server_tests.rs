@@ -220,7 +220,9 @@ fn revoked_links_stop_working_at_once() {
     assert!(e.contains("wrong server key"), "{e}");
     // Removing the file ends it for everyone in it.
     assert_eq!(ask(Admin::Remove { file: file.clone() }), AdminReply::Done);
-    pump(&mut [&mut a, &mut b], "everyone out", |s| s.iter().all(|x| matches!(&x.live.status, Status::Failed { reason } if reason.contains("removed"))));
+    pump(&mut [&mut a, &mut b], "everyone out", |s| {
+        s.iter().all(|x| matches!(&x.live.status, Status::Failed { reason } if reason.contains("removed")))
+    });
     server.stop();
 }
 
@@ -262,7 +264,8 @@ fn fuzzed_frames_dont_hurt_the_server() {
                     _ => bytes.truncate(i.max(1)),
                 }
             }
-            let frame = if round % 7 == 0 { Message::Text(String::from_utf8_lossy(&bytes).into_owned().into()) } else { Message::Binary(Bytes::from(bytes)) };
+            let frame =
+                if round % 7 == 0 { Message::Text(String::from_utf8_lossy(&bytes).into_owned().into()) } else { Message::Binary(Bytes::from(bytes)) };
             if ws.send(frame).is_err() {
                 break;
             }

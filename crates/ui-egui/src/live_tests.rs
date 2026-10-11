@@ -27,6 +27,9 @@ impl LiveLink for Mock {
     fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
         Ok(())
     }
+    fn publish(&mut self, _: figcraft_engine::live::PublishOptions) -> Result<(), String> {
+        Ok(())
+    }
     fn leave(&mut self) {}
     fn presence(&mut self, _: &Presence) {}
     fn send(&mut self, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}

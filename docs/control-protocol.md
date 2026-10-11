@@ -90,10 +90,12 @@ pointer press, so the focus ring shows) and the name of the `control` with the k
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
 the system's accessibility setting turns the interface's animations off. `live` is the live
 session as the window shows it: `status`, `role`, the number of `peers`, who you `follow`, the
-peers whose cursors are drawn on the canvas (`cursorsShown`) and whether the Join dialog is open
-(`joinDialog`; Escape closes it); the session itself is `engine.execute {command: "collab.peers"}`
-(hosting and joining are `collab.host` and `collab.join`, opening invite links
-`collab.registerLinks`, see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
+peers whose cursors are drawn on the canvas (`cursorsShown`), whether the Join and Publish to
+server dialogs are open (`joinDialog`, `publishDialog`; Escape closes them) and why the active
+document can't be edited now (`readOnly`: the "View only" or "Publishing" reason, else null); the
+session itself is `engine.execute {command: "collab.peers"}` (hosting, joining and publishing are
+`collab.host`, `collab.join` and `collab.publish`, opening invite links `collab.registerLinks`,
+see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
 was started with (`figcraft "figcraft://join?…"`).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`

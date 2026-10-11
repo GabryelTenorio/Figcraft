@@ -216,14 +216,20 @@ pub struct NewLink {
 pub enum AdminReply {
     /// The key is right: requests may follow.
     Ready,
-    Published { file: FileInfo, edit: NewLink, view: NewLink },
+    Published {
+        file: FileInfo,
+        edit: NewLink,
+        view: NewLink,
+    },
     Files(Vec<FileInfo>),
     Links(Vec<LinkInfo>),
     Link(NewLink),
     /// Done (a revoke or a removal).
     Done,
     /// The request couldn't be done (the connection stays open).
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 /// Client → server.

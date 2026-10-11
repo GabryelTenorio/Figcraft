@@ -32,15 +32,16 @@ fn parsing() {
     assert_eq!(c.config, Config::default());
     let c = parse(&args(&["serve", "--listen", "0.0.0.0:47900", "--data", "d", "--public-url", "wss://f.example.com/live/"])).unwrap();
     assert_eq!((c.config.listen.as_str(), c.config.data.to_str()), ("0.0.0.0:47900", Some("d")));
-    assert_eq!(parse(&args(&["links", "create", "f1", "--access", "view", "--label", "Client"])).unwrap().command, Command::CreateLink {
-        file: "f1".into(),
-        access: Access::View,
-        label: "Client".into()
-    });
+    assert_eq!(
+        parse(&args(&["links", "create", "f1", "--access", "view", "--label", "Client"])).unwrap().command,
+        Command::CreateLink { file: "f1".into(), access: Access::View, label: "Client".into() }
+    );
     assert_eq!(parse(&args(&["files"])).unwrap().command, Command::Files);
     assert_eq!(parse(&args(&["key", "--rotate"])).unwrap().command, Command::Key { rotate: true });
     assert_eq!(parse(&args(&["-h"])).unwrap().command, Command::Help);
-    for bad in [&["--nope"][..], &["links", "create", "f1"], &["--listen", "nowhere"], &["--listen"], &["frobnicate"], &["--public-url", "ws://h/?key=k"]] {
+    for bad in
+        [&["--nope"][..], &["links", "create", "f1"], &["--listen", "nowhere"], &["--listen"], &["frobnicate"], &["--public-url", "ws://h/?key=k"]]
+    {
         assert!(parse(&args(bad)).is_err(), "{bad:?}");
     }
     // A config file, with flags over it; unknown keys are errors.

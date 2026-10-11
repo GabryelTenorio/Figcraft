@@ -1184,6 +1184,8 @@ mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
 #[cfg(test)]
+mod live_access_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod mask_tests;

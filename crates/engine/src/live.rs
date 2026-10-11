@@ -39,6 +39,7 @@ pub use figcraft_collab::message::{Peer, Presence};
 use crate::cmd::CommandSpec;
 use crate::collab::EngineRecompute;
 use crate::params::{get, num, req_string, string};
+use crate::tools::ToolId;
 use crate::{DocState, EngineError, Result, Session, TextEdit, ViewState, bad, spec};
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
@@ -623,6 +624,10 @@ impl Session {
             info.file_name = doc.name.clone();
             info.pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
         }
+        // A view link: the editing tools are off.
+        if client.access() == Access::View && !matches!(self.tool.tool, ToolId::Move | ToolId::Hand) {
+            self.set_tool(ToolId::Move);
+        }
         self.live.client = Some(client);
         self.live.deferred.clear();
     }
@@ -937,7 +942,8 @@ fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     let key = string(p, "key").map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
     let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
     let name = string(p, "name").map(|n| n.trim().chars().filter(|c| !c.is_control()).take(256).collect::<String>()).filter(|n| !n.is_empty());
-    let opts = PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me: display_name(&s.prefs), doc };
+    let opts =
+        PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me: display_name(&s.prefs), doc };
     let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
     link.publish(opts).map_err(|e| bad(CMD, e))?;
     s.live.reset();

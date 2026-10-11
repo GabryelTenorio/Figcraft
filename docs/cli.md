@@ -6,6 +6,10 @@ commands, serve MCP and measure performance. Build it with
 
 Bad arguments print usage and exit with code 2; failures exit with 1. The CLI never panics on input.
 
+The collaboration server is a binary of its own, `figcraft-server` (`cargo build --release -p
+figcraft-server`): it keeps files with share links and serves their live sessions, and its
+`key`, `files` and `links` subcommands manage them. See [server.md](server.md).
+
 ## Subcommands
 
 ### `info <file> [--json]`
@@ -99,7 +103,8 @@ machines.
 ### `mcp [--attach PORT]`
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
-`figcraft --control PORT`. See [mcp.md](mcp.md).
+`figcraft --control PORT`. See [mcp.md](mcp.md). The headless session can host, join and publish
+live sessions (`collab.*`); the one-shot `run` can't (no network link).
 
 ### `perf [--layers N[,N...]]`
 

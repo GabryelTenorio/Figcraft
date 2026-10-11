@@ -128,6 +128,8 @@ pub fn invoke(app: &mut FigApp, id: &str) {
         "edit.findReplace" => app.ui.find = Some((String::new(), String::new())),
         // From a menu the link is pasted into the Join dialog (`collab.join {link}` joins directly).
         "collab.join" => crate::live::open_join(app, ""),
+        // So is the server address for publishing (it carries the server key).
+        "collab.publish" => crate::live::open_publish(app),
         "edit.copy" | "edit.cut" => {
             let ids = app.session.selection();
             // SVG for other apps, taken before a cut removes the layers.

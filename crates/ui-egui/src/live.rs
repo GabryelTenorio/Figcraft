@@ -1,14 +1,15 @@
 //! Live sessions in the window: other people's cursors (smoothly following their pointer, with a
 //! name tag) and selections on the canvas (their edits arrive through the engine's sync), their avatars at the top of the right panel (click one
-//! to follow their view), the Share popover (start a session, the invite link, stop) and the
-//! Join dialog. Everything acts through the `collab.*` commands; the state is the engine's
+//! to follow their view), the Share popover (start a session, the invite link, stop; the server,
+//! file and access of a session you joined; a published file's links), the Join dialog and the
+//! Publish to server dialog. Everything acts through the `collab.*` commands; the state is the engine's
 //! (`Session::live`). The network wakes the UI when something arrives, and cursors only ask for
 //! frames while they glide, so an idle session draws nothing.
 
 use std::collections::BTreeMap;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
-use figcraft_engine::live::{PEOPLE, Role, Status, initials, parse_color, presence_page};
+use figcraft_engine::live::{Access, PEOPLE, Role, Status, initials, parse_color, presence_page};
 use serde_json::json;
 
 use crate::FigApp;
@@ -19,11 +20,16 @@ use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
 /// In the browser: what joining needs (a page can't host, and https pages can't reach `ws://`).
-const BROWSER_NOTE: &str =
-    "In the browser you can join sessions hosted by the desktop app. A page opened over https can only reach sessions on this computer.";
+const BROWSER_NOTE: &str = "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS).";
 
 /// How undo works in a session (per person).
 const UNDO_NOTE: &str = "Undo takes back only your own changes; what others changed since stays.";
+
+/// What a view link means for you.
+const VIEW_NOTE: &str = "View only: you see every change as it happens but can't edit. Leave to keep a copy you can edit.";
+
+/// What a published file's links are.
+const PUBLISHED_NOTE: &str = "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them.";
 
 /// How fast a remote cursor closes in on where it was last reported (per second).
 const GLIDE: f64 = 20.0;
@@ -45,6 +51,21 @@ pub struct LiveUi {
     focus_join: bool,
     /// Start sessions on the local network (else this machine only).
     pub lan: bool,
+    /// The Publish to server dialog's fields (open when `Some`).
+    pub publish: Option<PublishForm>,
+    /// Put the keyboard in the Publish dialog's first field on its next frame.
+    focus_publish: bool,
+    /// The last server address published to (kept for this run only: it carries the server key).
+    last_server: String,
+}
+
+/// What the Publish to server dialog asks for.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PublishForm {
+    /// The server's address with its key (`ws://host:47900/?key=…`).
+    pub server: String,
+    /// The file's name on the server.
+    pub name: String,
 }
 
 impl LiveUi {
@@ -260,34 +281,37 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
     menu_popup(anchor).width(300.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         let t = Tokens::get(ui.ctx());
         ui.spacing_mut().item_spacing.y = 6.0;
-        ui.add_space(4.0);
-        ui.label(egui::RichText::new("Live session").font(semibold(12.0)));
-        let status = app.session.live.status.clone();
-        let role = app.session.live.role();
-        let (line, col) = match (&status, role) {
-            (Status::Live, Some(Role::Host)) => (format!("Live · {}", people_count(app.session.live.peers.len())), t.success),
-            (Status::Live, _) => {
-                let file = app.session.live.info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
-                (if file.is_empty() { "Joined".to_string() } else { format!("Joined {file}") }, t.success)
-            }
-            (Status::Failed { .. }, _) => (status.label(), t.danger),
-            _ => (status.label(), t.text_secondary),
-        };
-        widgets::label(ui, &line, col);
-        match (&status, role) {
-            (Status::Off | Status::Failed { .. }, _) => start_ui(app, ui, &t),
-            (Status::Live, Some(Role::Host)) => host_ui(app, ui),
-            _ => {
-                if let Some(i) = app.session.live.info.as_ref().filter(|i| !i.pages.is_empty()) {
-                    let pages: Vec<&str> = i.pages.iter().map(|p| p.name.as_str()).take(8).collect();
-                    widgets::label(ui, &format!("Pages: {}", pages.join(", ")), t.text_secondary);
+        ui.set_max_width(300.0);
+        // Menus lay out justified and don't wrap: the session's notes wrap, left-aligned, within
+        // the popover's width.
+        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("Live session").font(semibold(12.0)));
+            let status = app.session.live.status.clone();
+            let role = app.session.live.role();
+            let others = app.session.live.peers.len();
+            let published = app.session.live.published.is_some();
+            // Connecting with a tab already chosen and nobody's welcome yet: the upload.
+            let publishing = status == Status::Connecting && role.is_none() && app.session.live.doc_uid.is_some();
+            let (line, col) = match (&status, role) {
+                (Status::Live, Some(Role::Host)) => (format!("Live · {}", people_count(others)), t.success),
+                (Status::Live, _) if published => (format!("Published · {}", people_count(others)), t.success),
+                (Status::Connecting, _) if publishing => ("Publishing…".to_string(), t.text_secondary),
+                (Status::Live, _) => {
+                    let file = app.session.live.info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
+                    (if file.is_empty() { "Joined".to_string() } else { format!("Joined {file}") }, t.success)
                 }
-                widgets::label(ui, UNDO_NOTE, t.text_secondary);
-                if widgets::button(ui, "Leave session", false, true).clicked() {
-                    app.run("collab.leave", json!({}));
-                }
+                (Status::Failed { .. }, _) => (status.label(), t.danger),
+                _ => (status.label(), t.text_secondary),
+            };
+            widgets::label(ui, &line, col);
+            match (&status, role) {
+                (Status::Off | Status::Failed { .. }, _) => start_ui(app, ui, &t),
+                (Status::Live, Some(Role::Host)) => host_ui(app, ui),
+                _ => guest_ui(app, ui, &t),
             }
-        }
+        });
         ui.separator();
         if menu_item(ui, "Export…", "") {
             app.ui.export_preview = true;
@@ -340,12 +364,51 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             ui.close();
         }
     });
+    ui.separator();
+    widgets::label(ui, "Or keep the file on a FigCraft server and share links to edit or to view it.", t.text_secondary);
+    if widgets::button(ui, "Publish to server…", false, true).clicked() {
+        open_publish(app);
+        ui.close();
+    }
 }
 
 /// Hosting: the invite link and URL to copy, and stop.
 fn host_ui(app: &mut FigApp, ui: &mut Ui) {
     let Some(info) = app.session.live.info.clone() else { return };
-    for (label, value, what) in [("Invite link", &info.link, "Invite link copied"), ("WebSocket URL", &info.url, "WebSocket URL copied")] {
+    link_rows(app, ui, &[("Invite link", &info.link, "Invite link copied"), ("WebSocket URL", &info.url, "WebSocket URL copied")]);
+    let t = Tokens::get(ui.ctx());
+    widgets::label(ui, "The link carries the session's secret: share it only with people you invite.", t.text_secondary);
+    widgets::label(ui, UNDO_NOTE, t.text_secondary);
+    if widgets::button(ui, "Stop session", false, true).clicked() {
+        app.run("collab.stop", json!({}));
+    }
+}
+
+/// Joined, or publishing: where the file is and what you may do there, a published file's links,
+/// and leave (the file stays open as your copy).
+fn guest_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
+    let live = &app.session.live;
+    let view = live.info.as_ref().is_some_and(|i| i.access == Access::View);
+    if let Some(i) = live.info.as_ref() {
+        widgets::label(ui, &format!("{} · {}", i.address, if view { "View only" } else { "Can edit" }), t.text_secondary);
+        if !i.pages.is_empty() {
+            let pages: Vec<&str> = i.pages.iter().map(|p| p.name.as_str()).take(8).collect();
+            widgets::label(ui, &format!("Pages: {}", pages.join(", ")), t.text_secondary);
+        }
+    }
+    if let Some(p) = live.published.clone() {
+        link_rows(app, ui, &[("Edit link", &p.edit, "Edit link copied"), ("View link", &p.view, "View link copied")]);
+        widgets::label(ui, PUBLISHED_NOTE, t.text_secondary);
+    }
+    widgets::label(ui, if view { VIEW_NOTE } else { UNDO_NOTE }, t.text_secondary);
+    if widgets::button(ui, "Leave session", false, true).on_hover_text("Your copy of the file stays open").clicked() {
+        app.run("collab.leave", json!({}));
+    }
+}
+
+/// Links to copy: a label, the link (elided, monospace) and a Copy button each.
+fn link_rows(app: &mut FigApp, ui: &mut Ui, rows: &[(&str, &String, &str)]) {
+    for (label, value, what) in rows {
         ui.horizontal(|ui| {
             let t = Tokens::get(ui.ctx());
             let w = ui.available_width() - 64.0;
@@ -356,15 +419,9 @@ fn host_ui(app: &mut FigApp, ui: &mut Ui) {
             });
             if widgets::button(ui, "Copy", false, true).on_hover_text(format!("Copy the {}", label.to_lowercase())).clicked() {
                 app.services.clipboard_set_text(value);
-                app.toast(what);
+                app.toast(*what);
             }
         });
-    }
-    let t = Tokens::get(ui.ctx());
-    widgets::label(ui, "The link carries the session's secret: share it only with people you invite.", t.text_secondary);
-    widgets::label(ui, UNDO_NOTE, t.text_secondary);
-    if widgets::button(ui, "Stop session", false, true).clicked() {
-        app.run("collab.stop", json!({}));
     }
 }
 
@@ -382,17 +439,20 @@ pub fn open_invite(app: &mut FigApp, link: &str) {
     }
 }
 
-/// Escape closes the Join dialog (before the canvas's shortcuts see it: it doesn't deselect).
-pub fn join_keys(app: &mut FigApp, ctx: &egui::Context) {
-    if app.ui.live.join.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        app.ui.live.join = None;
+/// Escape closes the Join or Publish dialog (before the canvas's shortcuts see it: it doesn't
+/// deselect).
+pub fn dialog_keys(app: &mut FigApp, ctx: &egui::Context) {
+    let live = &mut app.ui.live;
+    if (live.join.is_some() || live.publish.is_some()) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        live.join = None;
+        live.publish = None;
     }
 }
 
 /// File ▸ Join live session: paste an invite link.
 pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
     // The editor takes Escape before its shortcuts; the home screen has none.
-    join_keys(app, ctx);
+    dialog_keys(app, ctx);
     let Some(mut link) = app.ui.live.join.take() else { return };
     let t = Tokens::get(ctx);
     let mut open = true;
@@ -427,6 +487,66 @@ pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
     }
 }
 
+/// Open the Publish to server dialog for the open file (the last address used this run in it).
+pub fn open_publish(app: &mut FigApp) {
+    if !app.session.live.can_host() {
+        app.toast("Publishing to a server needs the desktop app; in the browser you can join a server's files");
+        return;
+    }
+    let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
+    app.ui.live.publish = Some(PublishForm { server: app.ui.live.last_server.clone(), name });
+    app.ui.live.focus_publish = true;
+}
+
+/// Share ▸ Publish to server…: the server's address (with its key) and the file's name.
+pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
+    let Some(mut form) = app.ui.live.publish.take() else { return };
+    let t = Tokens::get(ctx);
+    let mut open = true;
+    let mut cancel = false;
+    let mut go = false;
+    let focus = std::mem::take(&mut app.ui.live.focus_publish);
+    crate::dialogs::window("Publish to server", ctx).open(&mut open).show(ctx, |ui| {
+        ui.set_width(380.0);
+        widgets::label(
+            ui,
+            "Uploads this file to a FigCraft server and keeps this tab in sync with it. You get a link to edit and a link to view.",
+            t.text,
+        );
+        widgets::label(ui, "Server address", t.text_secondary);
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut form.server)
+                .hint_text("ws://server:47900/?key=…")
+                .desired_width(380.0)
+                .id(egui::Id::new("live_publish_server")),
+        );
+        // The address carries the server key: it isn't read out.
+        a11y::text(&resp, "Server address", "");
+        if focus {
+            resp.request_focus();
+        }
+        let enter = |ui: &Ui| ui.input(|i| i.key_pressed(egui::Key::Enter));
+        go = resp.lost_focus() && enter(ui);
+        widgets::label(ui, "On the server's machine, `figcraft-server key` prints it.", t.text_secondary);
+        widgets::label(ui, "File name", t.text_secondary);
+        let nresp = ui.add(egui::TextEdit::singleline(&mut form.name).desired_width(380.0).id(egui::Id::new("live_publish_name")));
+        a11y::text(&nresp, "File name", &form.name);
+        go |= nresp.lost_focus() && enter(ui);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            go |= widgets::button(ui, "Publish", true, !form.server.trim().is_empty()).clicked();
+            cancel = widgets::button(ui, "Cancel", false, true).clicked();
+        });
+    });
+    if go && !form.server.trim().is_empty() && app.run("collab.publish", json!({"server": form.server.trim(), "name": form.name.trim()})).is_some() {
+        app.ui.live.last_server = form.server.trim().to_string();
+        return;
+    }
+    if open && !cancel {
+        app.ui.live.publish = Some(form);
+    }
+}
+
 /// Live session state for `ui.inspect`.
 pub fn inspect(app: &FigApp) -> serde_json::Value {
     let l = &app.session.live;
@@ -437,6 +557,8 @@ pub fn inspect(app: &FigApp) -> serde_json::Value {
         "follow": l.follow,
         "cursorsShown": app.ui.live.shown(),
         "joinDialog": app.ui.live.join.is_some(),
+        "publishDialog": app.ui.live.publish.is_some(),
+        "readOnly": app.session.active_read_only(),
     })
 }
 

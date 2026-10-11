@@ -499,12 +499,24 @@ joined file opens as a new document).
   `collab.peers` does, with `link` (`figcraft://join?host=…&file=…&token=…`) and `url`
   (`ws://…/?file=…&token=…`): both carry the session's secret, so share them only with people you
   invite. `collab.stop {}` ends it.
-- `collab.join {link}` (either form) returns at once with `status: "connecting"`; poll
+- `collab.join {link}` (any form: an app's invite, a `figcraft-server` share link, or the
+  `ws(s)://…?file=…&token=…` URL) returns at once with `status: "connecting"`; poll
   `collab.peers` until `status` is `"live"`, or `"failed"` with a `reason` (a wrong token, a full
-  session, an unreachable host). `collab.leave {}` leaves.
+  session, a revoked link, an unreachable host). `collab.leave {}` leaves; the synced document
+  stays open as your copy.
+- `collab.publish {server, name?, key?}` puts the active document on a `figcraft-server`
+  ([`server.md`](server.md)) and syncs it from there: `server` is the address
+  `figcraft-server key` prints (`ws://host:47900/?key=…`; or give `key` separately), `name` the
+  file's name (default: the document's). It returns at once with `status: "connecting"`; the
+  document is read-only until the upload is done, then `collab.peers` has `published: {server,
+  file, name, edit, view}` with the file's first edit link and view link (they carry their
+  tokens: share them like passwords). Someone joining with the view link gets `access: "view"`:
+  every edit on the synced document is refused with "View only: …" (the server refuses them too).
 - `collab.peers {}` → `{available, canHost (false in the web build), status
   (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
+  access (edit|view), readOnly (the active document can't be edited now: view only, or being
+  published), published (a file you published: {server, file, name, edit, view}),
   follow, syncing (the document arrived), document (the index of the synced open document),
   editing (the text layer you are typing in: {node, layer, caret, selection}, or null), peers: [{id,
   name, color, editing (the text layer they are typing in, same shape, or null), presence: {cursor:

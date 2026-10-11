@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::tools::ToolId;
-use crate::{Result, Session, ViewState, bad, spec};
+use crate::{EngineError, Result, Session, ViewState, bad, spec};
 
 fn view(s: &mut Session) -> Result<&mut ViewState> {
     Ok(&mut s.ds_mut()?.view)
@@ -125,6 +125,10 @@ fn pref(s: &mut Session, p: &Value, f: fn(&mut crate::Prefs) -> &mut bool) -> Re
 }
 
 fn tool(s: &mut Session, t: ToolId) -> Result<Value> {
+    // A file you can't edit now (view only, or on its way to a server): moving around only.
+    if let Some(why) = s.active_read_only().filter(|_| !matches!(t, ToolId::Move | ToolId::Hand)) {
+        return Err(EngineError::Disabled(format!("tool.{}", t.id()), why.into()));
+    }
     s.set_tool(t);
     Ok(json!({"tool": t.id()}))
 }
