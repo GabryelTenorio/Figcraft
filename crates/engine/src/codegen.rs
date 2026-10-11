@@ -281,6 +281,8 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
             MainAlign::Center => "center",
             MainAlign::Max => "flex-end",
             MainAlign::SpaceBetween => "space-between",
+            MainAlign::SpaceAround => "space-around",
+            MainAlign::SpaceEvenly => "space-evenly",
         };
         put("justify-content", justify.into());
         let align = match l.cross_align {

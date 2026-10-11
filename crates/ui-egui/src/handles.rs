@@ -223,32 +223,38 @@ fn al_zones(app: &FigApp) -> Option<Zones> {
             tracks.push([to(left, r.1), to(right, r.1)]);
         }
     } else {
+        // Worked out along x: a vertical flow is a horizontal one turned on its side (`flip`
+        // swaps the axes, `fband` swaps them back).
         let vertical = al.mode == LayoutMode::Vertical;
+        let flip = |r: figcraft_geom::Rect| if vertical { figcraft_geom::Rect::new(r.y0, r.x0, r.y1, r.x1) } else { r };
+        let fband = |x0: f64, y0: f64, x1: f64, y1: f64| if vertical { band(y0, x0, y1, x1) } else { band(x0, y0, x1, y1) };
+        // Main-axis length and padding, cross-axis length and padding.
+        let (mw, mp0, mp1, cw, cp0, cp1) = if vertical { (fh, pt, pb, fw, pl, pr) } else { (fw, pl, pr, fh, pt, pb) };
         let boxes: Vec<figcraft_geom::Rect> = figcraft_layout::flow_children(doc, id)
             .into_iter()
             .filter_map(|c| doc.node(c))
-            .map(|c| figcraft_geom::transform_rect_bbox(c.transform, c.local_rect()))
+            .map(|c| flip(figcraft_geom::transform_rect_bbox(c.transform, c.local_rect())))
             .collect();
-        // Lines: a wrapped item starts left of the previous one.
+        // Lines: a wrapped item starts before the end of the previous one.
         let mut lines: Vec<Vec<figcraft_geom::Rect>> = Vec::new();
         for b in boxes {
             match lines.last_mut() {
-                Some(line) if vertical || !al.wrap || line.last().is_some_and(|a| b.x0 >= a.x1 - 1e-6) => line.push(b),
+                Some(line) if !al.wrap || line.last().is_some_and(|a| b.x0 >= a.x1 - 1e-6) => line.push(b),
                 _ => lines.push(vec![b]),
             }
         }
         let span = |line: &[figcraft_geom::Rect]| line.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| (a.min(r.y0), b.max(r.y1)));
         for line in &lines {
-            let (y0, y1) = if al.wrap { span(line) } else { (pt, fh - pb) };
+            let (y0, y1) = if al.wrap { span(line) } else { (cp0, cw - cp1) };
             for pair in line.windows(2) {
                 if let [ra, rb] = pair {
-                    gaps.push(main(if vertical { band(pl, ra.y1, fw - pr, rb.y0) } else { band(ra.x1, y0, rb.x0, y1) }, vertical));
+                    gaps.push(main(fband(ra.x1, y0, rb.x0, y1), vertical));
                 }
             }
         }
         for pair in lines.windows(2) {
             if let [a, b] = pair {
-                gaps.push(cross(band(pl, span(a).1, fw - pr, span(b).0), true));
+                gaps.push(cross(fband(mp0, span(a).1, mw - mp1, span(b).0), !vertical));
             }
         }
     }

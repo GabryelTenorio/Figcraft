@@ -30,8 +30,8 @@ pub fn auto_layout_slot(doc: &Document, parent: NodeId, p: Point, exclude: &[Nod
     // A slot before the k-th placed child (k = its count: after the last) as an index in `kids`.
     let index = |k: usize| flow.get(k).map_or(kids.len(), |(i, _)| *i);
     let flow_ids: Vec<NodeId> = flow.iter().map(|(_, c)| *c).collect();
-    if layout.wrap && !vertical && layout.mode != LayoutMode::Grid {
-        let (k, line) = wrap_slot(doc, &flow_ids, p);
+    if layout.wrap && layout.mode != LayoutMode::Grid {
+        let (k, line) = wrap_slot(doc, &flow_ids, p, vertical);
         return Some((index(k), line));
     }
     let pos = if vertical { p.y } else { p.x };
@@ -53,12 +53,18 @@ pub fn line_before(b: figcraft_geom::Rect, vertical: bool, off: f64) -> [f64; 4]
     if vertical { [b.x0, b.y0 - off, b.x1, b.y0 - off] } else { [b.x0 - off, b.y0, b.x0 - off, b.y1] }
 }
 
-/// The visual rows of a wrapping row layout's placed children `kids`, each child as (its index in
-/// `kids`, its page bounds). Children wrap in flow order, so a new row starts where a child sits
-/// left of the one before.
-pub fn wrap_rows(doc: &Document, kids: &[NodeId]) -> Vec<Vec<(usize, figcraft_geom::Rect)>> {
+/// `r` with x and y swapped when `vertical`: a vertical wrap (columns) is a horizontal one (rows)
+/// turned on its side.
+pub fn flip(r: figcraft_geom::Rect, vertical: bool) -> figcraft_geom::Rect {
+    if vertical { figcraft_geom::Rect::new(r.y0, r.x0, r.y1, r.x1) } else { r }
+}
+
+/// The visual rows (columns when `vertical`) of a wrapping layout's placed children `kids`, each
+/// child as (its index in `kids`, its page bounds [`flip`]ped so the flow runs along x). Children
+/// wrap in flow order, so a new row starts where a child sits before the one before.
+pub fn wrap_rows(doc: &Document, kids: &[NodeId], vertical: bool) -> Vec<Vec<(usize, figcraft_geom::Rect)>> {
     let mut rows: Vec<Vec<(usize, figcraft_geom::Rect)>> = Vec::new();
-    for (i, b) in kids.iter().enumerate().filter_map(|(i, c)| doc.world_bounds(*c).map(|b| (i, b))) {
+    for (i, b) in kids.iter().enumerate().filter_map(|(i, c)| doc.world_bounds(*c).map(|b| (i, flip(b, vertical)))) {
         match rows.last_mut() {
             Some(row) if row.last().is_some_and(|(_, prev)| b.x0 >= prev.x0 - 0.5) => row.push((i, b)),
             _ => rows.push(vec![(i, b)]),
@@ -67,9 +73,14 @@ pub fn wrap_rows(doc: &Document, kids: &[NodeId]) -> Vec<Vec<(usize, figcraft_ge
     rows
 }
 
-/// The slot in a wrapping row layout: the visual row under the pointer, then the position in it.
-fn wrap_slot(doc: &Document, kids: &[NodeId], p: Point) -> (usize, Option<[f64; 4]>) {
-    let rows = wrap_rows(doc, kids);
+/// The slot in a wrapping layout: the visual row (column) under the pointer, then the position in it.
+fn wrap_slot(doc: &Document, kids: &[NodeId], p: Point, vertical: bool) -> (usize, Option<[f64; 4]>) {
+    let (k, line) = wrap_slot_rows(&wrap_rows(doc, kids, vertical), if vertical { Point::new(p.y, p.x) } else { p });
+    (k, line.map(|[x0, y0, x1, y1]| if vertical { [y0, x0, y1, x1] } else { [x0, y0, x1, y1] }))
+}
+
+/// [`wrap_slot`] in rows that run along x.
+fn wrap_slot_rows(rows: &[Vec<(usize, figcraft_geom::Rect)>], p: Point) -> (usize, Option<[f64; 4]>) {
     let span =
         |row: &[(usize, figcraft_geom::Rect)]| row.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), (_, b)| (lo.min(b.y0), hi.max(b.y1)));
     // The row containing the pointer, else the nearest one.

@@ -68,14 +68,28 @@ Or in a project's `.mcp.json`:
     Fixed sizes; a hugging text wider than its max width wraps.
   - `absolute: true` takes a child out of the flow (it stays where it is and follows its
     `constraints` when the frame resizes; Fill becomes Fixed).
+  - `mainAlign` takes `min`, `center`, `max` or an auto gap: `spaceBetween` (no space at the
+    edges), `spaceEvenly` (the same space in every gap and at the edges) or `spaceAround` (gaps
+    twice the edge space). An auto gap never goes below 0.
+  - `padding` never lets a frame get smaller than it: a fixed or hugging frame (or one with a
+    smaller max size) sizes up to its padding.
+  - `strokesIncluded` (default `true` for new auto layout): the frame's own inside stroke takes up
+    space like padding (per side with `strokeSides`); center and outside strokes never do.
+  - `reverseZ` (canvas stacking): `true` paints and hits the first child on top, `false` (default)
+    the last. The layer order doesn't change.
   - `crossAlign: "baseline"` lines up the first text baselines in horizontal layouts (other layers
     align to the top; nested auto layout frames use their first child's baseline).
-  - `wrap` with `crossGap` (alias `rowGap`) for the gap between wrapped rows.
+  - `wrap` with `crossGap` (alias `rowGap`) for the gap between wrapped rows (horizontal) or
+    columns (vertical layouts wrap top to bottom into new columns).
   - Grid (`layout: "grid"`): `gridColumns`, `gridRows` (minimum; rows grow), `columnGap` /
     `rowGap`, track sizes `columnTracks` / `rowTracks` as `[120, "1fr", "auto"]` (px fixed, `fr`
     fill share, `auto` hug) or the `layout.setTrack {axis, index, sizing, value?}` command; on a
     child, `gridColumn` / `gridRow` (0-based anchor cell, `null` = placed automatically) and
-    `gridColumnSpan` / `gridRowSpan`. `inspect` reports a grid child's resolved `gridCell`.
+    `gridColumnSpan` / `gridRowSpan`, and `gridAlignH` / `gridAlignV` (`min`, `center`, `max`;
+    `auto` or `null` uses the frame's alignment) to align it in its cell. `fr` tracks behave like
+    the CSS `fr` unit: a track never gets less than its content (a fixed-size child bigger than
+    its share keeps it; the other `fr` tracks share the rest). `inspect` reports a grid child's
+    resolved `gridCell`.
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills, strokes and effects passed through the MCP

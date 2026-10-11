@@ -342,21 +342,14 @@ impl<'a> Exporter<'a> {
     fn children(&mut self, s: &mut Surface, n: &Node, xf: Affine, depth: usize) {
         let doc = self.doc;
         let kids = &n.children;
-        let mut i = 0;
-        while i < kids.len() {
-            let Some(&c) = kids.get(i) else { break };
+        for run in doc.paint_runs(n) {
+            let Some(&c) = kids.get(run.start) else { continue };
             if doc.node(c).is_some_and(|cn| cn.is_mask && cn.visible) {
                 // Everything above the mask (until the next mask) shows through its alpha.
-                let mut j = i + 1;
-                while kids.get(j).is_some_and(|k| !doc.node(*k).is_some_and(|kn| kn.is_mask)) {
-                    j += 1;
-                }
-                self.masked(s, c, kids.get(i + 1..j).unwrap_or(&[]), xf, depth);
-                i = j;
-                continue;
+                self.masked(s, c, kids.get(run.start + 1..run.end).unwrap_or(&[]), xf, depth);
+            } else {
+                self.node(s, c, xf, depth + 1, false);
             }
-            self.node(s, c, xf, depth + 1, false);
-            i += 1;
         }
     }
 

@@ -99,7 +99,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert(
                 "gridCell".into(),
                 json!({"column": cell.column, "row": cell.row, "columnSpan": cell.column_span, "rowSpan": cell.row_span,
-                       "anchored": cl.grid_column.is_some() || cl.grid_row.is_some()}),
+                       "anchored": cl.grid_column.is_some() || cl.grid_row.is_some(), "alignH": cl.grid_align_h, "alignV": cl.grid_align_v}),
             );
         }
         if (!parent_al || cl.absolute) && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like()) {

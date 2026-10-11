@@ -390,9 +390,8 @@ impl W<'_> {
                 let _ = write!(self.body, "<g clip-path=\"url(#{cid})\">");
             }
             let kids = n.children.clone();
-            let mut i = 0;
-            while i < kids.len() {
-                let Some(&c) = kids.get(i) else { break };
+            for run in self.doc.paint_runs(n) {
+                let Some(&c) = kids.get(run.start) else { continue };
                 if self.doc.node(c).is_some_and(|cn| cn.is_mask && cn.visible) {
                     let kind = self.doc.node(c).map(|mn| mn.mask_type).unwrap_or_default();
                     if kind == figcraft_doc::MaskType::Vector {
@@ -421,20 +420,13 @@ impl W<'_> {
                         let _ = write!(self.defs, "<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\"{alpha}>{mask_body}</mask>");
                         let _ = write!(self.body, "<g mask=\"url(#{mid})\">");
                     }
-                    let mut j = i + 1;
-                    while let Some(&k) = kids.get(j) {
-                        if self.doc.node(k).is_some_and(|kn| kn.is_mask) {
-                            break;
-                        }
-                        self.node(k, xf, depth + 1);
-                        j += 1;
+                    for k in kids.get(run.start + 1..run.end).unwrap_or(&[]) {
+                        self.node(*k, xf, depth + 1);
                     }
                     self.body.push_str("</g>");
-                    i = j;
-                    continue;
+                } else {
+                    self.node(c, xf, depth + 1);
                 }
-                self.node(c, xf, depth + 1);
-                i += 1;
             }
             if clip && outline.is_some() {
                 self.body.push_str("</g>");

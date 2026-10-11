@@ -263,6 +263,7 @@ fn padding_and_included_strokes() {
         n.stroke.weight = 5.0;
     }
     layout_mut(&mut d, f).padding = [1.0, 2.0, 3.0, 4.0];
+    layout_mut(&mut d, f).strokes_included = false;
     let a = rect(&mut d, f, 50.0, 20.0);
     layout_frame(&mut d, f, &NoMeasure);
     assert_eq!(size(&d, f), (56.0, 24.0));

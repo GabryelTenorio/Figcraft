@@ -13,9 +13,9 @@ pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (paren
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], \
 strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
-mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap, \
+mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap (rows of a horizontal layout, columns of a vertical one), strokesIncluded (the frame's inside stroke takes up space), reverseZ (canvas stacking: true = first on top), \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
-gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, sizingH / sizingV (fixed|hug|fill), \
+gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill), \
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
@@ -438,7 +438,8 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 l.padding[2] = val;
             }
             "mainAlign" | "primaryAxisAlignItems" => {
-                ensure_layout(doc.get_mut(id)?).main_align = enum_of(v).ok_or_else(|| bad(cmd, "mainAlign: min|center|max|spaceBetween"))?
+                ensure_layout(doc.get_mut(id)?).main_align =
+                    enum_of(v).ok_or_else(|| bad(cmd, "mainAlign: min|center|max|spaceBetween|spaceAround|spaceEvenly"))?
             }
             "crossAlign" | "counterAxisAlignItems" => {
                 ensure_layout(doc.get_mut(id)?).cross_align = enum_of(v).ok_or_else(|| bad(cmd, "crossAlign: min|center|max|baseline"))?
@@ -509,6 +510,19 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     cl.grid_column = val;
                 } else {
                     cl.grid_row = val;
+                }
+            }
+            "gridAlignH" | "gridChildHorizontalAlign" | "gridAlignV" | "gridChildVerticalAlign" => {
+                let val = match v {
+                    Value::Null => None,
+                    Value::String(s) if s.eq_ignore_ascii_case("auto") => None,
+                    other => Some(enum_of(other).ok_or_else(|| bad(cmd, format!("`{k}`: min|center|max|auto")))?),
+                };
+                let cl = &mut doc.get_mut(id)?.child_layout;
+                if k.contains('H') {
+                    cl.grid_align_h = val;
+                } else {
+                    cl.grid_align_v = val;
                 }
             }
             "gridColumnSpan" | "gridRowSpan" => {

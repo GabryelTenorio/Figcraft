@@ -200,7 +200,7 @@ pub fn splat_subtree(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, clip: Op
         } else {
             clip
         };
-        for c in n.children.iter().filter_map(|c| ctx.doc.node(*c)) {
+        for c in n.paint_order().filter_map(|c| ctx.doc.node(c)) {
             splat_subtree(ctx, pix, c, xf * c.transform, clip, alpha, depth + 1);
         }
     }
