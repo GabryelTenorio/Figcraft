@@ -302,6 +302,33 @@ fn lookups_fall_back_to_english_and_fill_placeholders() {
 }
 
 #[test]
+fn system_languages_pick_the_first_one_with_a_catalog() {
+    let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
+    assert_eq!(code("system", Some("fr-CA")), "fr");
+    assert_eq!(code("system", Some("de_CH.UTF-8")), "de");
+    assert_eq!(code("system", Some("pt-BR")), "pt-BR");
+    // Portugal's Portuguese and a bare "pt" read the Brazilian catalog.
+    assert_eq!(code("system", Some("pt-PT")), "pt-BR");
+    assert_eq!(code("pt", None), "pt-BR");
+    // An OS list: the first language there is a catalog for (English counts).
+    assert_eq!(code("system", Some("nl-NL,de-DE,en-US")), "de");
+    assert_eq!(code("system", Some("nl-NL, en-US,fr-FR")), "en");
+    assert_eq!(code("system", Some("nl,sv")), "en");
+    assert_eq!(code("fr", Some("de-DE")), "fr", "a chosen language beats the system's");
+}
+
+#[test]
+fn french_and_portuguese_count_zero_as_singular() {
+    let one = |code: &str, n: usize| plural_one(LANGS.iter().position(|l| l.code == code).unwrap(), n);
+    for code in ["fr", "pt-BR"] {
+        assert!(one(code, 0) && one(code, 1) && !one(code, 2), "{code}");
+    }
+    for code in ["en", "es", "de"] {
+        assert!(!one(code, 0) && one(code, 1) && !one(code, 2), "{code}");
+    }
+}
+
+#[test]
 fn the_key_scanner_reads_rust_literals() {
     let src = r#"x(tr("A \"b\"")); trf(
         "C {n}", &[]); attr("no"); tr_noop("D\

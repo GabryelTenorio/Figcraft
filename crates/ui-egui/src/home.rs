@@ -7,6 +7,7 @@ use crate::FigApp;
 use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
+use crate::widgets;
 
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -40,14 +41,20 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             (Icon::Page, tr_noop("Open file"), tr_noop("Open .figcraft, .svg or images")),
         ] {
             let r = Rect::from_min_size(pos2(x, cy), vec2(260.0, 72.0));
-            let resp = ui.interact(r, ui.id().with(("card", title)), Sense::click());
+            let mut resp = ui.interact(r, ui.id().with(("card", title)), Sense::click());
+            // One line each inside the card; a long translation ends with an ellipsis, in full on hover.
+            let text_w = r.width() - 72.0;
+            let (title_shown, sub_shown) = (widgets::elide_font(ui, tr(title), text_w, semibold(12.0)), widgets::elide(ui, tr(sub), text_w));
+            if title_shown != tr(title) || sub_shown != tr(sub) {
+                resp = resp.on_hover_text(format!("{}\n{}", tr(title), tr(sub)));
+            }
             ui.painter().rect_filled(r, CornerRadius::same(8), if resp.hovered() { t.hover } else { t.panel });
             ui.painter().rect_stroke(r, CornerRadius::same(8), Stroke::new(1.0, t.border), StrokeKind::Inside);
             let ir = Rect::from_min_size(pos2(r.min.x + 16.0, r.center().y - 16.0), vec2(32.0, 32.0));
             ui.painter().rect_filled(ir, CornerRadius::same(6), ACCENT);
             icons::paint(ui.painter(), ir.shrink(8.0), icon, egui::Color32::WHITE);
-            ui.painter().text(pos2(r.min.x + 60.0, r.center().y - 8.0), Align2::LEFT_CENTER, tr(title), semibold(12.0), t.text);
-            ui.painter().text(pos2(r.min.x + 60.0, r.center().y + 9.0), Align2::LEFT_CENTER, tr(sub), regular(11.0), t.text_secondary);
+            ui.painter().text(pos2(r.min.x + 60.0, r.center().y - 8.0), Align2::LEFT_CENTER, title_shown, semibold(12.0), t.text);
+            ui.painter().text(pos2(r.min.x + 60.0, r.center().y + 9.0), Align2::LEFT_CENTER, sub_shown, regular(11.0), t.text_secondary);
             if resp.clicked() {
                 if title.starts_with("New") {
                     new_file = true;

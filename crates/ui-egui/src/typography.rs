@@ -179,7 +179,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     let fstyle = uniform(styles, |s| s.font_style.clone());
     row(ui, 32.0, |ui| {
         let w = ui.available_width();
-        let resp = widgets::elided_dropdown(ui, family.as_deref().unwrap_or(tr(MIXED)), w);
+        let resp = widgets::dropdown(ui, family.as_deref().unwrap_or(tr(MIXED)), w, None);
         menu_popup(&resp).width(w.max(240.0)).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
             if let Some(f) = font_picker(ui, family.as_deref(), resp.clicked()) {
                 remember_family(ui.ctx(), &f);
@@ -192,7 +192,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
     // Style + size.
     let half = (ui.available_width() - PAD * 2.0 - 8.0) / 2.0;
     row(ui, 32.0, |ui| {
-        let resp = widgets::elided_dropdown(ui, fstyle.as_deref().unwrap_or(tr(MIXED)), half);
+        let resp = widgets::dropdown(ui, fstyle.as_deref().unwrap_or(tr(MIXED)), half, None);
         let fam = family.clone();
         menu_popup(&resp).width(200.0).show(|ui| match &fam {
             Some(fam) => {
@@ -736,7 +736,7 @@ fn named_instances(
     // An inline list (a menu would close the Type settings popover it opens from).
     let open_id = Id::new("ty_instances_open");
     let mut open = ui.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
-    if widgets::elided_dropdown(ui, &label, ui.available_width()).on_hover_text(tr("Named instance")).clicked() {
+    if widgets::dropdown(ui, &label, ui.available_width(), None).on_hover_text(tr("Named instance")).clicked() {
         open = !open;
     }
     if open {

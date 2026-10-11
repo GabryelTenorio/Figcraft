@@ -944,7 +944,7 @@ fn variable_modes(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
             if name != c.name || r.library.is_some() {
                 ui.interact(rect, Id::new(("var_mode_name", &c.id)), Sense::hover()).on_hover_text(&hover);
             }
-            let resp = widgets::elided_dropdown(ui, &label, pick_w);
+            let resp = widgets::dropdown(ui, &label, pick_w, None);
             menu_popup(&resp).width(180.0).show(|ui| {
                 let mut pick = None;
                 if menu_check(ui, own == Some(None), &auto, "") {

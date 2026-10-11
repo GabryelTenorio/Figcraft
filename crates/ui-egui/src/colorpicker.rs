@@ -822,7 +822,7 @@ fn pattern_controls(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint:
     let sources = pattern_sources(app, target);
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        let resp = widgets::elided_dropdown(ui, &name, 208.0);
+        let resp = widgets::dropdown(ui, &name, 208.0, None);
         crate::a11y::combo(&resp, tr("Pattern source"), &name, crate::a11y::menu_open(&resp));
         crate::right::menu_popup(&resp).show(|ui| {
             for (id, label) in &sources {

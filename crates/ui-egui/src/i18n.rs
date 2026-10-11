@@ -49,19 +49,25 @@ pub fn current() -> Option<&'static Lang> {
 }
 
 /// Show the language of `pref` (a language code, or "system" for `system`, the OS or browser
-/// language). Unknown languages show English.
+/// languages, most preferred first and comma-separated). Unknown languages show English.
 pub fn set(pref: &str, system: Option<&str>) {
     CURRENT.store(resolve(pref, system), Ordering::Relaxed);
 }
 
-/// The [`LANGS`] index for a preference: the exact tag ("pt-BR"), else its base language ("es"
-/// for "es_ES.UTF-8"), else English.
+/// The [`LANGS`] index for a preference: the first language in it the UI has, else English.
 fn resolve(pref: &str, system: Option<&str>) -> usize {
     let want = if pref.is_empty() || pref == "system" { system.unwrap_or("en") } else { pref };
-    let tag = want.split(['.', '@']).next().unwrap_or("").replace('_', "-");
+    want.split(',').find_map(resolve_one).unwrap_or(0)
+}
+
+/// The [`LANGS`] index for one tag: the exact tag ("pt-BR"), else its base language ("es" for
+/// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT").
+fn resolve_one(want: &str) -> Option<usize> {
+    let tag = want.trim().split(['.', '@']).next().unwrap_or("").replace('_', "-");
     let base = tag.split('-').next().unwrap_or("");
     let find = |t: &str| LANGS.iter().position(|l| l.code.eq_ignore_ascii_case(t));
-    find(&tag).or_else(|| find(base)).unwrap_or(0)
+    let regional = || LANGS.iter().position(|l| !base.is_empty() && l.code.split('-').next().is_some_and(|b| b.eq_ignore_ascii_case(base)));
+    find(&tag).or_else(|| find(base)).or_else(regional)
 }
 
 fn find(table: &'static [(&'static str, Text)], key: &str) -> Option<&'static Text> {
@@ -106,11 +112,13 @@ pub fn trn(key: &str, n: usize, args: &[(&str, &dyn Display)]) -> String {
     fill(text, &all)
 }
 
-/// Whether count `n` takes the "one" form.
-// shortcut: n == 1 is CLDR's rule for English and Spanish (Spanish "many" for millions reads as
-// "other" here); add per-language rules when a language needs them (French: 0 and 1).
-fn plural_one(_lang: usize, n: usize) -> bool {
-    n == 1
+/// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, 1 elsewhere
+/// (CLDR's integer rules).
+// shortcut: CLDR's "many" (French, Spanish and Portuguese millions) reads as "other" here; add it
+// when a language needs a third form.
+fn plural_one(lang: usize, n: usize) -> bool {
+    let zero_is_one = LANGS.get(lang).is_some_and(|l| matches!(l.code, "fr" | "pt-BR"));
+    n == 1 || (n == 0 && zero_is_one)
 }
 
 /// Replace each `{name}` in `text` with its argument, in one pass (an argument's own braces stay).

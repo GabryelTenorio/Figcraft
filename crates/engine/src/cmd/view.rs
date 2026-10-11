@@ -272,7 +272,7 @@ pub fn specs() -> Vec<CommandSpec> {
             s.prefs.user_name = if name.is_empty() { super::comment::DEFAULT_AUTHOR.into() } else { name };
             Ok(json!({"name": s.prefs.user_name}))
         }),
-        spec!("pref.language", "Interface language", "{language: system|en|es|… (a language code; no catalog: English)}", false, |s, p| {
+        spec!("pref.language", "Interface language", "{language: system|en|es|fr|de|pt-BR|… (no catalog: English)}", false, |s, p| {
             let lang = req_string("pref.language", p, "language")?;
             let lang = lang.trim();
             // A BCP 47-style tag ("es", "pt-BR", "zh_Hans") or "system".

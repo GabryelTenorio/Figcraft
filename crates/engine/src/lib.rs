@@ -525,7 +525,7 @@ pub struct Prefs {
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
     pub theme: String,
-    /// The interface language: a language code ("en", "es") or "system" (the OS or browser
+    /// The interface language: a language code ("en", "es", "pt-BR") or "system" (the OS or browser
     /// language). Languages without a catalog show English.
     pub language: String,
     /// The name comments are signed with (and whose comments count as yours).

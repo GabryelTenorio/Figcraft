@@ -673,10 +673,10 @@ fn text_properties(ui: &mut Ui, id: &str, def: &TextStyle, out: &mut Frame) {
     // The dropdowns' menus open outside the dark scope (they're regular popups).
     let (family_resp, style_resp) = crate::theme::on_dark(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
-        let family_resp = widgets::elided_dropdown(ui, &def.font_family, W).on_hover_text(tr("Font"));
+        let family_resp = widgets::dropdown(ui, &def.font_family, W, None).on_hover_text(tr("Font"));
         let mut style_resp = None;
         ui.horizontal(|ui| {
-            style_resp = Some(widgets::elided_dropdown(ui, &def.font_style, half).on_hover_text(tr("Font style")));
+            style_resp = Some(widgets::dropdown(ui, &def.font_style, half, None).on_hover_text(tr("Font style")));
             if let Some(widgets::FieldEdit::Set(v) | widgets::FieldEdit::Scrub(v, true)) =
                 widgets::number_field(ui, Id::new(("ts_size", id)), widgets::Lead::Text(tr("Size")), Some(def.font_size), "", half, 1.0)
             {

@@ -503,32 +503,23 @@ pub fn dropdown_lead(ui: &mut Ui, label: &str, width: f32, lead: Option<DropLead
         }
         None => {}
     }
-    let galley = ui.painter().layout(label.to_string(), regular(11.0), t.text, rect.width() - (x - rect.min.x) - 20.0);
+    // One line: a label longer than the field (a variable font style like "SemiBold SemiCondensed",
+    // a long translation) ends with an ellipsis and shows in full on hover.
+    let shown = elide(ui, label, rect.max.x - x - 20.0);
+    let galley = ui.painter().layout_no_wrap(shown.clone(), regular(11.0), t.text);
     ui.painter().galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, t.text);
     icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.max.x - 10.0, rect.center().y), vec2(12.0, 12.0)), Icon::Chevron, t.icon_secondary);
-    resp
+    if shown != label { resp.on_hover_text(label) } else { resp }
 }
 
-/// Horizontal space a dropdown takes besides its label (padding and chevron).
-const DROPDOWN_CHROME: f32 = 30.0;
-
-/// A dropdown whose label stays on one line: long names (variable font styles like "SemiBold
-/// SemiCondensed") end with an ellipsis and show in full on hover.
-pub fn elided_dropdown(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
-    let shown = elide(ui, label, width - DROPDOWN_CHROME);
-    let resp = dropdown(ui, &shown, width, None);
-    if shown != label {
-        // Screen readers get the whole name.
-        a11y::combo(&resp, "", label, a11y::menu_open(&resp));
-        resp.on_hover_text(label)
-    } else {
-        resp
-    }
-}
-
-/// `s` shortened with an ellipsis to fit `max_w` on one line.
+/// `s` shortened with an ellipsis to fit `max_w` on one line at the UI's 11 px.
 pub fn elide(ui: &Ui, s: &str, max_w: f32) -> String {
-    let fits = |s: &str| ui.painter().layout_no_wrap(s.to_string(), regular(11.0), Color32::WHITE).size().x <= max_w;
+    elide_font(ui, s, max_w, regular(11.0))
+}
+
+/// [`elide`] in `font`.
+pub fn elide_font(ui: &Ui, s: &str, max_w: f32, font: egui::FontId) -> String {
+    let fits = |s: &str| ui.painter().layout_no_wrap(s.to_string(), font.clone(), Color32::WHITE).size().x <= max_w;
     if fits(s) {
         return s.to_string();
     }
@@ -899,10 +890,15 @@ pub fn sublabels(ui: &mut Ui, a: &str, b: Option<&str>) {
     let t = Tokens::get(ui.ctx());
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, 18.0), Sense::hover());
-    ui.painter().text(pos2(r.min.x + PAD, r.max.y - 2.0), Align2::LEFT_BOTTOM, a, regular(10.0), t.text_secondary);
-    if let Some(b) = b {
-        let col = col_width(w);
-        ui.painter().text(pos2(r.min.x + PAD + col + 8.0, r.max.y - 2.0), Align2::LEFT_BOTTOM, b, regular(10.0), t.text_secondary);
+    let col = col_width(w);
+    // Each label fits its column on one line (long translations end with an ellipsis, in full on hover).
+    let a_w = if b.is_some() { col } else { w - PAD * 2.0 };
+    for (i, (text, x, max_w)) in [(a, PAD, a_w)].into_iter().chain(b.map(|b| (b, PAD + col + 8.0, w - col - 8.0 - PAD * 2.0))).enumerate() {
+        let shown = elide_font(ui, text, max_w, regular(10.0));
+        let at = ui.painter().text(pos2(r.min.x + x, r.max.y - 2.0), Align2::LEFT_BOTTOM, &shown, regular(10.0), t.text_secondary);
+        if shown != text {
+            ui.interact(at, ui.id().with(("sublabel", i)), Sense::hover()).on_hover_text(text);
+        }
     }
 }
 

@@ -52,14 +52,14 @@ impl Desktop {
     }
 }
 
-/// The system's preferred interface language as a tag ("es-ES", "es_ES.UTF-8"): Windows' language
-/// list, macOS's AppleLanguages, the locale variables elsewhere.
+/// The system's preferred interface languages, most preferred first, comma-separated
+/// ("nl-NL,de-DE,en-US"): Windows' language list, macOS's AppleLanguages, `LANGUAGE` and the
+/// locale variables elsewhere. The UI shows the first one it has a catalog for.
 fn system_language() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         windows::System::UserProfile::GlobalizationPreferences::Languages()
-            .and_then(|l| l.GetAt(0))
-            .map(|s| s.to_string())
+            .map(|l| l.into_iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","))
             .inspect_err(|e| log::info!("language: can't read the system languages: {e}"))
             .ok()
     }
@@ -67,11 +67,20 @@ fn system_language() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let out = std::process::Command::new("defaults").args(["read", "-g", "AppleLanguages"]).output().ok()?;
-        String::from_utf8_lossy(&out.stdout).split(['(', ',', ')']).map(|s| s.trim().trim_matches('"').to_string()).find(|s| !s.is_empty())
+        let list: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .split(['(', ',', ')'])
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Some(list.join(","))
     }
+    // gettext's `LANGUAGE` priority list ("fr:de"), then the locale ("fr_FR.UTF-8").
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|k| std::env::var(k).ok()).find(|v| !v.is_empty() && v != "C" && v != "POSIX")
+        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty() && v != "C" && v != "POSIX");
+        let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].into_iter().find_map(var);
+        let list: Vec<String> = var("LANGUAGE").map(|l| l.replace(':', ",")).into_iter().chain(locale).collect();
+        (!list.is_empty()).then(|| list.join(","))
     }
     #[cfg(not(any(windows, unix)))]
     {

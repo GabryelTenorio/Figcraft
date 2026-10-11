@@ -3,8 +3,13 @@
 FigCraft's interface strings live in one TOML catalog per language in
 [`crates/ui-egui/locales/`](../crates/ui-egui/locales). The build bakes every catalog into the
 binary (desktop and web); nothing is read at run time. Preferences ▸ Language picks the language
-(System follows the OS, or the browser on the web) and the interface switches at once. `pref.language
-{language}` does the same from the CLI, MCP and the control channel.
+and the interface switches at once. System takes the first of the OS's preferred languages that has
+a catalog (the browser's language on the web): a regional tag reads its language's catalog
+(`fr-CA` → `fr`), and a language with only a regional catalog reads that one (`pt-PT` → `pt-BR`).
+`pref.language {language}` does the same from the CLI, MCP and the control channel.
+
+The catalogs: English (`en`, the source), and Spanish (`es`), French (`fr`), German (`de`) and
+Brazilian Portuguese (`pt-BR`), machine-drafted and waiting for native speakers' review.
 
 ## The catalogs
 
@@ -22,6 +27,10 @@ binary (desktop and web); nothing is read at run time. Preferences ▸ Language 
 
 A key a catalog lacks shows its English text, so a partial catalog is safe to ship.
 
+Typography follows each language: French puts a no-break space (`\u00A0` in the TOML) before
+`:` `;` `?` `!`, inside « » and before `%`; German uses „ “ and formal address (Sie); Brazilian
+Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European ones.
+
 ## Adding a language
 
 1. Copy `crates/ui-egui/locales/es.toml` to `<code>.toml` (a BCP 47 code: `fr`, `pt-BR`, `ja`) and
@@ -29,13 +38,21 @@ A key a catalog lacks shows its English text, so a partial catalog is safe to sh
 2. Translate every value; keep the keys. Keep `{placeholders}` exactly, "…" where English has it,
    brand names and keyboard glyphs. English labels of commands: `figcraft-cli commands`.
 3. Plurals: give `one` only if the language has a singular form (Japanese, Korean and Chinese give
-   only `other`). `trn` picks `one` for a count of 1; a language with other rules (French: 0 and 1)
-   needs its rule in `plural_one` in [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs).
+   only `other`). `trn` picks `one` for a count of 1, and also for 0 in French and Brazilian
+   Portuguese (keep `{n}` in their `one` forms); a language with other rules needs its rule in
+   `plural_one` in [`crates/ui-egui/src/i18n.rs`](../crates/ui-egui/src/i18n.rs).
 4. To require full coverage, add the code to `COMPLETE` in
-   [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs).
+   [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
+   adds a string then has to translate it into each complete language, so only Spanish is there:
+   French, German and Brazilian Portuguese are complete today but registered as drafts, and a
+   string added later shows English in them until it is translated. To list what a draft lacks,
+   add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
 
        cargo test -p figcraft-ui-egui i18n
+
+   Dropdowns, the right panel's two-column labels and the home cards cut a label that doesn't fit
+   with "…" and show it in full on hover; elsewhere, look for clipped or wrapped text.
 
 The check fails on keys the code uses that `en.toml` lacks (it prints the lines to paste), keys no
 code uses, unknown command ids, placeholders that don't match English, and, for complete languages,
@@ -48,7 +65,7 @@ Wrap every string a user sees or a screen reader hears: `tr` for plain text, `tr
 placeholders, `trn` for counts, `tr_noop` for literals in `const` tables that are looked up later
 with `tr(label)`. The key must be a string literal as the first argument (the check reads the
 source). Don't wrap ids, command ids, JSON, log messages, file extensions or document content. Then
-add the key to `en.toml` and to each complete language.
+add the key to `en.toml` and to each complete language (Spanish); the drafts may follow later.
 
 Labels from the engine and document crates (tool names, blend modes, easing curves…) are looked up
 at display with `tr(x.label())`; they are listed in `dynamic_labels` in `i18n_tests.rs`.

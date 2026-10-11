@@ -1,8 +1,8 @@
 # FigCraft Roadmap
 
-**Stage: alpha** · next: beta, ~26 points and ~170–305 h away (one Opus 5.5 agent; ~35–70 h wall-clock with 5 agents)
+**Stage: alpha** · next: beta, ~26 points and ~162–292 h away (one Opus 5.5 agent; ~33–67 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -18,14 +18,14 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Ready for real work | **~52%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~49%** | estimated: weekly areas 72.6% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
-| Remaining to beta | **~170–305 h** one agent | estimated |
-| Remaining to full parity | **~286–558 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
+| Remaining to beta | **~162–292 h** one agent | estimated |
+| Remaining to full parity | **~281–548 h** one agent (~85–148 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~52% | ~291–560 h | multiplayer (42–84), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
+| Full target (ready for real work) | ~52% | ~286–550 h | multiplayer (42–84), localization (40–65), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
 | Mainstream practitioner | ~49% | ~130–244 h | core editor depth incl. the `.fig` import's tail (49–98), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~60–110 h | the `.fig` import's tail so the files people send open well (5–10), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -50,7 +50,7 @@ against real Figma documents. Ready-for-real-work is ~52%, inside alpha's ~40–
 ~75% **and** reliable `.fig` import: the `.fig` import's tail (5–10 h), a real-file corpus with measured
 fidelity (15–30 h), the interaction pass (25–40 h of the 40–60), core depth to ~80% (40–75 h),
 basic multiplayer on the landed core (30–55 h), stability and platform QA (20–40 h), a partial GPU path (15–30 h) and
-Figma's own languages on the landed localization layer (15–25 h).
+Figma's last two languages, Japanese and Korean, on the landed localization layer (7–12 h).
 
 ## By dimension
 
@@ -63,7 +63,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 60% | 10–21 | [hardware-parity](docs/hardware-parity.md) |
-| Localization | 20% (layer; English, Spanish draft) | 45–75 | [localization-parity](docs/localization-parity.md) |
+| Localization | 30% (layer; English; Spanish, French, German, Brazilian Portuguese drafts) | 40–65 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
 | Ecosystem / plugins | 28% (own WASM plugins with panels and settings) | 15–40 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -103,18 +103,19 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Spanish | es | 100% | draft (needs native review) |
 | Hindi | hi | 0% | none |
 | Arabic | ar | 0% | none |
-| French | fr | 0% | none |
-| Portuguese | pt | 0% | none |
+| French | fr | 100% | draft (needs native review) |
+| Portuguese (Brazil) | pt-BR | 100% | draft (needs native review) |
 | Indonesian | id | 0% | none |
 | Japanese | ja | 0% | none |
-| German | de | 0% | none |
+| German | de | 100% | draft (needs native review) |
 | Korean | ko | 0% | none |
 | Vietnamese | vi | 0% | none |
 
 No other languages. Figma ships English, Japanese, Korean, French, German, Spanish and Portuguese
-(Brazil); FigCraft has the localization layer, English and a Spanish draft (Preferences ▸ Language;
-adding a language: [`docs/translating.md`](docs/translating.md)). Document text in any script (bidi, Arabic
-shaping, IME) already works. Detail: [`docs/localization-parity.md`](docs/localization-parity.md).
+(Brazil); FigCraft has the localization layer, English and Spanish, French, German and Brazilian
+Portuguese drafts (Preferences ▸ Language; adding a language:
+[`docs/translating.md`](docs/translating.md)). Document text in any script (bidi, Arabic shaping,
+IME) already works. Detail: [`docs/localization-parity.md`](docs/localization-parity.md).
 
 ## Upcoming
 
@@ -123,7 +124,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 1. `.fig` import's tail: fixes from real files, connector labels, table cells, filled areas with their own fills (the best-effort import, editable vector networks, the other layer kinds and variable prototype actions landed 2026-10-11): 5–10 h.
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
-4. Languages on the landed localization layer: ja, ko, pt-BR, fr, de, and a native review of es: 15–30 h.
+4. Languages on the landed localization layer: ja and ko (7–12 h), and native reviews of the es, fr, de and pt-BR drafts (people).
 5. Multiplayer (M9): accounts and teams on top of the live sessions and the standalone server (transport, hosting, invite links that open the app, document sync, presence with remote text carets, cursor chat and spotlight, per-user undo, reconnect with offline edits, collision-free ids for styles, variables and comments, the browser client, `figcraft-server` with persistence and share links to edit or view, team libraries on the server landed): 42–84 h.
 
 ## Progress log
@@ -222,6 +223,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | French, German and Brazilian Portuguese draft catalogs (gap 5): every UI string, command label and menu wording (1,899 entries) machine-drafted in each and marked as drafts awaiting native review, falling back to English per key (new strings need only English and Spanish); 0 counts as singular in French and Brazilian Portuguese; System picks the first OS language with a catalog (pt-PT and pt read pt-BR); long translations elide with a tooltip in dropdowns, two-column labels and the home cards. Localization 20% → 30%, 45–75 h → 40–65 h; ready for real work unchanged (~52%); full parity ~289–564 h → ~284–554 h; beta ~170–305 h → ~162–292 h |
 | 2026-10-12 | minor | Cursor chat and spotlight in live sessions: `/` opens a chat bubble at your pointer that everyone sees as you type and that fades a few seconds after the last change; a spotlight (your avatar's menu, `collab.spotlight`) makes everyone follow your view and page until they move their own. Ephemeral presence the host validates and rate-limits, passed only to clients that read it (older clients keep working). Multiplayer & sharing breadth 15% → 17%, ready unchanged (5%), 45–90 h → 42–84 h; collaboration 13% unchanged, 49–98 h → 46–92 h; feature breadth (~84%) and ready for real work (~51%) unchanged at this rounding; full parity ~301–587 h → ~298–581 h |
 | 2026-10-12 | minor | Layers and Assets panels behaviour suite written from the public documentation (6 engine tests with about 50 table rows and 5 panel tests driven through the UI; about 30 rows that the code before the fixes contradicts) and its fixes (several layers dropped together, Collapse layers, eye and padlock sweeps, Rename layers dialog with the documented number codes, page dragging, dividers, "Copy of" duplicates, Assets folders, hidden-from-publishing names both ways). Layers panel 98%/82% → 99%/85%; percentages and full parity hours unchanged at this rounding |
 | 2026-10-12 | minor | Vector multi-edit and the vector edit tail, with a behaviour suite written from the public documentation (5 tests, about 30 table rows and steps, and a junk-parameter sweep of every vector command in multi-edit mode): several vector layers are edited at once (Enter, double-click or `vector.edit.begin {ids}`; a press on another layer's point, handle or segment makes it the active layer; Shift-click, marquee and lasso select across layers; dragging, the arrows, Delete, delete and heal, mirroring, smoothing, corner radius and point caps and joins reach every layer's selected points in one undo step; the pen, bend, paint bucket, cut and eraser work in the active layer); several Bezier handles are selected with Shift-click and dragged together (`vector.edit.moveHandles`); a sharp point next to a curved segment rounds (the curve is cut where the arc meets it and keeps its shape); a point can have its own stroke cap and join (`vector.edit.strokeCap`, `vector.edit.strokeJoin`, the Point section of the Design panel; canvas, PNG, SVG and PDF, outline stroke); the Pen outside edit mode connects to one of its own points and ends the path, and continues a selected open path from an end point. Left: corner smoothing beyond rectangles, the transform box around points of several layers, per-point caps and joins on dashed, variable-width and brush strokes. Shapes & vector 98%/72% → 99%/73%, 2–4 h → 1–3 h; Figma Draw extras 80%/55% → 88%/60%, 2–5 h → 1–3 h (gap 9: pen pressure on macOS and Linux tablets left). Totals recomputed by the doc's method, which rows since the last recompute had left stale: the area table's weighted breadth is 83.7% (~83%; core 94.1%, ~94%) and ready 63.1% (~63%; core 72.1%, ~72%), hours 133–284 (core 38–83); Features (depth) 61% → 63%, 46–94 h → 34–76 h; ready for real work 52.6% (~52%); mainstream weekly areas 71.0% → 72.1% (× 0.9 × 0.9 × 0.85 = 49.7%, ~49%, rounded down); essentials unchanged (~57%); full parity ~306–595 h → ~294–572 h (on top of the rows merged since: ~301–587 h → ~289–564 h; area-table totals recomputed on the merged table and rounded down: breadth ~84%, ready ~63%, core ~94%/~72%, mainstream weekly areas 72.4%, ~49%) |
