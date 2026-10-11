@@ -5,7 +5,8 @@
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::Paint;
 use figcraft_doc::proto::{
-    Action, ConditionalBlock, Direction, Easing, Interaction, KeyMods, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger,
+    Action, ConditionalBlock, Direction, Easing, GAMEPAD_BUTTONS, Interaction, KeyMods, Overflow, OverlayPosition, ScrollPosition, Transition,
+    Trigger, is_gamepad_button,
 };
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -92,6 +93,8 @@ fn trigger_of(kind: &str, cur: &Trigger) -> Trigger {
 fn trigger_summary(t: &Trigger) -> String {
     match t {
         Trigger::KeyPress { key } if key.is_empty() => tr("Key/Gamepad").into(),
+        // A controller button names itself ("Gamepad A").
+        Trigger::KeyPress { key } if is_gamepad_button(key) => key.clone(),
         Trigger::KeyPress { key } => trf("Key/Gamepad {key}", &[("key", key)]),
         Trigger::AfterDelay { ms } => trf("After delay {ms}ms", &[("ms", ms)]),
         other => tr(trigger_kind(other)).into(),
@@ -714,7 +717,8 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
                 } else {
                     key.clone()
                 };
-                let w = ui.available_width();
+                // The key field, and a menu of controller buttons beside it.
+                let w = (ui.available_width() - PAD_MENU_W - ui.spacing().item_spacing.x).max(40.0);
                 let (r, resp) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::click());
                 let id = capture_id().with("field");
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.field);
@@ -750,11 +754,27 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
                 if resp.clicked() && !cap {
                     ui.ctx().data_mut(|d| d.insert_temp(capture_id(), true));
                 }
+                let pads = widgets::dropdown(ui, tr("Controller"), PAD_MENU_W, None);
+                menu_popup(&pads).show(|ui| {
+                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                        for b in GAMEPAD_BUTTONS {
+                            let mark = if key.eq_ignore_ascii_case(b) { format!("✓ {b}") } else { b.to_string() };
+                            if menu_item(ui, &mark, "") {
+                                ui.ctx().data_mut(|d| d.remove::<bool>(capture_id()));
+                                patch(app, node, k, json!({"trigger": {"type": "keyPress", "key": b}}));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
             });
         }
         _ => {}
     }
 }
+
+/// The width of the controller button menu beside a key trigger's key.
+const PAD_MENU_W: f32 = 92.0;
 
 /// A destination picker for the action at `slot`: `make` builds the action for the destination.
 #[allow(clippy::too_many_arguments)]

@@ -358,7 +358,12 @@ Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigat
 the scroll position with `preserveScroll: true`; `{type: "scrollTo", dest, offset?: [x, y]}` stops
 the layer that far from the top-left of the innermost frame scrolling it, e.g. below a fixed
 header). A key trigger takes a key or a combination (`{type: "keyPress", key: "Shift+K"}`; Ctrl,
-Alt, Shift and Cmd, all held and no others). In the player, an "on drag" trigger with a move, push
+Alt, Shift and Cmd, all held and no others) or a controller button (`key: "Gamepad A"`; `Gamepad`
+followed by `A`, `B`, `X`, `Y`, `LB`, `RB`, `LT`, `RT`, `View`, `Menu`, `LS`, `RS`, `Up`, `Down`,
+`Left`, `Right` or `Home`: the standard layout, face buttons by position), which the player reads
+from controllers on Windows and in the browser and which the control channel presses with
+`ui.input {events: [{gamepad: "A"}]}`. Widgets react to clicks in the player, on its own copy of
+the file (see [plugins.md](plugins.md)). In the player, an "on drag" trigger with a move, push
 or slide animation starts only for a drag that way, and the animation follows the pointer until it
 lets go; spring easings play until they settle (their duration follows from the spring, not
 `durationMs`); an overlay's after-delay timer starts when it opens; instances of a component play
@@ -374,7 +379,10 @@ a variable) or `{op: {op, args}}` with `add` (text joins when a string is involv
 `and`, `or`, `not` and `negate`; `{inMode: {variable, mode}}` reads a variable's value in one mode
 of its collection whichever mode is chosen, and `{mode: {collection}}` gives the name of the mode a
 collection is in where the interaction runs (as text; it follows set variable mode actions).
-Variables, collections and modes may be given by name; they are stored by id. Expressions can also
+Variables, collections and modes may be given by name; they are stored by id.
+`proto.evaluate {expression | expr, id?}` computes an expression without changing anything, with
+variables in the modes where layer `id`'s interaction would run (default: the default modes) →
+`{value, type, text}`; it fails with what's wrong, like the interaction commands. Expressions can also
 be written as text: `expression: "count + 1"`
 on a set variable action, or `expression: "count >= 3 and not done"` on a conditional block, in
 place of `expr` / `condition` (variables by name, `{name}` for any name; numbers, `"text"`,
@@ -678,13 +686,13 @@ The JSON returned by the public REST API's file endpoint (`GET /v1/files/:key`, 
 `run_command {command: "file.import", params: {path}}` (pages appended to the current document,
 with their flows, prototype settings and variables).
 The result's `warnings` list what was skipped or approximated (unsupported layer, paint and effect
-types, video and gamepad triggers, expression functions other than a variable mode lookup over a
+types, video triggers, controller triggers on more than one button, expression functions other than a variable mode lookup over a
 variable and one of its modes, bindings to library
 variables, instances of components outside the file, which come in as frames). Pages, the layer
 tree, geometry, paints, strokes, effects, corners, constraints, auto layout, layout grids, exports,
 text with styled runs, vectors, components, component sets, instances and component properties are
 mapped, and so is prototyping: `interactions` (on click, hover, press, drag, after delay, mouse
-enter/leave/down/up and key triggers; navigate, overlays, back, scroll to, change to, open link,
+enter/leave/down/up and key triggers, controller triggers as controller buttons; navigate, overlays, back, scroll to, change to, open link,
 set variable (values, variable references and expressions), set variable mode and conditional
 (if / else if / else over expressions) actions; dissolve, smart animate, move, push and slide transitions with their easing,
 custom bezier and spring curves included), flow starting points, scroll overflow and fixed/sticky

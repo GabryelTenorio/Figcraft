@@ -145,9 +145,12 @@ popovers and fields (`ui.pointer` and `ui.key` drive the canvas tools and shortc
 `{up: [x, y], button?}`, `{key, shift?, alt?, cmd?}` (pressed and released; egui key names such as
 `ArrowLeft`, `Escape`, `A`), `{text}` (typed text), `{scroll: [dx, dy], shift?, alt?, cmd?}` (a
 mouse wheel at the pointer: the content moves by that many points, so a negative `dy` scrolls down)
-`{leave: true}` (the pointer left the window) and `{hold: {alt?, shift?, cmd?}}` (keep those modifier
+`{leave: true}` (the pointer left the window), `{hold: {alt?, shift?, cmd?}}` (keep those modifier
 keys down for the frames that follow, e.g. Alt while dragging a component from the Assets panel onto
-an instance to swap it; all false releases them); positions are window points. Events of one call
+an instance to swap it; all false releases them) and `{gamepad: "A" | "Gamepad A" | 0}` (a
+controller button pressed in the prototype playing, the presenter's or else the preview pane's: a
+short name, a key/gamepad trigger's name or a standard layout index 0–16; an error when no prototype
+plays); positions are window points. Events of one call
 arrive in the same frame, so send a press and its release (or a double-click's two clicks) as
 separate calls. Returns `{queued}`.
 

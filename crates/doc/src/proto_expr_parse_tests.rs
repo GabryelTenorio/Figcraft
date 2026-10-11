@@ -148,4 +148,31 @@ fn hostile_text_is_bounded() {
     {
         let _ = Expr::parse(junk, &v);
     }
+    // Mode lookups and modes as junk: whatever parses writes back to the same expression and
+    // evaluates without trouble.
+    let modes = std::collections::BTreeMap::from([("c".to_string(), "dark".to_string())]);
+    for junk in [
+        "n-name[",
+        "n-name[]]",
+        "n-name[[Dark]]",
+        "n-name[Dark][Light]",
+        "n-name [\u{0}]",
+        "{n-name}[\"",
+        "mode(",
+        "mode((",
+        "mode(Theme)[Dark]",
+        "mode(mode(Theme))",
+        "mode()()",
+        "mode(\"Theme\"",
+        "n-name[Dark] + mode(Theme)",
+        "-n-name[Dark] * n-name[Light] / 0",
+        "n-name[🙂]",
+        "not mode(Theme)",
+        "mode(Theme) < mode(Theme) == true",
+    ] {
+        if let Ok(e) = Expr::parse(junk, &v) {
+            assert_eq!(Expr::parse(&e.display(&v), &v), Ok(e.clone()), "{junk}");
+            let _ = e.eval(&v, &modes);
+        }
+    }
 }

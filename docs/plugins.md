@@ -67,6 +67,12 @@ and its state (a small JSON object) in its own layer data, so a saved file, a co
 a live session carries the widget as it is, and a copy is a widget of its own. A widget whose
 plugin isn't installed stays as it was drawn; clicking it says the plugin is missing.
 
+In a presented prototype (the presenter or the preview pane) clicks on a widget's clickable parts
+call its plugin back the same way, with the same limits, but on the prototype's own copy of the
+file: the widget changes in the prototype only, the file and its undo history stay as they are,
+and restarting the prototype starts the widget over. An interaction on the clicked layer wins over
+the widget.
+
 If a callback fails, it is rolled back and its message shown; a plugin that returned an error
 keeps its panel, one that crashed or ran out of fuel or memory loses it.
 
@@ -414,8 +420,7 @@ import what you need from `figcraft`.
 - Plugins written for other apps (JavaScript plugins) don't run.
 - Widgets: clicks are their only events (no text input, hover, property menu or timers), they
   can't open a panel, and their layers are frames, text, rectangles, ellipses and images only (no
-  vectors, components or variables). Clicks reach them in the editor, not in a prototype being
-  presented.
+  vectors, components or variables).
 - Panels: no images, sliders or free layout inside a panel.
 - Data in the document: plugins keep data on layers (pages included) with `node.set {props:
   {pluginData: {key: value}}}`; there is no separate per-document store.

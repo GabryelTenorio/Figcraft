@@ -1368,6 +1368,8 @@ mod proto_responsive_tests;
 #[cfg(test)]
 mod proto_run_tests;
 #[cfg(test)]
+mod proto_tail_tests;
+#[cfg(test)]
 mod retained_walk_tests;
 #[cfg(test)]
 mod rotated_guides_tests;

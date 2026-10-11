@@ -290,6 +290,14 @@ pub struct Presenter {
     sections: HashMap<NodeId, NodeId>,
     /// The frame shown last, where it was placed and what it could draw into (comment pins go there).
     shown: Option<(NodeId, Place, Rect)>,
+    /// Controller buttons pressed since the last frame (as key trigger names), for the next frame.
+    pub pads: Vec<String>,
+    /// The prototype has gamepad triggers: the player polls the controllers.
+    uses_pads: bool,
+    /// The controller buttons held at the last poll (bit i: standard layout index i).
+    pads_held: u32,
+    /// Clicks on widgets' clickable parts (widget, target), for [`Presenter::click_widgets`].
+    widget_clicks: Vec<(NodeId, String)>,
 }
 
 impl Presenter {
@@ -345,6 +353,10 @@ impl Presenter {
             wheel: None,
             sections: HashMap::new(),
             shown: None,
+            pads: Vec::new(),
+            uses_pads: false,
+            pads_held: 0,
+            widget_clicks: Vec::new(),
         }
     }
 
@@ -463,6 +475,7 @@ impl Presenter {
             figcraft_engine::proto_run::play_interactions(d);
             raise_fixed(d);
         }
+        self.uses_pads = d.as_ref().is_some_and(figcraft_doc::proto::uses_gamepad);
         self.doc = d;
         self.rev += 1;
     }
@@ -568,6 +581,7 @@ impl Presenter {
             "panRange": [self.pan_range.0, self.pan_range.1],
             "zoom": self.zoom,
             "flinging": self.fling.is_some(),
+            "gamepad": self.uses_pads,
         })
     }
 
@@ -677,6 +691,24 @@ impl Presenter {
             self.temp = Some(Temp { rect, press, snap, transition: it.transition, dur, easing: it.easing });
         }
         did
+    }
+
+    /// Run the widget clicks the player took: each calls its plugin back on the player's copy (the
+    /// prototype's own state of the widget), as on the canvas but without touching the file.
+    /// Returns what went wrong, for a toast.
+    pub fn click_widgets(&mut self, s: &figcraft_engine::Session) -> Option<String> {
+        let mut error = None;
+        for (id, target) in std::mem::take(&mut self.widget_clicks) {
+            let Some(doc) = self.design.clone() else { break };
+            match figcraft_engine::widgets::click_on(s, doc, id, &target) {
+                Ok((d, _)) => {
+                    self.design = Some(d);
+                    self.relayout();
+                }
+                Err(e) => error = Some(e.to_string()),
+            }
+        }
+        error
     }
 
     fn perform(&mut self, a: &Action, node: NodeId, tr: Transition, dur: f64, easing: Easing, rect: Option<Rect>, now: f64) -> bool {
@@ -878,6 +910,10 @@ impl Place {
     }
     pub fn rect(&self, r: figcraft_geom::Rect) -> Rect {
         Rect::from_min_max(self.pt(r.x0, r.y0), self.pt(r.x1, r.y1))
+    }
+    /// The page point under screen point `q`.
+    pub fn page(&self, q: Pos2) -> Point {
+        Point::new(self.page_min.0 + f64::from(q.x - self.origin.x) / self.scale, self.page_min.1 + f64::from(q.y - self.origin.y) / self.scale)
     }
 }
 
@@ -1542,6 +1578,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     if let Ok(ds) = app.session.ds() {
         pres.sync(&ds.doc, now);
     }
+    poll_pads(app, &mut pres, &ctx);
     let mut action = None;
     // Typing a reply to a comment keeps the keys from the prototype; Shift+C shows the comments.
     let typing = ctx.egui_wants_keyboard_input();
@@ -1571,9 +1608,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     } else if app.ui.comments.open.is_some() {
         app.ui.comments.close();
     }
-    for u in pres.urls.drain(..) {
-        app.services.open_url(&u);
-    }
+    finish(app, &mut pres);
     // The options carry over to the next presentation.
     app.ui.present_view = pres.view;
     if let Some(BarAction::Responsive(on)) = action {
@@ -1583,6 +1618,35 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         return;
     }
     app.ui.present = Some(pres);
+}
+
+/// How often the player polls the controllers while its prototype has gamepad triggers (seconds).
+const PAD_POLL_SECS: f64 = 1.0 / 30.0;
+
+/// Before a player's frame: the controller buttons pressed since the last one, polled only while
+/// the prototype has gamepad triggers and the window has the focus (systems and browsers report
+/// controllers to the focused window only; focus coming back draws a frame, which polls again).
+fn poll_pads(app: &mut FigApp, p: &mut Presenter, ctx: &egui::Context) {
+    if !p.uses_pads || !ctx.input(|i| i.focused) {
+        return;
+    }
+    let held = app.services.gamepad_held();
+    let down = held & !p.pads_held;
+    p.pads_held = held;
+    // Each press once, in layout order.
+    let pressed = (0..u32::BITS as usize).filter(|i| down & (1 << i) != 0).filter_map(figcraft_doc::proto::gamepad_button);
+    p.pads.extend(pressed.map(str::to_string));
+    crate::repaint_in(ctx, PAD_POLL_SECS);
+}
+
+/// After a player's frame: the links it opens and the widget clicks it took.
+fn finish(app: &mut FigApp, p: &mut Presenter) {
+    for u in p.urls.drain(..) {
+        app.services.open_url(&u);
+    }
+    if let Some(e) = p.click_widgets(&app.session) {
+        app.toast(e);
+    }
 }
 
 /// The width of the presenter's Inspect panel.
@@ -1672,6 +1736,7 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
     let style = ctx.global_style();
     let typing = ds.text_edit.is_some() || crate::a11y::field_focused(ctx);
     let chrome = Chrome { pane: true, bar_h: 36.0, pad: 12.0, round: style.visuals.window_corner_radius.nw, keys: !typing };
+    poll_pads(app, &mut pane.player, ctx);
     let mut action = None;
     egui::Window::new(tr("Prototype preview"))
         .id(pane_id())
@@ -1687,9 +1752,7 @@ pub fn show_pane(app: &mut FigApp, ctx: &egui::Context) {
             let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
             action = player(&mut pane.player, ui, rect, now, chrome);
         });
-    for u in pane.player.urls.drain(..) {
-        app.services.open_url(&u);
-    }
+    finish(app, &mut pane.player);
     match action {
         Some(BarAction::Close) => {}
         Some(BarAction::Present) => {
@@ -2125,6 +2188,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         )
     });
     let keys = if keys_on { keys } else { Vec::new() };
+    let pads = std::mem::take(&mut p.pads);
     // A transition a drag started follows the pointer while it stays down, then plays on from there.
     if let Some(a) = p.anim.as_mut()
         && let Some((from, dir, len)) = a.follow
@@ -2325,10 +2389,26 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             {
                 return;
             }
+            // A widget's clickable part calls its plugin back (after the frame, with the session).
+            if let Some(q) = pos
+                && let Some(t) = layer_at(doc, root, &place, q).and_then(|hit| figcraft_engine::widgets::target_at(doc, hit, place.page(q)))
+            {
+                p.widget_clicks.push(t);
+                return;
+            }
             // Clicking where nothing reacts flashes the hotspots.
             if p.view.hotspot_hints {
                 p.flash_until = now + FLASH_SECS;
             }
+        }
+    }
+    // Controller buttons: pressed alone, anywhere on the screen, like keys.
+    for name in &pads {
+        let found = doc.subtree(root).into_iter().find_map(|id| find_trigger(doc, id, |t| t.fires_on_key(name, KeyMods::default())).map(|k| (id, k)));
+        if let Some((id, k)) = found
+            && p.fire(id, k, None, now)
+        {
+            return;
         }
     }
     // Keys.
@@ -2512,6 +2592,10 @@ mod variables_tests;
 #[cfg(test)]
 #[path = "present_behaviour_tests.rs"]
 mod behaviour_tests;
+
+#[cfg(test)]
+#[path = "present_tail_tests.rs"]
+mod tail_tests;
 
 #[cfg(test)]
 mod tests {

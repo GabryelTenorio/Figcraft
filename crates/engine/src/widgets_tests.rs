@@ -113,13 +113,13 @@ fn widget_manifest(id: &str, access: &str) -> Value {
 }
 
 /// A session with the tally widget plugin installed (read access).
-fn session() -> Session {
+pub(crate) fn session() -> Session {
     let mut s = Session::new();
     install(&mut s, widget_manifest("org.test.tally", "read"), &tally(|_| String::new()));
     s
 }
 
-fn insert(s: &mut Session) -> (NodeId, Value) {
+pub(crate) fn insert(s: &mut Session) -> (NodeId, Value) {
     let r = ex(s, "widget.insert", json!({"plugin": "org.test.tally", "x": 50, "y": 60}));
     (idv(&r), r)
 }

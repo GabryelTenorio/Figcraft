@@ -179,6 +179,9 @@ impl Services for Desktop {
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)
     }
+    fn gamepad_held(&mut self) -> u32 {
+        crate::gamepad::held()
+    }
     fn system_language(&self) -> Option<String> {
         self.language.clone()
     }

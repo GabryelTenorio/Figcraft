@@ -45,7 +45,7 @@ pub(crate) fn persisted<S: Serializer>(list: &[InstalledPlugin], s: S) -> std::r
 #[derive(Debug, Default)]
 pub struct Runtime {
     /// Modules of plugins imported without a manifest file, by plugin id.
-    modules: HashMap<String, Arc<Vec<u8>>>,
+    pub(crate) modules: HashMap<String, Arc<Vec<u8>>>,
     /// The last run (plugin id, command id, params): "Run last plugin".
     pub last: Option<(String, String, Value)>,
     /// The open plugin panels, one per plugin, in the order they opened.

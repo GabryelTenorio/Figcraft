@@ -167,6 +167,12 @@ pub trait Services {
     fn system_language(&self) -> Option<String> {
         None
     }
+    /// The controller buttons held now on any controller: bit i is standard gamepad layout index i
+    /// (0 the bottom face button … 16 home; `figcraft_doc::proto::GAMEPAD_BUTTONS`). The prototype
+    /// player asks every frame while its prototype has gamepad triggers.
+    fn gamepad_held(&mut self) -> u32 {
+        0
+    }
 }
 
 /// No-op services (tests, headless screenshots).
@@ -810,6 +816,8 @@ impl FigApp {
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
         if self.ui.present.is_some() {
             present::show(self, ui);
+            // What went wrong while presenting (a widget's plugin failing) shows over it.
+            self.toast_ui(&ctx);
             return;
         }
         if !self.has_files() || self.ui.home {

@@ -11,6 +11,7 @@
 
 mod args;
 mod control_server;
+mod gamepad;
 mod recovery;
 mod services;
 

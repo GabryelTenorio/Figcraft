@@ -47,12 +47,15 @@ impl Trigger {
             Trigger::MouseDown => "Mouse down".into(),
             Trigger::MouseUp => "Mouse up".into(),
             Trigger::AfterDelay { ms } => format!("After delay {ms}ms"),
+            // A controller button names itself ("Gamepad A").
+            Trigger::KeyPress { key } if is_gamepad_button(key) => key.clone(),
             Trigger::KeyPress { key } => format!("Key/Gamepad {key}"),
         }
     }
 
     /// A key trigger fires for the key named `key` (`Space`, `K`, `ArrowLeft`) pressed with
-    /// exactly the modifiers `mods`: its key is a combination such as `Shift+K`.
+    /// exactly the modifiers `mods`: its key is a combination such as `Shift+K`. A controller
+    /// button is a key named from [`GAMEPAD_BUTTONS`], pressed without modifiers.
     pub fn fires_on_key(&self, key: &str, mods: KeyMods) -> bool {
         let Trigger::KeyPress { key: want } = self else { return false };
         let (m, k) = KeyMods::split(want);
@@ -100,6 +103,46 @@ impl KeyMods {
         }
         (mods, rest)
     }
+}
+
+/// The controller buttons a key/gamepad trigger can name (as its key), in the order of the
+/// standard gamepad layout's button indices (the browser Gamepad API's `standard` mapping): face
+/// buttons by position (bottom, right, left, top), shoulders, triggers, the two centre buttons,
+/// stick presses, the d-pad and the home button.
+pub const GAMEPAD_BUTTONS: [&str; 17] = [
+    "Gamepad A",
+    "Gamepad B",
+    "Gamepad X",
+    "Gamepad Y",
+    "Gamepad LB",
+    "Gamepad RB",
+    "Gamepad LT",
+    "Gamepad RT",
+    "Gamepad View",
+    "Gamepad Menu",
+    "Gamepad LS",
+    "Gamepad RS",
+    "Gamepad Up",
+    "Gamepad Down",
+    "Gamepad Left",
+    "Gamepad Right",
+    "Gamepad Home",
+];
+
+/// The button at standard-layout index `index`, as a key trigger names it.
+pub fn gamepad_button(index: usize) -> Option<&'static str> {
+    GAMEPAD_BUTTONS.get(index).copied()
+}
+
+/// Whether a key trigger's key is a controller button.
+pub fn is_gamepad_button(key: &str) -> bool {
+    GAMEPAD_BUTTONS.iter().any(|b| b.eq_ignore_ascii_case(key.trim()))
+}
+
+/// Whether any layer of `doc` has a key/gamepad trigger on a controller button (the player then
+/// polls controllers).
+pub fn uses_gamepad(doc: &crate::Document) -> bool {
+    doc.nodes().any(|n| n.interactions.iter().any(|it| matches!(&it.trigger, Trigger::KeyPress { key } if is_gamepad_button(key))))
 }
 
 /// Alternative spellings people type for keys, as the keys' names.

@@ -4,7 +4,7 @@
 
 use figcraft_doc::proto::{
     Action, ConditionalBlock, DeviceRotation, Direction, Easing, Expr, ExprOp, Interaction, KeyMods, MAX_ACTION_DEPTH, MAX_EXPR_DEPTH, Overflow,
-    OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+    OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger, gamepad_button,
 };
 use figcraft_doc::{Node, NodeId, VariableType, VariableValue};
 use serde_json::{Value, json};
@@ -174,11 +174,20 @@ impl Ctx<'_> {
             Some("MOUSE_DOWN") => mouse(self, Trigger::MouseDown),
             Some("MOUSE_UP") => mouse(self, Trigger::MouseUp),
             Some(ty @ ("ON_KEY_DOWN" | "ON_KEY_UP")) => {
-                if text(t, "device").is_some_and(|d| d != "KEYBOARD") {
-                    self.warn("gamepad triggers are not supported and were skipped");
-                    return None;
-                }
                 let codes: Vec<f64> = list(t, "keyCodes").iter().filter_map(Value::as_f64).collect();
+                // Controllers: their codes read as standard-layout button indices; one button each.
+                if text(t, "device").is_some_and(|d| d != "KEYBOARD") {
+                    let button = match codes.as_slice() {
+                        [c] if c.fract() == 0.0 && *c >= 0.0 => gamepad_button(*c as usize),
+                        _ => None,
+                    };
+                    if button.is_none() {
+                        self.warn("gamepad triggers without exactly one known controller button were skipped");
+                    } else if ty == "ON_KEY_UP" {
+                        self.warn("key up triggers import as key presses");
+                    }
+                    return button.map(|b| Trigger::KeyPress { key: b.to_string() });
+                }
                 let Some(key) = codes.iter().rev().find(|c| modifier(**c).is_none()).and_then(|c| key_name(*c)) else {
                     self.warn("key triggers without a supported key were skipped");
                     return None;

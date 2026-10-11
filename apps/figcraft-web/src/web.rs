@@ -90,4 +90,21 @@ impl Services for WebServices {
     fn system_language(&self) -> Option<String> {
         web_sys::window().and_then(|w| w.navigator().language())
     }
+    /// The Gamepad API's controllers with the standard mapping (its button order is the layout's;
+    /// others are skipped). Browsers list controllers once one of their buttons is pressed.
+    fn gamepad_held(&mut self) -> u32 {
+        let Some(pads) = web_sys::window().and_then(|w| w.navigator().get_gamepads().ok()) else { return 0 };
+        let mut held = 0;
+        for pad in pads.iter().filter_map(|p| p.dyn_into::<web_sys::Gamepad>().ok()) {
+            if pad.mapping() != web_sys::GamepadMappingType::Standard {
+                continue;
+            }
+            for (i, b) in pad.buttons().iter().take(32).enumerate() {
+                if b.dyn_into::<web_sys::GamepadButton>().is_ok_and(|b| b.pressed()) {
+                    held |= 1 << i;
+                }
+            }
+        }
+        held
+    }
 }

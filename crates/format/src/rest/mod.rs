@@ -24,6 +24,8 @@ mod blur_tests;
 mod conditional_tests;
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod gamepad_tests;
 mod props;
 mod proto;
 #[cfg(test)]

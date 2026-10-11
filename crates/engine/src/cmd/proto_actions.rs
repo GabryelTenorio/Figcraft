@@ -68,7 +68,37 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             remove_block
         ),
+        spec!(
+            "proto.evaluate",
+            "Evaluate prototype expression",
+            "{expression (text, e.g. \"count + 1\", \"accent[Dark]\", \"mode(Theme) == 'Dark'\") | expr (expression JSON), id? (the layer it runs on: variables resolve in its modes; default: the document's default modes)} → {value, type, text}  without changing anything",
+            false,
+            evaluate
+        ),
     ]
+}
+
+/// An expression's value where it would run, as the prototype player computes it.
+fn evaluate(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "proto.evaluate";
+    let doc = s.doc()?;
+    let vars = &doc.variables;
+    let e = match (string(p, "expression"), parse::<Expr>(cmd, p, "expr")?) {
+        (Some(text), _) => Expr::parse(&text, vars).map_err(|e| bad(cmd, format!("`{text}`: {e}")))?,
+        (None, Some(mut e)) => {
+            super::proto::canonical_expr(vars, &mut e, 0);
+            e
+        }
+        (None, None) => return Err(bad(cmd, "`expression` (text) or `expr` (expression JSON) required")),
+    };
+    let kind = e.type_of(vars).map_err(|m| bad(cmd, m))?;
+    let modes = match id(p, "id") {
+        Some(n) if doc.contains(n) => doc.modes_for(n),
+        Some(n) => return Err(bad(cmd, format!("no layer {n}"))),
+        None => BTreeMap::new(),
+    };
+    let v = e.eval(vars, &modes).ok_or_else(|| bad(cmd, "it gives no value here (a division by zero, or a number too large)"))?;
+    Ok(json!({"value": v, "type": kind, "text": e.display(vars)}))
 }
 
 /// The action at `path` in `actions`.

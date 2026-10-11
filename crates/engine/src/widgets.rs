@@ -289,6 +289,21 @@ fn click(s: &mut Session, p: &Value) -> Result<Value> {
     report(s, w, &wp.manifest, out)
 }
 
+/// Click `target` of the widget `id` is (or is in) on `doc`, a document that isn't one of the
+/// session's: the prototype player's copy. The same callback as on the canvas, with the session's
+/// installed plugins and the same sandbox limits, but the widget's state and layers are the
+/// copy's, nothing reaches the session's documents and there is no undo step. Returns the
+/// document as the callback left it (on failure the caller keeps its copy as it was) and what
+/// `widget.click` returns.
+pub fn click_on(s: &Session, doc: Document, id: NodeId, target: &str) -> Result<(Document, Value)> {
+    let mut scratch = Session::with_document(doc);
+    scratch.prefs.plugins.clone_from(&s.prefs.plugins);
+    scratch.plugins.modules.clone_from(&s.plugins.modules);
+    let out = click(&mut scratch, &json!({"id": id, "target": target}))?;
+    let ds = scratch.docs.pop().ok_or(crate::EngineError::NoDocument)?;
+    Ok((std::sync::Arc::unwrap_or_clone(ds.doc), out))
+}
+
 fn list(s: &mut Session, _p: &Value) -> Result<Value> {
     let doc = s.doc()?;
     let widgets: Vec<Value> = doc

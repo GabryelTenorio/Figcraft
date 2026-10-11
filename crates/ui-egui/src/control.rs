@@ -10,9 +10,10 @@
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
 //! - `ui.input {events: [{move|down|up: [x, y], button?} | {key, shift?, alt?, cmd?} | {text} | {leave}
-//!   | {hold: {alt?, shift?, cmd?}}]}` — raw pointer and key events for the next frame, as if from the
-//!   window (panels, popovers); `hold` keeps modifier keys down for the frames that follow (all
-//!   false: released)
+//!   | {hold: {alt?, shift?, cmd?}} | {gamepad: "A" | "Gamepad A" | 0}]}` — raw pointer and key events
+//!   for the next frame, as if from the window (panels, popovers); `hold` keeps modifier keys down
+//!   for the frames that follow (all false: released); `gamepad` presses a controller button in the
+//!   prototype playing (presenter or preview pane)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
@@ -134,6 +135,17 @@ fn save_color_image(img: &egui::ColorImage, path: &str) -> Result<(), String> {
     buf.save(path).map_err(|e| e.to_string())
 }
 
+/// A controller button given as its standard-layout index, its key trigger name ("Gamepad A") or
+/// its short name ("A", "LB", "Up").
+fn pad_name(v: &Value) -> Option<&'static str> {
+    use figcraft_doc::proto::{GAMEPAD_BUTTONS, gamepad_button};
+    if let Some(i) = v.as_u64() {
+        return usize::try_from(i).ok().and_then(gamepad_button);
+    }
+    let s = v.as_str()?.trim();
+    GAMEPAD_BUTTONS.iter().copied().find(|b| b.eq_ignore_ascii_case(s) || b.get(8..).is_some_and(|short| short.eq_ignore_ascii_case(s)))
+}
+
 fn b(p: &Value, k: &str) -> bool {
     p.get(k).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -244,6 +256,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                 Some(egui::pos2(a.first()?.as_f64()? as f32, a.get(1)?.as_f64()? as f32))
             };
             let mut events = Vec::new();
+            let mut pads = Vec::new();
             for e in list.iter().take(256) {
                 let button = if e.get("button").and_then(Value::as_str) == Some("secondary") {
                     egui::PointerButton::Secondary
@@ -274,6 +287,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                         phase: egui::TouchPhase::Move,
                         modifiers: mods,
                     });
+                } else if let Some(g) = e.get("gamepad") {
+                    let names = figcraft_doc::proto::GAMEPAD_BUTTONS.join(", ");
+                    pads.push(pad_name(g).ok_or_else(|| format!("unknown controller button {g} (an index 0-16 or one of {names})"))?.to_string());
                 } else if b(e, "leave") {
                     events.push(egui::Event::PointerGone);
                 } else if let Some(h) = e.get("hold") {
@@ -287,6 +303,14 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     events.push(egui::Event::ModifiersChanged(held));
                 } else {
                     return Err(format!("unknown input event {e}"));
+                }
+            }
+            // Controller buttons go straight to the prototype playing (its next frame takes them).
+            if !pads.is_empty() {
+                match (app.ui.present.as_mut(), app.ui.preview.as_mut()) {
+                    (Some(p), _) => p.pads.extend(pads),
+                    (None, Some(pane)) => pane.player.pads.extend(pads),
+                    (None, None) => return Err("controller buttons go to a prototype that is playing: run proto.present or proto.preview".into()),
                 }
             }
             app.control_input.extend(events);
