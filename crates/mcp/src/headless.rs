@@ -138,7 +138,8 @@ impl Headless {
                 return Ok(json!({"command": bd.id}));
             }
             if !(m.cmd && key.len() == 1) {
-                textedit::key(&mut self.session, key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())?;
+                let (word, line) = figcraft_engine::keymap::text_motion(platform, key, m);
+                textedit::key(&mut self.session, key, m.shift, word, line).map_err(|e| e.to_string())?;
                 return Ok(json!({"ok": true, "textEdit": true}));
             }
         }

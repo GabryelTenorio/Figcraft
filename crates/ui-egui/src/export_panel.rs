@@ -38,7 +38,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         }
     }
     if mixed {
-        row(ui, 28.0, |ui| widgets::label(ui, tr("Click + to replace mixed content"), t.text_secondary));
+        widgets::note(ui, tr("Click + to replace mixed content"), t.text_secondary);
     }
     for (i, e) in list.iter().enumerate() {
         setting_row(app, ui, &ids, i, e);

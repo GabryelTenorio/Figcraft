@@ -291,7 +291,8 @@ fn text_keys(app: &mut FigApp, ctx: &Context, events: &[Event]) {
                     let _ = figcraft_engine::textedit::end(&mut app.session);
                     continue;
                 }
-                if let Err(e) = figcraft_engine::textedit::key(&mut app.session, name, m.shift, m.alt, m.command) {
+                let (word, line) = keymap::text_motion(platform(), name, mods(*m));
+                if let Err(e) = figcraft_engine::textedit::key(&mut app.session, name, m.shift, word, line) {
                     app.toast(e.to_string());
                 }
             }

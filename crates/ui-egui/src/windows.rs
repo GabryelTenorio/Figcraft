@@ -15,6 +15,7 @@ use figcraft_engine::DocState;
 use serde_json::{Value, json};
 
 use crate::canvas::CanvasState;
+use crate::i18n::{tr, trf};
 use crate::render_worker::Worker;
 use crate::{FigApp, TitleBar, UiState};
 
@@ -310,13 +311,13 @@ pub(crate) fn confirm_close(app: &mut FigApp, ctx: &Context) {
     }
     let t = crate::theme::Tokens::get(ctx);
     let (mut open, mut discard, mut cancel) = (true, false, false);
-    crate::dialogs::window("Unsaved changes", ctx).open(&mut open).show(ctx, |ui| {
+    crate::dialogs::window(tr("Unsaved changes"), ctx).open(&mut open).show(ctx, |ui| {
         ui.set_width(340.0);
-        crate::widgets::label(ui, &format!("Unsaved changes in {}. Close the window and lose them?", names.join(", ")), t.text);
+        crate::widgets::label(ui, &trf("Unsaved changes in {names}. Close the window and lose them?", &[("names", &names.join(", "))]), t.text);
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            discard = crate::widgets::button(ui, "Close without saving", true, true).clicked();
-            cancel = crate::widgets::button(ui, "Cancel", false, true).clicked();
+            discard = crate::widgets::button(ui, tr("Close without saving"), true, true).clicked();
+            cancel = crate::widgets::button(ui, tr("Cancel"), false, true).clicked();
         });
     });
     app.ui.confirm_close = open && !discard && !cancel;

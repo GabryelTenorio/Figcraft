@@ -512,6 +512,10 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
                         }
                     }
                 }
+                // An end of a linear gradient moved: its bands stay square to it.
+                if *which < 2 && g.kind == figcraft_color::GradientKind::Linear {
+                    g.square_linear_width(n.width, n.height);
+                }
             }
             let cmd = if *fills { "fill.set" } else { "stroke.set" };
             let _ = app.session.execute(cmd, &json!({"ids": [id], "index": index, "paint": paint}));

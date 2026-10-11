@@ -20,6 +20,9 @@ mod resources;
 mod server;
 mod tools;
 
+#[cfg(test)]
+mod gradient_tests;
+
 pub use backend::{Attached, Backend, decode_data, page_children};
 pub use headless::Headless;
 pub use prompts::{PROMPTS, PromptArg, PromptDef};

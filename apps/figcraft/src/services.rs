@@ -15,9 +15,11 @@ pub struct Desktop {
     reduce_motion: Arc<AtomicBool>,
     /// The system's interface language (read at startup).
     language: Option<String>,
+    /// Recovery copies of unsaved files (written at once after a panic).
+    recovery: crate::recovery::Shared,
 }
 
-fn config_dir() -> Option<PathBuf> {
+pub fn config_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
     #[cfg(target_os = "windows")]
@@ -28,7 +30,7 @@ fn config_dir() -> Option<PathBuf> {
 }
 
 impl Desktop {
-    pub fn load() -> Self {
+    pub fn load(recovery: crate::recovery::Shared) -> Self {
         let state: Value = config_dir()
             .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -46,7 +48,7 @@ impl Desktop {
         let reduce_motion = Arc::new(AtomicBool::new(false));
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
-        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language() }
+        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language(), recovery }
     }
 }
 
@@ -125,25 +127,6 @@ pub fn save_state(app: &FigApp) {
     }
 }
 
-/// After an unexpected panic: write every dirty document to the recovery folder.
-pub fn emergency_save(s: &Session) {
-    let Some(dir) = config_dir().map(|d| d.join("Recovery")) else { return };
-    let _ = std::fs::create_dir_all(&dir);
-    for d in &s.docs {
-        if d.is_dirty()
-            && let Ok(bytes) = figcraft_format_save(&d.doc)
-        {
-            let name = d.doc.name.replace(['/', '\\', ':'], "_");
-            let _ = std::fs::write(dir.join(format!("{name}-{}.figcraft", d.uid)), bytes);
-        }
-    }
-}
-
-fn figcraft_format_save(doc: &figcraft_engine::doc::Document) -> Result<Vec<u8>, String> {
-    let v = serde_json::to_vec(doc).map_err(|e| e.to_string())?;
-    Ok(v)
-}
-
 impl Services for Desktop {
     fn pick_open(&mut self, title: &str, exts: &[&str]) -> Option<PathBuf> {
         rfd::FileDialog::new().set_title(title).add_filter("Supported files", exts).pick_file()
@@ -180,7 +163,9 @@ impl Services for Desktop {
         let _ = webbrowser::open(url);
     }
     fn emergency_save(&mut self, session: &Session) {
-        emergency_save(session);
+        if let Some(r) = crate::recovery::lock(&self.recovery).as_mut() {
+            r.write(session, true);
+        }
     }
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)

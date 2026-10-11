@@ -422,6 +422,12 @@ impl DocState {
         true
     }
 
+    /// Shown as having unsaved changes until it is saved (a document recovered after a crash).
+    pub fn unsaved(mut self) -> Self {
+        self.saved_doc = Arc::new(Document::new(self.doc.name.clone()));
+        self
+    }
+
     pub fn mark_saved(&mut self) {
         self.saved_doc = self.doc.clone();
         self.versions_changed = false;
@@ -1318,6 +1324,8 @@ mod svg_import_tests;
 mod tests;
 #[cfg(test)]
 mod text_fill_tests;
+#[cfg(test)]
+mod text_motion_tests;
 #[cfg(test)]
 mod text_style_picker_tests;
 #[cfg(test)]

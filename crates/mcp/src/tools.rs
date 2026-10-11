@@ -402,9 +402,18 @@ fn normalize_paintish(v: &mut Value, depth: usize) {
                 }
                 o.entry("kind").or_insert(json!("linear"));
                 let linear = o.get("kind").and_then(Value::as_str) == Some("linear");
-                let (from, to, width) = if linear { ([0.5, 0.0], [0.5, 1.0], [0.0, 0.5]) } else { ([0.5, 0.5], [0.5, 1.0], [1.0, 0.5]) };
+                let (from, to, width) = if linear { ([0.5, 0.0], [0.5, 1.0], [-0.5, 0.0]) } else { ([0.5, 0.5], [0.5, 1.0], [1.0, 0.5]) };
                 o.entry("from").or_insert(json!(from));
                 o.entry("to").or_insert(json!(to));
+                // A linear gradient's width handle goes square to its axis (else its bands skew,
+                // or vanish when the handle lies on the axis).
+                let pt = |k: &str| o.get(k).and_then(Value::as_array).and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
+                if linear
+                    && !o.contains_key("width")
+                    && let (Some(f), Some(t)) = (pt("from"), pt("to"))
+                {
+                    o.insert("width".into(), json!([f.0 - (t.1 - f.1), f.1 + (t.0 - f.0)]));
+                }
                 o.entry("width").or_insert(json!(width));
                 if let Some(Value::Array(stops)) = o.get_mut("stops") {
                     let n = stops.len();

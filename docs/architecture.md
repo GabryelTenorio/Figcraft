@@ -64,8 +64,9 @@ express an effect.
 
 ## File I/O
 
-`.figcraft` is the native format (atomic saves, autosave checkpoints, recovery copies after a
-crash). Imports: REST API file JSON with variables and images, SVG, raster images, clipboard
+`.figcraft` is the native format (atomic saves, autosave checkpoints; the desktop app keeps
+recovery copies of unsaved documents that reopen after a crash or a forced quit). Imports: REST API
+file JSON with variables and images, SVG, raster images, clipboard
 content. Exports: PNG, JPG, WebP, SVG, PDF, code. There is no `.fig` reader yet
 ([`file-format-parity.md`](file-format-parity.md)).
 
