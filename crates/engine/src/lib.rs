@@ -1249,6 +1249,8 @@ mod booleans_tests;
 #[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
+mod branch_versions_tests;
+#[cfg(test)]
 mod brush_tests;
 #[cfg(test)]
 mod canvas_fixes_tests;

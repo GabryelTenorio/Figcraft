@@ -121,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.saveVersion",
             "Save to version history",
-            "{name?, description?}  snapshot the document into the file's version history (kept when the file is saved); returns the version",
+            "{name?, description?}  snapshot the document into the file's version history (on a branch tab: the branch's own history; kept when the file is saved); returns the version",
             false,
             save_version
         ),
@@ -252,8 +252,7 @@ pub const MAX_AUTOSAVES: usize = 20;
 /// `version.autosave`: a checkpoint of a document with unsaved changes since the last version.
 fn autosave(s: &mut Session, _: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
-    // A branch's versions would have nowhere to be saved.
-    if ds.preview.is_some() || ds.branch_of.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
+    if ds.preview.is_some() || !ds.is_dirty() || !ds.changed_since_checkpoint() {
         return Ok(json!({"saved": false}));
     }
     Ok(match add_version(ds, AUTOSAVE, "", true) {
@@ -348,10 +347,14 @@ pub(crate) fn unique_id(taken: impl Fn(&str) -> bool) -> String {
     }
 }
 
+/// `file.saveVersion`; on a branch tab the version goes into the branch's own history.
 fn save_version(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
-    if ds.branch_of.is_some() {
-        return Err(EngineError::Disabled("file.saveVersion".into(), "versions are saved on the main file, not on a branch".into()));
+    if ds.versions.len() >= figcraft_format::MAX_VERSIONS {
+        return Err(EngineError::Disabled(
+            "file.saveVersion".into(),
+            format!("the version history is full ({} versions): delete old versions first", figcraft_format::MAX_VERSIONS),
+        ));
     }
     let name =
         string(p, "name").map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or_else(|| format!("Version {}", ds.versions.len() + 1));

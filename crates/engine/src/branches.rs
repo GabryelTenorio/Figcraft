@@ -2,7 +2,8 @@
 //! against the main file and merged back. A branch remembers the main document as it was when
 //! the branch was made or last updated from main (its base); [`figcraft_collab::merge`] compares
 //! both sides with it. Branches are saved in the main file ([`figcraft_format::Branch`]); a
-//! branch tab's edits go into its branch ([`sync`]) and are saved with the main file.
+//! branch tab's edits and its own version history go into its branch ([`sync`]) and are saved with
+//! the main file. Merging adds a version to the main file's history; the branch keeps its own.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -136,13 +137,21 @@ pub(crate) fn sync(s: &mut Session) {
     if !s.docs.iter().any(|d| d.branch_of.is_some()) {
         return;
     }
-    let tabs: Vec<(u64, String, Arc<Document>)> =
-        s.docs.iter().filter_map(|d| d.branch_of.clone().map(|(m, id)| (m, id, d.document_itself().clone()))).collect();
-    for (main, id, doc) in tabs {
+    let mut tabs = Vec::new();
+    for d in s.docs.iter_mut() {
+        let Some((m, id)) = d.branch_of.clone() else { continue };
+        // Versions saved, renamed or deleted on the tab since the last sync.
+        let versions = std::mem::take(&mut d.versions_changed).then(|| d.versions.clone());
+        tabs.push((m, id, d.document_itself().clone(), versions));
+    }
+    for (main, id, doc, versions) in tabs {
         let Some(ds) = s.docs.iter_mut().find(|d| d.uid == main) else { continue };
-        let Some(i) = ds.branches.iter().position(|b| b.id == id && !Arc::ptr_eq(&b.head, &doc)) else { continue };
+        let Some(i) = ds.branches.iter().position(|b| b.id == id && (versions.is_some() || !Arc::ptr_eq(&b.head, &doc))) else { continue };
         if let Some(b) = ds.branches_mut().get_mut(i) {
             b.head = doc;
+            if let Some(v) = versions {
+                b.versions = v;
+            }
         }
     }
 }
@@ -232,6 +241,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         state: BranchState::Active,
         base,
         head: Arc::new(head),
+        versions: Vec::new(),
     });
     let index = open_tab(s, uid, &id)?;
     Ok(json!({"id": id, "name": name, "index": index}))
@@ -248,7 +258,8 @@ fn open_tab(s: &mut Session, main: u64, id: &str) -> Result<usize> {
     let mut doc = (*b.head).clone();
     // A branch read from a file has no client id yet.
     doc.set_client_id(b.client);
-    let mut tab = DocState::new(doc, None);
+    // The branch's own version history: the tab's versions while it is open ([`sync`]).
+    let mut tab = DocState::new(doc, None).with_versions(b.versions.clone());
     tab.branch_of = Some((main, id.to_string()));
     // The same content: opening isn't an edit of the main file.
     b.head = tab.doc.clone();
@@ -331,7 +342,8 @@ fn combine(s: &mut Session, p: &Value, from: Side) -> Result<Value> {
     if from == Side::Branch {
         let m = s.docs.get_mut(mi).ok_or(EngineError::NoDocument)?;
         let (selection, page) = (m.selection.clone(), m.page);
-        // The main file's history keeps it as it was before the merge, then the merge itself.
+        // The main file's history keeps it as it was before the merge, then the merge itself; the
+        // branch keeps its own history.
         crate::cmd::file::keep_in_history(m);
         show(m, doc);
         let name = m.branches.get(bi).map(|b| b.name.clone()).unwrap_or_default();

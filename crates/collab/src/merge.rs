@@ -4,7 +4,10 @@
 //!
 //! A conflict is the same property (or document-level entry) changed on both sides to different
 //! values, or a layer deleted on one side while the other side edited it or something inside it
-//! (including adding layers to it or moving layers into or out of it). Nothing that conflicts is
+//! (including adding layers to it or moving layers into or out of it). Fills, strokes and effects
+//! merge item by item: both sides changing different items of the list (or one adding items at its
+//! end) is no conflict, only the same item changed both ways or the list shortened on a side
+//! while the other changed it. Nothing that conflicts is
 //! merged until it is resolved: each conflict is resolved for one side, and the other side's
 //! changes to it are left out. Everything else from both sides is kept.
 
@@ -13,8 +16,9 @@ use std::fmt;
 
 use figcraft_doc::{Document, NodeId};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::change::{Change, DocProp, Entry, Prop};
+use crate::change::{Change, DocProp, Entry, Json, Prop};
 use crate::replica::{Mode, Positions, Replica, create_change};
 use crate::{Error, diff};
 
@@ -155,6 +159,55 @@ fn by_key(changes: &[Change]) -> BTreeMap<Key, Vec<usize>> {
     out
 }
 
+/// List properties whose items merge one by one.
+const PER_ITEM: &[Prop] = &[Prop::Fills, Prop::Strokes, Prop::Effects];
+
+/// Both sides' writes `b` and `m` of list property `key` merged item by item against the base
+/// (see [`merge_items`]); `None` when `key` isn't such a list or the writes conflict.
+fn merged_list(base: &Document, key: &Key, b: Option<&Change>, m: Option<&Change>) -> Option<Json> {
+    let Key::Node(id, prop) = key else { return None };
+    let (Some(Change::Set { value: bv, .. }), Some(Change::Set { value: mv, .. })) = (b, m) else { return None };
+    if !PER_ITEM.contains(prop) {
+        return None;
+    }
+    let o = prop.get(base.node(*id)?).ok()?;
+    merge_items(o.0.as_array()?, bv.0.as_array()?, mv.0.as_array()?).map(|v| Json(Value::Array(v)))
+}
+
+/// The change at the only index in `c`.
+fn only<'a>(c: &[usize], all: &'a [Change]) -> Option<&'a Change> {
+    match c {
+        [i] => all.get(*i),
+        _ => None,
+    }
+}
+
+/// Three-way merge of list `o` changed to `b` on one side and `m` on the other. Items at the same
+/// index merge one by one (changed on one side: that side's; on both: only the same way), and
+/// items added after `o`'s on one side (or the same ones on both) are kept. `None` when the same
+/// item changed both ways, both added different items, or a side removed items (lists without ids
+/// can't be lined up then).
+pub(crate) fn merge_items(o: &[Value], b: &[Value], m: &[Value]) -> Option<Vec<Value>> {
+    let (tb, tm) = (b.get(o.len()..)?, m.get(o.len()..)?);
+    let mut out = Vec::with_capacity(b.len().max(m.len()));
+    for (i, base) in o.iter().enumerate() {
+        let (x, y) = (b.get(i)?, m.get(i)?);
+        let item = if x == base {
+            y
+        } else if y == base || x == y {
+            x
+        } else {
+            return None;
+        };
+        out.push(item.clone());
+    }
+    if !tb.is_empty() && !tm.is_empty() && tb != tm {
+        return None;
+    }
+    out.extend_from_slice(if tb.is_empty() { tm } else { tb });
+    Some(out)
+}
+
 /// The changes (indexes) that edit what's in `gone`: write one of its layers, create a layer in it
 /// (or in a layer created in it) or move a layer into it. Changes come in [`diff`] order, so
 /// creations come parents first and before moves.
@@ -189,9 +242,10 @@ pub fn plan(base: &Document, branch: &Document, main: &Document) -> Result<Plan,
     let base_r = Replica::new(base.clone());
     let b = diff(&base_r, branch)?;
     let m = diff(&base_r, main)?;
-    let bc: Vec<Change> = b.changes.into_iter().filter(merges).collect();
-    let mc: Vec<Change> = m.changes.into_iter().filter(merges).collect();
+    let mut bc: Vec<Change> = b.changes.into_iter().filter(merges).collect();
+    let mut mc: Vec<Change> = m.changes.into_iter().filter(merges).collect();
     let mut conflicts = Vec::new();
+    let mut lists = Vec::new();
     let km = by_key(&mc);
     for (k, bi) in by_key(&bc) {
         // Deletions conflict with edits (below); images are content-addressed, so never differ.
@@ -203,8 +257,23 @@ pub fn plan(base: &Document, branch: &Document, main: &Document) -> Result<Plan,
         // out once the plan can tell followed values from overrides.
         let Some(mi) = km.get(&k) else { continue };
         let same = bi.len() == mi.len() && bi.iter().zip(mi).all(|(x, y)| bc.get(*x) == mc.get(*y));
-        if !same {
-            conflicts.push(Conflict { key: k, deleted_by: None, branch: bi, main: mi.clone() });
+        if same {
+            continue;
+        }
+        match merged_list(base, &k, only(&bi, &bc), only(mi, &mc)) {
+            Some(value) => lists.push((bi, mi.clone(), value)),
+            None => conflicts.push(Conflict { key: k, deleted_by: None, branch: bi, main: mi.clone() }),
+        }
+    }
+    // Both sides' writes of a list merged item by item become the merged list, so merging either
+    // way writes it.
+    for (bi, mi, value) in lists {
+        for (changes, at) in [(&mut bc, bi), (&mut mc, mi)] {
+            for i in at {
+                if let Some(Change::Set { value: v, .. }) = changes.get_mut(i) {
+                    *v = value.clone();
+                }
+            }
         }
     }
     for (side, changes, doc, other) in [(Side::Branch, &bc, branch, &mc), (Side::Main, &mc, main, &bc)] {

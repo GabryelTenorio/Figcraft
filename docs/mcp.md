@@ -752,12 +752,15 @@ branches). Driven with `run_command`:
   name, property, branch, main, deletedBy?}]}`. `layers` are the changed layers with their property
   changes formatted like Inspect (`fill #2563EB → #DC2626`); `document` lists styles, variables,
   comments and file settings. A conflict is the same property changed on both sides to different
-  values (key `<layer id>/<property>`, e.g. `4/fills`; a layer's parent and position are one
+  values (key `<layer id>/<property>`, e.g. `4/fills`; fills, strokes and effects compare item by
+  item, so changing different items of one list on each side, or adding items at its end on one
+  side, merges without a conflict; a layer's parent and position are one
   property, `parent`), a layer deleted on one side while the other edited it or what's inside it
   (`<layer id>/layer`, with `deletedBy`), or a document-level entry or setting changed on both sides
   (`style/<id>`, `variable/<id>`, `comment/<id>`, `doc/<property>`…).
 - `branch.merge {id?, resolutions?}` merges the branch into the main file as one undo step,
-  archives it (`state: merged`), closes its tab and shows the main file. `resolutions` maps every
+  archives it (`state: merged`), closes its tab and shows the main file; the main file's version
+  history gets a version for the merge (`Merged “<name>”`, after an autosave of main as it was when it had changed). `resolutions` maps every
   conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
   neither side's work is dropped without a choice.
 - `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
@@ -766,8 +769,10 @@ branches). Driven with `run_command`:
 - `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
   opened, but not merged).
 
-Versions are saved on the main file (`file.saveVersion` is refused on a branch tab), and branches
-aren't available in a live session.
+Each branch keeps its own version history: on a branch tab, `file.saveVersion`, `version.autosave`
+and the `version.*` commands (list, preview, restore, rename, delete, duplicate) act on the
+branch's versions, which are saved in the file with the branch and stay with it when it is merged
+or archived. Branches aren't available in a live session.
 
 ### Collaboration changes
 

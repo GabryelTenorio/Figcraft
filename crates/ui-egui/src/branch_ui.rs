@@ -67,7 +67,8 @@ pub fn keys(app: &mut FigApp, ctx: &egui::Context) {
 pub fn banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
     let Ok(ds) = app.session.ds() else { return };
     let Some((main, id)) = ds.branch_of.clone() else { return };
-    if ds.focus.is_some() || app.ui.branch_review.is_some() {
+    // A branch version being viewed shows its own banner in this place.
+    if ds.focus.is_some() || ds.preview.is_some() || app.ui.branch_review.is_some() {
         return;
     }
     let Some(m) = app.session.docs.iter().find(|d| d.uid == main) else { return };

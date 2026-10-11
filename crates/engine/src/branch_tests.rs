@@ -158,8 +158,6 @@ fn branch_tabs_save_with_the_main_file_and_come_back() {
     let path = dir.join("file.figcraft").to_string_lossy().to_string();
     let (mut s, id, r) = branched();
     ok(&mut s, "node.set", json!({"id": r[0], "props": {"name": "Branch edit"}}));
-    // Versions belong to the main file.
-    assert!(s.execute("file.saveVersion", &json!({})).is_err());
     // Saving on the branch tab saves the main file, branch included.
     ok(&mut s, "file.saveAs", json!({"path": path}));
     assert_eq!(s.docs[0].path.as_deref(), Some(path.as_str()));

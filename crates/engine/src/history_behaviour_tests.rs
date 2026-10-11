@@ -545,7 +545,9 @@ fn branches_and_the_version_history() {
     let b = ex(&mut s, "branch.create", json!({"name": "Explore"}));
     let branch = b["id"].as_str().unwrap().to_string();
     // On the branch tab.
-    assert!(s.execute("file.saveVersion", &json!({})).is_err(), "not yet: a branch has no version history of its own (gap 17)");
+    // A branch keeps its own version history: a version saved on its tab is listed there only.
+    ex(&mut s, "file.saveVersion", json!({"name": "On the branch"}));
+    assert_eq!(versions(&mut s).iter().map(|v| v["name"].clone()).collect::<Vec<_>>(), [json!("On the branch")], "a branch's own history");
     rect(&mut s, 900.0, 900.0, None);
     ex(&mut s, "doc.switch", json!({"index": 0}));
     let made_on_main = rect(&mut s, -500.0, 0.0, None);

@@ -130,6 +130,8 @@ mod frac_tests;
 #[cfg(test)]
 mod journal_tests;
 #[cfg(test)]
+mod merge_list_tests;
+#[cfg(test)]
 mod merge_tests;
 #[cfg(test)]
 mod reconnect_tests;

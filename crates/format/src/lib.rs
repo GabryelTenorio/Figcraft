@@ -7,7 +7,8 @@
 //! name, description, time, images}]}`, oldest first) plus one `versions/<id>.json` snapshot per
 //! version (a `document.json` of its own). Branches are kept the same way: `branches/index.json`
 //! (`{"branches": [{id, name, time, client, state, baseImages, headImages}]}`) plus
-//! `branches/<id>/base.json` and `branches/<id>/head.json`. A published file also holds its
+//! `branches/<id>/base.json` and `branches/<id>/head.json`; a branch's own version history is
+//! kept like the file's, under `branches/<id>/versions/`. A published file also holds its
 //! library (see [`library`]). Readers that don't know about versions, branches or libraries
 //! ignore those entries. Plain
 //! JSON (the `document.json` alone) also opens. Reading is lenient: structural problems are
@@ -45,7 +46,6 @@ pub const MAX_VERSION_DESCRIPTION: usize = 2000;
 /// Largest version index and total size of the version snapshots read from one file.
 const MAX_VERSION_INDEX: u64 = 16 * 1024 * 1024;
 const MAX_VERSION_BYTES: u64 = 1024 * 1024 * 1024;
-const VERSION_INDEX: &str = "versions/index.json";
 const BRANCH_INDEX: &str = "branches/index.json";
 /// Most branches a file keeps: making more is refused, extra entries in a file are skipped.
 pub const MAX_BRANCHES: usize = 100;
@@ -156,6 +156,8 @@ pub struct Branch {
     pub state: BranchState,
     pub base: Arc<Document>,
     pub head: Arc<Document>,
+    /// The branch's own version history, oldest first.
+    pub versions: Vec<Version>,
 }
 
 /// Whether `id` can name a version (and its archive entry).
@@ -363,7 +365,7 @@ pub fn save_bytes_with_history(
         put_json(&mut z, "document.json", doc)?;
         // Every image once, whether the document, a version or a branch uses it.
         let mut written = BTreeSet::new();
-        let branch_images = branches.iter().flat_map(|b| [&b.base.images, &b.head.images]);
+        let branch_images = branches.iter().flat_map(|b| [&b.base.images, &b.head.images].into_iter().chain(b.versions.iter().map(Version::images)));
         for (hash, img) in std::iter::once(&doc.images).chain(versions.iter().map(Version::images)).chain(branch_images).flatten() {
             if written.insert(hash) {
                 put(&mut z, &format!("images/{hash}"), stored, &img.bytes)?;
@@ -372,27 +374,7 @@ pub fn save_bytes_with_history(
         if let Some(t) = thumbnail_png {
             put(&mut z, "thumbnail.png", stored, t)?;
         }
-        if !versions.is_empty() {
-            let mut ids = BTreeSet::new();
-            let mut index = Vec::with_capacity(versions.len());
-            for v in versions {
-                if !is_valid_version_id(&v.id) || !ids.insert(v.id.as_str()) {
-                    return Err(FormatError::Io(format!("invalid or duplicate version id `{}`", v.id)));
-                }
-                let name = format!("versions/{}.json", v.id);
-                match &v.snapshot {
-                    Snapshot::Doc(d) => put_json(&mut z, &name, d)?,
-                    Snapshot::Stored { json, .. } => put(&mut z, &name, json_options(), json)?,
-                }
-                let images: Vec<&String> = v.images().keys().collect();
-                let mut entry = json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images});
-                if v.auto {
-                    entry["auto"] = json!(true);
-                }
-                index.push(entry);
-            }
-            put(&mut z, VERSION_INDEX, json_options(), &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
-        }
+        put_versions(&mut z, "versions", versions)?;
         if !branches.is_empty() {
             let mut ids = BTreeSet::new();
             let mut index = Vec::with_capacity(branches.len());
@@ -402,6 +384,7 @@ pub fn save_bytes_with_history(
                 }
                 put_json(&mut z, &format!("branches/{}/base.json", b.id), &b.base)?;
                 put_json(&mut z, &format!("branches/{}/head.json", b.id), &b.head)?;
+                put_versions(&mut z, &format!("branches/{}/versions", b.id), &b.versions)?;
                 let images = |d: &Document| d.images.keys().cloned().collect::<Vec<String>>();
                 index.push(json!({"id": b.id, "name": b.name, "time": b.time, "client": b.client, "state": b.state,
                     "baseImages": images(&b.base), "headImages": images(&b.head)}));
@@ -414,6 +397,34 @@ pub fn save_bytes_with_history(
         z.finish().map_err(io_err)?;
     }
     Ok(buf.into_inner())
+}
+
+/// Write version history `versions` (oldest first) under `dir`: `<dir>/index.json` and one
+/// `<dir>/<id>.json` snapshot per version. Nothing when there are none.
+fn put_versions<W: Write + Seek>(z: &mut zip::ZipWriter<W>, dir: &str, versions: &[Version]) -> Result<(), FormatError> {
+    if versions.is_empty() {
+        return Ok(());
+    }
+    let mut ids = BTreeSet::new();
+    let mut index = Vec::with_capacity(versions.len());
+    for v in versions {
+        if !is_valid_version_id(&v.id) || !ids.insert(v.id.as_str()) {
+            return Err(FormatError::Io(format!("invalid or duplicate version id `{}`", v.id)));
+        }
+        let name = format!("{dir}/{}.json", v.id);
+        match &v.snapshot {
+            Snapshot::Doc(d) => put_json(z, &name, d)?,
+            Snapshot::Stored { json, .. } => put(z, &name, json_options(), json)?,
+        }
+        let images: Vec<&String> = v.images().keys().collect();
+        let mut entry = json!({"id": v.id, "name": v.name, "description": v.description, "time": v.time, "images": images});
+        if v.auto {
+            entry["auto"] = json!(true);
+        }
+        index.push(entry);
+    }
+    put(z, &format!("{dir}/index.json"), json_options(), &serde_json::to_vec(&json!({"versions": index})).map_err(io_err)?)?;
+    Ok(())
 }
 
 /// Read a `.figcraft` archive (or bare JSON) from bytes. Returns the document and any repairs made.
@@ -458,10 +469,12 @@ pub fn load_bytes_with_versions(bytes: &[u8]) -> Result<Loaded, FormatError> {
         Ok(lib) => doc.published = lib.map(Arc::new),
         Err(e) => issues.push(format!("the published library was skipped: {e}")),
     }
-    let versions = read_versions(&mut z, &images, &mut issues);
+    let mut budget = MAX_VERSION_BYTES;
+    let versions = read_versions(&mut z, "versions", &images, &mut issues, &mut budget);
     let branches = read_branches(&mut z, &images, &mut issues);
     // Images only the version history or branches use stay with them.
-    let branch_images = branches.iter().flat_map(|b| b.base.images.keys().chain(b.head.images.keys()));
+    let branch_images =
+        branches.iter().flat_map(|b| b.base.images.keys().chain(b.head.images.keys()).chain(b.versions.iter().flat_map(|v| v.images().keys())));
     let history_only: BTreeSet<&String> = versions
         .iter()
         .flat_map(|v| v.images().keys())
@@ -472,13 +485,21 @@ pub fn load_bytes_with_versions(bytes: &[u8]) -> Result<Loaded, FormatError> {
     Ok(Loaded { doc, issues, versions, branches })
 }
 
-/// The version history of an archive (none when it has no index). Damaged entries are skipped and
-/// reported in `issues`; nothing here fails the load.
-fn read_versions<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<String, ImageData>, issues: &mut Vec<String>) -> Vec<Version> {
-    if z.index_for_name(VERSION_INDEX).is_none() {
+/// The version history kept under `dir` in an archive (none when it has no index), reading at
+/// most `budget` bytes of snapshots. Damaged entries are skipped and reported in `issues`; nothing
+/// here fails the load.
+fn read_versions<R: Read + Seek>(
+    z: &mut zip::ZipArchive<R>,
+    dir: &str,
+    images: &BTreeMap<String, ImageData>,
+    issues: &mut Vec<String>,
+    budget: &mut u64,
+) -> Vec<Version> {
+    let index_name = format!("{dir}/index.json");
+    if z.index_for_name(&index_name).is_none() {
         return Vec::new();
     }
-    let index = match read_member(z, VERSION_INDEX, MAX_VERSION_INDEX)
+    let index = match read_member(z, &index_name, MAX_VERSION_INDEX)
         .and_then(|b| serde_json::from_slice::<Value>(&b).map_err(|e| FormatError::Corrupt(e.to_string())))
     {
         Ok(v) => v,
@@ -489,7 +510,6 @@ fn read_versions<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<S
     };
     let entries = index.get("versions").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     let mut out: Vec<Version> = Vec::new();
-    let mut budget = MAX_VERSION_BYTES;
     for e in entries {
         if out.len() >= MAX_VERSIONS {
             issues.push(format!("only the first {MAX_VERSIONS} versions were kept"));
@@ -500,14 +520,14 @@ fn read_versions<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<S
             issues.push("a version with an invalid id was skipped".into());
             continue;
         }
-        let json = match read_member(z, &format!("versions/{id}.json"), budget.min(MAX_MEMBER)) {
+        let json = match read_member(z, &format!("{dir}/{id}.json"), (*budget).min(MAX_MEMBER)) {
             Ok(j) => j,
             Err(err) => {
                 issues.push(format!("version `{id}` was skipped: {err}"));
                 continue;
             }
         };
-        budget = budget.saturating_sub(json.len() as u64);
+        *budget = budget.saturating_sub(json.len() as u64);
         let text = |k: &str, max: usize| e.get(k).and_then(Value::as_str).map(|s| clip(s, max)).unwrap_or_default();
         let images = e
             .get("images")
@@ -578,6 +598,7 @@ fn read_branches<R: Read + Seek>(z: &mut zip::ZipArchive<R>, images: &BTreeMap<S
             time: e.get("time").and_then(Value::as_u64).unwrap_or(0),
             client: e.get("client").and_then(Value::as_u64).and_then(|c| u32::try_from(c).ok()).unwrap_or(0),
             state: e.get("state").and_then(|s| BranchState::deserialize(s).ok()).unwrap_or(BranchState::Active),
+            versions: read_versions(z, &format!("branches/{id}/versions"), images, issues, &mut budget),
             base,
             head,
         });

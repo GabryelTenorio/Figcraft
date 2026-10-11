@@ -26,6 +26,7 @@ fn branch(base: &Document) -> Branch {
         client: 3,
         state: BranchState::Merged,
         base: Arc::new(base.clone()),
+        versions: vec![Version::new("v1", "On its own", "", 9, Arc::new(base.clone()))],
         head: Arc::new(head),
     }
 }
@@ -41,6 +42,11 @@ fn branches_round_trip_with_their_images() {
     assert_eq!((got.id.as_str(), got.name.as_str(), got.time, got.client, got.state), ("b1", "Explore", 7, 3, BranchState::Merged));
     assert_eq!(*got.base, *b.base);
     assert_eq!(*got.head, *b.head);
+    // Its own version history comes back with it.
+    let v = got.versions.first().unwrap();
+    assert_eq!((got.versions.len(), v.id.as_str(), v.name.as_str(), v.time), (1, "v1", "On its own", 9));
+    assert_eq!(*v.document().unwrap(), *b.base);
+    assert!(l.versions.is_empty(), "the branch's versions aren't the file's");
     // The image only the branch uses stays out of the document.
     assert!(l.doc.images.is_empty() && got.head.images.len() == 1);
     // Duplicate ids are refused when saving.
