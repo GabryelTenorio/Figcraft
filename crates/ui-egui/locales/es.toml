@@ -1792,6 +1792,8 @@ status = "draft — needs native review"
 "view.zoomIn" = "Acercar"
 "view.zoomOut" = "Alejar"
 "view.zoomSelection" = "Zoom a la selección"
+"window.focus" = "Traer la ventana al frente"
+"window.new" = "Nueva ventana"
 
 [menu]
 "bool.exclude" = "Excluir"
