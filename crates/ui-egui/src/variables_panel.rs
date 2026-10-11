@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use crate::FigApp;
 use crate::a11y::Tip;
 use crate::colorpicker::PickerTarget;
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::icons::{self, Icon};
 use crate::right::menu_item;
 use crate::theme::{Tokens, regular, semibold};
@@ -144,7 +145,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     let screen = ctx.content_rect();
     let size = vec2(880.0_f32.min(screen.width() - 80.0).max(480.0), 480.0_f32.min(screen.height() - 120.0).max(240.0));
     let mut open = true;
-    egui::Window::new("Local variables")
+    egui::Window::new(tr("Local variables"))
         .id(Id::new("variables_window"))
         .title_bar(false)
         .collapsible(false)
@@ -176,25 +177,25 @@ fn header(app: &mut FigApp, ui: &mut Ui, open: &mut bool) {
     // Import and export, left of Close.
     let bar = Rect::from_min_max(pos2(r.max.x - 280.0, r.min.y + 10.0), pos2(r.max.x - 40.0, r.max.y - 10.0));
     let mut bar = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    let export = widgets::button(&mut bar, "Export…", false, true);
+    let export = widgets::button(&mut bar, tr("Export…"), false, true);
     crate::right::menu_popup(&export).show(|ui| {
-        for (label, format) in [("Variables JSON…", "json"), ("CSS custom properties…", "css")] {
+        for (label, format) in [(tr("Variables JSON…"), "json"), (tr("CSS custom properties…"), "css")] {
             if menu_item(ui, label, "") {
                 export_dialog(app, format);
                 ui.close();
             }
         }
     });
-    if widgets::button(&mut bar, "Import…", false, true).on_hover_text("Add or update collections from a variables JSON").clicked() {
+    if widgets::button(&mut bar, tr("Import…"), false, true).on_hover_text(tr("Add or update collections from a variables JSON")).clicked() {
         import_dialog(app);
     }
-    ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Local variables", semibold(13.0), t.text);
+    ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, tr("Local variables"), semibold(13.0), t.text);
     if widgets::icon_button_at(
         ui,
         Id::new("vars_close"),
         Rect::from_center_size(pos2(r.max.x - 22.0, r.center().y), vec2(24.0, 24.0)),
         Icon::Close,
-        "Close",
+        tr("Close"),
     ) {
         *open = false;
     }
@@ -204,20 +205,24 @@ fn header(app: &mut FigApp, ui: &mut Ui, open: &mut bool) {
 /// Export this file's collections through a save dialog.
 fn export_dialog(app: &mut FigApp, format: &str) {
     let name = app.session.doc().map(|d| format!("{}.variables.{format}", d.name)).unwrap_or_else(|_| format!("variables.{format}"));
-    let Some(p) = app.services.pick_save("Export variables", &name, &[format]) else { return };
+    let Some(p) = app.services.pick_save(tr("Export variables"), &name, &[format]) else { return };
     if app.run("variable.export", json!({"format": format, "path": p.to_string_lossy()})).is_some() {
-        app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
+        let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        app.toast(trf("Exported {file}", &[("file", &file)]));
     }
 }
 
 /// Import a variables JSON picked in an open dialog.
 fn import_dialog(app: &mut FigApp) {
-    let Some(p) = app.services.pick_open("Import variables", &["json"]) else { return };
+    let Some(p) = app.services.pick_open(tr("Import variables"), &["json"]) else { return };
     let Some(r) = app.run("variable.import", json!({"variables": p.to_string_lossy()})) else { return };
     let (added, updated) = (r["variables"].as_u64().unwrap_or(0), r["updated"].as_u64().unwrap_or(0));
     let skipped = r["warnings"].as_array().map_or(0, Vec::len);
-    let note = if skipped > 0 { format!(" ({skipped} warnings: some entries were skipped)") } else { String::new() };
-    app.toast(format!("Imported {added} new variables, updated {updated}{note}"));
+    let mut msg = trn("Imported {n} new variables, updated {updated}", added as usize, &[("updated", &updated)]);
+    if skipped > 0 {
+        msg = format!("{msg} {}", trn("({n} warnings: some entries were skipped)", skipped, &[]));
+    }
+    app.toast(msg);
 }
 
 /// Extend library `lib`'s collection `c` and show the new collection.
@@ -258,13 +263,13 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
 fn sidebar(app: &mut FigApp, ui: &mut Ui, views: &[View], local: &Variables, st: &mut Editor) {
     let t = Tokens::get(ui.ctx());
     let (hr, _) = ui.allocate_exact_size(vec2(SIDEBAR_W, 40.0), Sense::hover());
-    ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, "Collections", semibold(11.0), t.text_secondary);
+    ui.painter().text(pos2(hr.min.x + 16.0, hr.center().y), Align2::LEFT_CENTER, tr("Collections"), semibold(11.0), t.text_secondary);
     if widgets::icon_button_at(
         ui,
         Id::new("vars_add_coll"),
         Rect::from_center_size(pos2(hr.max.x - 20.0, hr.center().y), vec2(24.0, 24.0)),
         Icon::Plus,
-        "Create collection",
+        tr("Create collection"),
     ) {
         create_collection(app, ui, local, st);
     }
@@ -290,7 +295,7 @@ fn library_title(ui: &mut Ui, name: &str) {
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 22.0, r.center().y), vec2(12.0, 12.0)), Icon::Library, t.icon_secondary);
     let name_r = Rect::from_min_max(pos2(r.min.x + 34.0, r.min.y), pos2(r.max.x - 8.0, r.max.y));
     ui.painter().with_clip_rect(name_r).text(name_r.left_center(), Align2::LEFT_CENTER, name, semibold(11.0), t.text_secondary);
-    resp.on_hover_text("Library: its variables are read-only here; edit them in the library file and publish it");
+    resp.on_hover_text(tr("Library: its variables are read-only here; edit them in the library file and publish it"));
 }
 
 /// One collection in the sidebar (with its groups while selected).
@@ -330,18 +335,18 @@ fn collection_row(app: &mut FigApp, ui: &mut Ui, view: &View, c: &Collection, st
             start_rename(ui, st, target.clone());
         }
         crate::right::context_popup(&resp).show(|ui| {
-            if menu_item(ui, "Rename", "") {
+            if menu_item(ui, tr("Rename"), "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
             }
-            if menu_item(ui, "Delete collection", "") {
+            if menu_item(ui, tr("Delete collection"), "") {
                 app.run("variable.deleteCollection", json!({"collection": c.id}));
                 ui.close();
             }
         });
     } else if let Some(lib) = view.id() {
         crate::right::context_popup(&resp).show(|ui| {
-            if menu_item(ui, "Extend collection", "") {
+            if menu_item(ui, tr("Extend collection"), "") {
                 extend(app, lib, &c.id, st);
                 ui.close();
             }
@@ -390,7 +395,7 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
         }
         let depth = g.map_or(0, |g| g.matches('/').count());
         let x = r.min.x + 20.0 + depth as f32 * 12.0;
-        let label = g.map_or("All variables", |g| g.rsplit('/').next().unwrap_or(g));
+        let label = g.map_or(tr("All variables"), |g| g.rsplit('/').next().unwrap_or(g));
         let count = names.iter().filter(|n| g.is_none_or(|g| n.starts_with(&format!("{g}/")))).count();
         ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, count.to_string(), regular(10.0), t.text_tertiary);
         let name_r = Rect::from_min_max(pos2(x, r.min.y + 3.0), pos2(r.max.x - 28.0, r.max.y - 3.0));
@@ -419,11 +424,11 @@ fn group_rows(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
             start_rename(ui, st, target.clone());
         }
         crate::right::context_popup(&resp).show(|ui| {
-            if menu_item(ui, "Rename group", "") {
+            if menu_item(ui, tr("Rename group"), "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
             }
-            if menu_item(ui, "Delete group", "") {
+            if menu_item(ui, tr("Delete group"), "") {
                 let steps: Vec<serde_json::Value> = members
                     .iter()
                     .filter(|v| v.name.starts_with(&format!("{g}/")))
@@ -493,11 +498,11 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
             ui.vertical(|ui| {
                 widgets::label(
                     ui,
-                    "Variables store reusable values (colours, numbers, strings, booleans) with modes such as Light and Dark.",
+                    tr("Variables store reusable values (colours, numbers, strings, booleans) with modes such as Light and Dark."),
                     t.text_secondary,
                 );
                 ui.add_space(12.0);
-                if widgets::button(ui, "Create collection", true, true).clicked() {
+                if widgets::button(ui, tr("Create collection"), true, true).clicked() {
                     create_collection(app, ui, view.vars, st);
                 }
             });
@@ -515,7 +520,7 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     child.add(
         egui::TextEdit::singleline(&mut st.query)
             .frame(egui::Frame::NONE)
-            .hint_text("Search")
+            .hint_text(tr("Search"))
             .font(regular(11.0))
             .vertical_align(egui::Align::Center),
     );
@@ -523,14 +528,14 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
     let mut bar = ui.new_child(UiBuilder::new().max_rect(note).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let text = match (view.library, coll.extends.as_deref().and_then(|p| view.vars.collection(p))) {
         (Some((lib, name)), _) => {
-            let tip = "A collection of this file with these modes and variables: override their values per mode and add variables of its own";
-            if widgets::button(&mut bar, "Extend collection", false, true).on_hover_text(tip).clicked() {
+            let tip = tr("A collection of this file with these modes and variables: override their values per mode and add variables of its own");
+            if widgets::button(&mut bar, tr("Extend collection"), false, true).on_hover_text(tip).clicked() {
                 extend(app, lib, &coll.id, st);
             }
             bar.add_space(8.0);
-            Some(format!("From the library \"{name}\": read-only"))
+            Some(trf("From the library \"{name}\": read-only", &[("name", &name)]))
         }
-        (None, Some(parent)) => Some(format!("Extends \"{}\": overridden values are marked", parent.name)),
+        (None, Some(parent)) => Some(trf("Extends \"{name}\": overridden values are marked", &[("name", &parent.name)])),
         _ => None,
     };
     if let Some(text) = text {
@@ -559,7 +564,7 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
         }
         if list.is_empty() && !q.is_empty() {
             let (r, _) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::hover());
-            ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "No matching variables", regular(11.0), t.text_secondary);
+            ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, tr("No matching variables"), regular(11.0), t.text_secondary);
         }
         if view.editable() {
             create_row(app, ui, view, coll, st);
@@ -572,7 +577,7 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
     // An extended collection has the modes of the one it extends.
     let editable = view.editable() && coll.extends.is_none();
     let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
-    ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Name", regular(11.0), t.text_secondary);
+    ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, tr("Name"), regular(11.0), t.text_secondary);
     for (i, m) in coll.modes.iter().enumerate() {
         let x = r.min.x + NAME_W + i as f32 * MODE_W;
         let cell = Rect::from_min_max(pos2(x + 4.0, r.min.y + 4.0), pos2(x + MODE_W - 8.0, r.max.y - 4.0));
@@ -597,11 +602,11 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
             start_rename(ui, st, target.clone());
         }
         crate::right::context_popup(&resp).show(|ui| {
-            if menu_item(ui, "Rename mode", "") {
+            if menu_item(ui, tr("Rename mode"), "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
             }
-            if coll.modes.len() > 1 && menu_item(ui, "Delete mode", "") {
+            if coll.modes.len() > 1 && menu_item(ui, tr("Delete mode"), "") {
                 app.run("variable.removeMode", json!({"collection": coll.id, "mode": m.id}));
                 ui.close();
             }
@@ -614,7 +619,7 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
             Id::new("vars_add_mode"),
             Rect::from_center_size(pos2(x + 14.0, r.center().y), vec2(24.0, 24.0)),
             Icon::Plus,
-            "Add mode",
+            tr("Add mode"),
         )
     {
         let name = unique("Mode", |n| coll.modes.iter().any(|m| m.name == n));
@@ -657,23 +662,23 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Va
             start_rename(ui, st, target.clone());
         }
         crate::right::context_popup(&resp).show(|ui| {
-            if menu_item(ui, "Edit variable", "") {
+            if menu_item(ui, tr("Edit variable"), "") {
                 st.details = Some(v.id.clone());
                 ui.close();
             }
-            if !inherited && menu_item(ui, "Rename", "") {
+            if !inherited && menu_item(ui, tr("Rename"), "") {
                 start_rename(ui, st, target.clone());
                 ui.close();
             }
-            if !v.overrides.is_empty() && menu_item(ui, "Reset overrides", "") {
+            if !v.overrides.is_empty() && menu_item(ui, tr("Reset overrides"), "") {
                 app.run("variable.resetOverride", json!({"variable": v.id}));
                 ui.close();
             }
-            if menu_item(ui, "Duplicate", "") {
+            if menu_item(ui, tr("Duplicate"), "") {
                 app.run("variable.duplicate", json!({"variable": v.id}));
                 ui.close();
             }
-            if !inherited && menu_item(ui, "Delete variable", "") {
+            if !inherited && menu_item(ui, tr("Delete variable"), "") {
                 app.run("variable.delete", json!({"variable": v.id}));
                 ui.close();
             }
@@ -737,17 +742,17 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
         let mark = Rect::from_min_size(pos2(rect.min.x - 4.0, rect.min.y + 3.0), vec2(2.0, rect.height() - 6.0));
         ui.painter().rect_filled(mark, CornerRadius::same(1), t.accent);
         ui.interact(mark.expand2(vec2(2.0, 0.0)), id.with("mark"), Sense::hover())
-            .tip("Overridden here (the collection it extends has another value)");
+            .tip(tr("Overridden here (the collection it extends has another value)"));
         if hovered
-            && widgets::icon_button_at(ui, id.with("reset"), alias_btn.translate(vec2(-24.0, 0.0)), Icon::Reset, "Reset to the inherited value")
+            && widgets::icon_button_at(ui, id.with("reset"), alias_btn.translate(vec2(-24.0, 0.0)), Icon::Reset, tr("Reset to the inherited value"))
         {
             app.run("variable.resetOverride", json!({"variable": v.id, "mode": mode}));
         }
     }
     if let VariableValue::Alias(target) = val {
-        let full = view.vars.get(target).map(|x| x.name.as_str()).unwrap_or("Missing variable");
+        let full = view.vars.get(target).map(|x| x.name.as_str()).unwrap_or(tr("Missing variable"));
         let resp = ui.interact(body, id.with("alias"), if editable { Sense::click() } else { Sense::hover() });
-        let resp = if editable { resp.on_hover_text("Change alias") } else { resp };
+        let resp = if editable { resp.on_hover_text(tr("Change alias")) } else { resp };
         ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
         let chip = body.shrink2(vec2(3.0, 3.0));
         ui.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
@@ -765,7 +770,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
         }
         // Detach: keep the value it resolves to now.
-        if hovered && widgets::icon_button_at(ui, id.with("detach"), alias_btn, Icon::Detach, "Detach alias") {
+        if hovered && widgets::icon_button_at(ui, id.with("detach"), alias_btn, Icon::Detach, tr("Detach alias")) {
             let modes = [(coll.id.clone(), mode.to_string())].into_iter().collect();
             if let Some(resolved) = view.vars.resolve(&v.id, &modes) {
                 set(app, v, mode, value_json(&resolved));
@@ -782,7 +787,7 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
             let sw = Rect::from_center_size(pos2(body.min.x + 13.0, body.center().y), vec2(14.0, 14.0));
             widgets::paint_swatch(ui.painter(), sw, &figcraft_color::Paint::solid(*c));
-            if ui.interact(sw.expand(3.0), id.with("swatch"), Sense::click()).tip("Edit colour").clicked() {
+            if ui.interact(sw.expand(3.0), id.with("swatch"), Sense::click()).tip(tr("Edit colour")).clicked() {
                 app.ui.picker = Some(PickerTarget::Variable { id: v.id.clone(), mode: mode.to_string() });
             }
             let hex_r = Rect::from_min_max(pos2(sw.max.x + 8.0, body.min.y + 4.0), pos2(body.max.x - 44.0, body.max.y - 4.0));
@@ -813,13 +818,13 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
         }
         VariableValue::Boolean(b) => {
             let mut child = ui.new_child(UiBuilder::new().max_rect(body.shrink2(vec2(6.0, 0.0))));
-            if widgets::checkbox(&mut child, *b, if *b { "True" } else { "False" }) {
+            if widgets::checkbox(&mut child, *b, if *b { tr("True") } else { tr("False") }) {
                 set(app, v, mode, json!(!b));
             }
         }
         VariableValue::Alias(_) => {}
     }
-    if hovered && widgets::icon_button_at(ui, id.with("mkalias"), alias_btn, Icon::Variable, "Create alias") {
+    if hovered && widgets::icon_button_at(ui, id.with("mkalias"), alias_btn, Icon::Variable, tr("Create alias")) {
         crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
     }
 }
@@ -843,7 +848,7 @@ fn read_only_value(ui: &Ui, val: &VariableValue, body: Rect) {
         alpha_text(ui, c, body);
     }
     let text = match val {
-        VariableValue::Boolean(b) => (if *b { "True" } else { "False" }).to_string(),
+        VariableValue::Boolean(b) => (if *b { tr("True") } else { tr("False") }).to_string(),
         other => other.display(),
     };
     let text_r = Rect::from_min_max(pos2(x, body.min.y), pos2(body.max.x - 44.0, body.max.y));
@@ -854,16 +859,17 @@ fn create_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
-        let resp = widgets::button(ui, "+ Create variable", false, true);
+        let resp = widgets::button(ui, tr("+ Create variable"), false, true);
         crate::right::menu_popup(&resp).show(|ui| {
             for kind in TYPES {
                 let label = match kind {
-                    VariableType::Color => "Color",
-                    VariableType::Number => "Number",
-                    VariableType::String => "String",
-                    VariableType::Boolean => "Boolean",
+                    // The English label also names the new variable (document content).
+                    VariableType::Color => tr_noop("Color"),
+                    VariableType::Number => tr_noop("Number"),
+                    VariableType::String => tr_noop("String"),
+                    VariableType::Boolean => tr_noop("Boolean"),
                 };
-                if menu_item(ui, label, "") {
+                if menu_item(ui, tr(label), "") {
                     let name = unique(label, |n| view.in_collection(&coll.id).any(|v| v.name == n));
                     let params = json!({"collection": coll.id, "name": name, "type": kind.id()});
                     if let Some(id) = app.run("variable.create", params).and_then(|r| r["id"].as_str().map(str::to_string)) {
@@ -887,7 +893,7 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
     };
     let t = Tokens::get(ctx);
     let mut open = true;
-    egui::Window::new("Edit variable")
+    egui::Window::new(tr("Edit variable"))
         .id(Id::new("variable_details"))
         .open(&mut open)
         .collapsible(false)
@@ -896,17 +902,17 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
         .frame(egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(16)))
         .show(ctx, |ui| {
             ui.set_width(260.0);
-            widgets::label(ui, "Name", t.text_secondary);
+            widgets::label(ui, tr("Name"), t.text_secondary);
             if let Some(n) = widgets::text_field(ui, Id::new(("var_detail_name", &v.id)), &v.name, 260.0, "") {
                 app.run("variable.update", json!({"variable": v.id, "name": n}));
             }
             ui.add_space(6.0);
-            widgets::label(ui, "Description", t.text_secondary);
-            if let Some(d) = widgets::text_field(ui, Id::new(("var_detail_desc", &v.id)), &v.description, 260.0, "What it's for") {
+            widgets::label(ui, tr("Description"), t.text_secondary);
+            if let Some(d) = widgets::text_field(ui, Id::new(("var_detail_desc", &v.id)), &v.description, 260.0, tr("What it's for")) {
                 app.run("variable.update", json!({"variable": v.id, "description": d}));
             }
             ui.add_space(6.0);
-            if widgets::checkbox(ui, v.hidden_from_publishing, "Hide from publishing") {
+            if widgets::checkbox(ui, v.hidden_from_publishing, tr("Hide from publishing")) {
                 app.run("variable.update", json!({"variable": v.id, "hiddenFromPublishing": !v.hidden_from_publishing}));
             }
             let scopes = scopes_for(v.kind);
@@ -914,9 +920,9 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
                 return;
             }
             ui.add_space(10.0);
-            widgets::label(ui, "Scoping: where pickers offer it", t.text_secondary);
+            widgets::label(ui, tr("Scoping: where pickers offer it"), t.text_secondary);
             // "All" off hides it everywhere; on, from everywhere it fits.
-            if widgets::checkbox(ui, v.scopes.is_none(), "All supported properties") {
+            if widgets::checkbox(ui, v.scopes.is_none(), tr("All supported properties")) {
                 app.run("variable.update", json!({"variable": v.id, "scopes": if v.scopes.is_none() { json!([]) } else { Value::Null }}));
             }
             let on: Vec<&str> = scopes.iter().map(|(id, _)| *id).filter(|id| v.in_scope(id)).collect();
@@ -924,7 +930,7 @@ fn details(app: &mut FigApp, ctx: &Context, vars: &Variables, st: &mut Editor) {
                 let checked = on.contains(sid);
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
-                    if widgets::checkbox(ui, checked, label) {
+                    if widgets::checkbox(ui, checked, tr(label)) {
                         let mut list = on.clone();
                         if checked {
                             list.retain(|x| x != sid);

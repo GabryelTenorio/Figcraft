@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 
 use egui::RichText;
 
+use crate::i18n::{tr, tr_noop, trf};
 use crate::theme::{Tokens, semibold};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,9 +52,9 @@ impl NameMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            NameMode::Username => "Username",
-            NameMode::DisplayName => "Display name",
-            NameMode::RealName => "Real name",
+            NameMode::Username => tr("Username"),
+            NameMode::DisplayName => tr("Display name"),
+            NameMode::RealName => tr("Real name"),
         }
     }
 }
@@ -90,16 +91,16 @@ impl SortKey {
     /// Menu label and table header.
     pub fn label(self) -> (&'static str, &'static str) {
         match self {
-            SortKey::Name => ("Name (A–Z)", "Name"),
-            SortKey::Prs => ("Merged PRs", "PRs"),
-            SortKey::Commits => ("Commits", "Commits"),
-            SortKey::LinesAdded => ("Lines added", "+LOC"),
-            SortKey::LinesDeleted => ("Lines deleted", "−LOC"),
-            SortKey::LinesDelta => ("Line delta", "ΔLOC"),
-            SortKey::BinaryAdded => ("Binary assets added", "+Bin"),
-            SortKey::BinaryDeleted => ("Binary assets removed", "−Bin"),
-            SortKey::FirstCommit => ("First commit", "First"),
-            SortKey::LastCommit => ("Last commit", "Last"),
+            SortKey::Name => (tr("Name (A–Z)"), tr("Name")),
+            SortKey::Prs => (tr("Merged PRs"), "PRs"),
+            SortKey::Commits => (tr("Commits"), tr("Commits")),
+            SortKey::LinesAdded => (tr("Lines added"), "+LOC"),
+            SortKey::LinesDeleted => (tr("Lines deleted"), "−LOC"),
+            SortKey::LinesDelta => (tr("Line delta"), "ΔLOC"),
+            SortKey::BinaryAdded => (tr("Binary assets added"), "+Bin"),
+            SortKey::BinaryDeleted => (tr("Binary assets removed"), "−Bin"),
+            SortKey::FirstCommit => (tr("First commit"), tr("First")),
+            SortKey::LastCommit => (tr("Last commit"), tr("Last")),
         }
     }
 
@@ -146,18 +147,20 @@ impl Contributor {
 
     /// One line with everything we know, for tooltips.
     pub fn summary(&self) -> String {
-        format!(
-            "@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}",
-            self.login,
-            group(self.prs),
-            group(self.commits),
-            group(self.lines_added),
-            group(self.lines_deleted),
-            signed(self.lines_delta()),
-            group(self.binary_added),
-            group(self.binary_deleted),
-            day(self.first_commit),
-            day(self.last_commit),
+        trf(
+            "@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{bin_added} / −{bin_deleted} binary assets, {first} – {last}",
+            &[
+                ("login", &self.login),
+                ("prs", &group(self.prs)),
+                ("commits", &group(self.commits)),
+                ("added", &group(self.lines_added)),
+                ("deleted", &group(self.lines_deleted)),
+                ("delta", &signed(self.lines_delta())),
+                ("bin_added", &group(self.binary_added)),
+                ("bin_deleted", &group(self.binary_deleted)),
+                ("first", &day(self.first_commit)),
+                ("last", &day(self.last_commit)),
+            ],
         )
     }
 }
@@ -256,14 +259,14 @@ fn contributors_in(ui: &mut egui::Ui, contributors: &[Contributor], total_commit
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("Show").color(t.text_secondary));
+        ui.label(RichText::new(tr("Show")).color(t.text_secondary));
         for m in NameMode::ALL {
             if ui.selectable_label(v.names == m, m.label()).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        ui.label(RichText::new("Sort").color(t.text_secondary));
+        ui.label(RichText::new(tr("Sort")).color(t.text_secondary));
         egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
             for k in SortKey::ALL {
                 if ui.selectable_label(v.key == k, k.label().0).clicked() {
@@ -273,23 +276,23 @@ fn contributors_in(ui: &mut egui::Ui, contributors: &[Contributor], total_commit
             }
         });
         // egui's icon font has these arrows; the UI font (Inter) may not have ▲/▼.
-        if ui.button(if v.ascending { "⏶" } else { "⏷" }).on_hover_text("Reverse the order").clicked() {
+        if ui.button(if v.ascending { "⏶" } else { "⏷" }).on_hover_text(tr("Reverse the order")).clicked() {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, "Grab bag").clicked() {
+        if ui.selectable_label(!v.table, tr("Grab bag")).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, tr("Table")).clicked() {
             v.table = true;
         }
     });
     let list = sorted(contributors, v.names, v.key, v.ascending);
-    let counts = format!("Contributors: {} · Commits: {}", group(list.len() as u64), group(total_commits));
+    let counts = trf("Contributors: {people} · Commits: {commits}", &[("people", &group(list.len() as u64)), ("commits", &group(total_commits))]);
     ui.label(RichText::new(counts).small().color(t.text_secondary));
     ui.separator();
     if list.is_empty() {
-        ui.label(RichText::new("No contributor data was built into this copy.").color(t.text_secondary));
+        ui.label(RichText::new(tr("No contributor data was built into this copy.")).color(t.text_secondary));
     } else if v.table {
         table(ui, &list, &mut v, LIST_HEIGHT);
     } else {
@@ -484,7 +487,8 @@ fn percent(commits: u64, total: u64) -> String {
     if commits > 0 && p < 0.5 { "<1%".into() } else { format!("{:.0}%", p.min(100.0)) }
 }
 
-const MODEL_HEADS: [&str; 6] = ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"];
+const MODEL_HEADS: [&str; 6] =
+    [tr_noop("Company"), tr_noop("Model"), tr_noop("Version"), tr_noop("Commits"), tr_noop("% of all commits"), tr_noop("Lines +/−")];
 
 /// The Models table's cells for `m`, column by column; counts are the last three.
 fn model_cells(m: &Model, total: u64) -> [String; 6] {
@@ -503,7 +507,7 @@ fn model_widths(ui: &egui::Ui, rows: &[[String; 6]]) -> Vec<Option<f32>> {
     MODEL_HEADS
         .iter()
         .enumerate()
-        .map(|(i, h)| (i != 1).then(|| column_width(ui, h, rows.iter().filter_map(|r| r.get(i)).map(String::as_str))))
+        .map(|(i, h)| (i != 1).then(|| column_width(ui, tr(h), rows.iter().filter_map(|r| r.get(i)).map(String::as_str))))
         .collect()
 }
 
@@ -511,7 +515,7 @@ fn model_widths(ui: &egui::Ui, rows: &[[String; 6]]) -> Vec<Option<f32>> {
 fn models_in(ui: &mut egui::Ui, models: &[Model], total_commits: u64) {
     let t = Tokens::get(ui.ctx());
     if models.is_empty() {
-        ui.label(RichText::new("No model credits were built into this copy.").color(t.text_secondary));
+        ui.label(RichText::new(tr("No model credits were built into this copy.")).color(t.text_secondary));
         return;
     }
     // Counted against every commit, or the busiest model's if the total somehow trails it.
@@ -528,7 +532,7 @@ fn models_in(ui: &mut egui::Ui, models: &[Model], total_commits: u64) {
         |mut header| {
             for (i, h) in MODEL_HEADS.iter().enumerate() {
                 header.col(|ui| {
-                    header_cell(ui, &t, h, numeric(i), None);
+                    header_cell(ui, &t, tr(h), numeric(i), None);
                 });
             }
         },

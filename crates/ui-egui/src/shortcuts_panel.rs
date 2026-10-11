@@ -6,6 +6,7 @@ use egui::{Align2, Context, CornerRadius, Sense, Stroke, StrokeKind, Ui, pos2, v
 use figcraft_engine::keymap::{GESTURES, Group, KEYS, Platform};
 
 use crate::FigApp;
+use crate::i18n::{self, tr};
 use crate::theme::{Tokens, regular};
 
 /// Most keys a row shows (a command's first bindings; the rest stay in the menus' alternates).
@@ -17,7 +18,7 @@ const MAX_ROWS: usize = 9;
 
 /// One row: the action and its keys as written on this platform.
 struct Row {
-    label: &'static str,
+    label: std::borrow::Cow<'static, str>,
     keys: Vec<String>,
 }
 
@@ -29,11 +30,15 @@ fn tallest_column() -> usize {
 
 fn rows(group: Option<Group>, query: &str, platform: Platform) -> Vec<Row> {
     let q = query.trim().to_lowercase();
-    let wanted = |g: Group, label: &str| group.is_none_or(|x| x == g) && (q.is_empty() || label.to_lowercase().contains(&q));
+    // Labels match in the UI language and in English.
+    let wanted = |g: Group, label: &str, english: &str| {
+        group.is_none_or(|x| x == g) && (q.is_empty() || label.to_lowercase().contains(&q) || english.to_lowercase().contains(&q))
+    };
     let mut out: Vec<Row> = KEYS
         .iter()
-        .filter(|b| wanted(b.group, b.title()))
-        .map(|b| {
+        .map(|b| (b, i18n::command(b.id, b.title())))
+        .filter(|(b, label)| wanted(b.group, label, b.title()))
+        .map(|(b, label)| {
             // Alternatives that read the same (⌘+ and ⇧⌘+) show once.
             let mut keys: Vec<String> = Vec::with_capacity(MAX_KEYS);
             for k in b.keys(platform) {
@@ -42,15 +47,13 @@ fn rows(group: Option<Group>, query: &str, platform: Platform) -> Vec<Row> {
                     keys.push(shown);
                 }
             }
-            Row { label: b.title(), keys }
+            Row { label, keys }
         })
         .collect();
-    out.extend(
-        GESTURES.iter().filter(|(g, label, ..)| wanted(*g, label)).map(|(_, label, mac, other)| Row {
-            label,
-            keys: vec![if platform == Platform::Mac { (*mac).to_string() } else { (*other).to_string() }],
-        }),
-    );
+    out.extend(GESTURES.iter().filter(|(g, label, ..)| wanted(*g, tr(label), label)).map(|(_, label, mac, other)| Row {
+        label: tr(label).into(),
+        keys: vec![tr(if platform == Platform::Mac { mac } else { other }).to_string()],
+    }));
     out
 }
 
@@ -75,14 +78,14 @@ fn row(ui: &mut Ui, t: &Tokens, row: &Row, width: f32) {
     for (i, k) in row.keys.iter().enumerate().rev() {
         right = keycap(ui, t, k, right, cy);
         if i > 0 {
-            let or = ui.painter().layout_no_wrap("or".into(), regular(10.0), t.text_tertiary);
+            let or = ui.painter().layout_no_wrap(tr("or").into(), regular(10.0), t.text_tertiary);
             right -= 4.0 + or.size().x;
             ui.painter().galley(pos2(right, cy - or.size().y / 2.0), or, t.text_tertiary);
             right -= 4.0;
         }
     }
     let label_w = (right - r.min.x - 14.0).max(20.0);
-    let label = crate::widgets::elide(ui, row.label, label_w);
+    let label = crate::widgets::elide(ui, &row.label, label_w);
     ui.painter().text(pos2(r.min.x + 6.0, cy), Align2::LEFT_CENTER, label, regular(12.0), t.text);
 }
 
@@ -94,12 +97,12 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     let platform = crate::shortcuts::platform();
     let width = (ctx.content_rect().width() - 48.0).clamp(480.0, 1040.0);
     let mut open = true;
-    crate::dialogs::window("Keyboard shortcuts", ctx).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -16.0)).open(&mut open).show(ctx, |ui| {
+    crate::dialogs::window(tr("Keyboard shortcuts"), ctx).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -16.0)).open(&mut open).show(ctx, |ui| {
         ui.set_width(width);
         ui.horizontal(|ui| {
-            crate::dialogs::tab_strip(ui, &t, &Group::ALL, Group::label, &mut app.ui.shortcuts_tab);
+            crate::dialogs::tab_strip(ui, &t, &Group::ALL, |g| tr(g.label()), &mut app.ui.shortcuts_tab);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.ui.shortcuts_query).hint_text("Search shortcuts").desired_width(180.0));
+                ui.add(egui::TextEdit::singleline(&mut app.ui.shortcuts_query).hint_text(tr("Search shortcuts")).desired_width(180.0));
             });
         });
         ui.add_space(10.0);
@@ -109,7 +112,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         if list.is_empty() {
             ui.allocate_ui(vec2(width, body_h), |ui| {
                 ui.set_min_height(body_h);
-                ui.label(egui::RichText::new("No shortcuts match").color(t.text_secondary).font(regular(12.0)));
+                ui.label(egui::RichText::new(tr("No shortcuts match")).color(t.text_secondary).font(regular(12.0)));
             });
             return;
         }

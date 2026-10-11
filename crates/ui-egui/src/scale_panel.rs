@@ -8,6 +8,7 @@ use figcraft_doc::{Document, NodeId};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::i18n::tr;
 use crate::right::row;
 use crate::theme::Tokens;
 use crate::widgets::{self, FieldEdit, Lead};
@@ -15,13 +16,13 @@ use crate::widgets::{self, FieldEdit, Lead};
 /// The Scale section, shown in place of Position while the Scale tool is active.
 pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let Some(b) = doc.bounds_of(sel) else { return };
-    widgets::section_header(ui, "Scale", &[], false);
+    widgets::section_header(ui, tr("Scale"), &[], false);
     let col = widgets::col_width(ui.available_width());
     // Anchor: column and row (0 start, 1 middle, 2 end) of the point that stays put.
     let anchor = app.session.tool.scale_anchor;
     let mut factor: Option<f64> = None;
     let round = |v: f64| (v * 100.0).round() / 100.0;
-    widgets::sublabels(ui, "Dimensions", None);
+    widgets::sublabels(ui, tr("Dimensions"), None);
     row(ui, 32.0, |ui| {
         if let Some(FieldEdit::Set(w)) = widgets::number_field(ui, Id::new("scale_w"), Lead::Text("W"), Some(round(b.width())), "", col, 1.0)
             && b.width() > 1e-9
@@ -34,7 +35,7 @@ pub fn section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             factor = Some(h / b.height());
         }
     });
-    widgets::sublabels(ui, "Scale", Some("Anchor"));
+    widgets::sublabels(ui, tr("Scale"), Some(tr("Anchor")));
     crate::right::block(ui, 52.0, 2.0, |ui| {
         if let Some(FieldEdit::Set(k)) = widgets::number_field(ui, Id::new("scale_k"), Lead::None, Some(1.0), "x", col, 0.1) {
             factor = Some(k);

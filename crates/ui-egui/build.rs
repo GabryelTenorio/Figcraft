@@ -7,6 +7,9 @@
 //!   JSON says the entry was verified (`people_entry`).
 //!
 //! A missing or malformed file gives empty tables (or no names) and a warning.
+//!
+//! Also bakes the UI string catalogs (`locales/<code>.toml`, see docs/translating.md) into sorted
+//! static tables for `i18n`.
 
 use std::fmt::Write as _;
 
@@ -23,6 +26,56 @@ fn main() {
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap_or_default()).join("credits.rs");
     if let Err(e) = std::fs::write(&out, generate(&json, &people)) {
         println!("cargo::warning=writing {}: {e}", out.display());
+    }
+    let out = out.with_file_name("locales.rs");
+    if let Err(e) = std::fs::write(&out, locales()) {
+        println!("cargo::warning=writing {}: {e}", out.display());
+    }
+}
+
+/// `pub static LANGS: &[Lang]`: every `locales/*.toml`, English first, each table sorted by key.
+fn locales() -> String {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
+    println!("cargo::rerun-if-changed={}", dir.display());
+    let mut files: Vec<_> =
+        std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+    files.sort_by_key(|p| (p.file_stem().is_none_or(|s| s != "en"), p.clone()));
+    let mut o = String::from(
+        "pub static LANGS: &[Lang] = &[
+",
+    );
+    for path in files {
+        let Some(t) = read(&path, "the language is left out", |t| t.parse::<toml::Table>().map_err(|e| e.to_string())) else { continue };
+        let code = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let meta = |k: &str| t.get("meta").and_then(|m| m.get(k)).and_then(toml::Value::as_str).unwrap_or("").to_string();
+        let _ = writeln!(o, "    Lang {{ code: {code:?}, name: {:?}, draft: {}, ui: &[", meta("name"), !meta("status").is_empty());
+        table(&mut o, &path, t.get("ui"));
+        let _ = writeln!(o, "    ], commands: &[");
+        table(&mut o, &path, t.get("commands"));
+        let _ = writeln!(o, "    ], menu: &[");
+        table(&mut o, &path, t.get("menu"));
+        let _ = writeln!(o, "    ] }},");
+    }
+    o.push_str(
+        "];
+",
+    );
+    o
+}
+
+/// The rows of one catalog table: `"key" = "text"` or `"key" = { one = "…", other = "…" }`.
+fn table(o: &mut String, path: &std::path::Path, t: Option<&toml::Value>) {
+    let Some(t) = t.and_then(toml::Value::as_table) else { return };
+    // Sorted by key (byte order), as the lookup's binary search needs.
+    let mut rows: Vec<_> = t.iter().collect();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    for (k, v) in rows {
+        let s = |k: &str| v.get(k).and_then(toml::Value::as_str);
+        match (v.as_str(), s("one"), s("other")) {
+            (Some(text), ..) => _ = writeln!(o, "        ({k:?}, Text::Plain({text:?})),"),
+            (None, one, Some(other)) => _ = writeln!(o, "        ({k:?}, Text::Plural({}, {other:?})),", name(one)),
+            _ => println!("cargo::warning={}: `{k}` is neither a string nor {{ one, other }}; left out", path.display()),
+        }
     }
 }
 

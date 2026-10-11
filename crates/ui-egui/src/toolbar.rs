@@ -7,6 +7,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::a11y::{self, Nav, Region, Tip};
+use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular};
 
@@ -18,15 +19,19 @@ struct Group {
 }
 
 const GROUPS: &[Group] = &[
-    Group { key: "move", name: "Move tools", tools: &[(ToolId::Move, Icon::Move), (ToolId::Hand, Icon::Hand), (ToolId::Scale, Icon::Scale)] },
+    Group {
+        key: "move",
+        name: tr_noop("Move tools"),
+        tools: &[(ToolId::Move, Icon::Move), (ToolId::Hand, Icon::Hand), (ToolId::Scale, Icon::Scale)],
+    },
     Group {
         key: "frame",
-        name: "Frame tools",
+        name: tr_noop("Frame tools"),
         tools: &[(ToolId::Frame, Icon::Frame), (ToolId::Section, Icon::Section), (ToolId::Slice, Icon::Slice)],
     },
     Group {
         key: "shape",
-        name: "Shape tools",
+        name: tr_noop("Shape tools"),
         tools: &[
             (ToolId::Rectangle, Icon::Rectangle),
             (ToolId::Line, Icon::Line),
@@ -38,11 +43,11 @@ const GROUPS: &[Group] = &[
     },
     Group {
         key: "pen",
-        name: "Drawing tools",
+        name: tr_noop("Drawing tools"),
         tools: &[(ToolId::Pen, Icon::Pen), (ToolId::Pencil, Icon::Pencil), (ToolId::ShapeBuilder, Icon::ShapeBuilder)],
     },
-    Group { key: "text", name: "Text", tools: &[(ToolId::Text, Icon::Text)] },
-    Group { key: "comment", name: "Comment", tools: &[(ToolId::Comment, Icon::Comment)] },
+    Group { key: "text", name: tr_noop("Text"), tools: &[(ToolId::Text, Icon::Text)] },
+    Group { key: "comment", name: tr_noop("Comment"), tools: &[(ToolId::Comment, Icon::Comment)] },
 ];
 
 fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
@@ -79,7 +84,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         let shown = if in_group { current } else { remembered(ui, g.key, g.tools.first().map(|x| x.0).unwrap_or(ToolId::Move)) };
         let icon = g.tools.iter().find(|(tid, _)| *tid == shown).map(|(_, i)| *i).unwrap_or(Icon::Move);
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
-        let resp = tool_cell(ui, &t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", shown.label(), pretty_shortcut(shown.shortcut())));
+        let resp = tool_cell(ui, &t, r, ("tool", g.key), icon, in_group, &format!("{}  {}", tr(shown.label()), pretty_shortcut(shown.shortcut())));
         if in_group {
             a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
         }
@@ -92,7 +97,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             let cr = Rect::from_center_size(pos2(x + 5.0, cy), vec2(10.0, cell));
             let cresp = ui.interact(cr, ui.id().with(("flyout", g.key)), Sense::click());
             let open = app.ui.tool_flyout == Some(g.key);
-            a11y::menu_button(&cresp, g.name, open);
+            a11y::menu_button(&cresp, tr(g.name), open);
             if open {
                 a11y::popup(&mut app.ui.nav, cresp.id, flyout_id(g.key));
             }
@@ -112,8 +117,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     }
     // Resources (components, plugins) opens the Assets panel; Actions palette.
     for (icon, tip, id) in [
-        (Icon::Assets, crate::shortcuts::key_tip("Resources", "Shift+I"), "resources"),
-        (Icon::Actions, crate::shortcuts::tip("Actions", "app.actions"), "actions"),
+        (Icon::Assets, crate::shortcuts::key_tip(tr("Resources"), "Shift+I"), "resources"),
+        (Icon::Actions, crate::shortcuts::tip(tr("Actions"), "app.actions"), "actions"),
     ] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let resp = ui.interact(r, ui.id().with(id), Sense::click()).tip(tip);
@@ -134,7 +139,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     divider(ui, &t, x, cy);
     x += 8.0;
     // Mode switcher: Draw · Design · Prototype · Inspect (code).
-    let modes = [(Icon::Pencil, "Draw"), (Icon::Frame, "Design"), (Icon::Prototype, "Prototype"), (Icon::Code, "Inspect")];
+    let modes = [(Icon::Pencil, tr("Draw")), (Icon::Frame, tr("Design")), (Icon::Prototype, tr("Prototype")), (Icon::Code, tr("Inspect"))];
     let active = match app.ui.right_tab {
         crate::RightTab::Design if app.session.tool.tool == ToolId::Pencil => 0,
         crate::RightTab::Design => 1,
@@ -173,12 +178,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     }
     // Floating help button at the bottom right of the canvas.
     let hr = Rect::from_center_size(pos2(canvas.max.x - 32.0, canvas.max.y - 32.0), vec2(32.0, 32.0));
-    let hresp = ui.interact(hr, ui.id().with("help"), Sense::click()).tip("Help and resources");
+    let hresp = ui.interact(hr, ui.id().with("help"), Sense::click()).tip(tr("Help and resources"));
     ui.painter().circle_filled(hr.center() + vec2(0.0, 1.0), 17.0, Color32::from_black_alpha(20));
     ui.painter().circle_filled(hr.center(), 16.0, t.panel);
     ui.painter().text(hr.center(), Align2::CENTER_CENTER, "?", crate::theme::regular(15.0), t.text);
     crate::right::menu_popup(&hresp).show(|ui| {
-        for (l, c) in [("Keyboard shortcuts", "help.shortcuts"), ("Help page", "help.page"), ("About FigCraft", "help.about")] {
+        for (l, c) in [(tr("Keyboard shortcuts"), "help.shortcuts"), (tr("Help page"), "help.page"), (tr("About FigCraft"), "help.about")] {
             if crate::right::menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
                 app.run(c, json!({}));
                 ui.close();
@@ -195,7 +200,7 @@ fn view_only_toolbar(app: &mut FigApp, ui: &mut Ui, why: &'static str) {
     if !matches!(app.session.tool.tool, ToolId::Move | ToolId::Hand) {
         app.run("tool.set", json!({"tool": "move"}));
     }
-    let label = if why == figcraft_engine::live::PUBLISHING { "Publishing…" } else { "View only" };
+    let label = if why == figcraft_engine::live::PUBLISHING { tr("Publishing…") } else { tr("View only") };
     let cell = 32.0;
     let text = ui.painter().layout_no_wrap(label.to_string(), crate::theme::semibold(11.5), t.text);
     let badge_w = 12.0 + 14.0 + 6.0 + text.size().x + 12.0;
@@ -206,7 +211,7 @@ fn view_only_toolbar(app: &mut FigApp, ui: &mut Ui, why: &'static str) {
     for (tool, icon) in [(ToolId::Move, Icon::Move), (ToolId::Hand, Icon::Hand)] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let active = app.session.tool.tool == tool;
-        let resp = tool_cell(ui, &t, r, ("tool", tool.id()), icon, active, &format!("{}  {}", tool.label(), pretty_shortcut(tool.shortcut())));
+        let resp = tool_cell(ui, &t, r, ("tool", tool.id()), icon, active, &format!("{}  {}", tr(tool.label()), pretty_shortcut(tool.shortcut())));
         if active {
             a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
         }
@@ -238,9 +243,9 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
     for tool in VTool::ALL {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let tip = if tool == VTool::Bend {
-            format!("{}  hold {}", tool.label(), pretty_shortcut(tool.shortcut()))
+            trf("{tool}  hold {key}", &[("tool", &tr(tool.label())), ("key", &pretty_shortcut(tool.shortcut()))])
         } else {
-            format!("{}  {}", tool.label(), pretty_shortcut(tool.shortcut()))
+            format!("{}  {}", tr(tool.label()), pretty_shortcut(tool.shortcut()))
         };
         let active = tool == current && !held || held && tool == VTool::Bend;
         let icon = match tool {
@@ -262,7 +267,7 @@ fn edit_toolbar(app: &mut FigApp, ui: &mut Ui, current: VTool) {
         }
         x += cell + 4.0;
     }
-    if done_button(ui, &t, x, cy, "Done editing  Esc") {
+    if done_button(ui, &t, x, cy, &format!("{}  Esc", tr("Done editing"))) {
         app.run("vector.edit.end", json!({}));
     }
 }
@@ -275,18 +280,18 @@ fn builder_toolbar(app: &mut FigApp, ui: &mut Ui) {
     let has_regions = figcraft_engine::shapebuilder::current(&app.session).is_some_and(|a| !a.regions.is_empty());
     let alt = pretty_shortcut("Alt");
     let hint = if !has_regions {
-        "Select overlapping shapes".to_string()
+        tr("Select overlapping shapes").to_string()
     } else if remove {
-        format!("Click or drag to remove · {alt} merges")
+        trf("Click or drag to remove · {alt} merges", &[("alt", &alt)])
     } else {
-        format!("Click or drag to merge · {alt} removes")
+        trf("Click or drag to merge · {alt} removes", &[("alt", &alt)])
     };
     let galley = ui.painter().layout_no_wrap(hint, regular(12.0), t.text_secondary);
     let width = 2.0 * (cell + 4.0) + 8.0 + 12.0 + galley.size().x + 12.0 + 12.0 + DONE_W + 8.0;
     let rect = pill(ui, &mut app.ui.nav, app.canvas.rect, width, &t);
     let cy = rect.center().y;
     let mut x = rect.min.x + 8.0;
-    for (mode, icon, tip) in [("merge", Icon::ShapeBuilder, "Merge regions"), ("remove", Icon::ShapeBuilderRemove, "Remove regions")] {
+    for (mode, icon, tip) in [("merge", Icon::ShapeBuilder, tr("Merge regions")), ("remove", Icon::ShapeBuilderRemove, tr("Remove regions"))] {
         let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
         let active = (mode == "remove") == remove;
         let resp = tool_cell(ui, &t, r, ("sbmode", mode), icon, active, tip);
@@ -303,7 +308,7 @@ fn builder_toolbar(app: &mut FigApp, ui: &mut Ui) {
     let w = galley.size().x;
     ui.painter().galley(pos2(x, cy - galley.size().y / 2.0), galley, t.text_secondary);
     x += w + 12.0;
-    if done_button(ui, &t, x, cy, &format!("Done  {}", pretty_shortcut("Enter"))) {
+    if done_button(ui, &t, x, cy, &format!("{}  {}", tr("Done"), pretty_shortcut("Enter"))) {
         app.run("tool.set", json!({"tool": "move"}));
     }
 }
@@ -354,7 +359,7 @@ fn done_button(ui: &mut Ui, t: &Tokens, x: f32, cy: f32, tip: &str) -> bool {
     let done = Rect::from_min_size(pos2(x + 12.0, cy - 14.0), vec2(DONE_W, 28.0));
     let resp = ui.interact(done, ui.id().with("tool_done"), Sense::click()).tip(tip);
     ui.painter().rect_filled(done, CornerRadius::same(6), if resp.hovered() { t.accent_hover } else { ACCENT });
-    ui.painter().text(done.center(), Align2::CENTER_CENTER, "Done", crate::theme::semibold(11.5), Color32::WHITE);
+    ui.painter().text(done.center(), Align2::CENTER_CENTER, tr("Done"), crate::theme::semibold(11.5), Color32::WHITE);
     resp.clicked()
 }
 
@@ -371,7 +376,7 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
         for (tid, icon) in g.tools {
             let r = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(w - 16.0, item_h));
             let resp = ui.interact(r, ui.id().with(("fly", tid.id())), Sense::click());
-            a11y::menu_item(&resp, tid.label(), tid.shortcut(), Some(*tid == app.session.tool.tool));
+            a11y::menu_item(&resp, tr(tid.label()), tid.shortcut(), Some(*tid == app.session.tool.tool));
             // The keyboard's item is highlighted like the hovered one.
             a11y::own_focus(&resp);
             if resp.hovered() || resp.has_focus() {
@@ -381,7 +386,7 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
                 icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 10.0, r.center().y), vec2(12.0, 12.0)), Icon::Check, t.menu_text);
             }
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 32.0, r.center().y), vec2(16.0, 16.0)), *icon, t.menu_text);
-            ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, tid.label(), regular(12.0), t.menu_text);
+            ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, tr(tid.label()), regular(12.0), t.menu_text);
             ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut(tid.shortcut()), regular(12.0), t.menu_dim);
             if resp.clicked() {
                 chosen = Some(*tid);

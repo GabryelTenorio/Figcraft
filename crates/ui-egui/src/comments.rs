@@ -12,6 +12,7 @@ use figcraft_engine::cmd::comment::{self as cc, Filter, Query, Sort};
 use serde_json::{Value, json};
 
 use crate::FigApp;
+use crate::i18n::{tr, trf, trn};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 
@@ -322,27 +323,27 @@ fn age(t: u64) -> Option<u64> {
 pub fn ago(created: u64) -> String {
     let Some(d) = age(created) else { return String::new() };
     match d {
-        0..60 => "now".into(),
-        60..3600 => format!("{}m", d / 60),
-        3600..86_400 => format!("{}h", d / 3600),
-        86_400..604_800 => format!("{}d", d / 86_400),
-        _ => format!("{}w", d / 604_800),
+        0..60 => tr("now").into(),
+        60..3600 => trf("{n}m", &[("n", &(d / 60))]),
+        3600..86_400 => trf("{n}h", &[("n", &(d / 3600))]),
+        86_400..604_800 => trf("{n}d", &[("n", &(d / 86_400))]),
+        _ => trf("{n}w", &[("n", &(d / 604_800))]),
     }
 }
 
 /// "Just now", "5 minutes ago", "Yesterday", "3 weeks ago"…
 pub fn ago_long(t: u64) -> String {
     let Some(d) = age(t) else { return String::new() };
-    let units = |n: u64, unit: &str| if n == 1 { format!("1 {unit} ago") } else { format!("{n} {unit}s ago") };
+    let n = |div: u64| usize::try_from(d / div).unwrap_or(usize::MAX);
     match d {
-        0..60 => "Just now".into(),
-        60..3600 => units(d / 60, "minute"),
-        3600..86_400 => units(d / 3600, "hour"),
-        86_400..172_800 => "Yesterday".into(),
-        172_800..604_800 => units(d / 86_400, "day"),
-        604_800..2_592_000 => units(d / 604_800, "week"),
-        2_592_000..31_536_000 => units(d / 2_592_000, "month"),
-        _ => units(d / 31_536_000, "year"),
+        0..60 => tr("Just now").into(),
+        60..3600 => trn("{n} minutes ago", n(60), &[]),
+        3600..86_400 => trn("{n} hours ago", n(3600), &[]),
+        86_400..172_800 => tr("Yesterday").into(),
+        172_800..604_800 => trn("{n} days ago", n(86_400), &[]),
+        604_800..2_592_000 => trn("{n} weeks ago", n(604_800), &[]),
+        2_592_000..31_536_000 => trn("{n} months ago", n(2_592_000), &[]),
+        _ => trn("{n} years ago", n(31_536_000), &[]),
     }
 }
 
@@ -546,7 +547,7 @@ fn composer(ui: &mut Ui, id: Id, text: &mut String, hint: &str, people: &[String
             ui.painter().line_segment([c + vec2(0.0, 5.0), c + vec2(0.0, -5.0)], Stroke::new(1.6, col));
             ui.painter().line_segment([c + vec2(-4.0, -1.0), c + vec2(0.0, -5.0)], Stroke::new(1.6, col));
             ui.painter().line_segment([c + vec2(4.0, -1.0), c + vec2(0.0, -5.0)], Stroke::new(1.6, col));
-            if bresp.on_hover_text("Post").clicked() {
+            if bresp.on_hover_text(tr("Post")).clicked() {
                 submit = true;
             }
         });
@@ -658,19 +659,24 @@ fn message(
             avatar(ui.painter(), r.center(), 12.0, &m.author);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(&m.author).font(semibold(12.0)).color(t.text));
-            let when = if m.edited > 0 { format!("{} · edited", ago(m.created)) } else { ago(m.created) };
+            let when = if m.edited > 0 { trf("{when} · edited", &[("when", &ago(m.created))]) } else { ago(m.created) };
             ui.label(egui::RichText::new(when).font(regular(11.0)).color(t.text_tertiary));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if m.author == cx.me {
                     let menu = Id::new(("comment_msg_more_menu", id, i));
-                    let more =
-                        hover_button(ui, Id::new(("comment_msg_more", id, i)), Icon::Dots, hovered || egui::Popup::is_id_open(&ctx, menu), "More");
+                    let more = hover_button(
+                        ui,
+                        Id::new(("comment_msg_more", id, i)),
+                        Icon::Dots,
+                        hovered || egui::Popup::is_id_open(&ctx, menu),
+                        tr("More"),
+                    );
                     crate::right::menu_popup(&more).id(menu).show(|ui| {
-                        if crate::right::menu_item(ui, "Edit", "") {
+                        if crate::right::menu_item(ui, tr("Edit"), "") {
                             *act = Some(Act::Edit(i, m.text.clone()));
                             ui.close();
                         }
-                        if crate::right::menu_item(ui, if i == 0 { "Delete thread" } else { "Delete" }, "") {
+                        if crate::right::menu_item(ui, if i == 0 { tr("Delete thread") } else { tr("Delete") }, "") {
                             *act = Some(Act::Run("comment.delete", message_params(id, i)));
                             ui.close();
                         }
@@ -682,7 +688,7 @@ fn message(
                     Id::new(("comment_msg_react", id, i)),
                     Icon::Reaction,
                     hovered || egui::Popup::is_id_open(&ctx, menu),
-                    "Add reaction",
+                    tr("Add reaction"),
                 );
                 crate::right::menu_popup(&react).id(menu).show(|ui| {
                     ui.horizontal(|ui| {
@@ -709,12 +715,12 @@ fn message(
                 ui.horizontal(|ui| {
                     ui.add_space(indent);
                     ui.vertical(|ui| {
-                        if composer(ui, Id::new(("comment_edit", id, i)), text, "Edit comment", cx.people, cx.me, pick) {
+                        if composer(ui, Id::new(("comment_edit", id, i)), text, tr("Edit comment"), cx.people, cx.me, pick) {
                             let mut p = message_params(id, i);
                             p["text"] = json!(text.trim());
                             *act = Some(Act::Run("comment.edit", p));
                         }
-                        ui.label(egui::RichText::new("Enter to save · Esc to cancel").font(regular(10.5)).color(t.text_tertiary));
+                        ui.label(egui::RichText::new(tr("Enter to save · Esc to cancel")).font(regular(10.5)).color(t.text_tertiary));
                     });
                 });
             }
@@ -827,7 +833,7 @@ pub fn popovers(app: &mut FigApp, ctx: &egui::Context) {
             |ui| {
                 popover_frame(&t).show(ui, |ui| {
                     ui.set_width(POPOVER_W - 24.0);
-                    post = composer(ui, Id::new("comment_draft_text"), &mut text, "Add a comment", &people, &me, &mut pick);
+                    post = composer(ui, Id::new("comment_draft_text"), &mut text, tr("Add a comment"), &people, &me, &mut pick);
                 });
             },
         );
@@ -876,31 +882,31 @@ pub fn thread(app: &mut FigApp, ctx: &egui::Context, id: u64, anchor: Pos2, boun
             ui.set_width(POPOVER_W - 24.0);
             // Header: resolve, more, close.
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Comment").font(semibold(12.0)).color(t.text));
+                ui.label(egui::RichText::new(tr("Comment")).font(semibold(12.0)).color(t.text));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if icons::button(ui, Icon::Close, 24.0, false, "Close").clicked() {
+                    if icons::button(ui, Icon::Close, 24.0, false, tr("Close")).clicked() {
                         act = Some(Act::Close);
                     }
-                    let more = icons::button(ui, Icon::Dots, 24.0, false, "More");
+                    let more = icons::button(ui, Icon::Dots, 24.0, false, tr("More"));
                     crate::right::menu_popup(&more).show(|ui| {
-                        if crate::right::menu_item(ui, "Mark as unread", "") {
+                        if crate::right::menu_item(ui, tr("Mark as unread"), "") {
                             act = Some(Act::MarkUnread);
                             ui.close();
                         }
-                        if crate::right::menu_item(ui, "Copy link", "") {
+                        if crate::right::menu_item(ui, tr("Copy link"), "") {
                             act = Some(Act::CopyLink);
                             ui.close();
                         }
-                        if crate::right::menu_item(ui, if c.resolved { "Mark as unresolved" } else { "Mark as resolved" }, "") {
+                        if crate::right::menu_item(ui, if c.resolved { tr("Mark as unresolved") } else { tr("Mark as resolved") }, "") {
                             act = Some(Act::Run("comment.resolve", json!({"id": id, "resolved": !c.resolved})));
                             ui.close();
                         }
-                        if c.first.author == me && crate::right::menu_item(ui, "Delete thread", "") {
+                        if c.first.author == me && crate::right::menu_item(ui, tr("Delete thread"), "") {
                             act = Some(Act::Run("comment.delete", json!({"id": id})));
                             ui.close();
                         }
                     });
-                    let tip = if c.resolved { "Unresolve" } else { "Resolve" };
+                    let tip = if c.resolved { tr("Unresolve") } else { tr("Resolve") };
                     if icons::button(ui, Icon::Check, 24.0, c.resolved, tip).clicked() {
                         act = Some(Act::Run("comment.resolve", json!({"id": id, "resolved": !c.resolved})));
                     }
@@ -912,7 +918,7 @@ pub fn thread(app: &mut FigApp, ctx: &egui::Context, id: u64, anchor: Pos2, boun
                     message(ui, &cx, i, m, &mut editing, &mut pick, &mut act);
                 }
             });
-            if composer(ui, reply_id(id), &mut reply, "Reply", &people, &me, &mut pick) {
+            if composer(ui, reply_id(id), &mut reply, tr("Reply"), &people, &me, &mut pick) {
                 act = Some(Act::Run("comment.reply", json!({"id": id, "text": reply.trim()})));
             }
         });
@@ -929,7 +935,7 @@ pub fn thread(app: &mut FigApp, ctx: &egui::Context, id: u64, anchor: Pos2, boun
         Some(Act::CopyLink) => {
             if let Some(link) = app.run("comment.link", json!({"id": id})).and_then(|v| v.get("link").and_then(Value::as_str).map(str::to_string)) {
                 app.services.clipboard_set_text(&link);
-                app.toast("Link copied");
+                app.toast(tr("Link copied"));
             }
         }
         // It closes: an open thread reads itself again.
@@ -1010,26 +1016,31 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(16.0);
-        ui.label(egui::RichText::new("Comments").font(semibold(12.0)).color(t.text));
+        ui.label(egui::RichText::new(tr("Comments")).font(semibold(12.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
-            let menu = icons::button(ui, Icon::Adjust, 24.0, app.ui.comments.filter != Filter::Open, "Filter and sort");
+            let menu = icons::button(ui, Icon::Adjust, 24.0, app.ui.comments.filter != Filter::Open, tr("Filter and sort"));
             crate::right::menu_popup(&menu).width(200.0).show(|ui| {
                 for f in Filter::ALL {
-                    if crate::right::menu_check(ui, app.ui.comments.filter == f, f.label(), "") {
+                    if crate::right::menu_check(
+                        ui,
+                        app.ui.comments.filter == f,
+                        if f == Filter::Open { tr("Open|comments") } else { tr(f.label()) },
+                        "",
+                    ) {
                         app.ui.comments.filter = f;
                         ui.close();
                     }
                 }
                 ui.separator();
                 for s in Sort::ALL {
-                    if crate::right::menu_check(ui, app.ui.comments.sort == s, s.label(), "") {
+                    if crate::right::menu_check(ui, app.ui.comments.sort == s, tr(s.label()), "") {
                         app.ui.comments.sort = s;
                         ui.close();
                     }
                 }
                 ui.separator();
-                if crate::right::menu_item(ui, "Mark all as read", "") {
+                if crate::right::menu_item(ui, tr("Mark all as read"), "") {
                     app.run("comment.markRead", json!({}));
                     ui.close();
                 }
@@ -1040,7 +1051,7 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.add_space(16.0);
         let w = ui.available_width() - 16.0;
-        if let Some(s) = crate::widgets::text_field(ui, Id::new("comment_search"), &app.ui.comments.search, w, "Search comments") {
+        if let Some(s) = crate::widgets::text_field(ui, Id::new("comment_search"), &app.ui.comments.search, w, tr("Search comments")) {
             app.ui.comments.search = s;
         }
     });
@@ -1049,9 +1060,9 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.add_space(16.0);
-            ui.label(egui::RichText::new(app.ui.comments.filter.label()).font(regular(11.0)).color(t.text_secondary));
+            ui.label(egui::RichText::new(tr(app.ui.comments.filter.label())).font(regular(11.0)).color(t.text_secondary));
             ui.add_space(4.0);
-            if ui.add(egui::Label::new(egui::RichText::new("Show open").font(regular(11.0)).color(ACCENT)).sense(Sense::click())).clicked() {
+            if ui.add(egui::Label::new(egui::RichText::new(tr("Show open")).font(regular(11.0)).color(ACCENT)).sense(Sense::click())).clicked() {
                 app.ui.comments.filter = Filter::Open;
             }
         });
@@ -1062,9 +1073,9 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     let list = cc::query(&doc, &q, &me);
     if list.is_empty() {
         let (title, sub) = if doc.comments.iter().any(|c| doc.pages.contains(&c.page)) {
-            ("No matching comments", "Try another search or filter.")
+            (tr("No matching comments"), tr("Try another search or filter."))
         } else {
-            ("No comments yet", "Click anywhere on the canvas to leave one.")
+            (tr("No comments yet"), tr("Click anywhere on the canvas to leave one."))
         };
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
@@ -1120,10 +1131,10 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
             meta.push(doc.node(c.page).map(|n| n.name.clone()).unwrap_or_default());
         }
         if !c.replies.is_empty() {
-            meta.push(format!("{} {}", c.replies.len(), if c.replies.len() == 1 { "reply" } else { "replies" }));
+            meta.push(trn("{n} replies", c.replies.len(), &[]));
         }
         if c.resolved {
-            meta.push("Resolved".into());
+            meta.push(tr("Resolved").into());
         }
         if !meta.is_empty() {
             let galley = ui.painter().layout_no_wrap(meta.join(" · "), regular(11.0), t.text_secondary);

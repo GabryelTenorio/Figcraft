@@ -14,6 +14,7 @@ use serde_json::json;
 
 use crate::FigApp;
 use crate::dev_compare::{self, BAR_H, LIST_W, Mode, Shot};
+use crate::i18n::{tr, trf, trn};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets;
 
@@ -75,10 +76,11 @@ pub fn banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
     let t = Tokens::get(ctx);
     let review = widgets::canvas_banner(ctx, Id::new("branch_banner"), canvas, |ui| {
         ui.label(egui::RichText::new(format!("“{name}”")).font(semibold(11.0)).color(t.text));
-        let state = if active { format!("Branch of {file}") } else { format!("Branch of {file} · merged or archived") };
+        let state =
+            if active { trf("Branch of {file}", &[("file", &file)]) } else { trf("Branch of {file} · merged or archived", &[("file", &file)]) };
         ui.label(egui::RichText::new(state).font(regular(11.0)).color(t.text_secondary));
         ui.add_space(4.0);
-        widgets::button(ui, "Review and merge", true, active).clicked()
+        widgets::button(ui, tr("Review and merge"), true, active).clicked()
     });
     if review {
         app.ui.branch_review = Some(ReviewView::new(main, id));
@@ -156,17 +158,17 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
             let Some(cache) = view.cache.as_ref() else { return };
             let name = cache.review.as_ref().map(|r| r.name.clone()).unwrap_or_default();
-            dev_compare::header(ui, &t, "Review and merge", &name, &mut view.mode, &mut open);
+            dev_compare::header(ui, &t, tr("Review and merge"), &name, &mut view.mode, &mut open);
             let body_h = size.y - BAR_H * 2.0 - 2.0;
             ui.horizontal_top(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(size.x - LIST_W - 1.0, body_h), Sense::hover());
                 match cache.shots.as_ref() {
                     Some((_, Some(m), Some(b))) => {
-                        dev_compare::images(ui, &t, r, [(m, "Main"), (b, "Branch")], view.mode, &mut view.split, view.hovered)
+                        dev_compare::images(ui, &t, r, [(m, tr("Main")), (b, tr("Branch"))], view.mode, &mut view.split, view.hovered)
                     }
-                    Some((_, None, Some(_))) => dev_compare::message(ui, &t, r, "This frame is new on the branch."),
-                    Some((_, Some(_), None)) => dev_compare::message(ui, &t, r, "This frame isn't on the branch."),
-                    _ => dev_compare::message(ui, &t, r, "No layer changes to show."),
+                    Some((_, None, Some(_))) => dev_compare::message(ui, &t, r, tr("This frame is new on the branch.")),
+                    Some((_, Some(_), None)) => dev_compare::message(ui, &t, r, tr("This frame isn't on the branch.")),
+                    _ => dev_compare::message(ui, &t, r, tr("No layer changes to show.")),
                 }
                 let (line, _) = ui.allocate_exact_size(vec2(1.0, body_h), Sense::hover());
                 ui.painter().rect_filled(line, CornerRadius::ZERO, t.border);
@@ -176,7 +178,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                             action = Some(a);
                         }
                     }
-                    Err(e) => widgets::note(ui, &format!("This branch can't be reviewed: {e}"), t.danger),
+                    Err(e) => widgets::note(ui, &trf("This branch can't be reviewed: {e}", &[("e", e)]), t.danger),
                 });
             });
             if let Ok(r) = &cache.review
@@ -193,13 +195,13 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         }
         Some(Action::Update) => {
             if app.run("branch.updateFromMain", json!({"id": view.id, "resolutions": resolutions()})).is_some() {
-                app.toast("Branch updated from main");
+                app.toast(tr("Branch updated from main"));
                 view.picks.clear();
             }
         }
         Some(Action::Merge) => {
             if app.run("branch.merge", json!({"id": view.id, "resolutions": resolutions()})).is_some() {
-                app.toast("Branch merged");
+                app.toast(tr("Branch merged"));
                 open = false;
             }
         }
@@ -231,11 +233,11 @@ fn list(
     egui::ScrollArea::vertical().id_salt("branch_review_list").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
         if !r.conflicts.is_empty() {
-            title(ui, t, "Conflicts", r.conflicts.len());
+            title(ui, t, tr("Conflicts"), r.conflicts.len());
             for c in &r.conflicts {
                 let label = match c.deleted_by {
-                    Some(Side::Branch) => format!("{} · deleted on the branch", c.name),
-                    Some(Side::Main) => format!("{} · deleted on main", c.name),
+                    Some(Side::Branch) => trf("{name} · deleted on the branch", &[("name", &c.name)]),
+                    Some(Side::Main) => trf("{name} · deleted on main", &[("name", &c.name)]),
                     None => format!("{} · {}", c.name, c.property),
                 };
                 let resp = dev_compare::change_row(
@@ -246,7 +248,7 @@ fn list(
                     0,
                     1,
                     c.id.is_some() && c.id == selected,
-                    "Changed on both sides: keep one",
+                    tr("Changed on both sides: keep one"),
                 );
                 if resp.hovered() {
                     now_hovered = c.id;
@@ -255,7 +257,7 @@ fn list(
                     out = Some(Action::Show(id));
                 }
                 let pick = picks.get(&c.key).copied();
-                for (side, side_name, value) in [(Side::Branch, "Branch", &c.branch), (Side::Main, "Main", &c.main)] {
+                for (side, side_name, value) in [(Side::Branch, tr("Branch"), &c.branch), (Side::Main, tr("Main"), &c.main)] {
                     ui.horizontal(|ui| {
                         ui.add_space(28.0);
                         let text = widgets::elide(ui, &format!("{side_name}: {value}"), 200.0);
@@ -268,14 +270,22 @@ fn list(
             }
             widgets::separator(ui);
         }
-        for (label, side) in [("Changes on the branch", &r.branch), ("Changes on main", &r.main)] {
+        for (label, side) in [(tr("Changes on the branch"), &r.branch), (tr("Changes on main"), &r.main)] {
             title(ui, t, label, side.layers.len() + side.document.len());
             if side.layers.is_empty() && side.document.is_empty() {
-                widgets::note(ui, "None.", t.text_secondary);
+                widgets::note(ui, tr("None."), t.text_secondary);
             }
             for c in &side.layers {
-                let resp =
-                    dev_compare::change_row(ui, t, c.change, &c.name, c.depth.saturating_sub(1), c.layers, selected == Some(c.id), "Show this layer");
+                let resp = dev_compare::change_row(
+                    ui,
+                    t,
+                    c.change,
+                    &c.name,
+                    c.depth.saturating_sub(1),
+                    c.layers,
+                    selected == Some(c.id),
+                    tr("Show this layer"),
+                );
                 if resp.hovered() {
                     now_hovered = Some(c.id);
                 }
@@ -288,7 +298,7 @@ fn list(
                 dev_compare::change_row(ui, t, d.change, &d.what, 0, 1, false, &d.what);
             }
             if side.truncated {
-                widgets::note(ui, "Only the first changed layers are listed.", t.text_secondary);
+                widgets::note(ui, tr("Only the first changed layers are listed."), t.text_secondary);
             }
             ui.add_space(8.0);
         }
@@ -303,10 +313,10 @@ fn footer(ui: &mut Ui, t: &Tokens, r: &Review, picks: &BTreeMap<String, Side>) -
     let left = r.conflicts.iter().filter(|c| !picks.contains_key(&c.key)).count();
     let active = r.state == BranchState::Active;
     let status = match (active, left) {
-        (false, _) => "This branch was merged or archived.".to_string(),
-        (true, 0) if r.conflicts.is_empty() => "No conflicts.".to_string(),
-        (true, 0) => "Every conflict has a choice.".to_string(),
-        (true, n) => format!("{n} conflict{} to resolve", if n == 1 { "" } else { "s" }),
+        (false, _) => tr("This branch was merged or archived.").to_string(),
+        (true, 0) if r.conflicts.is_empty() => tr("No conflicts.").to_string(),
+        (true, 0) => tr("Every conflict has a choice.").to_string(),
+        (true, n) => trn("{n} conflicts to resolve", n, &[]),
     };
     ui.painter().text(
         pos2(rect.min.x + 16.0, rect.center().y),
@@ -320,20 +330,20 @@ fn footer(ui: &mut Ui, t: &Tokens, r: &Review, picks: &BTreeMap<String, Side>) -
     ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let ready = active && left == 0;
-        if widgets::button(ui, "Merge into main", true, ready)
-            .on_hover_text("Merge the branch into the main file (one undo step) and archive it")
+        if widgets::button(ui, tr("Merge into main"), true, ready)
+            .on_hover_text(tr("Merge the branch into the main file (one undo step) and archive it"))
             .clicked()
         {
             out = Some(Action::Merge);
         }
         let main_changed = !(r.main.layers.is_empty() && r.main.document.is_empty());
-        if widgets::button(ui, "Update from main", false, ready && main_changed)
-            .on_hover_text("Bring the main file's changes into the branch")
+        if widgets::button(ui, tr("Update from main"), false, ready && main_changed)
+            .on_hover_text(tr("Bring the main file's changes into the branch"))
             .clicked()
         {
             out = Some(Action::Update);
         }
-        if widgets::button(ui, "Close", false, true).clicked() {
+        if widgets::button(ui, tr("Close"), false, true).clicked() {
             out = Some(Action::Close);
         }
     });

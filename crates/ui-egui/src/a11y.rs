@@ -23,6 +23,7 @@ use egui::{Context, CornerRadius, Event, FocusDirection, Id, Key, LayerId, Modif
 use figcraft_engine::keymap;
 
 use crate::FigApp;
+use crate::i18n::tr;
 use crate::theme::Tokens;
 
 /// The commands F6 and Shift+F6 are bound to.
@@ -201,7 +202,7 @@ pub fn canvas(nav: &mut Nav, resp: &Response, describe: impl FnOnce() -> String)
     nav.next.canvas = Some(resp.id);
     area(nav, Region::Canvas, resp.rect);
     shared(&resp.ctx, |s| s.canvas = Some(resp.id));
-    node(resp, "Canvas", |n| {
+    node(resp, tr("Canvas"), |n| {
         n.set_role(Role::Group);
         n.set_description(describe());
     });
@@ -909,7 +910,7 @@ pub fn tree_item(resp: &Response, name: &str, info: &RowInfo) {
             n.set_expanded(open);
         }
         let mut d = info.kind.to_string();
-        for (on, word) in [(info.hidden, "hidden"), (info.locked, "locked")] {
+        for (on, word) in [(info.hidden, tr("hidden")), (info.locked, tr("locked"))] {
             if on {
                 d.push_str(", ");
                 d.push_str(word);

@@ -10,6 +10,7 @@ use figcraft_geom::Point;
 use serde_json::json;
 
 use crate::FigApp;
+use crate::i18n::{tr, trf, trn};
 use crate::render_worker::{Job, Worker};
 use crate::theme::{ACCENT, COMPONENT, Tokens, doc_c32, regular, semibold};
 
@@ -254,17 +255,17 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
 pub fn describe(s: &figcraft_engine::Session) -> String {
     let Ok(ds) = s.ds() else { return String::new() };
     match ds.selection.as_slice() {
-        [] => format!("{}, nothing selected", ds.doc.node(ds.page).map(|p| p.name.as_str()).unwrap_or("Page")),
+        [] => trf("{page}, nothing selected", &[("page", &ds.doc.node(ds.page).map(|p| p.name.as_str()).unwrap_or(tr("Page")))]),
         [id] => match ds.doc.node(*id) {
             Some(n) => {
-                let kind = n.kind.label();
+                let kind = tr(n.kind.label());
                 let name = if n.name.is_empty() { kind } else { n.name.as_str() };
                 let (w, h) = (crate::widgets::fmt_num(n.width), crate::widgets::fmt_num(n.height));
-                format!("{name}, {kind}, {w} by {h}, selected")
+                trf("{name}, {kind}, {w} by {h}, selected", &[("name", &name), ("kind", &kind), ("w", &w), ("h", &h)])
             }
             None => String::new(),
         },
-        many => format!("{} layers selected", many.len()),
+        many => trn("{n} layers selected", many.len(), &[]),
     }
 }
 
@@ -625,7 +626,7 @@ fn swap_highlight(app: &FigApp, painter: &egui::Painter, doc: &Document, id: Nod
     let ink = Color32::WHITE;
     painter.add(Shape::convex_polygon(q.to_vec(), COMPONENT.gamma_multiply(0.12), Stroke::NONE));
     quad(painter, q, stroke(COMPONENT, 2.0));
-    let galley = painter.layout_no_wrap("Swap instance".to_string(), semibold(10.0), ink);
+    let galley = painter.layout_no_wrap(tr("Swap instance").to_string(), semibold(10.0), ink);
     let size = vec2(galley.size().x + 26.0, 18.0);
     let top = Rect::from_points(&q).min;
     let pill = Rect::from_min_size(pos2(top.x, top.y - size.y - 4.0), size);
@@ -1196,9 +1197,9 @@ fn boards(doc: &Document, page: NodeId) -> Vec<NodeId> {
 pub(crate) fn status_label(n: &figcraft_doc::Node) -> Option<(&'static str, Color32)> {
     match n.dev_status {
         figcraft_doc::DevStatus::None => None,
-        figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => Some(("Changed", crate::theme::DEV_CHANGED)),
-        figcraft_doc::DevStatus::ReadyForDev => Some(("Ready for dev", crate::theme::DEV_READY)),
-        figcraft_doc::DevStatus::Completed => Some(("Completed", crate::theme::DEV_COMPLETED)),
+        figcraft_doc::DevStatus::ReadyForDev if n.dev_changed => Some((tr("Changed"), crate::theme::DEV_CHANGED)),
+        figcraft_doc::DevStatus::ReadyForDev => Some((tr("Ready for dev"), crate::theme::DEV_READY)),
+        figcraft_doc::DevStatus::Completed => Some((tr("Completed"), crate::theme::DEV_COMPLETED)),
     }
 }
 
