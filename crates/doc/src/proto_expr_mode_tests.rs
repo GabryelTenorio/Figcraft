@@ -16,6 +16,7 @@ fn more_vars() -> Variables {
         id: "cs".into(),
         name: "Color scheme".into(),
         modes: vec![Mode { id: "hc".into(), name: "High contrast".into() }, Mode { id: "odd".into(), name: "a]b".into() }],
+        extends: None,
     });
     v.variables.push(Variable {
         id: "k".into(),
@@ -26,6 +27,8 @@ fn more_vars() -> Variables {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     v
 }

@@ -45,6 +45,7 @@ use serde_json::Value;
 
 use crate::FormatError;
 use props::{MAX_COORD, MAX_SIZE, clip_str, flag, list, num, text};
+pub use variables::export as export_variables;
 
 /// Most layers imported from one file.
 pub const MAX_NODES: usize = 200_000;
@@ -88,6 +89,15 @@ fn nodes_entries(v: &Value) -> impl Iterator<Item = &Value> {
 /// Whether `v` is a local variables response (or its `meta`).
 pub fn is_variables_json(v: &Value) -> bool {
     variables::source(v).is_some()
+}
+
+/// The collections and variables of a local variables response (or its `meta`), checked like a
+/// file's, with the warnings about what was skipped; None when `v` isn't one.
+pub fn read_variables(v: &Value) -> Option<(figcraft_doc::Variables, Vec<String>)> {
+    let src = variables::source(v)?;
+    let mut cx = Ctx::new(Document::new("Variables"), &no_images);
+    cx.variables(src);
+    Some((std::mem::take(&mut cx.doc.variables), cx.warnings.finish()))
 }
 
 /// Import `bytes` when they are REST API file JSON; `None` when they are something else (the

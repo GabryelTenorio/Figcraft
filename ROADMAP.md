@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -17,16 +17,16 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Feature breadth | **~79%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
 | Ready for real work | **~47%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
-| Mainstream practitioner | **~43%** | estimated: weekly areas 66.7% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
+| Mainstream practitioner | **~43%** | estimated: weekly areas 66.8% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~200–365 h** one agent | estimated |
-| Remaining to full parity | **~385–730 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~380–725 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~370–695 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (91–177), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~47% | ~365–690 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Mainstream practitioner | ~43% | ~170–315 h | core editor depth incl. `.fig` import (88–171), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -56,7 +56,7 @@ the localization layer with Figma's own languages (20–35 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 67%) | 71–135 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 67%) | 68–129 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 12% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -83,7 +83,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Auto layout & constraints | 95% | 68% | 6–12 | [auto-layout-parity](docs/auto-layout-parity.md) |
 | Text | 85% | 64% | 8–14 | [target-app-parity](docs/target-app-parity.md) |
 | Components & variants | 95% | 68% | 6–12 | [components-parity](docs/components-parity.md) |
-| Styles & variables | 85% | 70% | 4–8 | [components-parity](docs/components-parity.md) |
+| Styles & variables | 92% | 72% | 1–2 | [components-parity](docs/components-parity.md) |
 | Prototyping | 88% | 70% | 5–9 | [prototyping-parity](docs/prototyping-parity.md) |
 | Import/export | 65% | 35% | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Dev Mode / inspect | 80% | 62% | 4–8 | [dev-mode-parity](docs/dev-mode-parity.md) |
@@ -130,6 +130,10 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 - **2026-10-11** · The last three menu items got commands: File ▸ Open recent (kept in the
   preferences, missing files greyed, Clear recent), outlines for the selection and mask outlines
   (gap 21). Menu breadth 203/203.
+- **2026-10-11** · Extended variable collections (a library collection's modes and variables in a
+  collection of the file, overridden per mode with reset, following library updates), variables
+  import/export (the REST local variables JSON, merged by name; CSS custom properties), gradient
+  stops and variant properties bound to variables (gap 14).
 - **2026-10-11** · Live boolean editing: operands stay editable layers (double-click or Cmd/Ctrl-click
   selects one, moving, resizing or editing its points redraws the result during the drag with every
   operand outlined, per-operand operations from the boolean controls, prefix-cached recompute);
@@ -161,6 +165,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
+| 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |

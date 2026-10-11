@@ -198,6 +198,7 @@ fn foundations(doc: &mut Document) -> (CollectionId, ModeId, ModeId) {
         id: coll.clone(),
         name: "Theme".into(),
         modes: vec![Mode { id: light.clone(), name: "Light".into() }, Mode { id: dark.clone(), name: "Dark".into() }],
+        extends: None,
     });
     let var = |name: &str, kind: VariableType, values: [VariableValue; 2]| Variable {
         id: var_id(name),
@@ -208,6 +209,8 @@ fn foundations(doc: &mut Document) -> (CollectionId, ModeId, ModeId) {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     };
     for (name, l, d) in COLORS {
         doc.variables.variables.push(var(name, VariableType::Color, [VariableValue::Color(rgb(l)), VariableValue::Color(rgb(d))]));

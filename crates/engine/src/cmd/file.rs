@@ -363,14 +363,14 @@ fn read(path: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write(path: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &str, bytes: &[u8]) -> Result<()> {
     let tmp = format!("{path}.tmp-figcraft");
     std::fs::write(&tmp, bytes).map_err(|e| EngineError::Other(format!("{tmp}: {e}")))?;
     std::fs::rename(&tmp, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write(path: &str, _bytes: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
@@ -509,7 +509,7 @@ fn sibling_variables(_path: &str) -> Option<Value> {
 }
 
 /// The local variables JSON a command passes as `variables`: an object, JSON text or a file path.
-fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
+pub(crate) fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
     let parse = |text: &[u8]| serde_json::from_slice::<Value>(text).map_err(|e| bad(cmd, format!("variables: {e}")));
     let v = match get(p, "variables") {
         None | Some(Value::Null) => return Ok(None),

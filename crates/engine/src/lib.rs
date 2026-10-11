@@ -1269,6 +1269,8 @@ mod variable_tests;
 #[cfg(test)]
 mod variables_editor_tests;
 #[cfg(test)]
+mod variables_io_tests;
+#[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]
 mod version_tests;

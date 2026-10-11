@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -27,7 +27,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video and animated GIF fills; HEIC/TIFF images | File format | 6–12 | [file-format-parity](file-format-parity.md) |
 | 13 | Boolean groups hit-tested by their operands (the rest of the vector tail landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
-| 14 | Variables: extended collections, import/export | Feature | 4–8 | [components-parity](components-parity.md) |
+| 14 | Variables: extended collections' tail | Feature | 1–2 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
 | 16 | Dev Mode: Code Connect, editor integrations | Feature | 4–8 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching and merging | Feature | 8–15 | [collaboration-parity](collaboration-parity.md) |
@@ -176,10 +176,16 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   a subtracted hole still picks the group.
 - **Estimate:** 1–3 h.
 
-### 14. Variables: extended collections, import/export
-- **Missing:** extended collections (a library collection extended with overrides), variables
-  import/export, variant properties and gradient stops bound to variables.
-- **Estimate:** 4–8 h.
+### 14. Variables: extended collections' tail
+- **Landed:** extended collections (`library.extendCollection`: a library collection's modes and
+  variables in a collection of this file, values overridden per mode with reset, following library
+  updates, variables of its own), variables import/export (`variable.export` / `variable.import`:
+  the REST local variables JSON, merged by name; CSS custom properties), gradient stops and variant
+  properties bound to variables.
+- **Missing:** variables a library adds to an extended collection arrive only with the library's
+  next other update (they don't count as an update of their own); an extended collection can't be
+  extended again; checked with synthetic files only.
+- **Estimate:** 1–2 h.
 
 ### 15. Prototyping: media triggers and actions, gamepad
 - **Missing:** video triggers (on media hit/end) and play/pause/mute/seek actions; gamepad input.
@@ -234,6 +240,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
+| 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |

@@ -15,7 +15,7 @@ fn comment(id: u64, page: NodeId) -> Comment {
 }
 
 fn collection(id: &str, modes: &[&str]) -> Collection {
-    Collection { id: id.into(), name: id.into(), modes: modes.iter().map(|m| Mode { id: (*m).into(), name: (*m).into() }).collect() }
+    Collection { id: id.into(), name: id.into(), modes: modes.iter().map(|m| Mode { id: (*m).into(), name: (*m).into() }).collect(), extends: None }
 }
 
 #[test]

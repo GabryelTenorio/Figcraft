@@ -2,7 +2,10 @@
 //! read-only under the library's name); the selected collection's variables on the right as a
 //! table with one value column per mode. Double-click a name to rename it, right-click for more; a
 //! value's variable button turns it into an alias of another variable (a library one too).
-//! Everything goes through `variable.*` commands, so it's undoable and the same over MCP.
+//! A library collection can be extended: a collection of this file with its modes and variables,
+//! whose overridden values are marked (with a reset). Import and export read and write the
+//! variables JSON (or CSS). Everything goes through `variable.*` / `library.*` commands, so it's
+//! undoable and the same over MCP.
 
 use egui::{Align2, Context, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2};
 use figcraft_doc::{Collection, Document, PublishedLibrary, Variable, VariableType, VariableValue, Variables, scopes_for};
@@ -153,7 +156,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         .show(ctx, |ui| {
             ui.set_min_size(size);
             ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-            header(ui, &mut open);
+            header(app, ui, &mut open);
             let h = (size.y - 44.0).max(160.0);
             let top_down = egui::Layout::top_down(egui::Align::Min);
             ui.horizontal_top(|ui| {
@@ -167,9 +170,24 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     app.ui.variables = open.then_some(st);
 }
 
-fn header(ui: &mut Ui, open: &mut bool) {
+fn header(app: &mut FigApp, ui: &mut Ui, open: &mut bool) {
     let t = Tokens::get(ui.ctx());
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::hover());
+    // Import and export, left of Close.
+    let bar = Rect::from_min_max(pos2(r.max.x - 280.0, r.min.y + 10.0), pos2(r.max.x - 40.0, r.max.y - 10.0));
+    let mut bar = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    let export = widgets::button(&mut bar, "Export…", false, true);
+    crate::right::menu_popup(&export).show(|ui| {
+        for (label, format) in [("Variables JSON…", "json"), ("CSS custom properties…", "css")] {
+            if menu_item(ui, label, "") {
+                export_dialog(app, format);
+                ui.close();
+            }
+        }
+    });
+    if widgets::button(&mut bar, "Import…", false, true).on_hover_text("Add or update collections from a variables JSON").clicked() {
+        import_dialog(app);
+    }
     ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Local variables", semibold(13.0), t.text);
     if widgets::icon_button_at(
         ui,
@@ -181,6 +199,36 @@ fn header(ui: &mut Ui, open: &mut bool) {
         *open = false;
     }
     ui.painter().line_segment([r.left_bottom(), r.right_bottom()], Stroke::new(1.0, t.border));
+}
+
+/// Export this file's collections through a save dialog.
+fn export_dialog(app: &mut FigApp, format: &str) {
+    let name = app.session.doc().map(|d| format!("{}.variables.{format}", d.name)).unwrap_or_else(|_| format!("variables.{format}"));
+    let Some(p) = app.services.pick_save("Export variables", &name, &[format]) else { return };
+    if app.run("variable.export", json!({"format": format, "path": p.to_string_lossy()})).is_some() {
+        app.toast(format!("Exported {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
+    }
+}
+
+/// Import a variables JSON picked in an open dialog.
+fn import_dialog(app: &mut FigApp) {
+    let Some(p) = app.services.pick_open("Import variables", &["json"]) else { return };
+    let Some(r) = app.run("variable.import", json!({"variables": p.to_string_lossy()})) else { return };
+    let (added, updated) = (r["variables"].as_u64().unwrap_or(0), r["updated"].as_u64().unwrap_or(0));
+    let skipped = r["warnings"].as_array().map_or(0, Vec::len);
+    let note = if skipped > 0 { format!(" ({skipped} warnings: some entries were skipped)") } else { String::new() };
+    app.toast(format!("Imported {added} new variables, updated {updated}{note}"));
+}
+
+/// Extend library `lib`'s collection `c` and show the new collection.
+fn extend(app: &mut FigApp, lib: &str, c: &str, st: &mut Editor) {
+    if let Some(id) = app.run("library.extendCollection", json!({"library": lib, "collection": c})).and_then(|r| r["id"].as_str().map(str::to_string))
+    {
+        st.library = None;
+        st.collection = Some(id);
+        st.group = None;
+        st.query.clear();
+    }
 }
 
 fn rename_id(target: &Rename) -> Id {
@@ -288,6 +336,13 @@ fn collection_row(app: &mut FigApp, ui: &mut Ui, view: &View, c: &Collection, st
             }
             if menu_item(ui, "Delete collection", "") {
                 app.run("variable.deleteCollection", json!({"collection": c.id}));
+                ui.close();
+            }
+        });
+    } else if let Some(lib) = view.id() {
+        crate::right::context_popup(&resp).show(|ui| {
+            if menu_item(ui, "Extend collection", "") {
+                extend(app, lib, &c.id, st);
                 ui.close();
             }
         });
@@ -464,10 +519,22 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
             .font(regular(11.0))
             .vertical_align(egui::Align::Center),
     );
-    if let Some((_, name)) = view.library {
-        let note = Rect::from_min_max(pos2(field.max.x + 16.0, sr.min.y), pos2(sr.max.x - 16.0, sr.max.y));
-        let text = format!("From the library \"{name}\": read-only");
-        ui.painter().with_clip_rect(note).text(note.right_center(), Align2::RIGHT_CENTER, text, regular(11.0), t.text_secondary);
+    let note = Rect::from_min_max(pos2(field.max.x + 16.0, sr.min.y + 8.0), pos2(sr.max.x - 16.0, sr.max.y - 8.0));
+    let mut bar = ui.new_child(UiBuilder::new().max_rect(note).layout(egui::Layout::right_to_left(egui::Align::Center)));
+    let text = match (view.library, coll.extends.as_deref().and_then(|p| view.vars.collection(p))) {
+        (Some((lib, name)), _) => {
+            let tip = "A collection of this file with these modes and variables: override their values per mode and add variables of its own";
+            if widgets::button(&mut bar, "Extend collection", false, true).on_hover_text(tip).clicked() {
+                extend(app, lib, &coll.id, st);
+            }
+            bar.add_space(8.0);
+            Some(format!("From the library \"{name}\": read-only"))
+        }
+        (None, Some(parent)) => Some(format!("Extends \"{}\": overridden values are marked", parent.name)),
+        _ => None,
+    };
+    if let Some(text) = text {
+        bar.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(t.text_secondary)).truncate());
     }
     let q = st.query.trim().to_lowercase();
     let in_group = |v: &Variable| st.group.as_ref().is_none_or(|g| v.name.starts_with(&format!("{g}/")));
@@ -502,20 +569,22 @@ fn table(app: &mut FigApp, ui: &mut Ui, view: &View, st: &mut Editor) {
 
 fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st: &mut Editor, width: f32) {
     let t = Tokens::get(ui.ctx());
+    // An extended collection has the modes of the one it extends.
+    let editable = view.editable() && coll.extends.is_none();
     let (r, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
     ui.painter().text(pos2(r.min.x + 16.0, r.center().y), Align2::LEFT_CENTER, "Name", regular(11.0), t.text_secondary);
     for (i, m) in coll.modes.iter().enumerate() {
         let x = r.min.x + NAME_W + i as f32 * MODE_W;
         let cell = Rect::from_min_max(pos2(x + 4.0, r.min.y + 4.0), pos2(x + MODE_W - 8.0, r.max.y - 4.0));
         let target = Rename::Mode(coll.id.clone(), m.id.clone());
-        if view.editable() && st.rename.as_ref() == Some(&target) {
+        if editable && st.rename.as_ref() == Some(&target) {
             if let Some(name) = rename_field(ui, st, &target, &m.name, cell.shrink2(vec2(4.0, 2.0)), regular(11.0)) {
                 app.run("variable.renameMode", json!({"collection": coll.id, "mode": m.id, "name": name}));
             }
             continue;
         }
         let name_pos = pos2(cell.min.x + 4.0, cell.center().y);
-        if !view.editable() {
+        if !editable {
             ui.painter().with_clip_rect(cell).text(name_pos, Align2::LEFT_CENTER, &m.name, regular(11.0), t.text_secondary);
             continue;
         }
@@ -539,7 +608,7 @@ fn header_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, st:
         });
     }
     let x = r.min.x + NAME_W + coll.modes.len() as f32 * MODE_W;
-    if view.editable()
+    if editable
         && widgets::icon_button_at(
             ui,
             Id::new("vars_add_mode"),
@@ -567,6 +636,8 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Va
     kind_glyph(ui, view.vars, v, coll, Rect::from_center_size(pos2(r.min.x + 24.0, r.center().y), vec2(14.0, 14.0)));
     let name_r = Rect::from_min_max(pos2(r.min.x + 40.0, r.min.y + 8.0), pos2(r.min.x + NAME_W - 8.0, r.max.y - 8.0));
     let target = Rename::Variable(v.id.clone());
+    // An inherited variable is named (and deleted) in the collection it extends.
+    let inherited = v.extends.is_some();
     if editable && st.rename.as_ref() == Some(&target) {
         if let Some(name) = rename_field(ui, st, &target, &v.name, name_r, regular(11.0)) {
             app.run("variable.update", json!({"variable": v.id, "name": name}));
@@ -582,7 +653,7 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Va
         value_cell(app, ui, view, v, coll, &m.id, cell);
     }
     if editable {
-        if resp.double_clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < name_r.max.x) {
+        if !inherited && resp.double_clicked() && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < name_r.max.x) {
             start_rename(ui, st, target.clone());
         }
         crate::right::context_popup(&resp).show(|ui| {
@@ -590,15 +661,19 @@ fn var_row(app: &mut FigApp, ui: &mut Ui, view: &View, coll: &Collection, v: &Va
                 st.details = Some(v.id.clone());
                 ui.close();
             }
-            if menu_item(ui, "Rename", "") {
+            if !inherited && menu_item(ui, "Rename", "") {
                 start_rename(ui, st, target.clone());
+                ui.close();
+            }
+            if !v.overrides.is_empty() && menu_item(ui, "Reset overrides", "") {
+                app.run("variable.resetOverride", json!({"variable": v.id}));
                 ui.close();
             }
             if menu_item(ui, "Duplicate", "") {
                 app.run("variable.duplicate", json!({"variable": v.id}));
                 ui.close();
             }
-            if menu_item(ui, "Delete variable", "") {
+            if !inherited && menu_item(ui, "Delete variable", "") {
                 app.run("variable.delete", json!({"variable": v.id}));
                 ui.close();
             }
@@ -652,10 +727,23 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
     let Some(val) = v.values.get(mode) else { return };
     let editable = view.editable();
     let id = Id::new(("var_cell", &v.id, mode));
-    // The value editor leaves room for the alias button.
-    let body = Rect::from_min_max(rect.min, pos2(rect.max.x - 26.0, rect.max.y));
+    // The value editor leaves room for the alias button (and in extended collections an
+    // override's reset button, so the column stays even).
+    let overridden = v.overrides.contains(mode);
+    let body = Rect::from_min_max(rect.min, pos2(rect.max.x - if coll.extends.is_some() { 50.0 } else { 26.0 }, rect.max.y));
     let alias_btn = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(22.0, 22.0));
     let hovered = editable && ui.rect_contains_pointer(rect.expand2(vec2(4.0, 6.0)));
+    if overridden {
+        let mark = Rect::from_min_size(pos2(rect.min.x - 4.0, rect.min.y + 3.0), vec2(2.0, rect.height() - 6.0));
+        ui.painter().rect_filled(mark, CornerRadius::same(1), t.accent);
+        ui.interact(mark.expand2(vec2(2.0, 0.0)), id.with("mark"), Sense::hover())
+            .tip("Overridden here (the collection it extends has another value)");
+        if hovered
+            && widgets::icon_button_at(ui, id.with("reset"), alias_btn.translate(vec2(-24.0, 0.0)), Icon::Reset, "Reset to the inherited value")
+        {
+            app.run("variable.resetOverride", json!({"variable": v.id, "mode": mode}));
+        }
+    }
     if let VariableValue::Alias(target) = val {
         let full = view.vars.get(target).map(|x| x.name.as_str()).unwrap_or("Missing variable");
         let resp = ui.interact(body, id.with("alias"), if editable { Sense::click() } else { Sense::hover() });
