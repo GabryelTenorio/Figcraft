@@ -166,7 +166,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     // in order, and an edit every frame (a drag) would otherwise never show until it stopped.
     if let Some(done) = worker.poll() {
         // A pixel preview render is magnified with hard pixel edges.
-        let filter = if app.session.ds().ok().and_then(pixel_preview) == Some(done.view.scale) {
+        let filter = if app.session.ds().ok().and_then(|d| d.view.pixel_preview_scale()) == Some(done.view.scale) {
             egui::TextureOptions::NEAREST
         } else {
             egui::TextureOptions::LINEAR
@@ -281,17 +281,11 @@ fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
     )
 }
 
-/// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past it.
-fn pixel_preview(ds: &figcraft_engine::DocState) -> Option<f64> {
-    let k = f64::from(ds.view.pixel_scale.clamp(1, 2));
-    (ds.view.pixel_preview && ds.view.zoom > k).then_some(k)
-}
-
 fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let Ok(ds) = app.session.ds() else { return };
     let rect = app.canvas.rect;
     let (mut ox, mut oy) = ds.view.origin();
-    let (scale, w, h) = if let Some(k) = pixel_preview(ds) {
+    let (scale, w, h) = if let Some(k) = ds.view.pixel_preview_scale() {
         // Pixel preview: render `k` pixels per page unit from a whole-pixel origin, shown magnified
         // without smoothing.
         (ox, oy) = ((ox * k).floor() / k, (oy * k).floor() / k);
@@ -403,10 +397,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         } else if scroll != egui::Vec2::ZERO
             && let Ok(ds) = app.session.ds_mut()
         {
-            let z = ds.view.zoom.max(1e-6);
-            let (dx, dy) = if mods.shift && scroll.x == 0.0 { (scroll.y, 0.0) } else { (scroll.x, scroll.y) };
-            ds.view.cx -= f64::from(dx) / z;
-            ds.view.cy -= f64::from(dy) / z;
+            ds.view.scroll(f64::from(scroll.x), f64::from(scroll.y), mods.shift);
             ds.revision += 1;
         }
     }
@@ -734,7 +725,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     let zoom = ds.view.zoom;
     let view = ds.view.clone();
     // Pixel grid at high zoom.
-    if view.pixel_grid && zoom >= 8.0 {
+    if view.pixel_grid_shown() {
         let r = app.canvas.rect;
         let p0 = app.to_page(r.min);
         let p1 = app.to_page(r.max);
@@ -763,7 +754,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
         if !on_screen.intersects(app.canvas.rect) {
             continue;
         }
-        if view.layout_grids && !n.grids.is_empty() {
+        if view.layout_grids && !n.grids.is_empty() && figcraft_layout::grids_shown(&doc, *c) {
             let w = doc.world_transform(*c);
             for g in n.grids.iter().filter(|g| g.visible) {
                 let col = doc_c32(painter.ctx(), g.color);
@@ -1270,8 +1261,7 @@ fn rulers(app: &FigApp, painter: &egui::Painter, t: &Tokens, doc: &Document, sel
     painter.rect_filled(Rect::from_min_size(r.min, vec2(r.width(), size)), CornerRadius::ZERO, t.panel);
     painter.rect_filled(Rect::from_min_size(r.min, vec2(size, r.height())), CornerRadius::ZERO, t.panel);
     let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
-    let step =
-        [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0].into_iter().find(|s| s * zoom >= 50.0).unwrap_or(10000.0);
+    let step = figcraft_engine::guides::ruler_step(zoom);
     let p0 = app.to_page(r.min);
     let p1 = app.to_page(r.max);
     // Highlight the selection's span.

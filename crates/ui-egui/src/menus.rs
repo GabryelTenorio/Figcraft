@@ -507,6 +507,10 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 {
                     entries.insert(at + 1, (label, "section.toggleContents"));
                 }
+                // A right-clicked ruler guide (selected, with no layers) can be removed.
+                if !has_sel && app.session.ds().is_ok_and(|d| d.selected_guide().is_some()) {
+                    entries.splice(0..0, [(tr("Remove guide"), "guide.remove"), ("-", "")]);
+                }
                 for (label, id) in &entries {
                     if *label == "-" {
                         separator(ui);

@@ -992,9 +992,17 @@ pub fn grid_lines(g: &LayoutGrid, w: f64, h: f64) -> Vec<Rect> {
         GridKind::Columns | GridKind::Rows => {
             let cols = g.kind == GridKind::Columns;
             let total = if cols { w } else { h };
-            let count = g.count.clamp(1, 500) as usize;
             let gutter = if g.gutter.is_finite() { g.gutter.max(0.0) } else { 0.0 };
             let offset = if g.offset.is_finite() { g.offset.max(0.0) } else { 0.0 };
+            let count = match g.count {
+                // Auto: as many fixed-size columns (rows) as fit in the room the type leaves them.
+                0 if g.align != GridAlign::Stretch => {
+                    let size = if g.size.is_finite() && g.size > 0.0 { g.size } else { 60.0 };
+                    let room = if g.align == GridAlign::Center { total } else { total - offset };
+                    ((room + gutter) / (size + gutter)).floor().clamp(1.0, 500.0) as usize
+                }
+                n => n.clamp(1, 500) as usize,
+            };
             let (start, size) = match g.align {
                 GridAlign::Stretch => {
                     let size = ((total - 2.0 * offset - gutter * (count - 1) as f64) / count as f64).max(0.0);
@@ -1020,6 +1028,11 @@ pub fn grid_lines(g: &LayoutGrid, w: f64, h: f64) -> Vec<Rect> {
     out
 }
 
+/// Whether a frame's layout grids apply: they don't show (or snap) on a frame turned off 0°.
+pub fn grids_shown(doc: &Document, frame: NodeId) -> bool {
+    figcraft_geom::rotation_degrees(doc.world_transform(frame)).abs() < 1e-6
+}
+
 /// Snap targets of a frame's visible layout grids (page coordinates): column/row edges.
 pub fn grid_snap_lines(doc: &Document, frame: NodeId) -> (Vec<f64>, Vec<f64>) {
     grid_snap_lines_in(doc, frame, doc.world_transform(frame))
@@ -1028,7 +1041,7 @@ pub fn grid_snap_lines(doc: &Document, frame: NodeId) -> (Vec<f64>, Vec<f64>) {
 /// [`grid_snap_lines`] mapped from the frame's coordinates by `xf` (the frame's world transform
 /// for page lines).
 pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64>, Vec<f64>) {
-    let Some(f) = doc.node(frame) else { return (vec![], vec![]) };
+    let Some(f) = doc.node(frame).filter(|_| grids_shown(doc, frame)) else { return (vec![], vec![]) };
     let mut xs = Vec::new();
     let mut ys = Vec::new();
     for g in f.grids.iter().filter(|g| g.visible) {

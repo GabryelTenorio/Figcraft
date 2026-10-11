@@ -63,7 +63,7 @@ pub enum BindEvent {
 /// A number field `width` wide. `value` None shows "Mixed". `suffix` (e.g. "%" or "°") is shown
 /// after the number. Typing supports simple math (`10+5`, `*2`).
 pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<FieldEdit> {
-    number_field_bindable(ui, id, lead, value, suffix, width, step, None).0
+    number_field_bindable(ui, id, lead, value, suffix, width, step, None, tr("Mixed")).0
 }
 
 /// [`number_field`] that shows `empty` (dim) for no value instead of "Mixed" (e.g. "Auto").
@@ -73,7 +73,7 @@ pub fn number_field_or(ui: &mut Ui, id: Id, value: Option<f64>, empty: &str, wid
 
 /// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
 /// a variable button on hover, `Some(Some(name))` = bound (shows the name; click to change, the
-/// detach button unbinds).
+/// detach button unbinds). No value shows `empty` ("Mixed", "Auto").
 pub fn number_field_bindable(
     ui: &mut Ui,
     id: Id,
@@ -83,8 +83,9 @@ pub fn number_field_bindable(
     width: f32,
     step: f64,
     binding: Option<Option<&str>>,
+    empty: &str,
 ) -> (Option<FieldEdit>, Option<BindEvent>) {
-    number_field_impl(ui, id, lead, value, suffix, width, step, binding, tr("Mixed"))
+    number_field_impl(ui, id, lead, value, suffix, width, step, binding, empty)
 }
 
 fn number_field_impl(

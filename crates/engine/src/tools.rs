@@ -831,7 +831,11 @@ impl Session {
         match ev.kind {
             PointerKind::Hover => self.hover(ev),
             PointerKind::Down => match tool {
-                ToolId::Move | ToolId::Scale => self.move_down(ev),
+                ToolId::Move | ToolId::Scale => {
+                    // A click on the canvas deselects a ruler guide (the UI selects guides itself).
+                    self.ds_mut()?.guide = None;
+                    self.move_down(ev)
+                }
                 ToolId::Hand => {
                     let v = &self.ds()?.view;
                     self.tool.gesture = Gesture::Pan { sx: ev.sx, sy: ev.sy, cx: v.cx, cy: v.cy };
@@ -1901,15 +1905,56 @@ impl Session {
         if self.ds().is_ok_and(|d| d.vector_edit.is_some()) {
             return crate::vectoredit::key(self, name, shift, alt, cmd);
         }
+        if !alt && !cmd && self.guide_key(name, shift)? {
+            return Ok(true);
+        }
         crate::shapebuilder::key(self, name)
     }
 
+    /// Keys for a selected ruler guide: Delete removes it, arrows across it nudge it (Shift: the big
+    /// nudge), Escape deselects it.
+    fn guide_key(&mut self, name: &str, shift: bool) -> Result<bool> {
+        let Some((owner, index)) = self.ds()?.selected_guide() else { return Ok(false) };
+        // Backspace is Delete, `Left` is `ArrowLeft`, and so on.
+        let name = crate::keymap::normalize(name).map_or(name, |(k, _)| k);
+        let page = self.page()?;
+        let at = |mut p: serde_json::Value| {
+            if owner != page {
+                p["frame"] = json!(owner);
+            }
+            p
+        };
+        let Some(g) = self.doc()?.node(owner).and_then(|n| n.guides().get(index).cloned()) else { return Ok(false) };
+        let step = if shift { self.prefs.nudge_big } else { self.prefs.nudge_small };
+        let d = match (name, g.vertical) {
+            ("Delete", _) => {
+                self.execute("guide.remove", &at(json!({"index": index})))?;
+                return Ok(true);
+            }
+            ("Escape", _) => {
+                self.execute("guide.select", &json!({}))?;
+                return Ok(true);
+            }
+            ("ArrowLeft", true) | ("ArrowUp", false) => -step,
+            ("ArrowRight", true) | ("ArrowDown", false) => step,
+            _ => return Ok(false),
+        };
+        self.execute("guide.move", &at(json!({"index": index, "offset": g.offset + d})))?;
+        Ok(true)
+    }
+
     /// The layer under `p` for a click: the topmost on `page`, or in the focus view the focused
-    /// frame's. Boolean groups are hit by their results ([`crate::booleans::result_outline`]).
+    /// frame's. Boolean groups are hit by their results ([`crate::booleans::result_outline`]); in
+    /// outline mode shapes only on their outlines.
     pub fn hit(&self, doc: &Document, page: NodeId, p: Point, tol: f64) -> Option<NodeId> {
         let sel = self.selection();
         let result = crate::booleans::result_outline(doc, &sel);
-        match self.ds().ok().and_then(crate::DocState::focused) {
+        let focus = self.ds().ok().and_then(crate::DocState::focused);
+        // Outline mode draws no fills: shapes are clicked on their outlines, reaching what's behind.
+        if self.ds().is_ok_and(|d| d.view.outlines) {
+            return figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result));
+        }
+        match focus {
             Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol, Some(&result)),
             None => doc.hit_test(page, p, tol, Some(&result)),
         }

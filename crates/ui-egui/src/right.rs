@@ -1921,9 +1921,16 @@ fn grids(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 fn grid_label(g: &LayoutGrid) -> String {
     match g.kind {
         GridKind::Grid => trf("Grid ({size})", &[("size", &g.size)]),
-        GridKind::Columns => trn("{n} columns", g.count as usize, &[]),
-        GridKind::Rows => trn("{n} rows", g.count as usize, &[]),
+        GridKind::Columns if auto_count(g) => tr("Auto columns").to_string(),
+        GridKind::Rows if auto_count(g) => tr("Auto rows").to_string(),
+        GridKind::Columns => trn("{n} columns", g.count.max(1) as usize, &[]),
+        GridKind::Rows => trn("{n} rows", g.count.max(1) as usize, &[]),
     }
+}
+
+/// Fixed-size columns or rows counted Auto: as many as fit.
+fn auto_count(g: &LayoutGrid) -> bool {
+    g.count == 0 && g.align != GridAlign::Stretch
 }
 
 /// `list` with grid `i` changed by `f`.
@@ -1957,7 +1964,14 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
         let cols = g.kind == GridKind::Columns;
         widgets::sublabels(ui, tr("Count"), Some(tr("Type")));
         row(ui, 32.0, |ui| {
-            field(app, ui, "count", f64::from(g.count), &|x, v| x.count = v.round().clamp(1.0, 1000.0) as u32);
+            // 0 is Auto for fixed-size columns (rows); a stretched grid has at least one.
+            let count = (!auto_count(g)).then(|| f64::from(g.count.max(1)));
+            let key = format!("layoutGrids/{i}/count");
+            let e =
+                crate::variable_ui::number_field_or(app, ui, ids, &key, Id::new(("grid_field", "count", i)), count, col, tr("Auto"), Lead::None, "");
+            app.field_run(e, "node.set", |v| {
+                set(&|x| x.count = if x.align == GridAlign::Stretch { v.round().clamp(1.0, 1000.0) } else { v.round().clamp(0.0, 1000.0) } as u32)
+            });
             let names =
                 if cols { [tr("Stretch"), tr("Left"), tr("Center"), tr("Right")] } else { [tr("Stretch"), tr("Top"), tr("Center"), tr("Bottom")] };
             let aligns = [GridAlign::Stretch, GridAlign::Min, GridAlign::Center, GridAlign::Max];
@@ -1973,6 +1987,9 @@ fn grid_settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], list: &[LayoutGr
                                 x.align = a;
                                 if a != GridAlign::Stretch && !(x.size.is_finite() && x.size > 0.0) {
                                     x.size = 60.0;
+                                }
+                                if a == GridAlign::Stretch {
+                                    x.count = x.count.max(1);
                                 }
                             }),
                         );

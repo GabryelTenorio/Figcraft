@@ -1,5 +1,6 @@
 //! Snapping and smart guides: while moving or resizing, edges and centres snap to nearby layers'
-//! edges/centres, the parent frame, layout grid columns and page guides; the matches come back as
+//! edges/centres, the parent frame, layout grid columns and ruler guides (the page's and the
+//! top-level frame's); the matches come back as
 //! guide lines (with spacing labels) for the canvas to draw in red. Vector points also snap to
 //! other points (see `vectoredit::snap`); landing on one shows a marker (a zero-length guide).
 
@@ -126,17 +127,11 @@ impl Targets {
             }
         };
         lines(page, to, None, &mut t);
-        // The guides of the frames the moving layers are in, across each frame.
-        let mut f = parent;
-        for _ in 0..128 {
-            let Some(n) = doc.node(f).filter(|_| f != page) else { break };
-            if !n.guides.is_empty()
-                && let Some(b) = bbox(f)
-            {
-                lines(f, to * doc.world_transform(f), Some(b), &mut t);
-            }
-            let Some(up) = n.parent else { break };
-            f = up;
+        // The guides of the top-level frame the moving layers are in, across it.
+        if let Some(f) = doc.top_level_frame(parent)
+            && let Some(b) = bbox(f)
+        {
+            lines(f, to * doc.world_transform(f), Some(b), &mut t);
         }
         t
     }

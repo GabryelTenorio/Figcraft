@@ -125,16 +125,51 @@ pub fn specs() -> Vec<CommandSpec> {
             s.doc_mut()?.get_mut(owner)?.guides_mut().get_mut(k).ok_or_else(|| bad("guide.move", "no such guide"))?.offset = offset;
             ok()
         }),
-        spec!("guide.remove", "Remove guide", "{index, frame? | page?}", true, |s, p| {
-            let owner = guide_owner(s, "guide.remove", p)?;
-            let k = guide_index("guide.remove", p)?;
+        spec!("guide.remove", "Remove guide", "{index?, frame? | page?} (no index: the selected guide)", true, |s, p| {
+            let (owner, k) = match p.get("index") {
+                None | Some(Value::Null) => s.ds()?.selected_guide().ok_or_else(|| bad("guide.remove", "no guide is selected (pass `index`)"))?,
+                Some(_) => (guide_owner(s, "guide.remove", p)?, guide_index("guide.remove", p)?),
+            };
             let guides = s.doc_mut()?.get_mut(owner)?.guides_mut();
             if k >= guides.len() {
                 return Err(bad("guide.remove", "no such guide"));
             }
             guides.remove(k);
+            let ds = s.ds_mut()?;
+            if ds.guide == Some((owner, k)) {
+                ds.guide = None;
+            }
             ok()
         }),
+        spec!(
+            "guide.select",
+            "Select guide",
+            "{index?, frame? | page?}  a ruler guide to delete or nudge (deselects layers; no index: none)",
+            false,
+            |s, p| {
+                let picked = match p.get("index") {
+                    None | Some(Value::Null) => None,
+                    Some(_) => {
+                        let owner = guide_owner(s, "guide.select", p)?;
+                        let k = guide_index("guide.select", p)?;
+                        if k >= s.doc()?.node(owner).map_or(0, |n| n.guides().len()) {
+                            return Err(bad("guide.select", "no such guide"));
+                        }
+                        Some((owner, k))
+                    }
+                };
+                if picked.is_some() {
+                    s.set_selection(vec![]);
+                }
+                let ds = s.ds_mut()?;
+                ds.guide = picked;
+                ds.revision += 1;
+                Ok(match picked {
+                    Some((owner, index)) => json!({"owner": owner, "index": index}),
+                    None => Value::Null,
+                })
+            }
+        ),
         spec!("guide.clear", "Remove all guides", "{frame? | page?}", true, |s, p| {
             let owner = guide_owner(s, "guide.clear", p)?;
             s.doc_mut()?.get_mut(owner)?.guides_mut().clear();
@@ -150,9 +185,10 @@ fn guide_owner(s: &Session, cmd: &str, p: &Value) -> crate::Result<NodeId> {
         Some(f) => f,
         None => id(p, "page").unwrap_or(s.page()?),
     };
-    match s.doc()?.node(owner) {
-        Some(n) if n.is_page() || n.kind.is_frame_like() => Ok(owner),
-        Some(_) => Err(bad(cmd, "guides go on a page or a frame")),
+    let doc = s.doc()?;
+    match doc.node(owner) {
+        Some(_) if crate::guides::keeps_guides(doc, owner) => Ok(owner),
+        Some(_) => Err(bad(cmd, "guides go on a page or a top-level frame")),
         None => Err(bad(cmd, "no such page or frame")),
     }
 }

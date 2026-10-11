@@ -51,7 +51,9 @@ pub fn is_closed(n: &Node) -> bool {
     }
 }
 
-fn hits_node_itself(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64) -> bool {
+/// Whether `pt` hits `n` itself; in `outline` mode (nothing filled on the canvas) a shape only where
+/// its outline is.
+fn hits_node_itself(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64, outline: bool) -> bool {
     let inv = doc.world_transform(id).inverse();
     let lp = inv * pt;
     // Tolerance in local units (approximate under scale).
@@ -66,7 +68,7 @@ fn hits_node_itself(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64) -
         NodeKind::Frame | NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. } | NodeKind::Section { .. } => {
             n.local_rect().inflate(tol_l, tol_l).contains(lp)
         }
-        _ => shape_path(n).is_some_and(|path| hits_path(n, &path, lp, tol_l, is_closed(n) && path.winding(lp) != 0)),
+        _ => shape_path(n).is_some_and(|path| hits_path(n, &path, lp, tol_l, !outline && is_closed(n) && path.winding(lp) != 0)),
     }
 }
 
@@ -89,10 +91,10 @@ fn hits_path(n: &Node, path: &BezPath, lp: Point, tol: f64, inside: bool) -> boo
 pub type BoolResult<'a> = Option<&'a dyn Fn(NodeId, &Node) -> Option<BezPath>>;
 
 /// With a result for boolean group `id`, whether `pt` hits it (`None`: no result, test operands).
-fn hits_result(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64, result: BoolResult) -> Option<bool> {
+fn hits_result(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64, result: BoolResult, outline: bool) -> Option<bool> {
     let path = result.and_then(|f| f(id, n))?;
     let lp = doc.world_transform(id).inverse() * pt;
-    Some(hits_path(n, &path, lp, tol, path.winding(lp) % 2 != 0))
+    Some(hits_path(n, &path, lp, tol, !outline && path.winding(lp) % 2 != 0))
 }
 
 fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
@@ -104,7 +106,7 @@ fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
 /// boolean groups are hit where their `result` is.
 pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
     let p = doc.node(page)?;
-    p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result).filter(|_| !masked_out(doc, p, *c, pt)))
+    p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, false).filter(|_| !masked_out(doc, p, *c, pt)))
 }
 
 /// Whether child `c` of `parent` is masked at `pt`: a visible mask below it (the nearest mask
@@ -121,16 +123,25 @@ fn masked_out(doc: &Document, parent: &Node, c: NodeId, pt: Point) -> bool {
 /// Whether mask `id` draws at `pt` (its shape, or for a group or frame what its layers draw).
 fn covers(doc: &Document, id: NodeId, n: &Node, pt: Point, depth: usize) -> bool {
     depth < 512
-        && (hits_node_itself(doc, id, n, pt, 0.0)
+        && (hits_node_itself(doc, id, n, pt, 0.0, false)
             || n.children.iter().any(|c| doc.node(*c).is_some_and(|k| k.visible && !k.is_mask && covers(doc, *c, k, pt, depth + 1))))
 }
 
 /// Like [`hit_leaf`], but only within layer `root` (it included).
 pub fn hit_in(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
-    hit_rec(doc, root, pt, tol, 0, result)
+    hit_rec(doc, root, pt, tol, 0, result, false)
 }
 
-fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult) -> Option<NodeId> {
+/// [`hit_leaf`] (or [`hit_in`] for a `root` that isn't a page) in outline mode: shapes are hit
+/// where their outlines are, so a click inside one reaches the layers drawn behind it.
+pub fn hit_outlines(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
+    match doc.node(root) {
+        Some(p) if p.is_page() => p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, true)),
+        _ => hit_rec(doc, root, pt, tol, 0, result, true),
+    }
+}
+
+fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult, outline: bool) -> Option<NodeId> {
     if depth > 512 {
         return None;
     }
@@ -139,25 +150,25 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result
         return None;
     }
     if let NodeKind::Section { contents_hidden: true } = n.kind {
-        return hits_node_itself(doc, id, n, pt, tol).then_some(id);
+        return hits_node_itself(doc, id, n, pt, tol, outline).then_some(id);
     }
     let clips = n.clip && n.kind.is_frame_like();
-    if clips && !hits_node_itself(doc, id, n, pt, 0.0) {
+    if clips && !hits_node_itself(doc, id, n, pt, 0.0, false) {
         return None;
     }
     // A boolean group is hit where its result is (without one: where an operand is). The leaf is
     // the operand under the point, so a plain click still selects the group (see `select_target`)
     // while a deep click, a double click or a selected sibling operand reaches the operand itself.
-    let in_result = if matches!(n.kind, NodeKind::BooleanOp { .. }) { hits_result(doc, id, n, pt, tol, result) } else { None };
+    let in_result = if matches!(n.kind, NodeKind::BooleanOp { .. }) { hits_result(doc, id, n, pt, tol, result, outline) } else { None };
     if in_result == Some(false) {
         return None;
     }
     for c in n.paint_order().rev() {
-        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result).filter(|_| !masked_out(doc, n, c, pt)) {
+        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result, outline).filter(|_| !masked_out(doc, n, c, pt)) {
             return Some(h);
         }
     }
-    if in_result == Some(true) || hits_node_itself(doc, id, n, pt, tol) {
+    if in_result == Some(true) || hits_node_itself(doc, id, n, pt, tol, outline) {
         return Some(id);
     }
     None
@@ -174,13 +185,13 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
             return;
         }
         let clips = n.clip && n.kind.is_frame_like();
-        if clips && !hits_node_itself(doc, id, n, pt, 0.0) {
+        if clips && !hits_node_itself(doc, id, n, pt, 0.0, false) {
             return;
         }
         let at = out.len();
         let whole = matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Section { contents_hidden: true });
         if whole {
-            if hit_rec(doc, id, pt, tol, depth, result).is_some() {
+            if hit_rec(doc, id, pt, tol, depth, result, false).is_some() {
                 out.push((id, depth));
             }
             return;
@@ -192,7 +203,7 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
                 out.truncate(before);
             }
         }
-        if out.len() > at || hits_node_itself(doc, id, n, pt, tol) {
+        if out.len() > at || hits_node_itself(doc, id, n, pt, tol, false) {
             out.insert(at, (id, depth));
         }
     }

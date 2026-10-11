@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -44,7 +44,7 @@ interaction feel not yet compared.
 | Smart guides: edges, centres, equal spacing (between two layers or continuing a row's gap, labelled), spacing labels, parent, layout grid, ruler guides | done | red, `snap.rs`; thresholds not yet compared with Figma's |
 | Ctrl to suspend snapping while dragging (macOS) | missing | |
 | Measure (Alt hover, Cmd+Alt nested, Shift+Alt padding/gaps) | done | labels never overlap |
-| Pixel grid snapping, pixel preview, 2x preview | done | moves, resizes and new shapes land on whole pixels |
+| Pixel grid snapping, pixel preview, 2x preview | done | moves, resizes and new shapes land on whole pixels; the pixel grid shows from 400% (`view_behaviour_tests`) |
 | Numeric fields: arithmetic, scrubbing by dragging the label, mixed values | partial | check scrub speed and Shift/Alt steps |
 | Transform box at small sizes | done | a press inside a layer smaller than its handles moves it, the nearest handle wins, handles answer just outside and are hidden under 16 px on screen; cursors follow each handle and the box's rotation |
 | Locked layers | done | selectable from the layers panel; no handles, not dragged with the rest of a selection |
@@ -73,16 +73,16 @@ interaction feel not yet compared.
 
 | Item | Status | Notes |
 |---|---|---|
-| Pan/zoom: wheel, pinch, Space-drag, Shift+0/1/2, Cmd+0, `+`/`-` | done | |
-| Rulers and guides (drag out, move, remove; rotated frames; frame guides) | done | |
+| Pan/zoom: wheel, pinch, Space-drag, Shift+0/1/2, Cmd+0, `+`/`-` | done | Shift-wheel pans sideways, pinch and the zoom tool keep the point under the pointer; zoom steps, limits (2%–25,600%) and frame order pinned where the documentation is silent (`view_behaviour_tests`) |
+| Rulers and guides (drag out, move, remove; rotated frames; frame guides) | done | guides belong to the page or a top-level frame (a frame moved into another keeps its guides but they stop applying); a click selects one for Delete, the arrows or the context menu's Remove guide; Alt-drag drops a copy; Alt while dragging measures to the layers in the frame it crosses; ruler numbering checked by eye only |
 | Frame labels (rotated, right-to-left), size badge | done | |
-| Outline mode | done | Outlines, outlines for the selection, mask outlines, frame outlines |
+| Outline mode | partial | Outlines, outlines for the selection, mask outlines, frame outlines; shapes are clicked on their outlines, reaching layers behind; the Include hidden layers and Include object bounds options are missing |
 | Slices shown on the canvas (View ▸ Slices) | done | dashed rectangles |
 | Dragging a layer inside a group keeps it in the group | done | frames and auto layout take other drops |
 | Frames and sections drawn around layers take those fully inside; sections never drop into frames | done | not in auto layout frames |
 | Resizing a section leaves its contents in place | done | |
 | Masks: what a mask hides doesn't take clicks; a mask group's box is the mask's | done | |
-| Layout grids (Ctrl+G) | done | |
+| Layout grids (Ctrl+G) | done | columns, rows and grid; stretch, left, centre, right; Auto count; several per frame; styles; not shown or snapped on a rotated frame; a nested frame's grids snap but only top-level frames draw them |
 | Gamut warnings for Display P3 files | done | colour picker note; View ▸ Soft-proof sRGB stripes what sRGB can't show (the canvas itself is sRGB) |
 | Gradient and padding/gap handles on the canvas | done | |
 | Hover outline, selection colours, handle sizes | done | measured from UI3 screenshots |
@@ -104,6 +104,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Canvas navigation, rulers, guides, layout grids, outline mode and measuring behaviour suite and fixes: the pixel grid shows from 400% (it waited for 800%); guides belong to the page or a top-level frame; a guide can be selected, deleted, nudged and removed from the context menu, Alt-dragged into a copy, and measured from with Alt while dragging; Auto column and row counts; layout grids hidden on rotated frames; outline mode clicks reach layers behind. Outline mode back to partial (two documented options missing) |
 | 2026-10-11 | minor | Shapes and vector behaviour suite and fixes: corner radius and star ratio handles on the canvas, Count and Ratio fields, Alt draws lines from the centre, paint bucket and cut drags, delete and heal along the curve, rounded vector points drawn, Shift-click deselects a point at a box corner, the miter field shows degrees, individual corners only for rectangles and frames |
 | 2026-10-11 | minor | Paint and effects behaviour suite: the blend menu's Normal sets Normal (it set pass-through), a blend menu for each paint in the colour picker, the eyedropper's rules covered by tests |
 | 2026-10-11 | minor | Frames, groups, sections and masks: drawing a frame or section around layers takes them, sections stay out of frames, section resizing leaves contents in place, masked-out areas don't take clicks, a mask group's box follows the mask, X/Y of layers in groups are measured in the frame |

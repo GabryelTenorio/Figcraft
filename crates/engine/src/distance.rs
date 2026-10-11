@@ -9,6 +9,7 @@
 //! - Alt while dragging layers: live distances to the nearest neighbours on each side within the
 //!   parent (to the parent's edges where there is none).
 //! - Shift+Alt over an auto layout frame: its padding and the gaps between its children.
+//! - Alt while dragging a ruler guide across a frame: from the guide to the nearest edges inside.
 //!
 //! The canvas draws the lines and places the labels so they never overlap (see the UI crate).
 
@@ -145,19 +146,47 @@ pub fn to_guide(a: Rect, vertical: bool, at: f64) -> Vec<Guide> {
     out
 }
 
-/// The ruler guides near page point `p` (within `tol`): the page's and those of the frames
-/// around `around` (those that run along the page's axes), as (vertical, page offset).
+/// Alt while dragging a ruler guide (`vertical` at page x = `at`, else at y = `at`) across frame
+/// `frame`: the distances from it to the nearest edge on each side, of the frame's visible layers
+/// or the frame itself, across the middle of what each measures to. Nothing when it misses the frame.
+pub fn from_guide(doc: &Document, frame: NodeId, vertical: bool, at: f64) -> Vec<Guide> {
+    let mut out = Vec::new();
+    let Some(f) = doc.world_bounds(frame).filter(|f| f.is_finite() && at.is_finite()) else { return out };
+    // Along the guide's normal: (start, end, middle across) of a box.
+    let span = |b: Rect| if vertical { (b.x0, b.x1, b.center().y) } else { (b.y0, b.y1, b.center().x) };
+    let (lo, hi, mid) = span(f);
+    if !(at > lo && at < hi) {
+        return out;
+    }
+    let (mut before, mut after) = ((lo, mid), (hi, mid));
+    for b in sibling_boxes(doc, frame, &[]) {
+        let (b0, b1, m) = span(b);
+        for e in [b0, b1] {
+            if e <= at && e > before.0 {
+                before = (e, m);
+            }
+            if e >= at && e < after.0 {
+                after = (e, m);
+            }
+        }
+    }
+    let pt = |along: f64, across: f64| if vertical { Point::new(along, across) } else { Point::new(across, along) };
+    measured(&mut out, pt(before.0, before.1), pt(at, before.1));
+    measured(&mut out, pt(at, after.1), pt(after.0, after.1));
+    out
+}
+
+/// The ruler guides near page point `p` (within `tol`): the page's and those of the top-level
+/// frames around `around` (those that run along the page's axes), as (vertical, page offset).
 pub fn guide_at(doc: &Document, page: NodeId, around: &[NodeId], p: Point, tol: f64) -> Option<(bool, f64)> {
     let mut lines: Vec<(bool, f64)> = Vec::new();
     if let Some(n) = doc.node(page) {
         lines.extend(n.guides().iter().map(|g| (g.vertical, g.offset)));
     }
     let mut frames: Vec<NodeId> = Vec::new();
-    for a in around {
-        for f in doc.ancestors(*a) {
-            if f != page && !frames.contains(&f) {
-                frames.push(f);
-            }
+    for f in around.iter().filter_map(|a| doc.top_level_frame(*a)) {
+        if !frames.contains(&f) {
+            frames.push(f);
         }
     }
     for f in frames {

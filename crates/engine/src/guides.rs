@@ -1,9 +1,28 @@
 //! Ruler guides on the page. A frame keeps its guides in its own coordinates, so on a rotated frame
 //! they run along the frame's rotated axes and span only the frame; a page's guides are page lines
-//! across the whole canvas.
+//! across the whole canvas. Only top-level frames (on the page or in sections) have guides: a
+//! frame moved into another keeps its guides, but they stop showing and snapping until it's back.
 
 use figcraft_doc::{Document, NodeId};
 use figcraft_geom::{Affine, Point};
+
+/// Whether `owner`'s guides apply: it's a page or a top-level frame.
+pub fn keeps_guides(doc: &Document, owner: NodeId) -> bool {
+    doc.node(owner).is_some_and(|n| n.is_page() || (n.kind.is_frame_like() && doc.top_level_frame(owner) == Some(owner)))
+}
+
+/// The spacing (page pixels) of the rulers' labelled ticks at `zoom`: the first of 1, 2, 5, 10, 20, …
+/// that leaves at least 50 screen pixels between labels.
+pub fn ruler_step(zoom: f64) -> f64 {
+    const STEPS: [f64; 12] = [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0];
+    STEPS.into_iter().find(|s| s * zoom >= 50.0).unwrap_or(10000.0)
+}
+
+/// Who gets a guide dragged out of a ruler and dropped at page point `p`: the top-level frame under
+/// it (dropped over a nested frame, the frame holding it), else the page.
+pub fn drop_owner(doc: &Document, page: NodeId, p: Point) -> NodeId {
+    crate::cmd::create::frame_at(doc, page, p, &[]).and_then(|f| doc.top_level_frame(f)).unwrap_or(page)
+}
 
 /// Below this, a transform coefficient counts as zero (rotations that keep the axes).
 const EPS: f64 = 1e-7;

@@ -229,8 +229,24 @@ pub fn number_field(
     suffix: &str,
     width: f32,
 ) -> Option<FieldEdit> {
+    number_field_or(app, ui, ids, field, id, value, width, tr("Mixed"), lead, suffix)
+}
+
+/// [`number_field`] showing `empty` (e.g. "Auto") for no value.
+pub fn number_field_or(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    field: &str,
+    id: Id,
+    value: Option<f64>,
+    width: f32,
+    empty: &str,
+    lead: Lead,
+    suffix: &str,
+) -> Option<FieldEdit> {
     let name = app.session.doc().ok().and_then(|d| bound_name(d, ids, field));
-    let (edit, ev) = widgets::number_field_bindable(ui, id, lead, value, suffix, width, 1.0, Some(name.as_deref()));
+    let (edit, ev) = widgets::number_field_bindable(ui, id, lead, value, suffix, width, 1.0, Some(name.as_deref()), empty);
     handle(app, ui, ids, field, VariableType::Number, ev);
     edit
 }

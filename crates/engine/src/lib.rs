@@ -201,6 +201,29 @@ impl ViewState {
         self.cx = r.center().x;
         self.cy = r.center().y;
     }
+    /// The zoom from which the pixel grid shows (400%).
+    pub const PIXEL_GRID_ZOOM: f64 = 4.0;
+    /// Whether the pixel grid draws: it's on and the canvas is zoomed in to 400% or more.
+    pub fn pixel_grid_shown(&self) -> bool {
+        self.pixel_grid && self.zoom >= Self::PIXEL_GRID_ZOOM - 1e-9
+    }
+    /// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past
+    /// it; below that the canvas is already coarser than the preview.
+    pub fn pixel_preview_scale(&self) -> Option<f64> {
+        let k = f64::from(self.pixel_scale.clamp(1, 2));
+        (self.pixel_preview && self.zoom > k).then_some(k)
+    }
+    /// A wheel or trackpad scroll of (`dx`, `dy`) screen points: the canvas pans with it (content
+    /// follows the fingers); with Shift a plain vertical wheel pans sideways.
+    pub fn scroll(&mut self, dx: f64, dy: f64, shift: bool) {
+        let (dx, dy) = if shift && dx == 0.0 { (dy, 0.0) } else { (dx, dy) };
+        if !(dx.is_finite() && dy.is_finite()) {
+            return;
+        }
+        let z = self.zoom.max(1e-6);
+        self.cx -= dx / z;
+        self.cy -= dy / z;
+    }
     pub fn page_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
         let (ox, oy) = self.origin();
         ((x - ox) * self.zoom, (y - oy) * self.zoom)
@@ -277,6 +300,8 @@ pub struct DocState {
     checkpoint: Arc<Document>,
     /// Dev Mode focus view: the frame or section shown alone on the canvas (see [`Self::focused`]).
     pub focus: Option<NodeId>,
+    /// The ruler guide clicked last: its page or frame and index (see [`Self::selected_guide`]).
+    pub guide: Option<(NodeId, usize)>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -330,9 +355,18 @@ impl DocState {
             preview: None,
             text_preview: None,
             focus: None,
+            guide: None,
         };
         st.zoom_to_fit();
         st
+    }
+
+    /// The selected ruler guide (its owner and index): it counts while no layer is selected and it
+    /// is still there on this page.
+    pub fn selected_guide(&self) -> Option<(NodeId, usize)> {
+        let (owner, i) = self.guide.filter(|_| self.selection.is_empty())?;
+        let on_page = owner == self.page || self.doc.top_level_frame(owner).is_some_and(|f| self.doc.ancestors(f).contains(&self.page));
+        (on_page && guides::keeps_guides(&self.doc, owner) && self.doc.node(owner).is_some_and(|n| i < n.guides().len())).then_some((owner, i))
     }
 
     /// With the version history read from its file.
@@ -1377,3 +1411,5 @@ mod vector_behaviour_tests;
 mod version_preview_tests;
 #[cfg(test)]
 mod version_tests;
+#[cfg(test)]
+mod view_behaviour_tests;

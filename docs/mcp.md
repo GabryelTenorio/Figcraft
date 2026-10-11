@@ -1031,12 +1031,25 @@ first, the last one is on top (the Design panel lists them the other way round, 
 
 `guide.add {vertical, offset, frame? | page?}` (returns `{index}`), `guide.move {index, offset, …}`,
 `guide.remove {index, …}` and `guide.clear {…}` edit the guides of the current page, another
-`page`, or a `frame` (frames, components and instances). A frame's guides are in its own
-coordinates: they move with the frame, span only it, are copied with it and snap the layers inside
-it. On a rotated frame they run along its own axes, and the layers inside it snap to them (and to
-their siblings and the frame's edges) along those axes, keeping whole pixels in the frame's
-coordinates. In the app, a guide dragged out of a ruler and dropped on a frame becomes that frame's
-guide, along the frame's axis nearer the ruler's.
+`page`, or a top-level `frame` (frames, components and instances on the page or in a section;
+nested frames are refused). A frame's guides are in its own coordinates: they move with the frame,
+span only it, are copied with it and snap the layers inside it. A frame moved into another frame
+keeps its guides, but they stop showing, snapping and measuring until it's top-level again. On a
+rotated frame they run along its own axes, and the layers inside it snap to them (and to their
+siblings and the frame's edges) along those axes, keeping whole pixels in the frame's coordinates.
+
+`guide.select {index, frame? | page?}` selects a guide (and deselects the layers; `{}` deselects
+it), as clicking one does in the app; `guide.remove {}` without an index removes the selected one
+(the context menu's Remove guide). While a guide is selected and no layer is, Delete removes it,
+the arrows across it nudge it (Shift: the big nudge) and Escape deselects it. In the app, a guide
+dragged out of a ruler and dropped on a frame becomes the guide of the top-level frame there, along
+the frame's axis nearer the ruler's; Alt-dragging a guide drops a copy, and holding Alt while
+dragging one shows its distances to the nearest edges inside the frame it crosses (the frame
+selected before the drag, else its own).
+
+Layout grids: a columns or rows grid with a fixed width (left, centre, right) and a `count` of 0 is
+Auto, as many as fit (a stretched grid shows at least one); grids don't show or snap on a frame
+turned off 0°.
 
 ### Measuring, the Scale tool, arc handles and selecting
 
