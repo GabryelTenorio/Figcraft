@@ -191,11 +191,17 @@ const HASH: [u8; 20] = [0xab; 20];
 /// (property off, child renamed); a flow and an explicit variable mode; an unsupported sticky
 /// note; styles and variables on the internal page.
 fn message() -> Kv<'static> {
-    let modes = arr(vec![o(vec![("id", g(90)), ("name", s("Light")), ("sortPosition", s("!"))]), o(vec![("id", g(91)), ("name", s("Dark")), ("sortPosition", s("\""))])]);
+    let modes = arr(vec![
+        o(vec![("id", g(90)), ("name", s("Light")), ("sortPosition", s("!"))]),
+        o(vec![("id", g(91)), ("name", s("Dark")), ("sortPosition", s("\""))]),
+    ]);
     let color_value = |c| o(vec![("value", o(vec![("colorValue", c)])), ("dataType", e("COLOR"))]);
     let values = o(vec![(
         "entries",
-        arr(vec![o(vec![("modeID", g(90)), ("variableData", color_value(rgb(1.0, 1.0, 1.0)))]), o(vec![("modeID", g(91)), ("variableData", color_value(rgb(0.0, 0.0, 0.0)))])]),
+        arr(vec![
+            o(vec![("modeID", g(90)), ("variableData", color_value(rgb(1.0, 1.0, 1.0)))]),
+            o(vec![("modeID", g(91)), ("variableData", color_value(rgb(0.0, 0.0, 0.0)))]),
+        ]),
     )]);
     let click = o(vec![
         ("event", o(vec![("interactionType", e("ON_CLICK"))])),
@@ -223,74 +229,153 @@ fn message() -> Kv<'static> {
         node(2, Some((0, "~")), "CANVAS", "Internal", vec![("internalOnly", Kv::Bool(true))]),
         node(3, Some((2, "!")), "RECTANGLE", "Brand", vec![("styleType", e("FILL")), ("fillPaints", arr(vec![solid(0.0, 0.0, 1.0)]))]),
         node(4, Some((2, "\"")), "VARIABLE_SET", "Theme", vec![("variableSetModes", modes)]),
-        node(5, Some((2, "#")), "VARIABLE", "surface", vec![
-            ("variableSetID", o(vec![("guid", g(4))])),
-            ("variableResolvedType", e("COLOR")),
-            ("variableDataValues", values),
-        ]),
+        node(
+            5,
+            Some((2, "#")),
+            "VARIABLE",
+            "surface",
+            vec![("variableSetID", o(vec![("guid", g(4))])), ("variableResolvedType", e("COLOR")), ("variableDataValues", values)],
+        ),
         // Listed before the frame, but its position puts it second.
-        node(20, Some((1, "\"")), "SYMBOL", "Button", vec![
-            ("size", xy(100.0, 40.0)),
-            ("transform", at(500.0, 0.0)),
-            ("fillPaints", arr(vec![solid(0.0, 1.0, 0.0)])),
-            ("componentPropDefs", arr(vec![o(vec![("id", g(80)), ("name", s("Show icon")), ("initialValue", o(vec![("boolValue", Kv::Bool(true))])), ("type", e("BOOL"))])])),
-            ("stackMode", e("HORIZONTAL")),
-            ("stackSpacing", f(8.0)),
-            ("stackHorizontalPadding", f(12.0)),
-            ("stackVerticalPadding", f(4.0)),
-        ]),
-        node(21, Some((20, "!")), "ELLIPSE", "Icon", vec![("size", xy(16.0, 16.0)), ("transform", at(12.0, 12.0)), ("parameterConsumptionMap", prop_ref(80, "VISIBLE"))]),
-        node(10, Some((1, "!")), "FRAME", "Screen", vec![
-            ("size", xy(400.0, 300.0)),
-            ("fillPaints", arr(vec![solid(1.0, 1.0, 1.0)])),
-            ("prototypeStartingPoint", o(vec![("name", s("Main flow")), ("position", s("!"))])),
-            ("variableModeBySetMap", o(vec![("entries", arr(vec![o(vec![("variableSetID", o(vec![("guid", g(4))])), ("variableModeID", g(91))])]))])),
-        ]),
-        node(11, Some((10, "!")), "ROUNDED_RECTANGLE", "Photo", vec![
-            ("size", xy(50.0, 40.0)),
-            ("transform", at(10.0, 20.0)),
-            ("cornerRadius", f(6.0)),
-            ("fillPaints", arr(vec![o(vec![("type", e("IMAGE")), ("image", o(vec![("hash", Kv::Bytes(HASH.to_vec()))]))])])),
-            ("strokePaints", arr(vec![solid(0.0, 0.0, 0.0)])),
-            ("strokeWeight", f(2.0)),
-            ("prototypeInteractions", arr(vec![click])),
-        ]),
-        node(12, Some((10, "\"")), "TEXT", "Title", vec![
-            ("size", xy(120.0, 20.0)),
-            ("transform", at(10.0, 80.0)),
-            ("fillPaints", arr(vec![solid(0.0, 0.0, 0.0)])),
-            ("fontSize", f(16.0)),
-            ("fontName", font("Regular")),
-            ("textData", text),
-        ]),
+        node(
+            20,
+            Some((1, "\"")),
+            "SYMBOL",
+            "Button",
+            vec![
+                ("size", xy(100.0, 40.0)),
+                ("transform", at(500.0, 0.0)),
+                ("fillPaints", arr(vec![solid(0.0, 1.0, 0.0)])),
+                (
+                    "componentPropDefs",
+                    arr(vec![o(vec![
+                        ("id", g(80)),
+                        ("name", s("Show icon")),
+                        ("initialValue", o(vec![("boolValue", Kv::Bool(true))])),
+                        ("type", e("BOOL")),
+                    ])]),
+                ),
+                ("stackMode", e("HORIZONTAL")),
+                ("stackSpacing", f(8.0)),
+                ("stackHorizontalPadding", f(12.0)),
+                ("stackVerticalPadding", f(4.0)),
+            ],
+        ),
+        node(
+            21,
+            Some((20, "!")),
+            "ELLIPSE",
+            "Icon",
+            vec![("size", xy(16.0, 16.0)), ("transform", at(12.0, 12.0)), ("parameterConsumptionMap", prop_ref(80, "VISIBLE"))],
+        ),
+        node(
+            10,
+            Some((1, "!")),
+            "FRAME",
+            "Screen",
+            vec![
+                ("size", xy(400.0, 300.0)),
+                ("fillPaints", arr(vec![solid(1.0, 1.0, 1.0)])),
+                ("prototypeStartingPoint", o(vec![("name", s("Main flow")), ("position", s("!"))])),
+                (
+                    "variableModeBySetMap",
+                    o(vec![("entries", arr(vec![o(vec![("variableSetID", o(vec![("guid", g(4))])), ("variableModeID", g(91))])]))]),
+                ),
+            ],
+        ),
+        node(
+            11,
+            Some((10, "!")),
+            "ROUNDED_RECTANGLE",
+            "Photo",
+            vec![
+                ("size", xy(50.0, 40.0)),
+                ("transform", at(10.0, 20.0)),
+                ("cornerRadius", f(6.0)),
+                ("fillPaints", arr(vec![o(vec![("type", e("IMAGE")), ("image", o(vec![("hash", Kv::Bytes(HASH.to_vec()))]))])])),
+                ("strokePaints", arr(vec![solid(0.0, 0.0, 0.0)])),
+                ("strokeWeight", f(2.0)),
+                ("prototypeInteractions", arr(vec![click])),
+            ],
+        ),
+        node(
+            12,
+            Some((10, "\"")),
+            "TEXT",
+            "Title",
+            vec![
+                ("size", xy(120.0, 20.0)),
+                ("transform", at(10.0, 80.0)),
+                ("fillPaints", arr(vec![solid(0.0, 0.0, 0.0)])),
+                ("fontSize", f(16.0)),
+                ("fontName", font("Regular")),
+                ("textData", text),
+            ],
+        ),
         node(13, Some((10, "#")), "FRAME", "Group", vec![("size", xy(30.0, 30.0)), ("transform", at(100.0, 100.0)), ("resizeToFit", Kv::Bool(true))]),
-        node(14, Some((13, "!")), "VECTOR", "Tri", vec![
-            ("size", xy(10.0, 8.0)),
-            ("transform", at(5.0, 6.0)),
-            ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
-            ("fillGeometry", arr(vec![o(vec![("windingRule", e("NONZERO")), ("commandsBlob", u(0))])])),
-        ]),
-        node(15, Some((13, "\"")), "STAR", "Star", vec![("size", xy(20.0, 20.0)), ("transform", at(10.0, 10.0)), ("count", u(6)), ("starInnerScale", f(0.5))]),
-        node(16, Some((10, "$")), "ROUNDED_RECTANGLE", "Styled", vec![
-            ("size", xy(10.0, 10.0)),
-            ("transform", at(0.0, 200.0)),
-            // A stale copy of the style's paint: the style wins.
-            ("fillPaints", arr(vec![solid(0.5, 0.5, 0.5)])),
-            ("styleIdForFill", o(vec![("guid", g(3))])),
-        ]),
-        node(17, Some((10, "%")), "ROUNDED_RECTANGLE", "Card", vec![
-            ("size", xy(10.0, 10.0)),
-            ("transform", at(20.0, 200.0)),
-            ("fillPaints", arr(vec![o(vec![("type", e("SOLID")), ("color", rgb(0.0, 0.0, 0.0)), ("colorVar", alias_data(5))])])),
-        ]),
-        node(18, Some((10, "&")), "INSTANCE", "Button copy", vec![
-            ("size", xy(100.0, 40.0)),
-            ("transform", at(200.0, 200.0)),
-            ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
-            ("stackMode", e("HORIZONTAL")),
-            ("symbolData", o(vec![("symbolID", g(20)), ("symbolOverrides", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(21)]))])), ("name", s("Renamed icon"))])]))])),
-            ("componentPropAssignments", arr(vec![o(vec![("defID", g(80)), ("value", o(vec![("boolValue", Kv::Bool(false))]))])])),
-        ]),
+        node(
+            14,
+            Some((13, "!")),
+            "VECTOR",
+            "Tri",
+            vec![
+                ("size", xy(10.0, 8.0)),
+                ("transform", at(5.0, 6.0)),
+                ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
+                ("fillGeometry", arr(vec![o(vec![("windingRule", e("NONZERO")), ("commandsBlob", u(0))])])),
+            ],
+        ),
+        node(
+            15,
+            Some((13, "\"")),
+            "STAR",
+            "Star",
+            vec![("size", xy(20.0, 20.0)), ("transform", at(10.0, 10.0)), ("count", u(6)), ("starInnerScale", f(0.5))],
+        ),
+        node(
+            16,
+            Some((10, "$")),
+            "ROUNDED_RECTANGLE",
+            "Styled",
+            vec![
+                ("size", xy(10.0, 10.0)),
+                ("transform", at(0.0, 200.0)),
+                // A stale copy of the style's paint: the style wins.
+                ("fillPaints", arr(vec![solid(0.5, 0.5, 0.5)])),
+                ("styleIdForFill", o(vec![("guid", g(3))])),
+            ],
+        ),
+        node(
+            17,
+            Some((10, "%")),
+            "ROUNDED_RECTANGLE",
+            "Card",
+            vec![
+                ("size", xy(10.0, 10.0)),
+                ("transform", at(20.0, 200.0)),
+                ("fillPaints", arr(vec![o(vec![("type", e("SOLID")), ("color", rgb(0.0, 0.0, 0.0)), ("colorVar", alias_data(5))])])),
+            ],
+        ),
+        node(
+            18,
+            Some((10, "&")),
+            "INSTANCE",
+            "Button copy",
+            vec![
+                ("size", xy(100.0, 40.0)),
+                ("transform", at(200.0, 200.0)),
+                ("fillPaints", arr(vec![solid(1.0, 0.0, 0.0)])),
+                ("stackMode", e("HORIZONTAL")),
+                (
+                    "symbolData",
+                    o(vec![
+                        ("symbolID", g(20)),
+                        ("symbolOverrides", arr(vec![o(vec![("guidPath", o(vec![("guids", arr(vec![g(21)]))])), ("name", s("Renamed icon"))])])),
+                    ]),
+                ),
+                ("componentPropAssignments", arr(vec![o(vec![("defID", g(80)), ("value", o(vec![("boolValue", Kv::Bool(false))]))])])),
+            ],
+        ),
         node(19, Some((10, "'")), "STICKY", "Note", vec![]),
     ];
     o(vec![("nodeChanges", arr(nodes)), ("blobs", arr(vec![o(vec![("bytes", Kv::Bytes(triangle_blob()))])]))])
@@ -350,7 +435,12 @@ fn kiwi_round_trip() {
 fn kiwi_scalars() {
     let names = ["f", "i", "u", "i64", "u64", "s", "b"];
     let types = [Type::Float, Type::Int, Type::Uint, Type::Int64, Type::Uint64, Type::Str, Type::Bool];
-    let fields = names.iter().zip(types).enumerate().map(|(i, (n, t))| Field { name: n.to_string(), ty: Some(t), array: false, value: i as u32 + 1 }).collect();
+    let fields = names
+        .iter()
+        .zip(types)
+        .enumerate()
+        .map(|(i, (n, t))| Field { name: n.to_string(), ty: Some(t), array: false, value: i as u32 + 1 })
+        .collect();
     let sc = Schema { defs: vec![Def { name: "M".into(), kind: Kind::Message, fields }] };
     let cases = [
         (0.0f32, 0i32, 0u32, 0i64, 0u64),
@@ -437,7 +527,9 @@ fn imports_the_fixture() {
     let button = named(&doc, "Button");
     assert!(matches!(&button.kind, NodeKind::Component { props, .. } if props.contains_key("Show icon")));
     let inst = named(&doc, "Button copy");
-    assert!(matches!(&inst.kind, NodeKind::Instance { component, props } if *component == button.id && props.get("Show icon") == Some(&Value::Bool(false))));
+    assert!(
+        matches!(&inst.kind, NodeKind::Instance { component, props } if *component == button.id && props.get("Show icon") == Some(&Value::Bool(false)))
+    );
     let icon = doc.node(inst.children[0]).unwrap();
     assert_eq!(icon.name, "Renamed icon");
     assert!(!icon.visible);

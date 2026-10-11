@@ -178,7 +178,8 @@ impl<'a> Mapper<'a> {
                 kids.entry(parent).or_default().push((p.get("position").and_then(Kv::str).unwrap_or(""), id.clone()));
             }
             for d in n.get("componentPropDefs").map(Kv::list).unwrap_or_default() {
-                if let (Some(did), Some(name), Some(ty)) = (d.get("id").and_then(guid), d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str))
+                if let (Some(did), Some(name), Some(ty)) =
+                    (d.get("id").and_then(guid), d.get("name").and_then(Kv::str), d.get("type").and_then(Kv::str))
                 {
                     prop_defs.insert(did.clone(), (format!("{name}#{did}"), ty));
                 }
@@ -189,7 +190,8 @@ impl<'a> Mapper<'a> {
             list.sort();
             list.dedup_by(|a, b| a.1 == b.1);
         }
-        let blobs = msg.get("blobs").map(Kv::list).unwrap_or_default().iter().map(|b| b.get("bytes").and_then(Kv::bytes).unwrap_or_default()).collect();
+        let blobs =
+            msg.get("blobs").map(Kv::list).unwrap_or_default().iter().map(|b| b.get("bytes").and_then(Kv::bytes).unwrap_or_default()).collect();
         Self { nodes, kids, blobs, prop_defs, styles: Obj::new(), components: Obj::new(), warnings: Vec::new(), count: 0 }
     }
 
@@ -304,8 +306,11 @@ impl<'a> Mapper<'a> {
             self.component(&mut o, &view, &rest_id);
         }
         self.prop_refs(&mut o, &view, inst);
-        let child_space =
-            if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") { space * view.get("transform").and_then(matrix).unwrap_or_default() } else { Affine::IDENTITY };
+        let child_space = if matches!(ty, "GROUP" | "BOOLEAN_OPERATION") {
+            space * view.get("transform").and_then(matrix).unwrap_or_default()
+        } else {
+            Affine::IDENTITY
+        };
         let mut kids = Vec::new();
         if ty == "INSTANCE" {
             if let Some((sub, sym)) = self.instance(&mut o, &view, id, inst, &rest_id) {
@@ -465,10 +470,14 @@ impl<'a> Mapper<'a> {
             copy_num(o, v, "gridRowGap", "gridRowGap");
             o.insert("gridColumnCount".into(), json!(tracks(v, "gridColumns").len()));
             o.insert("gridRowCount".into(), json!(tracks(v, "gridRows").len()));
-            let sizes = ["gridColumnsSizing", "gridRowsSizing"].iter().flat_map(|k| v.get(k).and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default());
+            let sizes = ["gridColumnsSizing", "gridRowsSizing"]
+                .iter()
+                .flat_map(|k| v.get(k).and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default());
             let flexible = sizes.into_iter().all(|e| {
                 let t = e.get("trackSize");
-                ["minSizing", "maxSizing"].iter().all(|s| t.and_then(|t| t.get(s)).and_then(|s| s.get("type")).and_then(Kv::str).is_none_or(|x| x == "FLEX"))
+                ["minSizing", "maxSizing"]
+                    .iter()
+                    .all(|s| t.and_then(|t| t.get(s)).and_then(|s| s.get("type")).and_then(Kv::str).is_none_or(|x| x == "FLEX"))
             });
             if !flexible {
                 self.warn("grid tracks of fixed or content size import as equal tracks");
@@ -477,8 +486,11 @@ impl<'a> Mapper<'a> {
     }
 
     fn text(&mut self, o: &mut Obj, v: &View<'a>) {
-        let style_node =
-            v.get("styleIdForText").and_then(ref_guid).or_else(|| v.get("inheritTextStyleID").and_then(guid)).and_then(|s| self.nodes.get(&s).copied());
+        let style_node = v
+            .get("styleIdForText")
+            .and_then(ref_guid)
+            .or_else(|| v.get("inheritTextStyleID").and_then(guid))
+            .and_then(|s| self.nodes.get(&s).copied());
         let sv = v.with(style_node.filter(|s| s.get("styleType").and_then(Kv::str) == Some("TEXT")));
         let td = v.get("textData");
         let chars = td.and_then(|t| t.get("characters")).and_then(Kv::str).unwrap_or("");
@@ -595,7 +607,8 @@ impl<'a> Mapper<'a> {
                 Some("OVERRIDDEN_SYMBOL_ID") => "mainComponent",
                 _ => continue,
             };
-            let Some(def) = e.get("variableData").and_then(|d| d.get("value")).and_then(|x| x.get("propRefValue")).and_then(|p| p.get("defId")).and_then(guid)
+            let Some(def) =
+                e.get("variableData").and_then(|d| d.get("value")).and_then(|x| x.get("propRefValue")).and_then(|p| p.get("defId")).and_then(guid)
             else {
                 continue;
             };
@@ -669,7 +682,8 @@ impl<'a> Mapper<'a> {
         let lists = [sd.and_then(|s| s.get("symbolOverrides")).map(Kv::list).unwrap_or_default(), v.list("derivedSymbolData")];
         for (layer, list) in lists.into_iter().enumerate() {
             for ov in list {
-                let rel: Vec<String> = ov.get("guidPath").and_then(|g| g.get("guids")).map(Kv::list).unwrap_or_default().iter().filter_map(guid).collect();
+                let rel: Vec<String> =
+                    ov.get("guidPath").and_then(|g| g.get("guids")).map(Kv::list).unwrap_or_default().iter().filter_map(guid).collect();
                 if rel.is_empty() || rel == [sym.clone()] {
                     continue;
                 }
@@ -778,7 +792,9 @@ impl<'a> Mapper<'a> {
                 Some("BACK") => actions.push(json!({"type": "BACK"})),
                 Some("CLOSE") => actions.push(json!({"type": "CLOSE"})),
                 Some("NONE") => {}
-                Some(other) => self.warn(format!("{} prototype actions are not imported from .fig files yet", other.to_ascii_lowercase().replace('_', " "))),
+                Some(other) => {
+                    self.warn(format!("{} prototype actions are not imported from .fig files yet", other.to_ascii_lowercase().replace('_', " ")))
+                }
             }
         }
         (!actions.is_empty()).then(|| json!({"trigger": trigger, "actions": actions}))
@@ -833,7 +849,9 @@ impl<'a> Mapper<'a> {
     /// Collections and variables, as the local variables response's `meta`.
     fn variables(&self) -> Option<Value> {
         let of_type = |t: &'static str| {
-            self.nodes.iter().filter(move |(_, n)| n.get("type").and_then(Kv::str) == Some(t) && n.get("isSoftDeleted").and_then(Kv::bool) != Some(true))
+            self.nodes
+                .iter()
+                .filter(move |(_, n)| n.get("type").and_then(Kv::str) == Some(t) && n.get("isSoftDeleted").and_then(Kv::bool) != Some(true))
         };
         let mut collections = Obj::new();
         for (id, n) in of_type("VARIABLE_SET") {
@@ -868,7 +886,10 @@ impl<'a> Mapper<'a> {
             }
             let name = n.get("name").and_then(Kv::str).unwrap_or("Variable");
             let desc = n.get("description").and_then(Kv::str).unwrap_or("");
-            variables.insert(id.clone(), json!({"id": id, "name": name, "variableCollectionId": set, "resolvedType": ty, "valuesByMode": values, "description": desc}));
+            variables.insert(
+                id.clone(),
+                json!({"id": id, "name": name, "variableCollectionId": set, "resolvedType": ty, "valuesByMode": values, "description": desc}),
+            );
         }
         (!collections.is_empty()).then(|| json!({"variableCollections": collections, "variables": variables}))
     }
@@ -964,7 +985,8 @@ fn child_layout(o: &mut Obj, v: &View, parent: Option<&View>) {
         }
     }
     if let Some(p) = parent.filter(|p| p.str("stackMode") == Some("GRID")) {
-        for (anchor, list, to) in [("gridColumnAnchor", "gridColumns", "gridColumnAnchorIndex"), ("gridRowAnchor", "gridRows", "gridRowAnchorIndex")] {
+        for (anchor, list, to) in [("gridColumnAnchor", "gridColumns", "gridColumnAnchorIndex"), ("gridRowAnchor", "gridRows", "gridRowAnchorIndex")]
+        {
             if let Some(i) = v.get(anchor).and_then(guid).and_then(|g| tracks(p, list).iter().position(|t| *t == g)) {
                 o.insert(to.into(), json!(i));
             }
@@ -1020,7 +1042,8 @@ fn paint(p: &Kv) -> Option<Value> {
             o.insert("gradientStops".into(), Value::Array(stops));
         }
         "IMAGE" => {
-            let hash: String = p.get("image").and_then(|i| i.get("hash")).and_then(Kv::bytes).unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect();
+            let hash: String =
+                p.get("image").and_then(|i| i.get("hash")).and_then(Kv::bytes).unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect();
             o.insert("imageRef".into(), json!(hash));
             let mode = p.get("imageScaleMode").and_then(Kv::str).unwrap_or("FILL");
             o.insert("scaleMode".into(), json!(mode));
@@ -1231,7 +1254,13 @@ fn transition(a: &Kv) -> Option<Value> {
         "SMART_ANIMATE" | "MAGIC_MOVE" => ("SMART_ANIMATE", None),
         "SCROLL_ANIMATE" => ("SCROLL_ANIMATE", None),
         t => {
-            let prefixes = [("SLIDE_FROM_", "SLIDE_IN"), ("PUSH_FROM_", "PUSH"), ("MOVE_FROM_", "MOVE_IN"), ("SLIDE_OUT_TO_", "SLIDE_OUT"), ("MOVE_OUT_TO_", "MOVE_OUT")];
+            let prefixes = [
+                ("SLIDE_FROM_", "SLIDE_IN"),
+                ("PUSH_FROM_", "PUSH"),
+                ("MOVE_FROM_", "MOVE_IN"),
+                ("SLIDE_OUT_TO_", "SLIDE_OUT"),
+                ("MOVE_OUT_TO_", "MOVE_OUT"),
+            ];
             let (kind, side) = prefixes.iter().find_map(|(p, k)| t.strip_prefix(p).map(|r| (*k, r)))?;
             let incoming = matches!(kind, "SLIDE_IN" | "PUSH" | "MOVE_IN");
             let dir = match (side, incoming) {
