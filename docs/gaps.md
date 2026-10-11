@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: the standalone server with share links to edit or view; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -26,7 +26,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 10 | Shared (team) libraries | Feature | 10–20 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video and animated GIF fills; HEIC/TIFF images | File format | 6–12 | [file-format-parity](file-format-parity.md) |
-| 13 | Live boolean editing and the vector tail | Feature | 6–10 | [target-app-parity](target-app-parity.md) |
+| 13 | Boolean groups hit-tested by their operands (the rest of the vector tail landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections, import/export | Feature | 4–8 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
 | 16 | Dev Mode: Code Connect, editor integrations | Feature | 4–8 | [dev-mode-parity](dev-mode-parity.md) |
@@ -164,10 +164,17 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   (help center, checked 2026-10-10). FigCraft decodes PNG, JPEG, WebP, GIF (first frame) and BMP.
 - **Estimate:** 6–12 h (video playback in the presenter is most of it).
 
-### 13. Live boolean editing and the vector tail
-- **Missing:** editing a boolean group's operands in place with live results, Design panel arc
-  fields, shape builder on strokes and open paths, one-sided variable widths.
-- **Estimate:** 6–10 h.
+### 13. Boolean groups hit-tested by their operands
+- **Landed (2026-10-11):** live boolean editing (operands selected by double-click or Cmd/Ctrl-click;
+  moving, resizing or editing an operand's points redraws the result during the drag, with every
+  operand outlined; per-operand operations from the boolean controls and `node.set`; a drag frame
+  recombines only the operands from the edited one up), Design panel Arc fields (Start, Sweep,
+  Ratio; Mixed across ellipses; bindable), the shape builder on strokes and open paths (strokes take
+  part as their outlined areas), one-sided variable widths (Alt-drag a width handle; canvas, PNG,
+  SVG, PDF and outline stroke).
+- **Missing:** a click is tested against a boolean group's operands, not its result, so a click in
+  a subtracted hole still picks the group.
+- **Estimate:** 1–3 h.
 
 ### 14. Variables: extended collections, import/export
 - **Missing:** extended collections (a library collection extended with overrides), variables
@@ -224,6 +231,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
+| 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

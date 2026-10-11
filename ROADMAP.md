@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: the standalone server with share links to edit or view; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -14,19 +14,19 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | | Value | Kind |
 |---|---|---|
 | Menu/command breadth | **98.5%** (200 / 203) | measured, [`docs/parity-checklist.md`](docs/parity-checklist.md) (`cargo xtask parity`) |
-| Feature breadth | **~78%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
+| Feature breadth | **~79%** (core editor ~90%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
 | Ready for real work | **~47%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
-| Mainstream practitioner | **~43%** | estimated: weekly areas 66.5% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
+| Mainstream practitioner | **~43%** | estimated: weekly areas 66.7% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~200–365 h** one agent | estimated |
-| Remaining to full parity | **~390–745 h** one agent (~95–170 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~385–730 h** one agent (~95–165 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~47% | ~375–705 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
-| Mainstream practitioner | ~43% | ~180–330 h | core editor depth incl. `.fig` import (98–188), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~47% | ~370–695 h | multiplayer (45–90), localization (60–100), plugins (25–55), the interaction pass (40–60), `.fig` import (30–60), GPU canvas (30–60), AI (30–60) |
+| Mainstream practitioner | ~43% | ~175–320 h | core editor depth incl. `.fig` import (91–177), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~53% | ~85–160 h | `.fig` import so files people send open (30–60), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -56,7 +56,7 @@ the localization layer with Figma's own languages (20–35 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 67%) | 71–135 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 12% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -75,7 +75,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Canvas & navigation | 95% | 72% | 3–6 | [ui-parity](docs/ui-parity.md) |
 | Selection & transform | 95% | 68% | 6–10 | [ui-parity](docs/ui-parity.md) |
 | Layers panel | 95% | 78% | 2–4 | [ui-parity](docs/ui-parity.md) |
-| Shapes & vector | 92% | 66% | 8–14 | [target-app-parity](docs/target-app-parity.md) |
+| Shapes & vector | 97% | 68% | 1–3 | [target-app-parity](docs/target-app-parity.md) |
 | Paint | 85% | 66% | 5–9 | [target-app-parity](docs/target-app-parity.md) |
 | Strokes | 90% | 72% | 2–4 | [target-app-parity](docs/target-app-parity.md) |
 | Effects | 100% | 72% | 3–6 | [target-app-parity](docs/target-app-parity.md) |
@@ -127,6 +127,11 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Progress log
 
+- **2026-10-11** · Live boolean editing: operands stay editable layers (double-click or Cmd/Ctrl-click
+  selects one, moving, resizing or editing its points redraws the result during the drag with every
+  operand outlined, per-operand operations from the boolean controls, prefix-cached recompute);
+  Design panel arc fields; the shape builder on strokes and open paths; one-sided variable widths
+  (gap 13). Feature breadth ~79%.
 - **2026-10-10** · WASM plugins (#101: sandboxed wasmi runtime, manifest permissions, Plugins menu,
   Run last, Manage, Rust SDK and two examples), docs refresh (#102), the multiplayer core without
   networking (#103: client-scoped ids, change sets, server ordering and validation, client
@@ -153,6 +158,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
+| 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

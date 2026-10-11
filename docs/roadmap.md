@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: the standalone server with share links to edit or view; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -50,7 +50,7 @@ blockers.
 | M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~75% | Open recent, outline mode variants, keyboard box selection, interaction pass | 8–14 + pass |
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
 | M3 Components & styles depth | ~75% | extended collections, variables import/export, real libraries | 10–20 |
-| M4 Vector & text depth | ~70% | live booleans, spell check, Figma Draw (brushes, pressure, text on a path, patterns) | 24–40 |
+| M4 Vector & text depth | ~75% (live booleans, arc fields, shape builder on strokes, one-sided widths landed 2026-10-11) | spell check, Figma Draw (brushes, pressure, text on a path, patterns), boolean hit testing on the result | 18–32 |
 | M5 Prototype & present | ~85% | media, gamepad, separate window | 5–9 |
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
@@ -72,6 +72,7 @@ blockers.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
+| 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |
 | 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |

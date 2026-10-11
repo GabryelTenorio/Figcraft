@@ -653,6 +653,23 @@ fn outline_shape(app: &FigApp, doc: &Document, id: NodeId) -> Option<Vec<Vec<Pos
     Some(out)
 }
 
+/// A layer's outline on the canvas: its shape for ellipses, vectors, polygons, stars and boolean
+/// groups, its box otherwise.
+fn draw_outline(app: &FigApp, painter: &egui::Painter, doc: &Document, id: NodeId, s: Stroke) {
+    match outline_shape(app, doc, id) {
+        Some(lines) => {
+            for l in lines {
+                painter.add(Shape::line(l, s));
+            }
+        }
+        None => {
+            if let Some(q) = node_quad(app, doc, id) {
+                quad(painter, q, s);
+            }
+        }
+    }
+}
+
 /// Everything drawn over the rendered page; returns the frame labels drawn (frame, corners on the
 /// page) for the engine to hit-test.
 fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [Point; 4])> {
@@ -724,19 +741,13 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
         && app.session.prefs.highlight_on_hover
         && app.session.tool.overlay.measure_box.is_none()
     {
-        let col = outline_colour(&doc, h);
-        match outline_shape(app, &doc, h) {
-            Some(lines) => {
-                for l in lines {
-                    painter.add(Shape::line(l, stroke(col, 1.5)));
-                }
-            }
-            None => {
-                if let Some(q) = node_quad(app, &doc, h) {
-                    quad(painter, q, stroke(col, 1.5));
-                }
-            }
-        }
+        draw_outline(app, painter, &doc, h, stroke(outline_colour(&doc, h), 1.5));
+    }
+    // Inside a boolean group (an operand selected or in vector edit mode): every operand's outline,
+    // so the shapes making the live result stay visible while one of them changes.
+    let operands = figcraft_engine::booleans::outlined_operands(&doc, &sel, ds.vector_edit.as_ref().map(|ve| ve.id));
+    for id in operands.iter().filter(|o| !sel.contains(o)) {
+        draw_outline(app, painter, &doc, *id, stroke(outline_colour(&doc, *id).gamma_multiply(0.6), 1.0));
     }
     // Drop target / insertion indicator.
     let ov = &app.session.tool.overlay;
@@ -779,18 +790,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     if !sel.is_empty() && editing.is_none() && ds.vector_edit.is_none() {
         let col = if sel.iter().any(|i| outline_colour(&doc, *i) == COMPONENT) { COMPONENT } else { ACCENT };
         for id in &sel {
-            match outline_shape(app, &doc, *id) {
-                Some(lines) => {
-                    for l in lines {
-                        painter.add(Shape::line(l, stroke(col, 1.0)));
-                    }
-                }
-                None => {
-                    if let Some(q) = node_quad(app, &doc, *id) {
-                        quad(painter, q, stroke(col, 1.0));
-                    }
-                }
-            }
+            draw_outline(app, painter, &doc, *id, stroke(col, 1.0));
         }
         // The shape builder reshapes by regions: no transform box.
         if app.session.tool.tool != ToolId::ShapeBuilder
@@ -963,6 +963,7 @@ fn arc_overlay(app: &FigApp, painter: &egui::Painter, col: Color32) {
 /// Variable width tool: each width point on the path with a bar across the stroke to its two
 /// width handles (the selected point filled), and a faint preview where a drag would add one.
 fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &figcraft_engine::vectoredit::VectorEdit, zoom: f64) {
+    use figcraft_doc::WidthSide;
     use figcraft_engine::vectoredit::{WHit, width_handles, width_preview};
     let hover = app.session.tool.overlay.width_hover;
     let sp = |p: &[f64; 2]| app.to_screen(p[0], p[1]);
@@ -971,8 +972,8 @@ fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &fig
         let col = if ghost { ACCENT.gamma_multiply(0.5) } else { ACCENT };
         painter.line_segment([a, b], stroke(Color32::from_white_alpha(160), 3.0));
         painter.line_segment([a, b], stroke(col, 1.0));
-        let grab = !ghost && hover == Some(WHit::Handle { index: h.index });
-        for e in [a, b] {
+        for (e, side) in [(a, WidthSide::Right), (b, WidthSide::Left)] {
+            let grab = !ghost && hover == Some(WHit::Handle { index: h.index, side });
             let r = if grab { 4.5 } else { 3.5 };
             painter.circle_filled(e, r, Color32::WHITE);
             painter.circle_stroke(e, r, stroke(col, 1.0));
@@ -986,7 +987,7 @@ fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &fig
     for h in width_handles(doc, ve, zoom) {
         draw(&h, false);
     }
-    if let Some(WHit::Path { t }) = hover {
+    if let Some(WHit::Path { t, .. }) = hover {
         for h in width_preview(doc, ve, t, zoom) {
             draw(&h, true);
         }

@@ -79,7 +79,7 @@ fn width_tool_drags_add_slide_and_size_points_in_one_step_each() {
     assert_eq!(ve(&s).tool, VTool::Width);
     // Hovering the stroke offers to add a point there.
     s.pointer(&ev(PointerKind::Hover, 50.0, 52.0)).unwrap();
-    assert!(matches!(s.tool.overlay.width_hover, Some(WHit::Path { t }) if (t - 0.5).abs() < 1e-9));
+    assert!(matches!(s.tool.overlay.width_hover, Some(WHit::Path { t, side: WidthSide::Right }) if (t - 0.5).abs() < 1e-9));
     // Dragging from the path adds a point and sets its width: 20 from the centre = 40 wide.
     drag(&mut s, (50.0, 50.0), (50.0, 70.0));
     assert_eq!(points(&s, id), vec![(0.0, 1.0), (0.5, 4.0), (1.0, 1.0)]);
@@ -94,7 +94,7 @@ fn width_tool_drags_add_slide_and_size_points_in_one_step_each() {
     let h = hs.iter().find(|h| h.index == 1).unwrap();
     assert!((h.sides[0][1] - 70.0).abs() < 1e-6 || (h.sides[1][1] - 70.0).abs() < 1e-6, "{h:?}");
     s.pointer(&ev(PointerKind::Hover, 50.0, 30.0)).unwrap();
-    assert_eq!(s.tool.overlay.width_hover, Some(WHit::Handle { index: 1 }));
+    assert_eq!(s.tool.overlay.width_hover, Some(WHit::Handle { index: 1, side: WidthSide::Left }));
     drag(&mut s, (50.0, 30.0), (50.0, 45.0));
     assert_eq!(points(&s, id), vec![(0.0, 1.0), (0.5, 1.0), (1.0, 1.0)]);
     // Dragging the point slides it along the path.

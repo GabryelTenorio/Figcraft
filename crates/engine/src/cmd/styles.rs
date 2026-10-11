@@ -681,6 +681,9 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
                 VariableValue::Color(c) => json!(c.to_css_hex()),
                 // Opacity variables hold percentages.
                 VariableValue::Number(x) if field == "opacity" => json!((x / 100.0).clamp(0.0, 1.0)),
+                // Arc sweep and ratio variables hold percentages too (what the Arc fields show).
+                VariableValue::Number(x) if field == "arcSweep" => json!(x * 3.6),
+                VariableValue::Number(x) if field == "arcInner" => json!(x / 100.0),
                 VariableValue::Number(x) => json!(x),
                 VariableValue::String(x) => json!(x),
                 VariableValue::Boolean(b) => json!(b),

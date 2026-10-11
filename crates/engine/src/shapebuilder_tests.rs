@@ -225,7 +225,7 @@ fn groups_rotated_and_ineligible_layers() {
     let line = id(&ex(&mut s, "shape.line", json!({"x": 0, "y": 5, "width": 20})));
     let frame = id(&ex(&mut s, "frame.create", json!({"x": 100, "y": 100, "width": 50, "height": 50})));
     let r = ex(&mut s, "shapeBuilder.regions", json!({"ids": [g, line, frame]}));
-    assert_eq!(r["sources"], json!([a, b]), "groups give their shapes; lines and frames don't take part");
+    assert_eq!(r["sources"], json!([a, b, line]), "groups give their shapes; lines take part through their strokes; frames don't");
     // The merged shape lands in the group, which stays selected.
     s.set_selection(vec![g]);
     let m = id(&ex(&mut s, "shapeBuilder.merge", json!({"points": [[7, 7]]})));

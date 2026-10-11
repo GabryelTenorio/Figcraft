@@ -10,6 +10,7 @@
 pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
+pub mod booleans;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -1138,11 +1139,15 @@ mod annotation_categories_tests;
 #[cfg(test)]
 mod annotations_tests;
 #[cfg(test)]
+mod arc_fields_tests;
+#[cfg(test)]
 mod arc_handles_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
+#[cfg(test)]
+mod booleans_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]
@@ -1231,6 +1236,8 @@ mod section_contents_tests;
 mod section_tests;
 #[cfg(test)]
 mod selection_depth_tests;
+#[cfg(test)]
+mod shapebuilder_strokes_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
 #[cfg(test)]

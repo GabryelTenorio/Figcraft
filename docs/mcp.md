@@ -218,6 +218,16 @@ points: `vector.edit.widthPoint {t, width? (px) | scale?}` adds one, `{index, t?
 moves or resizes it, `{action: "remove", index}` deletes it. Rendering, PNG/SVG/PDF export and
 `vector.outlineStroke` follow the profile.
 
+One-sided widths: a width point can be wider on one side of the path than the other (left and
+right looking along the path, y down). Points are `[t, left, right]` (or `{t, left, right}`) where
+each side's scale is what `scale` would be with both sides that wide, so `[t, s]` equals
+`[t, s, s]`; `get_node` reports one-sided points that way. `vector.edit.widthPoint {index, side:
+left|right, width? | scale?}` changes one side (`width`: the distance from the centre line to that
+edge; with `t` it adds a point keeping the other side as it is); a width without `side` makes the
+point symmetric again. With `pointer`, `alt: true` while dragging a handle (or the path) changes
+that side only; `vector.edit.state` lists `widthPoints` with both handle positions (`sides`:
+right, left) and `oneSided`.
+
 ### Prototypes
 
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
@@ -367,15 +377,35 @@ remove and reorder layers there, unlike the rest of an instance). It is a compon
 
 `get_node` shows `"slot": "<property>"` on slot layers.
 
+### Boolean groups
+
+`bool.union` / `bool.subtract` / `bool.intersect` / `bool.exclude {ids?}` wrap layers in a new
+boolean group, except: with one boolean group selected they set its operation (every operand follows
+it again), and with layers inside boolean groups they set those operands' own operation. Each
+operand above the bottom one combines with the result of the operands below it by its own
+operation, or the group's (`node.set {operandOperation: union|subtract|intersect|exclude | null}`
+on any operand, or `booleanOperation` on an operand that isn't itself a boolean group; on a group
+`booleanOperation` is the group's). `get_node` shows `operandOperation` on operands that have one.
+Operands stay editable layers: `select.children` (Enter) or a double-click selects them, `cmd: true`
+clicks reach them directly, and moving, resizing or editing an operand's points (`vector.edit.*`)
+updates the group's result on every pointer move, one undo step per gesture; a dragged operand
+stays in its group. `bool.flatten` bakes the result. Only the operands from the edited one up are
+recombined during a drag (`figcraft_render::boolean`; timed by `cargo xtask bench`).
+
 ### Shape builder
 
 The selected shapes' outlines split the canvas into regions (areas covered by the same shapes).
 `shapeBuilder.regions {ids?}` lists them: an SVG `path` in page coordinates, the `sources` covering
-each one (top-most first), `bounds` and a `point` inside. `shapeBuilder.merge {ids?, regions?,
-points?}` makes one vector from the regions (by index, or the regions under page points), styled
-like the top-most shape over the first one; `shapeBuilder.remove {ids?, regions?, points?}` deletes
-them. Either way every shape covering a picked region loses that area (it becomes a vector, or goes
-when nothing is left), and each call is one undo step. The tool is `tool.shapeBuilder` (Shift+M):
+each one (top-most first), the `parts` covering it (`{id, stroke}`: a shape's fill, or its stroke's
+outlined area; top-most first), `bounds` and a `point` inside. Visible strokes take part as their
+outlined areas, so stroked lines and open paths split the regions they cross and a stroke's band is a
+region of its own. `shapeBuilder.merge {ids?, regions?, points?}` makes one vector from the regions
+(by index, or the regions under page points), styled like the top-most fill or stroke over the first
+one (a stroke's region is filled with the stroke's paints); `shapeBuilder.remove {ids?, regions?,
+points?}` deletes them. Either way every shape covering a picked region loses that area (it becomes
+a vector, or goes when nothing is left); the strokes of the shapes involved become outlined vectors
+just above them (`outlines` in the result; an open path is replaced by its outline), and each call
+is one undo step. The tool is `tool.shapeBuilder` (Shift+M):
 click or drag across regions with `pointer` to merge, add `alt` to remove; `shapeBuilder.mode
 {mode: merge|remove}` swaps what a plain click does.
 
@@ -727,7 +757,10 @@ guide, along the frame's axis nearer the ruler's.
   the start. **Start** turns the arc and keeps its sweep. **Ratio** (the centre, or the inner edge
   halfway round a ring) drags out to make a ring, and into the gap to show the other part.
   `shift: true` snaps angles to 15° steps and the ratio to 5% steps. Each drag is one undo step
-  and writes `node.set`'s `arcStart` / `arcSweep` (degrees) and `arcInner` (0–0.99).
+  and writes `node.set`'s `arcStart` / `arcSweep` (degrees) and `arcInner` (0–0.99). The Design
+  panel's Arc fields (Start °, Sweep %, Ratio %) write the same keys; number variables bound to
+  `arcSweep` and `arcInner` (`variable.bind`) hold percentages, as the fields show them, and ones
+  bound to `arcStart` degrees.
   `tool.overlay.arc` holds the readout while dragging (`{handle, label: "Sweep 75%", at}`), and
   `tool.overlay.arc_hover` holds the handle under the pointer.
 - **Select**: `select.layersAt {x, y}` lists every layer under a page point, front-most first with its
