@@ -362,6 +362,15 @@ fn read(path: &str) -> Result<Vec<u8>> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
+/// The bytes of file `path`, refused when it's larger than `max`.
+pub(crate) fn read_capped(path: &str, max: u64) -> Result<Vec<u8>> {
+    let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    if !meta.is_file() || meta.len() > max {
+        return Err(EngineError::Other(format!("{path}: not a file of at most {max} bytes")));
+    }
+    read(path)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn write(path: &str, bytes: &[u8]) -> Result<()> {
     let tmp = format!("{path}.tmp-figcraft");

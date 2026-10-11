@@ -1,9 +1,9 @@
 # Dev Mode parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created from the ROADMAP's Dev Mode items) · **Target:** Figma Design Dev Mode (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect and Dev Mode plugins) · **Target:** Figma Design Dev Mode (desktop app 126.10.7)
 
-**Breadth ~80%, ready ~62% (estimated).** The inspect surface is broad; what's missing connects
-designs to real codebases. Remaining: 4–8 h.
+**Breadth ~90%, ready ~64% (estimated).** The inspect surface is broad and components connect
+to the code components of a repository; left: dev resources links. Remaining: 1–3 h.
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -15,13 +15,14 @@ designs to real codebases. Remaining: 4–8 h.
 | Ready for dev list, statuses, "Changed" after edits | done | |
 | Focus view (one frame, previous / next) | done | |
 | Compare changes (before/after side by side or overlaid, property diffs) | done | only against the snapshot taken when a frame was marked ready; not against any named version |
-| Code Connect (map components to repository code) | missing | |
-| Plugins in Dev Mode (Jira, GitHub, etc.) | missing | needs plugins |
-| VS Code extension | missing | FigCraft's MCP server and control channel already serve design data to agents and editors |
+| Code connect (map components to repository code) | done | per language (React, SwiftUI, Compose): import path, name and a template with `{property}` and `{property ? "a" : "b"}` placeholders; instances (also inside generated layer trees) show the snippet with their values; edited in the Inspect panel with a live preview; `figcraft.connect.json` export/import. Inside a generated layer tree, connected instances' imports aren't collected |
+| Plugins in Dev Mode (Jira, GitHub, etc.) | partial | FigCraft's own WASM plugins that only read run from the Inspect tab; no plugin UI at run time, no third-party integrations |
+| VS Code extension | out of scope | FigCraft's MCP server and control channel already serve design data, code and connected snippets to agents and editors |
 | Dev resources links on layers | missing | 1 h |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–720 h |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

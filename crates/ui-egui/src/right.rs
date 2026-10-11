@@ -1949,6 +1949,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
         widgets::note(ui, "Hover other layers to measure the distance", t.text_secondary);
         crate::dev_mode::ready_list(app, ui);
         crate::dev_mode::categories_section(app, ui);
+        crate::dev_mode::plugins_section(app, ui);
         return;
     };
     let name = doc.node(first).map(|n| n.name.clone()).unwrap_or_default();
@@ -1975,7 +1976,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
             }
         });
     });
-    let code = crate::dev_mode::code(app, first, lang);
+    let code = crate::dev_mode::code(app, ui, first, lang);
     egui::Frame::NONE
         .fill(t.field)
         .corner_radius(CornerRadius::same(6))
@@ -1993,4 +1994,6 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
         app.services.clipboard_set_text(&code);
         app.toast(format!("Copied {}", lang.label()));
     }
+    crate::dev_mode::connect_section(app, ui, &doc, first, lang);
+    crate::dev_mode::plugins_section(app, ui);
 }

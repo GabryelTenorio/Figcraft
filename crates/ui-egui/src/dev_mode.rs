@@ -1,14 +1,17 @@
 //! Dev Mode extras in the Inspect tab: annotations (notes with pinned properties and a category)
 //! drawn as callouts in their category's colour on the canvas and edited in the panel, the
 //! categories and the filter of the callouts, the handoff status of the selected frames (with the
-//! focus view and Compare changes), the list of frames and sections that are ready for dev, and
-//! the focus view's bar.
+//! focus view and Compare changes), the list of frames and sections that are ready for dev, the
+//! focus view's bar, Connect to code (a component's link to its code component) and the plugins
+//! that only read the document.
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use figcraft_doc::{Annotation, AnnotationCategory, DevStatus, Document, NodeId};
+use figcraft_doc::{Annotation, AnnotationCategory, CodeLink, DevStatus, Document, NodeId};
 use figcraft_engine::annotations::{self, PINNABLE, Pinnable};
+use figcraft_engine::code_connect;
 use figcraft_engine::codegen::{CodeLang, code_for};
 use figcraft_engine::devinspect::{self, DevItem, Prop};
+use figcraft_engine::plugins::Access;
 use serde_json::json;
 
 use crate::a11y::Tip;
@@ -227,10 +230,25 @@ impl Callout {
 
 // ------------------------------------------------------------------ Inspect panel
 
+/// Where the template being edited in Connect to code keeps its draft.
+fn template_id(owner: NodeId, lang: CodeLang) -> Id {
+    Id::new(("code_connect_template", owner, lang.id()))
+}
+
 /// Layer `id`'s code in `lang`, generated again only when the document or the choice change (a
-/// component set's code compares every variant).
-pub fn code(app: &mut FigApp, id: NodeId, lang: CodeLang) -> String {
+/// component set's code compares every variant). While a connected template is being edited, its
+/// draft's snippet (the live preview).
+pub fn code(app: &mut FigApp, ui: &Ui, id: NodeId, lang: CodeLang) -> String {
     let Ok(ds) = app.session.ds() else { return String::new() };
+    // The draft lives on after the field loses focus to another layer: only a focused one counts.
+    if let Some(owner) = code_connect::owner(&ds.doc, id)
+        && ui.memory(|m| m.has_focus(template_id(owner, lang).with("te")))
+        && let Some(template) = ui.data(|d| d.get_temp::<String>(template_id(owner, lang)))
+        && let Some(link) = code_connect::link(&ds.doc, id, lang)
+    {
+        let draft = CodeLink { template, ..link.clone() };
+        return code_connect::connected_code(&ds.doc, id, lang, &draft).unwrap_or_default();
+    }
     let key = (ds.uid, ds.revision, id, lang);
     match &app.ui.dev.code {
         Some((k, c)) if *k == key => c.clone(),
@@ -240,6 +258,121 @@ pub fn code(app: &mut FigApp, id: NodeId, lang: CodeLang) -> String {
             c
         }
     }
+}
+
+/// Connect to code for the selected component, set or instance (its main), in the Code section's
+/// language: a button to connect, then a Connected badge, the import path, name and template (the
+/// code above shows the snippet, live while the template is edited).
+pub fn connect_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, lang: CodeLang) {
+    let Some(owner) = code_connect::owner(doc, id) else { return };
+    let t = Tokens::get(ui.ctx());
+    let link = code_connect::link(doc, id, lang).cloned();
+    let connectable = code_connect::language(lang.id()).is_some();
+    widgets::separator(ui);
+    let buttons: &[(Icon, &str)] = match (&link, connectable) {
+        (Some(_), _) => &[(Icon::Minus, "Disconnect from code")],
+        (None, true) => &[(Icon::Plus, "Connect to code")],
+        _ => &[],
+    };
+    let clicked = widgets::section_header(ui, "Connect to code", buttons, link.is_none()).is_some();
+    let params = json!({"id": owner, "language": lang.id()});
+    let Some(link) = link else {
+        if clicked {
+            app.run("codeConnect.set", params);
+        }
+        let text = if connectable {
+            "Link this component to its code component: instances then show your real snippet with their values."
+        } else {
+            "Choose React, SwiftUI or Compose above to connect this component to its code."
+        };
+        widgets::note(ui, text, t.text_secondary);
+        return;
+    };
+    if clicked {
+        app.run("codeConnect.remove", params);
+        return;
+    }
+    // The badge, and what the snippet comes from.
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+    let g = ui.painter().layout_no_wrap("Connected".into(), semibold(10.0), Color32::WHITE);
+    let pill = Rect::from_min_size(pos2(r.min.x + PAD, r.center().y - g.size().y / 2.0 - 2.0), g.size() + vec2(10.0, 4.0));
+    ui.painter().rect_filled(pill, CornerRadius::same(4), t.success);
+    ui.painter().galley(pill.min + vec2(5.0, 2.0), g, Color32::WHITE);
+    let from = if link.import_path.is_empty() { link.name.clone() } else { format!("{} from {}", link.name, link.import_path) };
+    crate::a11y::status(&resp, "Connected", &format!("Connected to code: {from}"));
+    let from_x = pill.max.x + 8.0;
+    let from = widgets::elide(ui, &from, r.max.x - PAD - from_x);
+    ui.painter().text(pos2(from_x, r.center().y), Align2::LEFT_CENTER, from, regular(11.0), t.text_secondary);
+    let mut edit: Option<(&str, String)> = None;
+    widgets::sublabels(ui, "Import path", Some("Name"));
+    let col = widgets::col_width(ui.available_width());
+    row(ui, 32.0, |ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        if let Some(v) = widgets::text_field(ui, Id::new(("code_connect_import", owner, lang.id())), &link.import_path, col, "Import path") {
+            edit = Some(("importPath", v));
+        }
+        if let Some(v) = widgets::text_field(ui, Id::new(("code_connect_name", owner, lang.id())), &link.name, col, "Component name") {
+            edit = Some(("name", v));
+        }
+    });
+    widgets::sublabels(ui, "Template", None);
+    if let Some(v) = widgets::multiline_field(ui, template_id(owner, lang), &link.template, "<Button size={size}>{label}</Button>", 3) {
+        edit = Some(("template", v));
+    }
+    widgets::note(ui, "{property} is its value; {property ? \"a\" : \"b\"} picks a string. Other {…} stays as written.", t.text_secondary);
+    if let Some((key, value)) = edit {
+        let mut params = params;
+        params[key] = json!(value);
+        if let Some(out) = app.run("codeConnect.set", params)
+            && let Some(names) = out["unknown"].as_array().filter(|u| !u.is_empty())
+        {
+            let names: Vec<&str> = names.iter().filter_map(serde_json::Value::as_str).collect();
+            app.toast(format!("Not properties, kept as written: {}", names.join(", ")));
+        }
+    }
+    ui.add_space(4.0);
+}
+
+/// Dev Mode plugins: the installed plugins that only read the document, run from the Inspect tab.
+pub fn plugins_section(app: &mut FigApp, ui: &mut Ui) {
+    let runnable: Vec<(String, String, String)> = app
+        .session
+        .prefs
+        .plugins
+        .iter()
+        .filter(|p| p.manifest.permissions.access == Access::Read)
+        .flat_map(|p| {
+            let m = &p.manifest;
+            m.commands.iter().map(move |c| {
+                let label = if m.commands.len() > 1 { format!("{} · {}", m.name, c.label) } else { m.name.clone() };
+                (m.id.clone(), c.id.clone(), label)
+            })
+        })
+        .collect();
+    if runnable.is_empty() {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    widgets::separator(ui);
+    widgets::section_header(ui, "Plugins", &[], false);
+    let mut run = None;
+    for (id, command, label) in &runnable {
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+        let resp = resp.tip(format!("Run {label}"));
+        if resp.hovered() {
+            ui.painter().rect_filled(r.shrink2(vec2(8.0, 0.0)), CornerRadius::same(5), t.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + PAD + 6.0, r.center().y), vec2(12.0, 12.0)), Icon::Actions, t.icon);
+        let name = widgets::elide(ui, label, r.width() - PAD * 2.0 - 20.0);
+        ui.painter().text(pos2(r.min.x + PAD + 20.0, r.center().y), Align2::LEFT_CENTER, name, regular(11.0), t.text);
+        if resp.clicked() {
+            run = Some((id.clone(), command.clone()));
+        }
+    }
+    if let Some((id, command)) = run {
+        crate::plugins_ui::start(app, &id, &command);
+    }
+    ui.add_space(4.0);
 }
 
 /// The handoff status of the selected frames or sections (nothing for other layers).

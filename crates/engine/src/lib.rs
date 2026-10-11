@@ -13,6 +13,7 @@ pub mod arc_handles;
 pub mod booleans;
 pub mod catalog;
 pub mod cmd;
+pub mod code_connect;
 pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
@@ -1158,6 +1159,8 @@ mod autosave_tests;
 mod binding_lists_tests;
 #[cfg(test)]
 mod booleans_tests;
+#[cfg(test)]
+mod code_connect_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]

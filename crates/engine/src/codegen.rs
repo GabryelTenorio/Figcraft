@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "inspect.code",
         "Code for layer",
-        "{id?, language?: css|html|react|swiftui|compose (default css; html and react are the whole layer tree; components take their properties as parameters, instances pass their values)} → {code, language}",
+        "{id?, language?: css|html|react|swiftui|compose (default css; html and react are the whole layer tree; components take their properties as parameters, instances pass their values; a component connected to code (codeConnect.set) gives its import and snippet instead)} → {code, language, connected}",
         false,
         |s, p| {
             let id = targets(s, p).first().copied().ok_or_else(|| bad("inspect.code", "select a layer"))?;
@@ -30,7 +30,8 @@ pub fn specs() -> Vec<CommandSpec> {
             if !doc.contains(id) {
                 return Err(bad("inspect.code", "no such layer"));
             }
-            Ok(json!({"code": code_for(doc, id, lang), "language": lang.id()}))
+            let connected = crate::code_connect::link(doc, id, lang).is_some();
+            Ok(json!({"code": code_for(doc, id, lang), "language": lang.id(), "connected": connected}))
         }
     )]
 }

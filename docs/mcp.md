@@ -126,7 +126,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
@@ -632,6 +632,30 @@ the last plugin command again.
   that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
   {id?, language?}` returns the parts: `{component, name, set, properties: [{name, param, type,
   default, value? (instances)}], definition, usage? (instances)}`.
+- **Code connect:** link a component (a variant links its set) to the code component it is built
+  as, per language (`react`, `swiftui`, `compose`): `codeConnect.set {id?, language?, importPath?,
+  name?, template?}` (undoable; fields left out keep their value; the defaults are the generated
+  name and a call passing every property) → `{component, language, code, unknown}`. Templates are
+  text, never executed: `{property}` (its name or parameter name) is the instance's value escaped
+  for the language (React keeps JSX's braces, so `size={size}` gives `size="Large"` and
+  `disabled={disabled}` gives `disabled={true}`), `{property ? "a" : "b"}` inserts one of two
+  strings, any other `{…}` stays as written (`unknown` lists placeholder names that aren't
+  properties). Then `inspect.code` on an instance or the component returns the import line and the
+  snippet instead of generated code (`connected: true`), connected instances inside a generated
+  layer tree are their snippet, and `inspect.componentCode` returns `connected: {importPath, name,
+  template, import, code}` with the snippet as `usage`. Example: template `<Button
+  variant="primary" icon="{Has icon ? "cart" : "none"}">{label}</Button>` with import path
+  `@acme/ui` gives `import { Button } from "@acme/ui";` then `<Button variant="primary" icon="none">{"Buy
+  now"}</Button>`. `codeConnect.remove {id?, language?}` (no language: all). `codeConnect.export
+  {path?}` → `{text, links}` (or writes the file): `{version: 1, links: [{component, language,
+  importPath, name, template}]}`, sorted, meant to live in the code repository as
+  `figcraft.connect.json`; `codeConnect.import {json | path}` → `{linked, warnings}` links each
+  entry to every component or set with that name (one undo step; at most 5,000 links and 4 MB;
+  templates up to 4,000 characters, names 100, import paths 300; invalid entries are skipped with a
+  warning). `get_node` lists a component's links as `codeLinks`. In the app, the Inspect tab's
+  Connect to code section edits them in the Code section's language, with a live preview and a
+  Connected badge. An editor extension isn't needed: agents and editors read the same snippets
+  through this server. Plugins whose manifest asks only for `read` also run from the Inspect tab.
 - **Annotations:** notes for developers on any layer, each with optional pinned properties that
   Dev Mode shows with their current values (and the style or variable behind them).
   `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,

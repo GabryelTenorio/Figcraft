@@ -58,7 +58,8 @@ layout (including grid `columnTracks` / `rowTracks`), sizing, `minWidth` / `maxW
 children), `gridCell` (a grid auto layout child's column, row and spans), clip, text properties,
 component/instance links, overrides, `slot` (a slot layer's property name), boundVariables, interactions, exports,
 `devStatus` (handoff status), `devChanged` (changed since it was marked ready for dev),
-`annotations` (Dev Mode notes: `[{label, properties, category?}]`). The auto layout props
+`annotations` (Dev Mode notes: `[{label, properties, category?}]`), `codeLinks` (a component's
+links to code: `[{language, importPath, name, template}]`). The auto layout props
 that `node.set` accepts are listed in [mcp.md](mcp.md#conventions-agents-must-know).
 
 ### `ui.inspect {}`
