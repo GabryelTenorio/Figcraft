@@ -753,7 +753,10 @@ impl Node {
                 StrokeAlign::Outside => w,
             };
             // Arrowheads are sized by the weight, whatever a width profile does.
-            let caps = if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() { w.max(self.stroke.weight) * 3.0 } else { w };
+            let point_arrows =
+                matches!(&self.kind, NodeKind::Vector { network } if network.vertices.iter().any(|v| v.cap.is_some_and(StrokeCap::is_arrow)));
+            let caps =
+                if self.stroke.cap_start.is_arrow() || self.stroke.cap_end.is_arrow() || point_arrows { w.max(self.stroke.weight) * 3.0 } else { w };
             // Right-angled or smooth outlines (boxes, ellipses) end their mitres on the grown box.
             let boxy = matches!(self.kind, NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Section { .. }) || self.kind.is_frame_like();
             let miter = if boxy { 1.0 } else { self.stroke.miter_limit.clamp(1.0, 4.0) };

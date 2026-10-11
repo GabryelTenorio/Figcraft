@@ -265,9 +265,14 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 ### Editing vectors
 
 Vector edit mode is driven with `run_command` (or `pointer`/`key` for gestures):
-`vector.edit.begin {id}` (converts shapes to vectors), `vector.edit.state` (page-space overlay, the
-local network, each point's handle mirroring and the width points), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser|width}`,
-`vector.edit.select {vertices?, segments?, add?}`, `vector.edit.selectAll`, `vector.edit.moveVertices`,
+`vector.edit.begin {id? | ids?}` (default the selection; converts shapes to vectors; several layers
+are edited at once, the first active; `key` Enter with shapes selected does the same),
+`vector.edit.state` (page-space overlay of the active layer, its local network, each point's handle
+mirroring, the width points, `layers` (every edited layer, the active first), `others` (the other
+layers' selected points and segments) and `handles` (the selected Bezier handles as
+`[segment, start]`)), `vector.edit.tool {tool: move|pen|bend|paint|lasso|cut|eraser|width}`,
+`vector.edit.select {vertices?, segments?, handles?: [[segment, start], ...], id? (an edited layer,
+made active), add?}`, `vector.edit.selectAll` (every edited layer's points), `vector.edit.moveVertices`,
 `vector.edit.nudge`, `vector.edit.position {x?, y?}`, `vector.edit.setHandle`, `vector.edit.mirroring
 {mode: none|angle|angleAndLength}`, `vector.edit.smooth {smooth?}`, `vector.edit.bend`,
 `vector.edit.addVertex`, `vector.edit.connect {a, b}`, `vector.edit.pen {x, y, dx?, dy?}` (continues
@@ -279,9 +284,28 @@ page line crosses; parts that come apart move to layers of their own above, list
 `vector.edit.erase {points, radius?}` (the eraser),
 `vector.edit.lasso {points}`, `vector.edit.delete`,
 `vector.deleteHeal`, `vector.join` / `vector.smoothJoin` (join the selected points while editing),
-`vector.edit.cornerRadius` (rounds the selected points that join two straight segments, drawn and
-exported; `node.set {cornerRadius}` on a vector rounds every point), `vector.edit.end`. Point
-indices refer to `network.vertices` in `vector.edit.state`; local coordinates are the layer's own.
+`vector.edit.cornerRadius` (rounds the selected sharp points, next to straight or curved segments: a
+curve is cut where the arc meets it and keeps the rest of its shape; drawn and exported;
+`node.set {cornerRadius}` on a vector rounds every point), `vector.edit.strokeCap {cap, vertices?}`
+and `vector.edit.strokeJoin {join, vertices?}` (the stroke's cap where it ends at these points and
+its join where it turns there, `null` for the layer's; drawn, exported and outlined),
+`vector.edit.moveHandles {dx, dy, handles?}` (moves the selected handles by a page offset),
+`vector.edit.end`. Point indices refer to `network.vertices` in `vector.edit.state`; local
+coordinates are the layer's own.
+
+Several layers at once: with more than one layer in edit mode, a press on another layer's point,
+handle or segment makes it the active layer; Shift-click and marquee or lasso select points in any of
+them; dragging a selected point, the arrows, Delete, `vector.edit.nudge`, `vector.edit.moveVertices`,
+`vector.edit.delete`, `vector.deleteHeal`, `vector.edit.mirroring`, `vector.edit.smooth`,
+`vector.edit.cornerRadius`, `vector.edit.strokeCap` and `vector.edit.strokeJoin` reach every layer's
+selected points in one undo step (a `vertices` list names points of the active layer only). The pen,
+bend, paint bucket, cut, eraser, join, position and the transform box work in the active layer; the
+box hides while points are selected in more than one layer. Shift-click Bezier handles to select
+several; dragging one drags them all.
+
+The Pen tool outside edit mode: clicking the path's first point closes it; clicking another of its
+own points (not the last) connects there and ends the path; with an open vector selected, a click on
+one of its end points continues that path in edit mode.
 `vector.deleteHeal` fits the healed curve through where the deleted point was, keeping the
 neighbours' tangents. With `pointer`, the Paint bucket and Cut tools also drag (across areas to
 paint, across paths to divide), one undo step each; `shift` on a selected point at a corner of the

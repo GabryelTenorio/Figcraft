@@ -506,13 +506,8 @@ impl DocState {
             self.text_edit = None;
         }
         // Vector edit mode ends when its layer is gone (or no longer a vector, e.g. undone).
-        match self.vector_edit.as_mut() {
-            Some(ve) if doc.page_of(ve.id) == Some(page) => match vectoredit::network(&doc, ve.id) {
-                Some(net) => ve.clamp(net),
-                None => self.vector_edit = None,
-            },
-            Some(_) => self.vector_edit = None,
-            None => {}
+        if self.vector_edit.as_mut().is_some_and(|ve| doc.page_of(ve.id) != Some(page) || !ve.clamp_doc(&doc)) {
+            self.vector_edit = None;
         }
     }
 }
@@ -1421,6 +1416,8 @@ mod variables_editor_tests;
 mod variables_io_tests;
 #[cfg(test)]
 mod vector_behaviour_tests;
+#[cfg(test)]
+mod vector_multi_behaviour_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]

@@ -11,13 +11,14 @@ pub mod brush;
 mod brush_tests;
 #[cfg(test)]
 mod ops_tests;
+mod points;
 #[cfg(test)]
 mod sides_tests;
 pub mod width;
 #[cfg(test)]
 mod width_tests;
 
-use figcraft_doc::{BoolOp, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps};
+use figcraft_doc::{BoolOp, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps, VectorNetwork};
 use figcraft_geom::kurbo::{self, BezPath, Cap, Join, PathEl, PathSeg, Point, Shape, Vec2};
 
 #[derive(Debug, PartialEq)]
@@ -241,7 +242,7 @@ pub fn union_faces<'a>(faces: impl IntoIterator<Item = &'a BezPath>) -> Result<B
     simplify(&all)
 }
 
-fn kcap(c: StrokeCap) -> Cap {
+pub(crate) fn kcap(c: StrokeCap) -> Cap {
     match c {
         StrokeCap::Round | StrokeCap::CircleFilled => Cap::Round,
         StrokeCap::Square | StrokeCap::DiamondFilled => Cap::Square,
@@ -249,7 +250,7 @@ fn kcap(c: StrokeCap) -> Cap {
     }
 }
 
-fn kjoin(j: StrokeJoin) -> Join {
+pub(crate) fn kjoin(j: StrokeJoin) -> Join {
     match j {
         StrokeJoin::Miter => Join::Miter,
         StrokeJoin::Bevel => Join::Bevel,
@@ -277,15 +278,23 @@ pub fn stroke_center(path: &BezPath, width: f64, props: &StrokeProps) -> BezPath
 /// shape is closed (Inside/Outside only apply to closed shapes). A width profile makes the width
 /// vary along the path (fill the result non-zero when centred).
 pub fn stroke_outline(path: &BezPath, props: &StrokeProps, closed_shape: bool) -> BezPath {
+    stroke_outline_of(path, props, closed_shape, None)
+}
+
+/// [`stroke_outline`] of a shape whose stroke follows vector network `net` (`path` is its stroke
+/// path): points with a cap or join of their own draw them there.
+pub fn stroke_outline_of(path: &BezPath, props: &StrokeProps, closed_shape: bool, net: Option<&VectorNetwork>) -> BezPath {
     let w = props.weight;
     if !(w.is_finite() && w > 0.0) {
         return BezPath::new();
     }
+    let styled = net.and_then(|n| points::Styled::new(n, props));
     // Centred at `width` (twice the weight for Inside/Outside, which clip half of it away).
-    let centred = |width: f64| match (&props.brush, props.profile()) {
-        (Some(b), _) => brush::outline(path, width, props, b).unwrap_or_else(|| stroke_center(path, width, props)),
-        (None, Some(p)) => width::variable_outline(path, width, props, p).unwrap_or_else(|| stroke_center(path, width, props)),
-        (None, None) => stroke_center(path, width, props),
+    let centred = |width: f64| match (&styled, &props.brush, props.profile()) {
+        (Some(st), ..) => st.outline(width, props),
+        (None, Some(b), _) => brush::outline(path, width, props, b).unwrap_or_else(|| stroke_center(path, width, props)),
+        (None, None, Some(p)) => width::variable_outline(path, width, props, p).unwrap_or_else(|| stroke_center(path, width, props)),
+        (None, None, None) => stroke_center(path, width, props),
     };
     let align = if closed_shape { props.align } else { StrokeAlign::Center };
     let mut out = match align {
@@ -299,7 +308,9 @@ pub fn stroke_outline(path: &BezPath, props: &StrokeProps, closed_shape: bool) -
             binary(&s, path, linesweeper::BinaryOp::Difference).unwrap_or(s)
         }
     };
-    if !closed_shape {
+    if let Some(st) = styled.as_ref().filter(|_| !closed_shape) {
+        out.extend(st.arrowheads(w, props).elements().iter().copied());
+    } else if !closed_shape {
         for (at_end, cap) in [(false, props.cap_start), (true, props.cap_end)] {
             if cap.is_arrow()
                 && let Some(head) = arrowhead(path, cap, w, at_end)

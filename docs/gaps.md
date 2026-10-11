@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -22,7 +22,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 6 | Plugins: no distribution or widgets; Figma's plugins don't run | Ecosystem | 15–40 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA: Linux and the browser left (Windows pass done 2026-10-11) | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
-| 9 | Figma Draw: multi-edit, pen pressure on macOS/Linux tablets (brushes, pressure, text on a path and pattern fills landed) | Feature | 2–5 | [target-app-parity](target-app-parity.md) |
+| 9 | Figma Draw: pen pressure on macOS/Linux tablets (multi-edit, brushes, pressure, text on a path and pattern fills landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
 | 10 | Team libraries: no team-wide lists or accounts; analytics are counts | Feature | 4–8 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video fills; HEIC images | File format | 5–10 | [file-format-parity](file-format-parity.md) |
@@ -152,8 +152,12 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).
 
-### 9. Figma Draw: multi-edit and tablet pressure
-- **Missing:** multi-edit; pen pressure on macOS and Linux tablets (winit reports none there).
+### 9. Figma Draw: tablet pressure on macOS and Linux
+- **Missing:** pen pressure on macOS and Linux tablets (winit reports none there).
+- **Landed (2026-10-12):** multi-edit: several vector layers in edit mode at once (Enter or
+  double-click with them selected, `vector.edit.begin {ids}`); points selected, marqueed, dragged,
+  nudged, deleted, mirrored and rounded across layers in one undo step; the pen, bend, paint bucket,
+  cut and eraser work in the layer last pressed (`vector_multi_behaviour_tests`).
 - **Landed:** text on a path (`text.onPath`, `text.pathOptions`, `text.removeFromPath`; the
   Design panel's Typography section; canvas, PNG, SVG and PDF as outlines; SVG `<textPath>` imports
   as text on a path), pattern fills (`PaintKind::Pattern`, `fill.pattern`, the colour picker's
@@ -161,9 +165,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   eight presets drawn in code; canvas, PNG, SVG, PDF and outline stroke) and pen pressure for the
   Pencil (Windows pens and browser styluses; recorded as the stroke's width profile, which brushes
   follow).
-- **Evidence:** no pressure input anywhere; strokes have uniform and variable widths only.
+- **Evidence:** winit reports no pressure on macOS and Linux tablets.
 - **Impact:** illustration-flavoured work moved into Figma Draw in 2025.
-- **Estimate:** 5–10 h.
+- **Estimate:** 1–3 h once winit (or a platform tablet API behind it) reports pressure there.
 
 ### 10. Team libraries: no team-wide lists or accounts; analytics are counts
 - **Missing:** libraries listed for a whole team or organization (each file enables a library by
@@ -192,6 +196,11 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 - **Estimate:** 5–10 h (video playback in the presenter is most of it; it can reuse the GIF clock).
 
 ### 13. Vector tail: none left
+- **Landed (2026-10-12):** several Bezier handles selected with Shift-click and dragged together,
+  sharp points beside curved segments rounded, a stroke cap and join per point (canvas, PNG, SVG,
+  PDF, outline stroke), the Pen outside edit mode connecting to its own points and continuing a
+  selected open path. Left: corner smoothing beyond rectangles and frames, the transform box around
+  points of several layers, per-point caps and joins on dashed, variable-width and brush strokes.
 - **Landed (2026-10-11):** boolean groups are clicked where their result is (a click in a
   subtracted hole reaches what's behind; with the group or an operand selected its operands are
   hit, so each can still be picked; "Select layer" lists the group only where its result is), live
@@ -314,6 +323,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Vector multi-edit and the vector edit tail, with a behaviour suite written from the public documentation (5 tests, about 30 table rows and steps, and a junk-parameter sweep of every vector command in multi-edit mode): several vector layers are edited at once (Enter, double-click or `vector.edit.begin {ids}`; a press on another layer's point, handle or segment makes it the active layer; Shift-click, marquee and lasso select across layers; dragging, the arrows, Delete, delete and heal, mirroring, smoothing, corner radius and point caps and joins reach every layer's selected points in one undo step; the pen, bend, paint bucket, cut and eraser work in the active layer); several Bezier handles are selected with Shift-click and dragged together (`vector.edit.moveHandles`); a sharp point next to a curved segment rounds (the curve is cut where the arc meets it and keeps its shape); a point can have its own stroke cap and join (`vector.edit.strokeCap`, `vector.edit.strokeJoin`, the Point section of the Design panel; canvas, PNG, SVG and PDF, outline stroke); the Pen outside edit mode connects to one of its own points and ends the path, and continues a selected open path from an end point. Left: corner smoothing beyond rectangles, the transform box around points of several layers, per-point caps and joins on dashed, variable-width and brush strokes. Gap 9 2–5 h → 1–3 h (pen pressure on macOS and Linux tablets left, blocked on winit). Shapes & vector 98%/72% → 99%/73%, 2–4 h → 1–3 h; Figma Draw extras 80%/55% → 88%/60%, 2–5 h → 1–3 h (gap 9: pen pressure on macOS and Linux tablets left). Totals recomputed by the doc's method, which rows since the last recompute had left stale: the area table's weighted breadth is 83.7% (~83%; core 94.1%, ~94%) and ready 63.1% (~63%; core 72.1%, ~72%), hours 133–284 (core 38–83); Features (depth) 61% → 63%, 46–94 h → 34–76 h; ready for real work 52.6% (~52%); mainstream weekly areas 71.0% → 72.1% (× 0.9 × 0.9 × 0.85 = 49.7%, ~49%, rounded down); essentials unchanged (~57%); full parity ~306–595 h → ~294–572 h (on top of the rows merged since: ~301–587 h → ~289–564 h; area-table totals recomputed on the merged table and rounded down: breadth ~84%, ready ~63%, core ~94%/~72%, mainstream weekly areas 72.4%, ~49%) |
 | 2026-10-12 | minor | Dev resources (gap 16): links for developers (a URL and a name) on any layer: `devResource.add` / `edit` / `remove` / `list`, undoable, saved and synced; an instance also lists its main component's (and that component's set's) links read-only with where they come from, and layers inside an instance show their main layer's; URLs are checked as web links (http or https, a host, no spaces, at most 2,048 characters) and never fetched (a link added without a name is named after its URL), opened only when clicked; the Inspect tab lists, adds, edits and removes them; `get_node` and `inspect_document` return them as `devResources`. The editor extension stays out of scope (the MCP server serves agents and editors). Dev Mode breadth 93% → 96%, ready 70% → 72%, 1–3 h → 0–1 h; feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~304–593 h → ~303–591 h |
 | 2026-10-12 | minor | Extended collections' tail (gap 14): variables a library adds to a collection this file extends now count as a library update of their own (listed by name without a copy yet) and arrive inheriting when accepted, instead of waiting for the library's next other update; a library collection that is itself an extended collection can be extended again, values flowing down the chain as each file accepts updates with every level's overrides kept (checked end to end). Styles & variables breadth 94% → 95%, ready unchanged (76%), 3–5 h → 2–4 h; gap 14 1–2 h → 0–1 h (real-library checks left); feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~305–594 h → ~304–593 h |
 | 2026-10-12 | minor | A branch's own version history and finer list merges (gap 17): versions saved or autosaved on a branch tab go into the branch (viewed, restored, renamed, deleted and duplicated there, saved in the file with it); merging adds a version to the main file's history and the merged or archived branch keeps its own; fills, strokes and effects merge item by item, conflicting only when the same item changed both ways, an item was removed on one side or both sides added different items. Comments, versions, find, misc breadth 85% → 87%, ready 60% → 61%, 2–5 h → 1–4 h; gap 17 1–3 h → 1–2 h; feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~306–595 h → ~305–594 h |

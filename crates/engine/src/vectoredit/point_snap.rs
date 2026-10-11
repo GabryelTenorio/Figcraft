@@ -26,6 +26,19 @@ const MAX_MOVING: usize = 256;
 /// dragged; their segments' midpoints move too), the points and segment midpoints of the other
 /// visible vectors on `page`, the layer targets around it and `extra` page points.
 pub fn targets(doc: &Document, page: NodeId, edited: Option<NodeId>, moving: &[usize], extra: &[Point]) -> Targets {
+    targets_moving(doc, page, edited, moving, extra, &[])
+}
+
+/// [`targets`] while points of other layers move too (`others`: each layer's moving points, which
+/// aren't targets).
+pub fn targets_moving(
+    doc: &Document,
+    page: NodeId,
+    edited: Option<NodeId>,
+    moving: &[usize],
+    extra: &[Point],
+    others: &[(NodeId, Vec<usize>)],
+) -> Targets {
     // Points are snapped on the page.
     let mut t = Targets::gather_in(doc, page, edited.as_slice(), figcraft_geom::Affine::IDENTITY);
     let mut budget = MAX_POINTS;
@@ -36,9 +49,9 @@ pub fn targets(doc: &Document, page: NodeId, edited: Option<NodeId>, moving: &[u
     if let Some(id) = edited {
         add_vector(doc, id, &moving.iter().copied().collect(), &mut t, &mut budget);
     }
-    let none = BTreeSet::new();
     for id in visible_vectors(doc, page).into_iter().filter(|v| Some(*v) != edited) {
-        add_vector(doc, id, &none, &mut t, &mut budget);
+        let skip: BTreeSet<usize> = others.iter().find(|(o, _)| *o == id).map(|(_, v)| v.iter().copied().collect()).unwrap_or_default();
+        add_vector(doc, id, &skip, &mut t, &mut budget);
     }
     t
 }

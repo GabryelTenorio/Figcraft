@@ -1,16 +1,17 @@
 //! Design panel in vector edit mode: the selected points' position and dimensions (their
-//! transform box), corner radius and handle mirroring, or the selected width point with the
-//! Variable width tool (in place of the layer's position and dimensions).
+//! transform box), corner radius, handle mirroring and the stroke's cap and join at them, or the
+//! selected width point with the Variable width tool (in place of the layer's position and
+//! dimensions).
 
 use egui::{Id, Ui};
-use figcraft_doc::{Document, HandleMirroring};
+use figcraft_doc::{Document, HandleMirroring, StrokeCap, StrokeJoin};
 use figcraft_engine::vectoredit::{self, VectorEdit};
 use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::i18n::tr;
 use crate::icons::Icon;
-use crate::right::{menu_item, menu_popup, row};
+use crate::right::{CAP_ART_W, cap_art, join_label, menu_item, menu_item_with, menu_popup, row};
 use crate::widgets::{self, FieldEdit, Lead, PAD};
 
 /// Run a point command from a field: typed values are one step, scrubs one step when released.
@@ -110,17 +111,12 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
             point_field(app, "vector.edit.resize", e, |v| json!({"height": v.max(0.0)}));
         });
     }
-    let common = |f: &dyn Fn(usize) -> Option<f64>| -> Option<f64> {
-        let mut it = pts.iter().map(|v| f(*v));
-        let first = it.next().flatten()?;
-        it.all(|x| x == Some(first)).then_some(first)
-    };
-    let radius = common(&|v| net.vertices.get(v).map(|x| x.radius));
-    let mirror = {
-        let mut it = pts.iter().map(|v| net.mirroring(*v));
-        let first = it.next();
-        first.filter(|m| it.all(|x| x == *m))
-    };
+    let vertex = |v: &usize| net.vertices.get(*v).copied();
+    let radius = same(pts.iter().map(|v| vertex(v).map(|x| x.radius))).flatten();
+    let mirror = same(pts.iter().map(|v| net.mirroring(*v)));
+    // A point's own cap and join (`Some(None)`: the layer's; `None`: mixed).
+    let cap = same(pts.iter().map(|v| vertex(v).map(|x| x.cap))).flatten();
+    let join = same(pts.iter().map(|v| vertex(v).map(|x| x.join))).flatten();
     widgets::sublabels(ui, tr("Corner radius"), None);
     row(ui, 32.0, |ui| {
         let e =
@@ -144,5 +140,46 @@ pub fn points(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
             }
         });
     });
+    // The stroke where it ends and turns at these points.
+    let own = |set: Option<Option<&'static str>>| match set {
+        None => tr("Mixed"),
+        Some(None) => tr("Same as layer"),
+        Some(Some(l)) => l,
+    };
+    widgets::sublabels(ui, tr("End point"), Some(tr("Join|stroke")));
+    row(ui, 32.0, |ui| {
+        let resp = widgets::dropdown(ui, own(cap.map(|c| c.map(|c| tr(c.label())))), col, None);
+        menu_popup(&resp).show(|ui| {
+            if menu_item(ui, tr("Same as layer"), "") {
+                app.run("vector.edit.strokeCap", json!({"cap": null}));
+                ui.close();
+            }
+            for c in StrokeCap::ALL {
+                if menu_item_with(ui, tr(c.label()), "", CAP_ART_W, |p, r, col| cap_art(p, r, col, c, false)) {
+                    app.run("vector.edit.strokeCap", json!({"cap": c}));
+                    ui.close();
+                }
+            }
+        });
+        let resp = widgets::dropdown(ui, own(join.map(|j| j.map(join_label))), col, None);
+        menu_popup(&resp).show(|ui| {
+            if menu_item(ui, tr("Same as layer"), "") {
+                app.run("vector.edit.strokeJoin", json!({"join": null}));
+                ui.close();
+            }
+            for j in StrokeJoin::ALL {
+                if menu_item(ui, join_label(j), "") {
+                    app.run("vector.edit.strokeJoin", json!({"join": j}));
+                    ui.close();
+                }
+            }
+        });
+    });
     ui.add_space(8.0);
+}
+
+/// The value every item shares, if they all share one.
+fn same<T: PartialEq>(mut it: impl Iterator<Item = T>) -> Option<T> {
+    let first = it.next()?;
+    it.all(|x| x == first).then_some(first)
 }

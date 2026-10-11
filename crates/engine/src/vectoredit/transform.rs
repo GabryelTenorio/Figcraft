@@ -66,9 +66,10 @@ pub fn point_box(doc: &Document, ve: &VectorEdit) -> Option<PointBox> {
 }
 
 /// The box drawn and dragged on the canvas: the Move tool, no open pen path, and two or more
-/// points that aren't all in one place.
+/// points that aren't all in one place, all in the active layer.
+/// shortcut: with points selected in several layers there is no box (drags, nudges and the Design panel still reach them all); wrap them all if asked for.
 pub fn shown_box(doc: &Document, ve: &VectorEdit) -> Option<PointBox> {
-    if ve.tool != VTool::Move || ve.anchor.is_some() {
+    if ve.tool != VTool::Move || ve.anchor.is_some() || ve.others_selected() {
         return None;
     }
     point_box(doc, ve).filter(|b| b.points.len() >= 2 && (b.width > EPS || b.height > EPS))

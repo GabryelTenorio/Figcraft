@@ -265,9 +265,16 @@ pub fn opacity_digit(app: &mut FigApp, key: Key, now: f64) -> bool {
     true
 }
 
-/// Enter on a single selected text layer starts editing it.
+/// Enter on a single selected text layer starts editing it; on shapes, edits them as vectors.
 fn enter_text(app: &mut FigApp) -> bool {
     let sel = app.session.selection();
+    if sel.len() > 1 {
+        let ids = app.session.doc().ok().and_then(|d| figcraft_engine::vectoredit::enter_targets(d, &sel));
+        return ids.is_some_and(|ids| {
+            app.run("vector.edit.begin", json!({"ids": ids}));
+            true
+        });
+    }
     if sel.len() != 1 {
         return false;
     }

@@ -64,6 +64,10 @@ pub enum StrokeJoin {
     Round,
 }
 
+impl StrokeJoin {
+    pub const ALL: [StrokeJoin; 3] = [StrokeJoin::Miter, StrokeJoin::Bevel, StrokeJoin::Round];
+}
+
 /// Stroke geometry shared by every stroke paint of a node.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

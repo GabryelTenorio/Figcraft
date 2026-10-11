@@ -158,6 +158,10 @@ impl Headless {
                 "select.children" if self.session.tool.pen.is_some() => {
                     let _ = self.session.pen_finish();
                 }
+                // Enter on shapes edits them as vectors (several at once).
+                "select.children" if self.vector_targets().is_some() => {
+                    self.execute("vector.edit.begin", &json!({"ids": self.vector_targets()}))?;
+                }
                 id => {
                     self.execute(id, &json!({}))?;
                 }
@@ -184,6 +188,11 @@ impl Headless {
     }
 
     /// The selected layer when exactly one text layer is selected.
+    /// The selected layers Enter edits as vectors (see `vectoredit::enter_targets`).
+    fn vector_targets(&self) -> Option<Vec<NodeId>> {
+        figcraft_engine::vectoredit::enter_targets(self.session.doc().ok()?, &self.session.selection())
+    }
+
     fn single_text(&self) -> Option<NodeId> {
         let sel = self.session.selection();
         let doc = self.session.doc().ok()?;

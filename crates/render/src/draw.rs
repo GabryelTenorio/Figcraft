@@ -151,6 +151,14 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
         d.to_bits().hash(&mut h);
     }
     props.dashes.len().hash(&mut h);
+    // Points' own caps and joins (vector networks).
+    let net = match &n.kind {
+        NodeKind::Vector { network } if network.has_point_styles() => Some(network),
+        _ => None,
+    };
+    for v in net.map(|n| n.vertices.as_slice()).unwrap_or_default() {
+        (v.cap.map(|c| c as u8), v.join.map(|j| j as u8)).hash(&mut h);
+    }
     for p in props.profile().map(|p| p.points.as_slice()).unwrap_or_default() {
         (p.t.to_bits(), p.scale.to_bits(), p.bias.to_bits()).hash(&mut h);
     }
@@ -161,7 +169,7 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     if let Some(p) = locked(stroke_cache()).get(key) {
         return p;
     }
-    let out = Arc::new(figcraft_pathops::stroke_outline(path, props, closed));
+    let out = Arc::new(figcraft_pathops::stroke_outline_of(path, props, closed, net));
     locked(stroke_cache()).insert(key, out.clone());
     out
 }

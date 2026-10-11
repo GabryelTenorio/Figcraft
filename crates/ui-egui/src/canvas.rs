@@ -837,7 +837,15 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     {
         // The Variable width tool shows width points in place of the path's points.
         let width_tool = ve.tool == figcraft_engine::vectoredit::VTool::Width;
-        vector_overlay(app, painter, &o, !width_tool);
+        // Other layers edited at once go under the active one; the hover shows on its own layer.
+        let ov = &app.session.tool.overlay;
+        let hover_on = |id| ov.vector_hover.filter(|_| ov.vector_hover_on.unwrap_or(ve.id) == id);
+        for part in &ve.others {
+            if let Some(po) = figcraft_engine::vectoredit::overlay(&doc, &ve.view(part)) {
+                vector_overlay(app, painter, &po, !width_tool, hover_on(part.id), false);
+            }
+        }
+        vector_overlay(app, painter, &o, !width_tool, hover_on(ve.id), true);
         if width_tool {
             width_overlay(app, painter, &doc, &ve, zoom);
         } else if let Some(c) = app.session.vector_edit_box() {
@@ -1089,18 +1097,25 @@ fn width_overlay(app: &FigApp, painter: &egui::Painter, doc: &Document, ve: &fig
     }
 }
 
-/// Vector edit mode: the network's segments, handles and points (`points`), the hovered part, the
-/// closed area under the paint bucket and the pen's rubber band.
-fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::vectoredit::EditOverlay, points: bool) {
+/// Vector edit mode: a layer's segments, handles and points (`points`) with its `hover`ed part, and
+/// for the `active` layer the closed area under the paint bucket and the pen's rubber band.
+fn vector_overlay(
+    app: &FigApp,
+    painter: &egui::Painter,
+    o: &figcraft_engine::vectoredit::EditOverlay,
+    points: bool,
+    hover: Option<figcraft_engine::vectoredit::VHit>,
+    active: bool,
+) {
     use figcraft_engine::vectoredit::VHit;
     let ov = &app.session.tool.overlay;
     let sp = |p: &[f64; 2]| app.to_screen(p[0], p[1]);
     // Paint bucket target: hatched like a fill to come.
-    if !ov.face.is_empty() {
+    if active && !ov.face.is_empty() {
         let polys: Vec<Vec<Pos2>> = ov.face.iter().map(|poly| poly.iter().map(sp).collect()).collect();
         hatched(painter, &polys, ACCENT);
     }
-    let hover_seg = match ov.vector_hover {
+    let hover_seg = match hover {
         Some(VHit::Segment { seg, .. }) => Some(seg),
         _ => None,
     };
@@ -1121,14 +1136,15 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
     for h in &o.handles {
         let (v, e) = (sp(&h.vertex), sp(&h.handle));
         painter.line_segment([v, e], stroke(ACCENT, 1.0));
-        let hovered = ov.vector_hover == Some(VHit::Handle { seg: h.seg, start: h.start });
+        let hovered = hover == Some(VHit::Handle { seg: h.seg, start: h.start });
         let r = if hovered { 4.5 } else { 3.5 };
-        painter.circle_filled(e, r, Color32::WHITE);
+        let on = o.selected_handles.contains(&(h.seg, h.start));
+        painter.circle_filled(e, r, if on { ACCENT } else { Color32::WHITE });
         painter.circle_stroke(e, r, stroke(ACCENT, 1.0));
     }
     for (i, v) in o.vertices.iter().enumerate() {
         let p = sp(v);
-        let hovered = matches!(ov.vector_hover, Some(VHit::Vertex { index }) if index == i);
+        let hovered = matches!(hover, Some(VHit::Vertex { index }) if index == i);
         let size = if hovered { 9.0 } else { 7.0 };
         let r = Rect::from_center_size(p, vec2(size, size));
         let on = o.selected_vertices.contains(&i);
@@ -1138,7 +1154,7 @@ fn vector_overlay(app: &FigApp, painter: &egui::Painter, o: &figcraft_engine::ve
             painter.circle_stroke(p, 7.5, stroke(ACCENT, 1.0));
         }
     }
-    if let Some([x0, y0, x1, y1]) = ov.rubber {
+    if let Some([x0, y0, x1, y1]) = ov.rubber.filter(|_| active) {
         painter.add(Shape::dashed_line(&[app.to_screen(x0, y0), app.to_screen(x1, y1)], stroke(ACCENT, 1.0), 4.0, 3.0));
     }
 }

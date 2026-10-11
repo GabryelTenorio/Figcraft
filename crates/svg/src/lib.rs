@@ -581,6 +581,7 @@ impl W<'_> {
             || k.brush.is_some()
             || k.cap_start.is_arrow()
             || k.cap_end.is_arrow()
+            || matches!(&n.kind, NodeKind::Vector { network } if network.has_point_styles())
             || !(w.is_finite() && w > 0.0)
         {
             return None;

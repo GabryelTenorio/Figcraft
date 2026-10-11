@@ -100,6 +100,17 @@ pub fn set_handle(net: &mut VectorNetwork, seg: usize, start: bool, rel: (f64, f
     net.set_handle(*oi, *ostart, (mirrored.x, mirrored.y));
 }
 
+/// Move handles `hs` (segment, the handle at its `a` end) by `d` from where they are now, each as
+/// [`set_handle`] would.
+pub fn move_handles(net: &mut VectorNetwork, hs: &[(usize, bool)], d: Vec2, independent: bool) {
+    let from: Vec<Option<(f64, f64)>> = hs.iter().map(|(s, st)| net.handle(*s, *st)).collect();
+    for (&(seg, start), h) in hs.iter().zip(from) {
+        if let Some(h) = h {
+            set_handle(net, seg, start, (h.0 + d.x, h.1 + d.y), independent);
+        }
+    }
+}
+
 /// Set the mirroring of vertices and make their handles agree with it.
 pub fn set_mirroring(net: &mut VectorNetwork, verts: &[usize], mode: HandleMirroring) {
     for &vi in verts {

@@ -223,6 +223,8 @@ pub struct Overlay {
     /// Vector edit mode: what the pointer is over, the lasso being drawn and the closed area the
     /// paint bucket would fill (page-space polygons).
     pub vector_hover: Option<crate::vectoredit::VHit>,
+    /// The edited layer `vector_hover` is on (several layers can be in edit mode).
+    pub vector_hover_on: Option<NodeId>,
     /// Vector edit mode, Variable width tool: the width point, handle or path under the pointer.
     pub width_hover: Option<crate::vectoredit::WHit>,
     pub lasso: Vec<[f64; 2]>,
@@ -346,6 +348,8 @@ pub struct PenPath {
     /// Anchors with (in, out) handle offsets.
     pub points: Vec<(Point, Vec2, Vec2)>,
     pub closed: bool,
+    /// The path ends connected to this anchor of its own (a vector network).
+    pub join: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1636,9 +1640,12 @@ impl Session {
             textedit::select_word(self, idx)?;
             return Ok(());
         }
-        // Shapes and vectors: enter vector edit mode.
+        // Shapes and vectors: enter vector edit mode (every selected shape, the clicked one active).
         if doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
-            return crate::vectoredit::begin(self, target);
+            let mut ids = crate::vectoredit::enter_targets(&doc, &sel).unwrap_or_default();
+            ids.retain(|i| *i != target);
+            ids.insert(0, target);
+            return crate::vectoredit::begin_many(self, &ids);
         }
         // Groups, frames and boolean groups: select one level deeper (the layer under the pointer).
         let deeper = figcraft_doc::geometry::enter_target(&doc, leaf, &sel);
@@ -1747,6 +1754,18 @@ impl Session {
             let ds = self.ds()?;
             (ds.doc.clone(), ds.page)
         };
+        // With an open path selected, a click on one of its end points continues it in edit mode.
+        if self.tool.pen.is_none()
+            && let Some((id, v)) = selected_end_at(&doc, &self.selection(), ev.p(), 8.0 / ev.zoom.max(1e-6))
+        {
+            self.set_tool(ToolId::Move);
+            crate::vectoredit::begin(self, id)?;
+            crate::vectoredit::set_tool(self, crate::vectoredit::VTool::Pen)?;
+            return crate::vectoredit::set_state(self, |e| {
+                e.anchor = Some(v);
+                e.vertices = vec![v];
+            });
+        }
         let pen = self.tool.pen.get_or_insert_with(PenPath::default);
         // Clicking the first anchor closes the path.
         if pen.points.len() > 2
@@ -1754,6 +1773,13 @@ impl Session {
             && (*first - p).hypot() * ev.zoom < 8.0
         {
             pen.closed = true;
+            self.pen_update()?;
+            return self.pen_finish();
+        }
+        // Clicking another of its own anchors (not the last) connects there and ends the path.
+        let near = |q: &Point| (*q - p).hypot() * ev.zoom < 8.0;
+        if let Some(k) = (1..pen.points.len().saturating_sub(1)).find(|k| pen.points.get(*k).is_some_and(|(q, _, _)| near(q))) {
+            pen.join = Some(k);
             self.pen_update()?;
             return self.pen_finish();
         }
@@ -1821,6 +1847,11 @@ impl Session {
         }
         if !pen.closed {
             net.regions.clear();
+        }
+        // Anchor k is vertex k of the open path.
+        if let (Some(k), Some((last, _, out))) = (pen.join, pts.last()) {
+            let from = pts.len() - 1;
+            crate::vectoredit::ops::connect(&mut net, from, k, (out.x - last.x, out.y - last.y), (0.0, 0.0));
         }
         let id = match pen.id {
             Some(id) if doc.contains(id) => id,
@@ -2045,3 +2076,13 @@ fn shape_hint(doc: &Document, id: NodeId, handle: ShapeHandle, zoom: f64) -> Opt
 
 #[allow(dead_code)]
 fn unused(_: BTreeMap<u8, u8>) {}
+
+/// An end point of a selected open vector within `tol` of page point `p`: (layer, point).
+fn selected_end_at(doc: &Document, sel: &[NodeId], p: Point, tol: f64) -> Option<(NodeId, usize)> {
+    sel.iter().find_map(|id| {
+        let net = crate::vectoredit::network(doc, *id)?;
+        let w = doc.world_transform(*id);
+        let near = |v: &usize| net.vertices.get(*v).is_some_and(|x| (w * x.point() - p).hypot() <= tol);
+        (0..net.vertices.len()).filter(near).find(|v| net.incident(*v).len() == 1).map(|v| (*id, v))
+    })
+}

@@ -1381,17 +1381,11 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     let join = st.as_ref().map(|s| s.join);
     widgets::sublabels(ui, tr("Join|stroke"), (join == Some(StrokeJoin::Miter)).then_some(tr("Miter angle")));
     row(ui, 32.0, |ui| {
-        let label = match join {
-            Some(StrokeJoin::Miter) => tr("Miter"),
-            Some(StrokeJoin::Bevel) => tr("Bevel"),
-            Some(StrokeJoin::Round) => tr("Round"),
-            None => tr("Mixed"),
-        };
-        let resp = widgets::dropdown(ui, label, half, None);
+        let resp = widgets::dropdown(ui, join.map(join_label).unwrap_or(tr("Mixed")), half, None);
         menu_popup(&resp).show(|ui| {
-            for (l, v) in [(tr("Miter"), "miter"), (tr("Bevel"), "bevel"), (tr("Round"), "round")] {
-                if menu_item(ui, l, "") {
-                    app.set_props(&ids, json!({"strokeJoin": v}));
+            for j in StrokeJoin::ALL {
+                if menu_item(ui, join_label(j), "") {
+                    app.set_props(&ids, json!({"strokeJoin": j}));
                     ui.close();
                 }
             }
@@ -1423,12 +1417,21 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     ui.add_space(4.0);
 }
 
+/// A stroke join's name in the interface.
+pub(crate) fn join_label(j: StrokeJoin) -> &'static str {
+    match j {
+        StrokeJoin::Miter => tr("Miter"),
+        StrokeJoin::Bevel => tr("Bevel"),
+        StrokeJoin::Round => tr("Round"),
+    }
+}
+
 /// The width [`cap_art`] takes at the right of a menu row (its arrows reach past the line's ends).
-const CAP_ART_W: f32 = 64.0;
+pub(crate) const CAP_ART_W: f32 = 64.0;
 
 /// A short stroke ending in `cap` (on its left end for a start point), drawn at the right of a menu
 /// row.
-fn cap_art(p: &egui::Painter, r: Rect, col: Color32, cap: StrokeCap, start: bool) {
+pub(crate) fn cap_art(p: &egui::Painter, r: Rect, col: Color32, cap: StrokeCap, start: bool) {
     let y = r.center().y;
     let (left, right) = (r.max.x - 58.0, r.max.x - 14.0);
     // The capped end, the plain end, and the direction from the stroke into its cap.
