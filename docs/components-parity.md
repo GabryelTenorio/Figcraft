@@ -1,11 +1,11 @@
 # Components, variants, styles and variables parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (styles and variables behaviour suite and fixes; components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (extended collections tail; styles and variables behaviour suite and fixes; components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
 
 Design systems are why teams adopt Figma. **Components: breadth ~96%, ready ~72%. Styles and
-variables: breadth ~92%, ready ~72% (estimated).** QA'd with a synthetic design system of ~300
+variables: breadth ~95%, ready ~76% (estimated).** QA'd with a synthetic design system of ~300
 components used 2,000 times (`crates/engine/src/synthetic_ds.rs`, `components_scale_tests.rs`);
-not with real libraries. Remaining: 5–11 h here, plus team libraries' tail (4–8 h, partly after
+not with real libraries. Remaining: 4–10 h here, plus team libraries' tail (4–8 h, partly after
 accounts).
 
 ## Components and variants
@@ -67,7 +67,7 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 | Bindings: fills, strokes, effects, opacity, padding, gaps, sizes, radius, font size/weight, line height, letter spacing, paragraph spacing/indent, text, visibility, layout grids, instance properties | done | type-checked per field; number variables fill text content |
 | Explicit modes per frame, library collections' modes | done | |
 | Gradient stops and variant properties bound to variables | done | a stop's binding follows it when earlier stops are removed |
-| Extended collections | done | library collections; overrides per mode with reset; follow library updates; modes inherited. New library variables arrive with the next other update ([gaps](gaps.md) #14) |
+| Extended collections | done | library collections, including a library's own extended collections (chains through libraries); overrides per mode with reset; follow library updates, variables new to the library collection being an update of their own; modes inherited. Checked with synthetic libraries only ([gaps](gaps.md) #14) |
 | Variables import/export (JSON) | done | the REST local variables shape (round-trips; merges by collection, mode and variable name); CSS custom properties export |
 | Expressions in prototype set-variable actions | done | see [prototyping-parity](prototyping-parity.md) |
 
@@ -75,6 +75,7 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Extended collections' tail (gap 14): variables a library adds to a collection this file extends now count as a library update of their own (listed by name without a copy yet) and arrive inheriting when accepted, instead of waiting for the library's next other update; a library collection that is itself an extended collection can be extended again, values flowing down the chain as each file accepts updates with every level's overrides kept (checked end to end). Styles & variables breadth 94% → 95%, ready unchanged (76%), 3–5 h → 2–4 h; gap 14 1–2 h → 0–1 h (real-library checks left); feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~305–594 h → ~304–593 h |
 | 2026-10-11 | minor | Styles and variables behaviour suite from the public documentation (18 tests) and its fixes (styled properties edited away unlink, deleted variables unbind with values kept, type-checked bindings, alias checks on create, text styles on text only); style folders, order and duplicates with a Local styles list; mode duplicate and default; code syntax. Found missing: variables inside styles. Styles and variables breadth ~92% → ~94%, ready ~72% → ~76%; remaining here 7–14 h → 9–17 h |
 | 2026-10-11 | minor | Behaviour suite from the public documentation and its fixes: overrides of padding, gap, alignment, layout grids, export settings, interactions and every text property kept (they were lost when the main changed); geometry, constraints and resizing of layers inside instances refused; variant switches keep only overrides both variants agreed on (text layers keep theirs); Alt-drops from Assets keep only text overrides; top-left default variant; hidden exposed instances hide their properties; push from nested layers goes to the outer main; variant property reordering and conflict warnings. Components ~95%/~68% → ~96%/~72%; remaining here 7–14 h → 5–11 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` (publish under the file, enable by a share link, updates with overrides kept), usage counts per component and file, and swapping a library by names (gap 10) |

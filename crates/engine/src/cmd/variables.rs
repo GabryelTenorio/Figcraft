@@ -332,8 +332,10 @@ pub fn sync_extensions(doc: &mut Document) {
         .collect();
     for (cid, parent) in exts {
         let vars = &mut doc.variables.variables;
-        // shortcut: an extension of an extension isn't followed (extending is offered for library
-        // collections only), upgrade if extended collections get published and extended again.
+        // shortcut: an extension of a local extended collection isn't followed: extending takes
+        // library collections, and a library's extended collection arrives as a plain copy, so
+        // chains go through libraries (`extended_chain_tests`); follow parents here if extending
+        // local collections is ever offered.
         let Some(parent) = parent.filter(|p| p.extends.is_none()) else {
             for v in vars.iter_mut().filter(|v| v.collection == cid) {
                 v.extends = None;

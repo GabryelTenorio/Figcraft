@@ -1285,6 +1285,8 @@ mod effects_tests;
 #[cfg(test)]
 mod export_behaviour_tests;
 #[cfg(test)]
+mod extended_chain_tests;
+#[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
 mod frame_guides_tests;

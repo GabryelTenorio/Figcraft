@@ -434,7 +434,10 @@ name and sets them this way);
   `mode` is left out). Variables of its own come from `variable.create`. Modes, and the names of
   inheriting variables, come from the library collection (renaming, adding or deleting them is
   refused); accepting library updates brings new values (overrides stay), renames and new
-  variables. The Variables editor offers Extend collection on a library collection and marks
+  variables. A variable the library adds to the extended collection is an update of its own
+  (`library.updates` lists it without an `id`, it has no copy yet). A library collection that is
+  itself an extended collection can be extended again: the chain follows as each file accepts
+  its library's updates. The Variables editor offers Extend collection on a library collection and marks
   overridden values, with a reset button.
 - **Update**: `library.updates` lists the components, styles, variable collections and variables
   with a newer published version; `library.acceptUpdates {ids? (library ids)}` pulls them in,

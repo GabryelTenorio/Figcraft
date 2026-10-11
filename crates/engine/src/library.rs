@@ -841,9 +841,25 @@ fn stale(records: &[ImportedRecord], lid: &str, exists: impl Fn(&str) -> bool, v
     records.iter().filter(|r| r.library == lid && exists(&r.local) && version(&r.key).is_some_and(|v| v > r.version)).cloned().collect()
 }
 
-/// Pending updates of `doc`'s copies of library `lib`.
+/// Pending updates of `doc`'s copies of library `lib`. Variables a library collection gained count
+/// too when one of `doc`'s collections extends it (they have no copy yet: `local` is empty).
 pub fn pending(doc: &Document, lib: &PublishedLibrary) -> Pending {
     let (m, libs, vars) = (&lib.manifest, &doc.libraries, &doc.variables);
+    let mut variables = stale(&libs.variables, &m.id, |l| vars.variables.iter().any(|v| v.id == l), |k| m.variable(k).map(|x| x.version));
+    let extended: BTreeSet<&str> = vars
+        .collections
+        .iter()
+        .filter_map(|c| libs.collection_import(c.extends.as_deref()?))
+        .filter(|r| r.library == m.id)
+        .map(|r| r.key.as_str())
+        .collect();
+    let copied = |key: &str| libs.variables.iter().any(|r| r.library == m.id && r.key == key && vars.get(&r.local).is_some());
+    variables.extend(published_variables(lib).filter(|v| extended.contains(v.collection.as_str()) && !copied(&v.id)).map(|v| ImportedRecord {
+        library: m.id.clone(),
+        key: v.id.clone(),
+        local: String::new(),
+        version: 0,
+    }));
     Pending {
         components: libs
             .components
@@ -853,7 +869,7 @@ pub fn pending(doc: &Document, lib: &PublishedLibrary) -> Pending {
             .collect(),
         styles: stale(&libs.styles, &m.id, |l| doc.styles.iter().any(|s| s.id == l), |k| m.style(k).map(|x| x.version)),
         collections: stale(&libs.collections, &m.id, |l| vars.collections.iter().any(|c| c.id == l), |k| m.collection(k).map(|x| x.version)),
-        variables: stale(&libs.variables, &m.id, |l| vars.variables.iter().any(|v| v.id == l), |k| m.variable(k).map(|x| x.version)),
+        variables,
     }
 }
 
@@ -868,24 +884,9 @@ pub fn accept_updates(doc: &mut Document, lib: &PublishedLibrary) -> Result<Pend
     if !p.styles.is_empty() {
         import_styles(doc, lib, &p.styles.iter().map(|r| r.key.clone()).collect(), true);
     }
-    // Extended collections also get the variables their library collection gained.
-    // shortcut: `pending` doesn't count those, so they arrive with the library's next other update;
-    // upgrade if extended collections need them on their own.
-    let extended: BTreeSet<&str> = doc
-        .variables
-        .collections
-        .iter()
-        .filter_map(|c| doc.libraries.collection_import(c.extends.as_deref()?))
-        .filter(|r| r.library == lib.manifest.id)
-        .map(|r| r.key.as_str())
-        .collect();
-    let extended: BTreeSet<VariableId> =
-        published_variables(lib).filter(|v| extended.contains(v.collection.as_str())).map(|v| v.id.clone()).collect();
-    if !p.variables.is_empty() || !p.collections.is_empty() || !extended.is_empty() {
+    if !p.variables.is_empty() || !p.collections.is_empty() {
         let keys = |list: &[ImportedRecord]| list.iter().map(|r| r.key.clone()).collect::<BTreeSet<_>>();
-        let mut vars = keys(&p.variables);
-        vars.extend(extended);
-        import_variables(doc, lib, &vars, &keys(&p.collections), true);
+        import_variables(doc, lib, &keys(&p.variables), &keys(&p.collections), true);
     }
     crate::cmd::variables::sync_extensions(doc);
     let m = &lib.manifest;

@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "library.updates",
             "Library updates",
-            "{}  → the components, styles, variable collections and variables with a newer published version",
+            "{}  → the components, styles, variable collections and variables with a newer published version, and variables new to a library collection this file extends (listed without an `id`: no copy yet)",
             false,
             updates
         ),
@@ -574,7 +574,8 @@ fn updates(s: &mut Session, _p: &Value) -> Result<Value> {
         let m = &lib.manifest;
         let name = |r: &ImportedComponent| m.component(r.key).map(|a| a.name.clone()).unwrap_or_default();
         let rows = |list: &[ImportedRecord], name: &dyn Fn(&str) -> Option<String>| {
-            list.iter().map(|r| json!({"id": r.local, "key": r.key, "name": name(&r.key)})).collect::<Vec<_>>()
+            // A variable new to an extended collection has no copy yet: no `id`.
+            list.iter().map(|r| json!({"id": (!r.local.is_empty()).then_some(&r.local), "key": r.key, "name": name(&r.key)})).collect::<Vec<_>>()
         };
         out.push(json!({
             "id": l.id,
