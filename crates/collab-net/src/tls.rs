@@ -90,28 +90,20 @@ fn make_config() -> Result<Arc<ClientConfig>, String> {
 /// session's lock), take them in and try again. Anything the session must answer (alerts, key
 /// updates) goes out through `out`.
 pub fn read(tls: &Mutex<ClientConnection>, sock: &mut TcpStream, out: &Mutex<TcpStream>, buf: &mut [u8]) -> io::Result<usize> {
-    // At most this much ciphertext at a time keeps the plaintext under rustls's buffer limit.
-    let mut chunk = [0u8; 8 * 1024];
     loop {
         match lock(tls).reader().read(buf) {
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
             done => return done,
         }
-        let n = sock.read(&mut chunk)?;
+        // Wait for ciphertext without taking it off the socket, then let the session read only
+        // what it takes: its plaintext buffer is empty here, so it never overflows (feeding it a
+        // whole chunk could, when a record completes on top of plaintext not yet read).
+        sock.peek(&mut [0u8; 1])?;
         let answer = {
             let mut c = lock(tls);
             // An empty read (the socket ended) tells the session so: the next read ends too.
-            let mut rest = chunk.get(..n).unwrap_or_default();
-            loop {
-                let took = c.read_tls(&mut rest)?;
-                c.process_new_packets().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                if rest.is_empty() {
-                    break;
-                }
-                if took == 0 {
-                    return Err(io::Error::other("the secure connection stopped taking data"));
-                }
-            }
+            c.read_tls(sock)?;
+            c.process_new_packets().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             c.wants_write()
         };
         if answer {
