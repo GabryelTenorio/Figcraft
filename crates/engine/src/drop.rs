@@ -142,7 +142,8 @@ pub fn grid_cell_at(doc: &Document, parent: NodeId, p: Point) -> Option<(u32, u3
 /// being dragged) and their descendants. Inside auto layout the deepest auto layout frame under the
 /// pointer wins: plain frames there are items of the flow, not destinations (dropping onto a card
 /// in a list inserts next to it). Elsewhere the deepest frame or section under the pointer wins.
-/// Inside an instance only its slots (and what's in them) take drops; a slot always does.
+/// Inside an instance only its slots (and what's in them) take drops; a slot always does. Sections
+/// being dragged only go into sections.
 pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -> Option<NodeId> {
     /// `locked`: inside an instance, outside its slots.
     fn rec(doc: &Document, id: NodeId, p: Point, exclude: &[NodeId], in_al: bool, locked: bool, depth: usize) -> Option<NodeId> {
@@ -167,7 +168,13 @@ pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -
         let deeper = n.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, in_al || auto_layout, kids_locked, depth + 1));
         deeper.or((!kids_locked && (auto_layout || !in_al || crate::components::is_slot(doc, id))).then_some(id))
     }
-    doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, false, 0))
+    let hit = doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, false, 0));
+    // Sections go on the page or in sections: a frame under the pointer gives way to the section
+    // it is in.
+    if exclude.iter().any(|m| doc.node(*m).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }))) {
+        return hit.and_then(|h| std::iter::once(h).chain(doc.ancestors(h)).find(|a| doc.takes_sections(*a))).filter(|a| *a != page);
+    }
+    hit
 }
 
 /// Whether layers dragged on the canvas inside `parent` stay in it (they only move): those of a

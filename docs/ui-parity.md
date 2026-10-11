@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -77,6 +77,9 @@ interaction feel not yet compared.
 | Outline mode | done | Outlines, outlines for the selection, mask outlines, frame outlines |
 | Slices shown on the canvas (View ▸ Slices) | done | dashed rectangles |
 | Dragging a layer inside a group keeps it in the group | done | frames and auto layout take other drops |
+| Frames and sections drawn around layers take those fully inside; sections never drop into frames | done | not in auto layout frames |
+| Resizing a section leaves its contents in place | done | |
+| Masks: what a mask hides doesn't take clicks; a mask group's box is the mask's | done | |
 | Layout grids (Ctrl+G) | done | |
 | Gamut warnings for Display P3 files | done | colour picker note; View ▸ Soft-proof sRGB stripes what sRGB can't show (the canvas itself is sRGB) |
 | Gradient and padding/gap handles on the canvas | done | |
@@ -99,6 +102,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Frames, groups, sections and masks: drawing a frame or section around layers takes them, sections stay out of frames, section resizing leaves contents in place, masked-out areas don't take clicks, a mask group's box follows the mask, X/Y of layers in groups are measured in the frame |
 | 2026-10-11 | minor | Layers panel keyboard: F2 renames (also from a row with the keyboard, which gets it back), Shift+F10 opens the context menu at the focused row or below the canvas selection, F8 draws a selection box the arrows move and size; stroke weights bind to variables side by side |
 | 2026-10-11 | minor | Selection and transform behaviour suite and fixes: Alt shrinks, groups and mixed rotations scale each layer along its own axes, several layers flip together, whole-pixel resizes, small layers move from inside, locked layers stay put, marquees from a top-level frame's background, equal spacing snapping, Cmd/Ctrl ignores constraints while resizing a frame |
 | 2026-10-11 | minor | Gamut warnings: the colour picker flags Display P3 colours outside sRGB; View ▸ Soft-proof sRGB stripes them on the canvas |

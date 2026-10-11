@@ -54,9 +54,16 @@ Or in a project's `.mcp.json`:
 ## Conventions agents must know
 
 - Coordinates are **page units** (1 unit = 1 px at 100% zoom), x right, **y down**.
-- `create_node` and `set_properties` take `x`/`y` **relative to the parent** (the page when there is
-  no parent, so they are page coordinates then). `inspect_document` reports parent-relative `x`/`y`
-  plus `absoluteBounds` in page coordinates.
+- `create_node` and `set_properties` take `x`/`y` **relative to the parent frame** (the page when
+  there is none, so they are page coordinates then). Groups and boolean groups have no coordinate
+  space of their own: a layer in a group is placed in the frame (or on the page) the group is in.
+  `inspect_document` reports `x`/`y` the same way, plus `absoluteBounds` in page coordinates.
+- Frames, groups, sections and masks: drawing a frame or section with the `pointer` tool around
+  layers puts those fully inside it in it; sections go only on the page or in sections (moves,
+  drags, pastes and new sections elsewhere are refused or land on the page); resizing a section
+  leaves its contents where they are, and so does resizing a frame with `cmd` held (constraints
+  ignored); a layer a mask hides can't be clicked there, and a mask group's box and exports are
+  the mask's (plus any layers under the mask).
 - Children of an auto-layout frame are positioned by the layout: set `layout`, `gap`, `padding`,
   `mainAlign`, `crossAlign`, `sizingH`/`sizingV` instead of x/y. More auto layout props:
   - `sizingH` / `sizingV`: `fixed`, `hug` (auto layout frames and text) or `fill` (children in an

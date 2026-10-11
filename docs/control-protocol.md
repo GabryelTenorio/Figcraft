@@ -21,7 +21,8 @@ real UI state. A request that the UI doesn't answer within 60 s gets a timeout e
 not JSON gets `{"id": null, "ok": false, "error": "bad JSON: …"}`. The implementation is in
 `crates/ui-egui/src/control.rs` (methods) and `apps/figcraft/src/control_server.rs` (socket).
 
-Coordinates are page units, y down. `x`/`y` in `node.set`/`node.create` are parent-relative.
+Coordinates are page units, y down. `x`/`y` in `node.set`/`node.create` are relative to the parent
+frame (groups have no coordinate space of their own).
 
 **Windows.** The desktop app can show files in several windows (`window.new`). Every method takes
 an optional `window` (an id from `window.list`; `0` is the main window) and then runs in that

@@ -104,12 +104,25 @@ fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
 /// boolean groups are hit where their `result` is.
 pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
     let p = doc.node(page)?;
-    for c in p.children.iter().rev() {
-        if let Some(h) = hit_rec(doc, *c, pt, tol, 0, result) {
-            return Some(h);
-        }
+    p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result).filter(|_| !masked_out(doc, p, *c, pt)))
+}
+
+/// Whether child `c` of `parent` is masked at `pt`: a visible mask below it (the nearest mask
+/// below it, a hidden one masks nothing) doesn't cover the point, so nothing of `c` shows there.
+fn masked_out(doc: &Document, parent: &Node, c: NodeId, pt: Point) -> bool {
+    if !doc.has_masks() {
+        return false;
     }
-    None
+    let below = parent.children.iter().position(|k| *k == c).and_then(|i| parent.children.get(..i)).unwrap_or(&[]);
+    let mask = below.iter().rev().filter_map(|k| doc.node(*k).map(|n| (*k, n))).find(|(_, n)| n.is_mask);
+    mask.is_some_and(|(m, n)| n.visible && !covers(doc, m, n, pt, 0))
+}
+
+/// Whether mask `id` draws at `pt` (its shape, or for a group or frame what its layers draw).
+fn covers(doc: &Document, id: NodeId, n: &Node, pt: Point, depth: usize) -> bool {
+    depth < 512
+        && (hits_node_itself(doc, id, n, pt, 0.0)
+            || n.children.iter().any(|c| doc.node(*c).is_some_and(|k| k.visible && !k.is_mask && covers(doc, *c, k, pt, depth + 1))))
 }
 
 /// Like [`hit_leaf`], but only within layer `root` (it included).
@@ -140,7 +153,7 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result
         return None;
     }
     for c in n.paint_order().rev() {
-        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result) {
+        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result).filter(|_| !masked_out(doc, n, c, pt)) {
             return Some(h);
         }
     }
@@ -173,7 +186,11 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
             return;
         }
         for c in n.paint_order().rev() {
+            let before = out.len();
             rec(doc, c, pt, tol, depth + 1, result, out);
+            if out.len() > before && masked_out(doc, n, c, pt) {
+                out.truncate(before);
+            }
         }
         if out.len() > at || hits_node_itself(doc, id, n, pt, tol) {
             out.insert(at, (id, depth));
@@ -182,7 +199,11 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
     let mut out = Vec::new();
     if let Some(p) = doc.node(page) {
         for c in p.children.iter().rev() {
+            let before = out.len();
             rec(doc, *c, pt, tol, 0, result, &mut out);
+            if out.len() > before && masked_out(doc, p, *c, pt) {
+                out.truncate(before);
+            }
         }
     }
     out

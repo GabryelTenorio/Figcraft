@@ -512,7 +512,8 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
     for (k, v) in &clip.images {
         doc.images.entry(k.clone()).or_insert_with(|| v.clone());
     }
-    let parent_world = doc.world_transform(parent);
+    // Sections go on the page (or in sections), never in the frame being pasted into.
+    let page = doc.page_of(parent).unwrap_or(parent);
     let shift = match (at, clip.bounds) {
         (Some((x, y)), Some(b)) => Affine::translate((x - b.x0, y - b.y0)),
         _ => Affine::IDENTITY,
@@ -525,10 +526,12 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
             map.insert(n.id, doc.alloc_id());
         }
         let mut nodes = nodes.clone();
+        let section = nodes.first().is_some_and(|r| matches!(r.kind, NodeKind::Section { .. }));
+        let into = if section && !doc.takes_sections(parent) { page } else { parent };
         if let Some(r) = nodes.first_mut() {
-            r.transform = parent_world.inverse() * shift * r.transform;
+            r.transform = doc.world_transform(into).inverse() * shift * r.transform;
         }
-        out.push(doc.paste_nodes(&nodes, &map, *root, parent, None)?);
+        out.push(doc.paste_nodes(&nodes, &map, *root, into, None)?);
         all.extend(map);
     }
     if let Some(src) = foreign {

@@ -468,6 +468,8 @@ pub(crate) fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         let (w, h) = (num(p, "width").unwrap_or(ow).max(0.0), num(p, "height").unwrap_or(oh).max(0.0));
         let fixed_local = Point::new(ow * ax, oh * ay);
         let before = n.transform * fixed_local;
+        // A section's contents stay where they are on the page, wherever its anchor puts it.
+        let kept = if matches!(n.kind, NodeKind::Section { .. }) { super::props::children_worlds(doc, i) } else { Vec::new() };
         super::props::resize_node(doc, i, w, h)?;
         let n = doc.get_mut(i)?;
         let after = n.transform * Point::new(w * ax, h * ay);
@@ -481,6 +483,7 @@ pub(crate) fn resize_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         if let NodeKind::Text(t) = &mut n.kind {
             t.auto_resize = if num(p, "height").is_some() { TextAutoResize::None } else { TextAutoResize::Height };
         }
+        super::props::restore_worlds(doc, &kept)?;
     }
     ok()
 }

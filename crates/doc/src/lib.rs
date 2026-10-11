@@ -76,9 +76,19 @@ pub enum DocError {
 
 pub type DocResult<T> = Result<T, DocError>;
 
-/// The set of touched node ids. Never part of equality or serialisation.
+/// The set of touched node ids, and whether any layer is a mask (worked out when first asked
+/// after a change: hit testing skips its mask checks without one). Never part of equality or
+/// serialisation.
 #[derive(Clone, Debug, Default)]
-pub struct Dirty(pub std::collections::BTreeSet<NodeId>);
+pub struct Dirty(pub std::collections::BTreeSet<NodeId>, std::sync::OnceLock<bool>);
+
+impl Dirty {
+    /// Record node `id` as touched (edited, added or removed).
+    fn touch(&mut self, id: NodeId) {
+        self.0.insert(id);
+        self.1 = std::sync::OnceLock::new();
+    }
+}
 
 impl PartialEq for Dirty {
     fn eq(&self, _: &Self) -> bool {
@@ -238,6 +248,11 @@ impl Document {
         self.dirty.0.extend(ids);
     }
 
+    /// Whether any layer of the document is a mask.
+    pub fn has_masks(&self) -> bool {
+        *self.dirty.1.get_or_init(|| self.nodes.values().any(|n| n.is_mask))
+    }
+
     /// Node ids touched so far (without clearing).
     pub fn dirty(&self) -> &std::collections::BTreeSet<NodeId> {
         &self.dirty.0
@@ -286,7 +301,7 @@ impl Document {
     pub fn node_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         let n = self.nodes.get_mut(&id).map(Arc::make_mut);
         if n.is_some() {
-            self.dirty.0.insert(id);
+            self.dirty.touch(id);
         }
         n
     }
@@ -359,7 +374,7 @@ impl Document {
             0.0,
         );
         self.nodes.insert(id, Arc::new(node));
-        self.dirty.0.insert(id);
+        self.dirty.touch(id);
         self.pages.push(id);
         id
     }
@@ -395,7 +410,7 @@ impl Document {
         self.reserve_ids(id);
         node.parent = Some(parent);
         self.nodes.insert(id, Arc::new(node));
-        self.dirty.0.insert(id);
+        self.dirty.touch(id);
         let p = self.get_mut(parent)?;
         let at = index.unwrap_or(p.children.len()).min(p.children.len());
         p.children.insert(at, id);
@@ -476,9 +491,40 @@ impl Document {
         }
         for d in self.subtree(id) {
             self.nodes.remove(&d);
-            self.dirty.0.insert(d);
+            self.dirty.touch(d);
         }
         Ok(())
+    }
+
+    /// Whether sections may go in `parent`: a page or another section (never a frame or a group).
+    pub fn takes_sections(&self, parent: NodeId) -> bool {
+        self.node(parent).is_some_and(|p| p.is_page() || matches!(p.kind, NodeKind::Section { .. }))
+    }
+
+    /// `id`'s transform in the space of the frame it is in (or of the page): groups and boolean
+    /// groups have no coordinate space of their own, so theirs fold in. X and Y are measured there.
+    pub fn frame_relative(&self, id: NodeId) -> Affine {
+        let Some(n) = self.node(id) else { return Affine::IDENTITY };
+        let mut t = n.transform;
+        let mut parent = n.parent;
+        while let Some(p) = parent.and_then(|p| self.node(p)).filter(|p| p.kind.bounds_follow_children()) {
+            t = p.transform * t;
+            parent = p.parent;
+        }
+        t
+    }
+
+    /// The children of `n` that make up its box (a group's bounds, an export's area): all of them,
+    /// except layers a visible mask below them masks, whose part is the mask's.
+    pub fn box_children<'a>(&'a self, n: &'a Node) -> impl Iterator<Item = (NodeId, &'a Node)> + 'a {
+        let mut masked = false;
+        n.children.iter().filter_map(|c| self.node(*c).map(|k| (*c, k))).filter(move |(_, k)| {
+            if k.is_mask {
+                masked = k.visible;
+                return true;
+            }
+            !masked
+        })
     }
 
     /// Index of `id` among its siblings.
@@ -499,6 +545,9 @@ impl Document {
         let node = self.get(id)?;
         if node.is_page() {
             return Err(DocError::Invalid("pages can't be moved into nodes".into()));
+        }
+        if matches!(node.kind, NodeKind::Section { .. }) && !self.takes_sections(new_parent) {
+            return Err(DocError::Invalid("sections go on the page or in other sections, not in frames or groups".into()));
         }
         let world = self.world_transform(id);
         let old_parent = node.parent;
@@ -539,7 +588,7 @@ impl Document {
         node.parent = None;
         node.children.clear();
         self.nodes.insert(id, Arc::new(node));
-        self.dirty.0.insert(id);
+        self.dirty.touch(id);
         self.pages.push(id);
         Ok(id)
     }
@@ -621,8 +670,8 @@ impl Document {
         let reach = n.paint_reach();
         let mut r = figcraft_geom::transform_rect_bbox(self.world_transform(id), n.local_rect().inflate(reach, reach));
         if !(n.clip && n.kind.is_frame_like()) || n.kind.bounds_follow_children() {
-            for c in &n.children {
-                if let Some(cr) = self.world_render_bounds(*c) {
+            for (c, _) in self.box_children(n) {
+                if let Some(cr) = self.world_render_bounds(c) {
                     r = r.union(cr);
                 }
             }
@@ -649,11 +698,10 @@ impl Document {
         }
         let world = self.world_transform(id);
         let inv = world.inverse();
-        // Children bounds in the group's current local space.
+        // Children bounds in the group's current local space (a mask stands for what it masks).
         let mut local: Option<Rect> = None;
-        for c in &n.children {
-            let Some(cn) = self.node(*c) else { continue };
-            let r = figcraft_geom::transform_rect_bbox(inv * self.world_transform(*c), cn.local_rect());
+        for (c, cn) in self.box_children(n) {
+            let r = figcraft_geom::transform_rect_bbox(inv * self.world_transform(c), cn.local_rect());
             local = Some(local.map_or(r, |l| l.union(r)));
         }
         let Some(local) = local else { return Ok(()) };
@@ -740,7 +788,7 @@ impl Document {
             }
             self.reserve_ids(*new_id);
             self.nodes.insert(*new_id, Arc::new(c));
-            self.dirty.0.insert(*new_id);
+            self.dirty.touch(*new_id);
         }
         let p = self.get_mut(parent)?;
         let at = index.unwrap_or(p.children.len()).min(p.children.len());

@@ -1251,6 +1251,8 @@ mod frame_label_tests;
 #[cfg(test)]
 mod frame_tests;
 #[cfg(test)]
+mod frames_behaviour_tests;
+#[cfg(test)]
 mod gesture_preview_tests;
 #[cfg(test)]
 mod html_codegen_tests;
@@ -1268,6 +1270,8 @@ mod live_access_tests;
 mod live_tests;
 #[cfg(test)]
 mod mask_tests;
+#[cfg(test)]
+mod masks_behaviour_tests;
 #[cfg(test)]
 mod measure_tests;
 #[cfg(test)]

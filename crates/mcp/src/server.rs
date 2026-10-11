@@ -29,7 +29,7 @@ pub const INSTRUCTIONS: &str = "FigCraft is an interface design tool (Figma-clas
 groups, shapes, text, components and instances, with auto layout, styles, variables and prototyping. \
 Coordinates are page units (1 unit = 1 px at 100% zoom), x right and y DOWN. create_node and set_properties \
 take x/y RELATIVE TO THE PARENT (the page when there is no parent, so page coordinates); inspect_document \
-reports both parent-relative x/y and absoluteBounds in page coordinates. Children of an auto-layout frame are \
+reports both x/y relative to the parent frame (groups don't count) and absoluteBounds in page coordinates. Children of an auto-layout frame are \
 positioned by the layout (set layout, gap, padding, mainAlign, crossAlign, sizingH/sizingV instead). \
 Every menu item, panel action and shortcut is a command: find ids and params with list_commands (use a filter) \
 and run them with run_command, or several as one undo step with batch. Commands act on `ids` when given, else \

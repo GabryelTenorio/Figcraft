@@ -266,7 +266,7 @@ impl Document {
             0.0,
         );
         self.nodes.insert(id, Arc::new(node));
-        self.dirty.0.insert(id);
+        self.dirty.touch(id);
         Arc::make_mut(&mut self.libraries).store = Some(id);
         id
     }

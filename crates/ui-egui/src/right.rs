@@ -566,8 +566,9 @@ fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
             });
         }
     });
-    let x = common(doc, sel, |n| (n.transform.as_coeffs()[4] * 100.0).round() / 100.0);
-    let y = common(doc, sel, |n| (n.transform.as_coeffs()[5] * 100.0).round() / 100.0);
+    // In the frame's space: groups have none of their own.
+    let x = common(doc, sel, |n| (doc.frame_relative(n.id).as_coeffs()[4] * 100.0).round() / 100.0);
+    let y = common(doc, sel, |n| (doc.frame_relative(n.id).as_coeffs()[5] * 100.0).round() / 100.0);
     let rot = common(doc, sel, |n| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0);
     let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
     let absolute = common(doc, sel, |n| n.child_layout.absolute);

@@ -12,7 +12,7 @@ use crate::{Result, bad};
 pub const STROKE_SIDES: [&str; 4] = ["strokeTopWeight", "strokeRightWeight", "strokeBottomWeight", "strokeLeftWeight"];
 
 /// Keys `node.set` understands (documented for agents).
-pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (parent-relative), width, height, rotation (degrees), \
+pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), \
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], strokeTopWeight / strokeRightWeight / strokeBottomWeight / strokeLeftWeight (one side; turns on individual strokes), \
 strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
@@ -274,18 +274,19 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
         match k {
             "x" | "y" => {
                 let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?;
-                let n = doc.get_mut(id)?;
-                let b = figcraft_geom::transform_rect_bbox(n.transform, n.local_rect());
-                let c = n.transform.as_coeffs();
-                // Figma's X/Y are the node's own origin (its rotated top-left) for rotated nodes.
+                // X/Y are the node's own origin (its rotated top-left for rotated nodes), in the
+                // frame it is in (groups have no space of their own).
+                let n = doc.get(id)?;
+                let group = n.parent.filter(|p| doc.node(*p).is_some_and(|pn| pn.kind.bounds_follow_children()));
+                let space = group.map_or(Affine::IDENTITY, |g| doc.frame_relative(g));
+                let c = (space * n.transform).as_coeffs();
                 let (mut tx, mut ty) = (c[4], c[5]);
-                let _ = b;
                 if k == "x" {
                     tx = val;
                 } else {
                     ty = val;
                 }
-                n.transform = Affine::new([c[0], c[1], c[2], c[3], tx, ty]);
+                doc.get_mut(id)?.transform = space.inverse() * Affine::new([c[0], c[1], c[2], c[3], tx, ty]);
             }
             "width" | "height" | "w" | "h" => {
                 let val = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?.max(0.0);
@@ -949,12 +950,29 @@ fn set_sizing(cmd: &str, doc: &mut Document, id: NodeId, s: Sizing, horizontal: 
 }
 
 /// Resize a node's box from its top-left, applying constraints / group scaling to children.
+/// The page transforms of `id`'s children, to put back with [`restore_worlds`] once a container
+/// whose contents stay where they are on the page (a section; a frame resized with Cmd/Ctrl held)
+/// has moved or changed size.
+pub fn children_worlds(doc: &Document, id: NodeId) -> Vec<(NodeId, Affine)> {
+    doc.node(id).map(|n| n.children.iter().map(|c| (*c, doc.world_transform(*c))).collect()).unwrap_or_default()
+}
+
+pub fn restore_worlds(doc: &mut Document, worlds: &[(NodeId, Affine)]) -> Result<()> {
+    for (c, w) in worlds {
+        doc.set_world_transform(*c, *w)?;
+    }
+    Ok(())
+}
+
 pub fn resize_node(doc: &mut Document, id: NodeId, w: f64, h: f64) -> Result<()> {
     let n = doc.get(id)?;
     let (ow, oh) = (n.width, n.height);
     let group = n.kind.bounds_follow_children();
+    let section = matches!(n.kind, NodeKind::Section { .. });
     figcraft_layout::set_size(doc, id, w, h);
-    if group {
+    if section {
+        // Sections have no constraints: what's in them stays as it is.
+    } else if group {
         let kx = if ow > 1e-9 { w / ow } else { 1.0 };
         let ky = if oh > 1e-9 { h / oh } else { 1.0 };
         figcraft_layout::scale_group_children(doc, id, kx, ky);
@@ -968,7 +986,7 @@ pub fn resize_node(doc: &mut Document, id: NodeId, w: f64, h: f64) -> Result<()>
 /// The design-panel view of a node (used by the UI and inspect).
 pub fn describe(doc: &Document, id: NodeId) -> Value {
     let Some(n) = doc.node(id) else { return Value::Null };
-    let c = n.transform.as_coeffs();
+    let c = doc.frame_relative(id).as_coeffs();
     let mut v = json!({
         "id": n.id,
         "name": n.name,

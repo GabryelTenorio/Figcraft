@@ -400,6 +400,29 @@ pub(crate) fn pressure_profile(points: &[Point], pressure: &[Option<f32>]) -> Op
     Some(profile.collect())
 }
 
+/// A frame or section drawn around layers takes those of its siblings that lie fully inside it
+/// (visible and unlocked ones, in their order; a frame never takes a section). Not in auto layout,
+/// where the new frame is one more item of the flow.
+fn take_enclosed(doc: &mut Document, drawn: NodeId) -> Result<()> {
+    let Some(n) = doc.node(drawn) else { return Ok(()) };
+    let section = matches!(n.kind, NodeKind::Section { .. });
+    let (Some(parent), Some(area)) = (n.parent.and_then(|p| doc.node(p)), doc.world_bounds(drawn)) else { return Ok(()) };
+    if parent.layout.is_some() {
+        return Ok(());
+    }
+    let inside: Vec<NodeId> = parent
+        .children
+        .iter()
+        .copied()
+        .filter(|c| *c != drawn && doc.node(*c).is_some_and(|k| k.visible && !k.locked && (section || !matches!(k.kind, NodeKind::Section { .. }))))
+        .filter(|c| doc.world_bounds(*c).is_some_and(|b| area.contains(b.origin()) && area.contains(Point::new(b.x1, b.y1))))
+        .collect();
+    for c in inside {
+        doc.reparent(c, drawn, None)?;
+    }
+    Ok(())
+}
+
 /// The frame whose name label (see [`ToolState::labels`]) is under `p` on `page`: the topmost
 /// one drawn, if it can be selected (still there, on the page, visible and unlocked).
 pub fn label_at(doc: &Document, page: NodeId, labels: &[(NodeId, [Point; 4])], p: Point) -> Option<NodeId> {
@@ -1252,15 +1275,15 @@ impl Session {
         let nodes = r.nodes.clone();
         let single = r.single;
         let handle = r.handle;
-        // Cmd/Ctrl on a frame: its children ignore their constraints and stay where they are.
-        let ignore_constraints = ev.cmd;
+        // What's in a section stays where it is on the page, and so does what's in a frame resized
+        // with Cmd/Ctrl held (its constraints are ignored).
+        let keeps = |doc: &Document, id: NodeId| {
+            doc.node(id).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }) || (ev.cmd && single && n.kind.is_frame_like()))
+        };
         self.preview(|doc, _| {
             if single {
                 let Some((id, world, _, _)) = nodes.first() else { return Ok(()) };
-                let pinned: Vec<(NodeId, Affine)> = match doc.node(*id) {
-                    Some(n) if ignore_constraints && n.kind.is_frame_like() => n.children.iter().map(|c| (*c, doc.world_transform(*c))).collect(),
-                    _ => Vec::new(),
-                };
+                let kept = if keeps(doc, *id) { crate::cmd::props::children_worlds(doc, *id) } else { Vec::new() };
                 let mut t = *world * Affine::translate((nx0, ny0));
                 if flip_x {
                     t *= Affine::new([-1.0, 0.0, 0.0, 1.0, nw, 0.0]);
@@ -1269,9 +1292,11 @@ impl Session {
                     t *= Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, nh]);
                 }
                 doc.set_world_transform(*id, t)?;
-                crate::cmd::props::resize_node(doc, *id, nw.max(0.01), nh.max(0.01))?;
-                for (c, w) in &pinned {
-                    doc.set_world_transform(*c, *w)?;
+                if kept.is_empty() {
+                    crate::cmd::props::resize_node(doc, *id, nw.max(0.01), nh.max(0.01))?;
+                } else {
+                    figcraft_layout::set_size(doc, *id, nw.max(0.01), nh.max(0.01));
+                    crate::cmd::props::restore_worlds(doc, &kept)?;
                 }
                 let n = doc.get_mut(*id)?;
                 if matches!(handle, Handle::Corner(_) | Handle::Edge(1) | Handle::Edge(3)) {
@@ -1301,8 +1326,10 @@ impl Session {
                 let (w2, h2) = (w * kw, h * kh);
                 let lin = (mirror * local).with_translation(Vec2::ZERO);
                 let origin = Point::new(x0 + center.x * sx, y0 + center.y * sy) - lin * Point::new(w2 / 2.0, h2 / 2.0);
+                let kept = if keeps(doc, *id) { crate::cmd::props::children_worlds(doc, *id) } else { Vec::new() };
                 doc.set_world_transform(*id, frame * lin.with_translation(origin))?;
                 crate::cmd::props::resize_node(doc, *id, w2, h2)?;
+                crate::cmd::props::restore_worlds(doc, &kept)?;
             }
             Ok(())
         })?;
@@ -1521,6 +1548,14 @@ impl Session {
                     let targets = Targets::default();
                     self.draw_drag(&fake, start, None, parent, &targets)?;
                     self.tool.gesture = Gesture::None;
+                }
+                if matches!(self.tool.tool, ToolId::Frame | ToolId::Section)
+                    && let Some(drawn) = self.selection().first().copied()
+                {
+                    let ds = self.ds_mut()?;
+                    let before = ds.doc.clone();
+                    take_enclosed(ds.doc_mut(), drawn)?;
+                    crate::normalize(ds.doc_mut(), &before);
                 }
                 self.commit_interaction()?;
                 if !self.prefs.keep_tool {

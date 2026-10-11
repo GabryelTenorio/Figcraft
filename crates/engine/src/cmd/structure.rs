@@ -125,6 +125,9 @@ fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
     if matches!(w, Wrap::Section) && !ids.iter().all(|i| board(doc, *i)) {
         return Err(bad("object.wrapInSection", "only layers on the page or in a section can be wrapped in a section"));
     }
+    if !matches!(w, Wrap::Section) && ids.iter().any(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Section { .. }))) {
+        return Err(bad("object.group", "sections can't go in groups or frames"));
+    }
     let index = doc.index_in_parent(top).map(|i| i + 1);
     let mut bounds = doc.bounds_of(&ids).unwrap_or_default();
     if matches!(w, Wrap::Section) {

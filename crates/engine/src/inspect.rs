@@ -8,7 +8,7 @@ use crate::Session;
 /// A node and (to `depth`) its children, with the properties a designer would check.
 pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
     let Some(n) = doc.node(id) else { return Value::Null };
-    let c = n.transform.as_coeffs();
+    let c = doc.frame_relative(id).as_coeffs();
     let mut v = json!({
         "id": n.id,
         "name": n.name,

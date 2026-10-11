@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "node.create",
             "Create layer",
-            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (parent-relative), width?, height?, parent? (id; default: the page), index?, name?, text? (for text), path? (SVG path data for vector), props? {node.set keys}, select? (default true)}",
+            "{type: rectangle|ellipse|polygon|star|line|arrow|vector|text|frame|section|component|slice, x?, y? (relative to the parent frame; groups don't count), width?, height?, parent? (id; default: the page), index?, name?, text? (for text), path? (SVG path data for vector), props? {node.set keys}, select? (default true)}",
             true,
             create
         ),
@@ -173,6 +173,11 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     if !pn.kind.is_container() {
         return Err(bad(cmd, format!("{parent} can't contain layers")));
     }
+    if base == "Section" && !doc.takes_sections(parent) {
+        return Err(bad(cmd, "sections go on the page or in other sections"));
+    }
+    // X and Y are in the frame's space: a group parent has none of its own.
+    let space = if pn.kind.bounds_follow_children() { doc.frame_relative(parent) } else { figcraft_geom::Affine::IDENTITY };
     let x = num_or(p, "x", 0.0);
     let y = num_or(p, "y", 0.0);
     let (mut w, mut h) = match base {
@@ -233,7 +238,7 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = ds.doc_mut();
     let nid = doc.alloc_id();
     let mut node = if base == "Section" { Node::new_section(nid, name, w, h) } else { Node::new(nid, kind, name, w, h) };
-    node.transform = figcraft_geom::Affine::translate((x + offset.0, y + offset.1));
+    node.transform = space.inverse() * figcraft_geom::Affine::translate((x + offset.0, y + offset.1));
     if base == "Arrow" {
         node.stroke.cap_end = StrokeCap::LineArrow;
     }
