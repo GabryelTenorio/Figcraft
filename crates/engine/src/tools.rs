@@ -495,9 +495,15 @@ fn shared_rotation(doc: &Document, ids: &[NodeId]) -> Option<f64> {
     (a.is_finite() && !axis_aligned && angles.all(same)).then_some(a)
 }
 
-/// Which handle (if any) is under `p`.
+/// Whether layer `id` is locked or inside a locked layer: it can be selected in the layers panel
+/// but not moved or resized on the canvas.
+pub fn locked_in(doc: &Document, id: NodeId) -> bool {
+    std::iter::once(id).chain(doc.ancestors(id)).any(|a| doc.node(a).is_some_and(|n| n.locked))
+}
+
+/// Which handle (if any) is under `p`. A selection with a locked layer has none.
 pub fn handle_at(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> Option<Handle> {
-    if sel.is_empty() {
+    if sel.is_empty() || sel.iter().any(|i| locked_in(doc, *i)) {
         return None;
     }
     let corners = selection_box(doc, sel)?;
@@ -506,27 +512,48 @@ pub fn handle_at(doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> Option<
     handle_at_corners(&corners, p, zoom, is_line)
 }
 
+/// A box whose sides are both shorter than this on screen (pixels) would be covered by its
+/// handles: the canvas draws just its outline (the handles still answer just outside it).
+pub const SMALL_BOX_PX: f64 = 16.0;
+
+/// The shorter and longer sides, in screen pixels, of the box with `corners` (tl, tr, br, bl).
+pub fn box_sides_px(corners: &[Point; 4], zoom: f64) -> (f64, f64) {
+    let [a, b, _, d] = corners;
+    let (w, h) = ((*b - *a).hypot() * zoom, (*d - *a).hypot() * zoom);
+    (w.min(h), w.max(h))
+}
+
 /// Which handle of the box with `corners` (tl, tr, br, bl in page coordinates) is under `p`;
 /// `is_line` keeps only the two end handles.
 pub fn handle_at_corners(corners: &[Point; 4], p: Point, zoom: f64, is_line: bool) -> Option<Handle> {
     let tol = HANDLE_PX / zoom.max(1e-6);
-    for (i, c) in corners.iter().enumerate() {
-        if is_line && (i == 3 || i == 2) {
-            continue;
-        }
-        if (*c - p).hypot() <= tol * 1.6 {
-            return Some(Handle::Corner(i as u8));
-        }
+    // Inside the box, handles reach in at most a quarter of its shorter side, so that a press in
+    // the middle of a small layer moves it; outside it they reach as far as ever.
+    let inner = if !is_line && in_quad(corners, p) { box_sides_px(corners, zoom).0 / 4.0 / zoom.max(1e-6) } else { f64::INFINITY };
+    let (corner_reach, edge_reach) = ((tol * 1.6).min(inner), tol.min(inner));
+    // The nearest corner, then the nearest edge, in reach (a small box's reaches overlap).
+    let nearest = |hits: &mut dyn Iterator<Item = (f64, Handle)>| hits.min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, h)| h);
+    let corner = nearest(
+        &mut corners
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(is_line && *i >= 2))
+            .map(|(i, c)| ((*c - p).hypot(), Handle::Corner(i as u8)))
+            .filter(|(d, _)| *d <= corner_reach),
+    );
+    if corner.is_some() {
+        return corner;
     }
     if !is_line {
-        for i in 0..4 {
-            let (Some(a), Some(b)) = (corners.get(i), corners.get((i + 1) % 4)) else { continue };
-            let seg = figcraft_geom::kurbo::Line::new(*a, *b);
-            use figcraft_geom::kurbo::ParamCurveNearest;
-            let near = seg.nearest(p, 0.001);
-            if near.distance_sq.sqrt() <= tol && near.t > 0.05 && near.t < 0.95 {
-                return Some(Handle::Edge(i as u8));
-            }
+        use figcraft_geom::kurbo::ParamCurveNearest;
+        let edge = nearest(&mut (0..4).filter_map(|i| {
+            let (a, b) = (corners.get(i)?, corners.get((i + 1) % 4)?);
+            let near = figcraft_geom::kurbo::Line::new(*a, *b).nearest(p, 0.001);
+            let d = near.distance_sq.sqrt();
+            (d <= edge_reach && near.t > 0.05 && near.t < 0.95).then_some((d, Handle::Edge(i as u8)))
+        }));
+        if edge.is_some() {
+            return edge;
         }
     }
     // Rotation zones: just outside each corner.
@@ -565,107 +592,46 @@ pub(crate) fn handle_cursor(c: &[Point; 4], h: Handle) -> Cursor {
 }
 
 /// The box (x0, y0, x1, y1) a `w0`×`h0` handle box becomes when `handle` is dragged to `q`, all in
-/// the box's own axes: `keep` constrains proportions, `from_center` resizes about the centre.
-/// Edges that cross over come back reversed (x1 < x0 or y1 < y0: a flip).
+/// the box's own axes: `keep` constrains proportions, `from_center` resizes about the centre (the
+/// opposite side mirrors the dragged one). Edges that cross over come back reversed (x1 < x0 or
+/// y1 < y0: a flip).
 pub(crate) fn resized_box(handle: Handle, q: Point, w0: f64, h0: f64, keep: bool, from_center: bool) -> (f64, f64, f64, f64) {
     let (mut x0, mut y0, mut x1, mut y1) = (0.0, 0.0, w0, h0);
-    match handle {
-        Handle::Corner(0) => {
-            x0 = q.x;
-            y0 = q.y;
-        }
-        Handle::Corner(1) => {
-            x1 = q.x;
-            y0 = q.y;
-        }
-        Handle::Corner(2) => {
-            x1 = q.x;
-            y1 = q.y;
-        }
-        Handle::Corner(_) => {
-            x0 = q.x;
-            y1 = q.y;
-        }
-        Handle::Edge(0) => y0 = q.y,
-        Handle::Edge(1) => x1 = q.x,
-        Handle::Edge(2) => y1 = q.y,
-        Handle::Edge(_) => x0 = q.x,
-        Handle::Rotate(_) => {}
+    // The dragged sides: x0 or x1 (`Some(false)` / `Some(true)`), y0 or y1.
+    let (sx, sy) = match handle {
+        Handle::Corner(0) => (Some(false), Some(false)),
+        Handle::Corner(1) => (Some(true), Some(false)),
+        Handle::Corner(2) => (Some(true), Some(true)),
+        Handle::Corner(_) => (Some(false), Some(true)),
+        Handle::Edge(0) => (None, Some(false)),
+        Handle::Edge(1) => (Some(true), None),
+        Handle::Edge(2) => (None, Some(true)),
+        Handle::Edge(_) => (Some(false), None),
+        Handle::Rotate(_) => (None, None),
+    };
+    match sx {
+        Some(false) => (x0, x1) = (q.x, if from_center { w0 - q.x } else { w0 }),
+        Some(true) => (x0, x1) = (if from_center { w0 - q.x } else { 0.0 }, q.x),
+        None => {}
     }
-    if keep && w0 > 1e-9 && h0 > 1e-9 {
-        let (sx, sy) = ((x1 - x0) / w0, (y1 - y0) / h0);
-        let k = match handle {
-            Handle::Edge(0) | Handle::Edge(2) => sy,
-            Handle::Edge(_) => sx,
-            _ => {
-                if sx.abs() > sy.abs() {
-                    sx
-                } else {
-                    sy
-                }
-            }
+    match sy {
+        Some(false) => (y0, y1) = (q.y, if from_center { h0 - q.y } else { h0 }),
+        Some(true) => (y0, y1) = (if from_center { h0 - q.y } else { 0.0 }, q.y),
+        None => {}
+    }
+    if keep && w0 > 1e-9 && h0 > 1e-9 && !matches!(handle, Handle::Rotate(_)) {
+        // One factor for both axes: the dragged axis's (a corner: the one that moved the most),
+        // about the point that stays put (the opposite handle, or the centre).
+        let (kx, ky) = ((x1 - x0) / w0, (y1 - y0) / h0);
+        let k = match (sx, sy) {
+            (None, _) => ky,
+            (_, None) => kx,
+            _ if kx.abs() > ky.abs() => kx,
+            _ => ky,
         };
-        let (nw, nh) = (w0 * k, h0 * k);
-        match handle {
-            Handle::Corner(0) => {
-                x0 = w0 - nw;
-                y0 = h0 - nh;
-            }
-            Handle::Corner(1) => {
-                x1 = nw;
-                y0 = h0 - nh;
-            }
-            Handle::Corner(2) => {
-                x1 = nw;
-                y1 = nh;
-            }
-            Handle::Corner(_) => {
-                x0 = w0 - nw;
-                y1 = nh;
-            }
-            Handle::Edge(0) | Handle::Edge(2) => {
-                let c = w0 / 2.0;
-                x0 = c - nw / 2.0;
-                x1 = c + nw / 2.0;
-                if matches!(handle, Handle::Edge(0)) {
-                    y0 = h0 - nh;
-                } else {
-                    y1 = nh;
-                }
-            }
-            Handle::Rotate(_) => {}
-            Handle::Edge(_) => {
-                let c = h0 / 2.0;
-                y0 = c - nh / 2.0;
-                y1 = c + nh / 2.0;
-                if matches!(handle, Handle::Edge(3)) {
-                    x0 = w0 - nw;
-                } else {
-                    x1 = nw;
-                }
-            }
-        }
-    }
-    if from_center {
-        let (cx, cy) = (w0 / 2.0, h0 / 2.0);
-        let hw = ((x1 - x0) / 2.0).abs().max((cx - x0).abs().max((x1 - cx).abs()));
-        let hh = ((y1 - y0) / 2.0).abs().max((cy - y0).abs().max((y1 - cy).abs()));
-        match handle {
-            Handle::Edge(0) | Handle::Edge(2) => {
-                y0 = cy - hh;
-                y1 = cy + hh;
-            }
-            Handle::Edge(_) => {
-                x0 = cx - hw;
-                x1 = cx + hw;
-            }
-            _ => {
-                x0 = cx - hw;
-                x1 = cx + hw;
-                y0 = cy - hh;
-                y1 = cy + hh;
-            }
-        }
+        let pivot = if from_center { Point::new(w0 / 2.0, h0 / 2.0) } else { handle_point(opposite(handle), w0, h0) };
+        (x0, x1) = (pivot.x * (1.0 - k), pivot.x + (w0 - pivot.x) * k);
+        (y0, y1) = (pivot.y * (1.0 - k), pivot.y + (h0 - pivot.y) * k);
     }
     (x0, y0, x1, y1)
 }
@@ -928,9 +894,17 @@ impl Session {
             };
             return Ok(());
         }
-        // A frame's name label picks the frame itself.
-        let target = label_at(&doc, page, &self.tool.labels, ev.p())
-            .or_else(|| self.hit(&doc, page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
+        // A frame's name label picks the frame itself. The background of a top-level frame with
+        // layers in it is like the canvas (a press starts a marquee inside it) unless the frame is
+        // selected; an empty frame is picked and dragged.
+        let board_background = |leaf: NodeId| {
+            !sel.contains(&leaf) && doc.node(leaf).is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty())
+        };
+        let target = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| {
+            self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
+                .filter(|leaf| ev.cmd || !board_background(*leaf))
+                .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
+        });
         match target {
             Some(target) => {
                 // Clicking inside the current selection's box keeps it (drag them all).
@@ -954,7 +928,11 @@ impl Session {
                 if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) {
                     return Ok(());
                 }
-                let ids = roots(&doc, &new_sel);
+                // Locked layers selected in the layers panel stay put.
+                let ids: Vec<NodeId> = roots(&doc, &new_sel).into_iter().filter(|i| !locked_in(&doc, *i)).collect();
+                if ids.is_empty() {
+                    return Ok(());
+                }
                 let targets = Targets::gather(&doc, page, &ids);
                 self.begin_interaction(if ev.alt { "Duplicate" } else { "Move" })?;
                 self.tool.gesture = Gesture::Move { start: ev.p(), ids, targets, duplicate: ev.alt, moved: false };
@@ -1225,6 +1203,11 @@ impl Session {
         let _ = start;
         // In the handle box's own axes (one layer: its local space).
         let (frame, w0, h0) = r.frame;
+        // The pixel grid: an upright box's dragged sides land on whole pixels (the Scale tool
+        // scales by the factor as dragged).
+        if !scale_tool && self.ds().map(|d| d.view.snap_pixel).unwrap_or(true) && crate::guides::axis_aligned(frame) {
+            p = Point::new(p.x.round(), p.y.round());
+        }
         let q = frame.inverse() * p;
         let is_line = r.single && ids.first().and_then(|i| self.doc().ok()?.node(*i).map(|n| matches!(n.kind, NodeKind::Line))).unwrap_or(false);
         if scale_tool {
@@ -1261,9 +1244,15 @@ impl Session {
         let nodes = r.nodes.clone();
         let single = r.single;
         let handle = r.handle;
+        // Cmd/Ctrl on a frame: its children ignore their constraints and stay where they are.
+        let ignore_constraints = ev.cmd;
         self.preview(|doc, _| {
             if single {
                 let Some((id, world, _, _)) = nodes.first() else { return Ok(()) };
+                let pinned: Vec<(NodeId, Affine)> = match doc.node(*id) {
+                    Some(n) if ignore_constraints && n.kind.is_frame_like() => n.children.iter().map(|c| (*c, doc.world_transform(*c))).collect(),
+                    _ => Vec::new(),
+                };
                 let mut t = *world * Affine::translate((nx0, ny0));
                 if flip_x {
                     t *= Affine::new([-1.0, 0.0, 0.0, 1.0, nw, 0.0]);
@@ -1273,6 +1262,9 @@ impl Session {
                 }
                 doc.set_world_transform(*id, t)?;
                 crate::cmd::props::resize_node(doc, *id, nw.max(0.01), nh.max(0.01))?;
+                for (c, w) in &pinned {
+                    doc.set_world_transform(*c, *w)?;
+                }
                 let n = doc.get_mut(*id)?;
                 if matches!(handle, Handle::Corner(_) | Handle::Edge(1) | Handle::Edge(3)) {
                     n.child_layout.sizing_h = Sizing::Fixed;
@@ -1288,15 +1280,21 @@ impl Session {
                 }
                 return Ok(());
             }
-            // Several layers: map the old box onto the new one, in the box's axes.
-            let (sx, sy) = (if w0 > 1e-9 { nw / w0 } else { 1.0 }, if h0 > 1e-9 { nh / h0 } else { 1.0 });
+            // Several layers: map the old box onto the new one, in the box's axes. Each layer's
+            // centre follows the box (mirrored when it flips); each keeps its rotation and scales
+            // along its own axes (see `axis_factors`), turning over with the box.
+            let (sx, sy) = (if w0 > 1e-9 { (x1 - x0) / w0 } else { 1.0 }, if h0 > 1e-9 { (y1 - y0) / h0 } else { 1.0 });
+            let mirror = Affine::new([sx.signum(), 0.0, 0.0, sy.signum(), 0.0, 0.0]);
             let inv = frame.inverse();
             for (id, world, w, h) in &nodes {
                 let local = inv * *world;
-                let o = local * Point::ZERO;
-                let c = local.as_coeffs();
-                doc.set_world_transform(*id, frame * Affine::new([c[0], c[1], c[2], c[3], nx0 + o.x * sx, ny0 + o.y * sy]))?;
-                crate::cmd::props::resize_node(doc, *id, w * sx, h * sy)?;
+                let center = local * Point::new(w / 2.0, h / 2.0);
+                let (kw, kh) = figcraft_layout::axis_factors(local, sx, sy);
+                let (w2, h2) = (w * kw, h * kh);
+                let lin = (mirror * local).with_translation(Vec2::ZERO);
+                let origin = Point::new(x0 + center.x * sx, y0 + center.y * sy) - lin * Point::new(w2 / 2.0, h2 / 2.0);
+                doc.set_world_transform(*id, frame * lin.with_translation(origin))?;
+                crate::cmd::props::resize_node(doc, *id, w2, h2)?;
             }
             Ok(())
         })?;

@@ -34,11 +34,12 @@ pub fn from_position_rotation(x: f64, y: f64, degrees: f64) -> Affine {
 }
 
 /// Change the rotation of `xf` to `degrees` about the centre of a `w`×`h` box in its local space,
-/// keeping that centre in place and keeping any flip.
+/// keeping that centre in place and keeping any flip. A flip is kept as a vertical one, the form
+/// [`rotation_degrees`] reads (a horizontal flip reads as 180°), so the rotation set reads back.
 pub fn set_rotation_about_center(xf: Affine, w: f64, h: f64, degrees: f64) -> Affine {
     let center_local = Point::new(w / 2.0, h / 2.0);
     let center = xf * center_local;
-    let flip = if is_flipped(xf) { Affine::FLIP_X } else { Affine::IDENTITY };
+    let flip = if is_flipped(xf) { Affine::FLIP_Y } else { Affine::IDENTITY };
     let rot = Affine::rotate(-degrees.to_radians());
     let lin = rot * flip;
     // Solve translation so that lin * center_local + t = center.

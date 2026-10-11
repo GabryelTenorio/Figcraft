@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -30,21 +30,23 @@ interaction feel not yet compared.
 
 | Item | Status | Notes |
 |---|---|---|
-| Click, Shift-click, marquee, Shift-marquee toggle | done | |
+| Click, Shift-click, marquee, Shift-marquee toggle | done | a marquee selects what it touches; from a top-level frame's background, the layers inside it; locked and hidden layers are skipped (`selection_behaviour_tests`) |
 | Deep select (Cmd/Ctrl-click, Cmd/Ctrl-marquee) | done | |
 | Select layer menu (every layer under the click) | done | |
 | Enter / Shift+Enter (children / parent), Tab / Shift+Tab (siblings) | done | Tab renames the next layer while renaming |
-| Resize handles: Shift keeps proportions, Alt from centre, constraints-aware | done | |
+| Resize handles: Shift keeps proportions, Alt from centre, constraints-aware | done | Alt shrinks too; past an edge flips (several layers mirror); groups and mixed rotations scale each layer along its own axes, keeping rotation and flip (no skew: children turned off a right angle are approximate); Cmd/Ctrl ignores a frame's constraints (`transform_behaviour_tests`) |
 | Rotate just outside a corner; Shift in 15° steps | done | rotated handle box when layers share a rotation |
 | Flip, rotate 90° | done | |
 | Alt-drag duplicate | done | |
 | Scale tool (K): handles about an anchor, live factor, panel | done | |
 | Nudge 1 / Shift 10 (preference), Cmd+arrows resize | done | arrows reorder auto layout children |
-| Smart guides: edges, centres, spacing labels, parent, layout grid, ruler guides | done | red, `snap.rs`; thresholds not yet compared with Figma's |
+| Smart guides: edges, centres, equal spacing (between two layers or continuing a row's gap, labelled), spacing labels, parent, layout grid, ruler guides | done | red, `snap.rs`; thresholds not yet compared with Figma's |
 | Ctrl to suspend snapping while dragging (macOS) | missing | |
 | Measure (Alt hover, Cmd+Alt nested, Shift+Alt padding/gaps) | done | labels never overlap |
-| Pixel grid snapping, pixel preview, 2x preview | done | |
+| Pixel grid snapping, pixel preview, 2x preview | done | moves, resizes and new shapes land on whole pixels |
 | Numeric fields: arithmetic, scrubbing by dragging the label, mixed values | partial | check scrub speed and Shift/Alt steps |
+| Transform box at small sizes | done | a press inside a layer smaller than its handles moves it, the nearest handle wins, handles answer just outside and are hidden under 16 px on screen; cursors follow each handle and the box's rotation |
+| Locked layers | done | selectable from the layers panel; no handles, not dragged with the rest of a selection |
 | Keyboard box selection | missing | |
 
 ## Tools
@@ -96,6 +98,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Selection and transform behaviour suite and fixes: Alt shrinks, groups and mixed rotations scale each layer along its own axes, several layers flip together, whole-pixel resizes, small layers move from inside, locked layers stay put, marquees from a top-level frame's background, equal spacing snapping, Cmd/Ctrl ignores constraints while resizing a frame |
 | 2026-10-11 | minor | Gamut warnings: the colour picker flags Display P3 colours outside sRGB; View ▸ Soft-proof sRGB stripes them on the canvas |
 | 2026-10-11 | minor | Several windows: File ▸ New window, Open in new window on a tab, a tab dragged off the strip; each window has its own tabs and panels and asks about unsaved changes when it closes |
 | 2026-10-11 | minor | Canvas fixes: boolean groups clicked where their result is, a layer dragged inside a group stays in it, View ▸ Frame outlines and View ▸ Slices draw |

@@ -73,6 +73,19 @@ fn linear(a: Affine) -> Affine {
     Affine::new([c[0], c[1], c[2], c[3], 0.0, 0.0])
 }
 
+/// How much a layer's own width and height scale (no skew: it keeps its rotation and flip) when
+/// its parent's space scales by `kx`, `ky`: how much each of its axes (`xf`'s linear part)
+/// stretches. A layer turned 90° swaps the two; one turned 45° gets a mix.
+pub fn axis_factors(xf: Affine, kx: f64, ky: f64) -> (f64, f64) {
+    let [a, b, c, d, _, _] = xf.as_coeffs();
+    let along = |x: f64, y: f64, fallback: f64| {
+        let len = x.hypot(y);
+        let k = (kx * x).hypot(ky * y) / len;
+        if len > 1e-12 && k.is_finite() { k } else { fallback }
+    };
+    (along(a, b, kx), along(c, d, ky))
+}
+
 /// Place `id` so its (rotated) bounding box's top-left is at `(x, y)` in the parent.
 fn place(doc: &mut Document, id: NodeId, x: f64, y: f64) {
     let Some(n) = doc.node(id) else { return };
@@ -912,9 +925,9 @@ pub fn apply_constraints(doc: &mut Document, id: NodeId, ow: f64, oh: f64) {
                 y1 *= sy;
             }
         }
-        // New local size from the bbox change (axis-aligned children exactly; rotated approximately).
-        let kw = if bw > 1e-9 { (x1 - x0) / bw } else { 1.0 };
-        let kh = if bh > 1e-9 { (y1 - y0) / bh } else { 1.0 };
+        // New local size from the bbox change, along the child's own axes (axis-aligned children,
+        // turned or flipped, exactly; others approximately, never skewed).
+        let (kw, kh) = axis_factors(lin, if bw > 1e-9 { (x1 - x0) / bw } else { 1.0 }, if bh > 1e-9 { (y1 - y0) / bh } else { 1.0 });
         let (new_w, new_h) = (cw * kw, ch * kh);
         let resized = (new_w - cw).abs() > 1e-9 || (new_h - ch).abs() > 1e-9;
         if resized {
@@ -935,16 +948,20 @@ pub fn apply_constraints(doc: &mut Document, id: NodeId, ow: f64, oh: f64) {
 }
 
 /// Scale a group's children when the group is resized (groups scale their contents).
+/// Each child keeps its rotation and flip and scales along its own axes ([`axis_factors`]), its
+/// centre following the group's scale.
 pub fn scale_group_children(doc: &mut Document, id: NodeId, kx: f64, ky: f64) {
     let Some(n) = doc.node(id) else { return };
     for c in n.children.clone() {
         let Some(cn) = doc.node(c) else { continue };
-        let b = figcraft_geom::transform_rect_bbox(cn.transform, cn.local_rect());
+        let center = figcraft_geom::transform_rect_bbox(cn.transform, cn.local_rect()).center();
         let (w, h) = (cn.width, cn.height);
-        set_size(doc, c, w * kx, h * ky);
-        place(doc, c, b.x0 * kx, b.y0 * ky);
+        let (kw, kh) = axis_factors(cn.transform, kx, ky);
+        set_size(doc, c, w * kw, h * kh);
+        let (nw, nh) = outer_size(doc, c);
+        place(doc, c, center.x * kx - nw / 2.0, center.y * ky - nh / 2.0);
         if doc.node(c).is_some_and(|n| n.kind.bounds_follow_children()) {
-            scale_group_children(doc, c, kx, ky);
+            scale_group_children(doc, c, kw, kh);
         } else if doc.node(c).is_some_and(|n| n.kind.is_frame_like()) {
             apply_constraints(doc, c, w, h);
         }

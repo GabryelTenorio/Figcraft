@@ -52,6 +52,9 @@ pub struct Targets {
     pub moving: Option<Rect>,
 }
 
+/// A gap along a row: from, to, and where across it is drawn.
+type Gap = (f64, f64, f64);
+
 impl Targets {
     /// Gather snap lines from the siblings of `moving` (and the parent frame), page guides and
     /// layout grids, excluding the moving nodes and their descendants. Inside a rotated frame they
@@ -156,11 +159,84 @@ impl Targets {
     }
 
     /// Snap the moving layers moved by page vector `d`: the correction to add to it (a page
-    /// vector) and the guides to draw.
+    /// vector) and the guides to draw. Besides lines, the box snaps to equal spacing with the
+    /// layers beside it (whichever is nearer on each axis), and equal gaps show labelled.
     pub fn snap_move(&self, d: Vec2, threshold: f64) -> (Vec2, Vec<Guide>) {
         let Some(b) = self.moving else { return (Vec2::ZERO, Vec::new()) };
-        let (dx, dy, guides) = self.snap_rect(b + self.to_space_vec(d), threshold);
-        (Vec2::new(dx, dy), guides)
+        let r = b + self.to_space_vec(d);
+        let (xs, ys) = rect_spans(r);
+        let (mut dx, mut dy, _) = self.snap_spans(&xs, &ys, threshold);
+        for (horizontal, slot) in [(true, &mut dx), (false, &mut dy)] {
+            if let Some(e) = self.equal_spacing(r, threshold, horizontal)
+                && slot.is_none_or(|v| e.abs() < v.abs())
+            {
+                *slot = Some(e);
+            }
+        }
+        let c = Vec2::new(dx.unwrap_or(0.0), dy.unwrap_or(0.0));
+        let at = r + c;
+        let mut guides = self.guides_for(at);
+        guides.extend(self.spacing_guides(at, true));
+        guides.extend(self.spacing_guides(at, false));
+        (self.to_page_vec(c), self.to_page(guides))
+    }
+
+    /// The ways `r` can be spaced equally in its row (`horizontal`) or column, worked out as a row
+    /// (a column's boxes are transposed): centred between its nearest neighbours, as far after the
+    /// one before it as that one is from the next, or as far before the one after it. Each: how far
+    /// `r` would move along the row, and the two gaps (from, to, across) that are equal then.
+    fn spacings(&self, r: Rect, horizontal: bool) -> Vec<(f64, [Gap; 2])> {
+        let t = |b: Rect| if horizontal { b } else { Rect::new(b.y0, b.x0, b.y1, b.x1) };
+        let r = t(r);
+        let row = self.boxes.iter().map(|b| t(*b)).filter(|b| b.y0 < r.y1 && b.y1 > r.y0);
+        let (mut before, mut after): (Vec<Rect>, Vec<Rect>) = row.partition(|b| b.center().x < r.center().x);
+        before.sort_by(|a, b| b.x1.total_cmp(&a.x1));
+        after.sort_by(|a, b| a.x0.total_cmp(&b.x0));
+        // Across the middle of what two boxes share.
+        let mid = |a: &Rect, b: &Rect| (a.y0.max(b.y0) + a.y1.min(b.y1)) / 2.0;
+        let w = r.width();
+        let mut out = Vec::new();
+        if let (Some(l), Some(n)) = (before.first(), after.first())
+            && n.x0 - l.x1 > w
+        {
+            let x0 = (l.x1 + n.x0 - w) / 2.0;
+            out.push((x0, [(l.x1, x0, mid(l, &r)), (x0 + w, n.x0, mid(&r, n))]));
+        }
+        if let (Some(l), Some(l2)) = (before.first(), before.get(1))
+            && l.x0 > l2.x1
+        {
+            let x0 = l.x1 + (l.x0 - l2.x1);
+            out.push((x0, [(l2.x1, l.x0, mid(l2, l)), (l.x1, x0, mid(l, &r))]));
+        }
+        if let (Some(n), Some(n2)) = (after.first(), after.get(1))
+            && n2.x0 > n.x1
+        {
+            let x0 = n.x0 - (n2.x0 - n.x1) - w;
+            out.push((x0, [(x0 + w, n.x0, mid(&r, n)), (n.x1, n2.x0, mid(n, n2))]));
+        }
+        out.into_iter().map(|(x0, gaps)| (x0 - r.x0, gaps)).filter(|(d, _)| d.is_finite()).collect()
+    }
+
+    /// The correction (snap space, along the row or column) that spaces `r` equally, if one is in
+    /// reach.
+    fn equal_spacing(&self, r: Rect, threshold: f64, horizontal: bool) -> Option<f64> {
+        self.spacings(r, horizontal).into_iter().map(|(d, _)| d).filter(|d| d.abs() <= threshold).min_by(|a, b| a.abs().total_cmp(&b.abs()))
+    }
+
+    /// Labelled lines across the gaps that are equal around `r` in its row or column.
+    fn spacing_guides(&self, r: Rect, horizontal: bool) -> Vec<Guide> {
+        let mut out: Vec<Guide> = Vec::new();
+        for (_, gaps) in self.spacings(r, horizontal).into_iter().filter(|(d, _)| d.abs() < 1e-6) {
+            for (from, to, across) in gaps {
+                let (p, q) =
+                    if horizontal { (Point::new(from, across), Point::new(to, across)) } else { (Point::new(across, from), Point::new(across, to)) };
+                let line = Guide { label: Some(crate::distance::label(to - from)), ..Guide::new(p, q) };
+                if !out.contains(&line) {
+                    out.push(line);
+                }
+            }
+        }
+        out
     }
 
     /// Page move `d` adjusted so that the moving layers' box keeps its origin on whole pixels of

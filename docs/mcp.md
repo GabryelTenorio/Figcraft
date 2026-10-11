@@ -1005,7 +1005,18 @@ guide, along the frame's axis nearer the ruler's.
   depth (the context menu's Select layer); `select.set`, `select.children` / `select.parent` (Enter
   / Shift+Enter), `select.next` / `select.previous` (Tab / Shift+Tab). With `pointer`, `cmd: true`
   clicks select the nested layer, `cmd` drags from empty canvas select the nested layers they touch,
-  and `shift` drags toggle what they touch.
+  and `shift` drags toggle what they touch. A press on the background of a top-level frame with
+  layers in it (the frame not selected) starts a marquee inside it, as on the canvas; an empty frame
+  is picked and dragged. Locked layers (selectable with `select.set`) get no handles and stay put
+  when the rest of the selection is dragged. `select.all` / `select.inverse` skip hidden and locked
+  layers.
+- **Transform gestures**: with `pointer`, `shift` keeps proportions, `alt` resizes from the centre
+  (both together too), dragging past the opposite edge flips (several layers mirror and flip);
+  groups and several layers scale each layer along its own axes, keeping its rotation and flip;
+  `cmd` while resizing a frame ignores its children's constraints (they stay where they are) and,
+  as in every drag, turns snapping off. Moves snap to edges, centres and equal spacing (the gaps
+  show in `tool.overlay.guides` with labels); with the pixel grid on, moves and resizes land on
+  whole pixels.
 
 Tool failures come back as results with `isError: true` and a message; protocol problems (unknown
 tool, malformed JSON, wrong parameter types) are JSON-RPC errors. Nothing crashes the server.

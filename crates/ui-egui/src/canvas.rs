@@ -860,7 +860,20 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
             if let Some(hint) = scale {
                 label = format!("{label} · {}x", fmt(hint.factor.abs()));
             }
-            size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, if is_line { 2 } else { 4 }, label);
+            // A layer smaller than its handles on screen shows just its outline (they still answer
+            // just outside it).
+            let tiny = figcraft_engine::tools::box_sides_px(&b, zoom).1 < figcraft_engine::tools::SMALL_BOX_PX;
+            // Locked layers (selected in the layers panel) can't be resized: no handles either.
+            let handles = if sel.iter().any(|i| figcraft_engine::tools::locked_in(&doc, *i)) {
+                0
+            } else if is_line {
+                2
+            } else if tiny {
+                0
+            } else {
+                4
+            };
+            size_label = transform_box(app, painter, b.map(|p| app.to_screen(p.x, p.y)), col, sel.len() > 1, handles, label);
             arc_overlay(app, painter, col);
             if app.session.tool.tool == ToolId::Scale {
                 // The point that stays put: the dragged pivot, else the anchor.
