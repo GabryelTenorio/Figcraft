@@ -62,8 +62,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   ordering and validation, client reconciliation, binary messages, randomized convergence tests over
   real commands), and live sessions run over the network (`crates/collab-net`: hosting from the
   app, invite links that open the app, document sync between apps, live cursors, selections,
-  avatars and follow, and the browser build joins) with per-person undo, refused edits rolled back
-  with a reason, and reconnects that resume and send what was made offline; a standalone
+  text carets, avatars and follow, and the browser build joins) with per-person undo, refused
+  edits rolled back with a reason, reconnects that resume and send what was made offline, and
+  styles, variables and comments that several people create at once all kept; a standalone
   `figcraft-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
   confirmed), takes files published from the app and hands out share links that let people edit
   or only view (`docs/server.md`). But there are no accounts (a link is the access), and the

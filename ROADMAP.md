@@ -59,7 +59,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Features (depth) | 57% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
-| Collaboration | 12% (core in; live sessions with document sync and cursors, the browser joins, invite links open the app; a self-hosted server with edit and view links; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
+| Collaboration | 12% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 50% | 15–30 | [hardware-parity](docs/hardware-parity.md) |
@@ -123,7 +123,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Localization layer, then ja, ko, es, pt-BR, fr, de: 35–55 h.
-5. Multiplayer (M9): accounts, teams and TLS in the desktop app on top of the live sessions and the standalone server (transport, hosting, invite links that open the app, document sync, presence, per-user undo, reconnect with offline edits, the browser client, `figcraft-server` with persistence and share links to edit or view landed): 45–90 h.
+5. Multiplayer (M9): accounts, teams and TLS in the desktop app on top of the live sessions and the standalone server (transport, hosting, invite links that open the app, document sync, presence with remote text carets, per-user undo, reconnect with offline edits, collision-free ids for styles, variables and comments, the browser client, `figcraft-server` with persistence and share links to edit or view landed): 45–90 h.
 
 ## Progress log
 

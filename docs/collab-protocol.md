@@ -8,7 +8,9 @@ embeds, invite links, document sync end to end (several apps edit one file), liv
 selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
 handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
 session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
-app hosts, and `figcraft://` invite links open the app and join. **Step 5 is implemented**: the
+app hosts, and `figcraft://` invite links open the app and join. Styles, variables, collections,
+modes and comments created in a session take ids from their creator's id space, and others' text
+carets show on the canvas. **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
 the app publishes to it. The rest is the plan the next implementation PRs follow and update;
@@ -633,7 +635,8 @@ chooses to share on the network; the default is the invite link with a random to
    client and reaches the network only through the `LiveLink` the app installs).
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
    editing. **Done** (the core's client and server, the engine's live session, the guest's
-   resuming connection).
+   resuming connection), followed by client-scoped ids for document-level objects and remote text
+   carets on the canvas.
 4. **Browser client** (WebSocket through `web-sys`). **Done** (the web build joins
    desktop-hosted sessions; `figcraft://` links open the desktop app and join).
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
