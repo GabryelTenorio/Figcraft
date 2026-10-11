@@ -191,7 +191,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     crate::menus::invoke(app, bd.id);
                     return Ok(json!({"command": bd.id}));
                 }
-                figcraft_engine::textedit::key(&mut app.session, key, m.shift, m.alt, m.cmd).map_err(|e| e.to_string())?;
+                let (word, line) = figcraft_engine::keymap::text_motion(platform, key, m);
+                figcraft_engine::textedit::key(&mut app.session, key, m.shift, word, line).map_err(|e| e.to_string())?;
                 return Ok(json!({"ok": true}));
             }
             // Vector edit mode and shape builder keys (tools, nudging points, delete, join, Enter).

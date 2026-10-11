@@ -985,6 +985,30 @@ impl Document {
     pub fn hit_test(&self, page: NodeId, pt: Point, tolerance: f64, result: geometry::BoolResult) -> Option<NodeId> {
         geometry::hit_leaf(self, page, pt, tolerance, result)
     }
+
+    /// `n`'s children as paint runs (index ranges into `n.children`), bottom to top: a visible
+    /// mask with the layers above it up to the next mask, or a single layer. An auto layout frame
+    /// whose first child paints on top paints the runs in reverse (see [`Node::paint_order`]).
+    pub fn paint_runs(&self, n: &Node) -> Vec<std::ops::Range<usize>> {
+        let kids = &n.children;
+        let node = |i: usize| kids.get(i).and_then(|k| self.node(*k));
+        let mut runs = Vec::new();
+        let mut i = 0;
+        while i < kids.len() {
+            let mut j = i + 1;
+            if node(i).is_some_and(|k| k.is_mask && k.visible) {
+                while j < kids.len() && !node(j).is_some_and(|k| k.is_mask) {
+                    j += 1;
+                }
+            }
+            runs.push(i..j);
+            i = j;
+        }
+        if n.layout.as_ref().is_some_and(|l| l.reverse_z) {
+            runs.reverse();
+        }
+        runs
+    }
 }
 
 fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {

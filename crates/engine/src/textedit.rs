@@ -125,8 +125,10 @@ fn word_right(chars: &[char], mut i: usize) -> usize {
 }
 
 /// A named key: Backspace, Delete, Left, Right, Up, Down, Home, End, Enter, Escape, SelectAll.
-/// `word` is Alt (word-wise), `line` is Cmd (line-wise).
+/// `word` moves or deletes by word, `line` to the line's ends (Up/Down, Home/End: the text's ends);
+/// [`crate::keymap::text_motion`] gives them for the platform's keys. `ArrowLeft` etc. also work.
 pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> Result<()> {
+    let key = key.strip_prefix("Arrow").unwrap_or(key);
     let Some(te) = s.ds()?.text_edit.clone() else { return Err(EngineError::Other("not editing text".into())) };
     let t = text_of(s, te.id)?;
     let chars: Vec<char> = t.characters.chars().collect();
@@ -193,6 +195,8 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
             None if key == "Left" => cur.saturating_sub(1),
             None => (cur + 1).min(n),
         },
+        "Home" if line => 0,
+        "End" if line => n,
         "Home" => line_start(&chars, cur),
         "End" => line_end(&chars, cur),
         "Up" | "Down" => match &layout {

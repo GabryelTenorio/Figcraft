@@ -66,7 +66,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
             if several {
                 resp.context_menu(|ui| {
                     ui.set_width(200.0);
-                    if crate::menus::item(ui, "Open in new window", "", true, false, &t) {
+                    if crate::menus::item(ui, tr("Open in new window"), "", true, false, &t) {
                         detach = Some((i, None));
                         ui.close();
                     }

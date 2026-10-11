@@ -11,10 +11,13 @@
 
 mod args;
 mod control_server;
+mod recovery;
 mod services;
 
 #[cfg(test)]
 mod args_tests;
+#[cfg(test)]
+mod recovery_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -30,6 +33,8 @@ struct App {
     /// The window title last sent: a viewport command asks for another frame, so it's only sent
     /// when the title changes (sending it every frame kept an idle window redrawing).
     title: String,
+    /// Shared with the services, which write the copies after a panic.
+    recovery: recovery::Shared,
 }
 
 impl eframe::App for App {
@@ -56,6 +61,10 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
+        let now = ctx.input(|i| i.time);
+        if let Some(wait) = with_app(|fig| recovery::lock(&self.recovery).as_mut().and_then(|r| r.tick(&fig.session, now))).flatten() {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
@@ -73,6 +82,9 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         with_app(|fig| services::save_state(fig));
+        if let Some(r) = recovery::lock(&self.recovery).take() {
+            r.finish();
+        }
     }
 }
 
@@ -112,7 +124,11 @@ fn main() -> eframe::Result {
             log::error!("{f}: {e}");
         }
     }
-    let svc = services::Desktop::load();
+    // Documents a crashed or killed run left unsaved come back; this run keeps its own copies.
+    let recovery_root = services::config_dir().map(|d| d.join("Recovery"));
+    let recovered = recovery_root.as_deref().map_or(0, |r| recovery::recover(r, &mut session));
+    let recovery: recovery::Shared = Arc::new(Mutex::new(recovery_root.as_deref().and_then(recovery::Recovery::start)));
+    let svc = services::Desktop::load(recovery.clone());
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
@@ -125,6 +141,7 @@ fn main() -> eframe::Result {
     }
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
+    fig.note_recovered(recovered);
     if let Some(link) = &args.join {
         figcraft_ui_egui::live::open_invite(&mut fig, link);
     }
@@ -152,5 +169,5 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
     figcraft_ui_egui::windows::install(fig);
-    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { queue, ctx_slot, title: String::new() }))))
+    eframe::run_native("FigCraft", options, Box::new(move |_cc| Ok(Box::new(App { queue, ctx_slot, title: String::new(), recovery }))))
 }

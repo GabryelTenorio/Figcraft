@@ -382,7 +382,8 @@ fn auto_layout(doc: &Document, n: &Node, l: &AutoLayout) -> Section {
     let dir = match (l.mode, l.wrap) {
         (LayoutMode::Horizontal, true) => "Horizontal, wrap",
         (LayoutMode::Horizontal, false) => "Horizontal",
-        (LayoutMode::Vertical, _) => "Vertical",
+        (LayoutMode::Vertical, true) => "Vertical, wrap",
+        (LayoutMode::Vertical, false) => "Vertical",
         (LayoutMode::Grid, _) => "Grid",
     };
     let mut rows = vec![prop("Direction", dir)];
@@ -390,10 +391,16 @@ fn auto_layout(doc: &Document, n: &Node, l: &AutoLayout) -> Section {
         rows.push(prop("Grid", format!("{} × {}", l.grid_columns, l.grid_rows)));
         rows.push(prop("Gap", format!("{} {}", num(l.gap), num(l.cross_gap))));
     } else {
-        let gap = if l.main_align == MainAlign::SpaceBetween { "Auto (space between)".to_string() } else { num(l.gap) };
+        let gap = match l.main_align {
+            MainAlign::SpaceBetween => "Auto (space between)".to_string(),
+            MainAlign::SpaceAround => "Auto (space around)".to_string(),
+            MainAlign::SpaceEvenly => "Auto (space evenly)".to_string(),
+            _ => num(l.gap),
+        };
         rows.push(prop("Gap", gap).token(variable(doc, n, "gap")));
         if l.wrap {
-            rows.push(prop("Row gap", num(l.cross_gap)).token(variable(doc, n, "crossGap")));
+            let label = if l.mode == LayoutMode::Vertical { "Column gap" } else { "Row gap" };
+            rows.push(prop(label, num(l.cross_gap)).token(variable(doc, n, "crossGap")));
         }
     }
     let [t, r, b, lft] = l.padding;
@@ -411,6 +418,8 @@ fn auto_layout(doc: &Document, n: &Node, l: &AutoLayout) -> Section {
         MainAlign::Center => "center",
         MainAlign::Max => "end",
         MainAlign::SpaceBetween => "space between",
+        MainAlign::SpaceAround => "space around",
+        MainAlign::SpaceEvenly => "space evenly",
     };
     let cross = match l.cross_align {
         CrossAlign::Min => "start",

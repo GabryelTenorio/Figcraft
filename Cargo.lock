@@ -1415,6 +1415,7 @@ dependencies = [
  "env_logger",
  "figcraft-collab-net",
  "figcraft-engine",
+ "figcraft-format",
  "figcraft-text",
  "figcraft-ui-egui",
  "image",

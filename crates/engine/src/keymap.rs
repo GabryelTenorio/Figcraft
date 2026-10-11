@@ -347,6 +347,17 @@ impl Mods {
     }
 }
 
+/// How far a text editing key moves or deletes on `platform`, as `(word, line)` for
+/// [`crate::textedit::key`]. macOS: Alt by word, Cmd to the line's ends (Up/Down: the text's).
+/// Windows and Linux: Ctrl by word, Ctrl+Home/End to the text's ends.
+pub fn text_motion(platform: Platform, key: &str, m: Mods) -> (bool, bool) {
+    match platform {
+        Platform::Mac => (m.alt, m.cmd),
+        Platform::Other if matches!(key, "Home" | "End") => (false, m.cmd || m.ctrl),
+        Platform::Other => (m.cmd || m.ctrl, false),
+    }
+}
+
 /// A key name as canonical (`=` for `Equals`, `ArrowLeft` for `Left`, `Delete` for `Backspace`),
 /// and whether the name implies Shift (`?` is Shift+`/`). `None` for names that aren't keys.
 pub fn normalize(name: &str) -> Option<(&str, bool)> {

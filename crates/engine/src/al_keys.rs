@@ -24,7 +24,7 @@ use figcraft_layout::{GridCell, flow_children, grid_place};
 
 use crate::Result;
 use crate::components::structure_locked;
-use crate::drop::{auto_layout_slot, wrap_rows};
+use crate::drop::{auto_layout_slot, flip, wrap_rows};
 
 /// One arrow key: an axis and a direction (`forward`: right or down).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,8 +71,8 @@ pub fn arrow_move(doc: &mut Document, parent: NodeId, selected: &[NodeId], dir: 
             let along = (mode == LayoutMode::Horizontal) == dir.horizontal;
             if along {
                 step_in_flow(doc, parent, &flow, &block, dir.forward)?
-            } else if layout.wrap && mode == LayoutMode::Horizontal {
-                wrap_row_move(doc, parent, &flow, &block, dir.forward)?
+            } else if layout.wrap {
+                wrap_row_move(doc, parent, &flow, &block, dir.forward, mode == LayoutMode::Vertical)?
             } else {
                 false
             }
@@ -119,17 +119,18 @@ fn step_in_flow(doc: &mut Document, parent: NodeId, flow: &[NodeId], block: &[No
     Ok(true)
 }
 
-/// Up/Down in a wrapping row layout: into the previous/next visual row, next to the child nearest
-/// the selection's centre (before it going up, after it going down, so the selection lands under
-/// or over where it was once the rows reflow). Returns whether anything moved.
-fn wrap_row_move(doc: &mut Document, parent: NodeId, flow: &[NodeId], block: &[NodeId], forward: bool) -> Result<bool> {
-    let rows = wrap_rows(doc, flow);
+/// Up/Down in a wrapping row layout (Left/Right in a wrapping column layout, `vertical`): into the
+/// previous/next visual row, next to the child nearest the selection's centre (before it going
+/// back, after it going forward, so the selection lands beside where it was once the rows reflow).
+/// Returns whether anything moved.
+fn wrap_row_move(doc: &mut Document, parent: NodeId, flow: &[NodeId], block: &[NodeId], forward: bool, vertical: bool) -> Result<bool> {
+    let rows = wrap_rows(doc, flow, vertical);
     let lead = if forward { block.last() } else { block.first() };
     let Some(lead_i) = lead.and_then(|l| flow.iter().position(|c| c == l)) else { return Ok(false) };
     let Some(row) = rows.iter().position(|r| r.iter().any(|(i, _)| *i == lead_i)) else { return Ok(false) };
     let target_row = if forward { row.checked_add(1) } else { row.checked_sub(1) };
     let Some(target) = target_row.and_then(|r| rows.get(r)) else { return Ok(false) };
-    let Some(centre) = doc.bounds_of(block).map(|b| b.center().x) else { return Ok(false) };
+    let Some(centre) = doc.bounds_of(block).map(|b| flip(b, vertical).center().x) else { return Ok(false) };
     let nearest = target
         .iter()
         .filter(|(i, _)| flow.get(*i).is_some_and(|c| !block.contains(c)))

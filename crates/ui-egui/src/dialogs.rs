@@ -98,6 +98,24 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
     );
 }
 
+/// Escape closes the topmost simple dialog (one without menus of its own), before the canvas's
+/// shortcuts see it (it doesn't deselect), like a system dialog: from one of its fields too.
+pub fn keys(app: &mut FigApp, ctx: &Context) {
+    let u = &mut app.ui;
+    let open = u.color_profile.is_some() || u.find.is_some() || u.confirm_close || u.export_preview || u.shortcuts_panel || u.preferences || u.about;
+    if !open || !ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        return;
+    }
+    if u.color_profile.take().is_some() || u.find.take().is_some() {
+        return;
+    }
+    for flag in [&mut u.confirm_close, &mut u.export_preview, &mut u.shortcuts_panel, &mut u.preferences, &mut u.about] {
+        if std::mem::take(flag) {
+            return;
+        }
+    }
+}
+
 pub fn show(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     if app.ui.about {

@@ -113,6 +113,8 @@ mod titlebar_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
 #[cfg(test)]
+mod windows_qa_tests;
+#[cfg(test)]
 mod windows_tests;
 
 use std::collections::BTreeSet;
@@ -482,6 +484,13 @@ impl FigApp {
         self.ui.toast = Some((msg.into(), None));
     }
 
+    /// Say that `n` documents left unsaved by a crash were opened again from recovery copies.
+    pub fn note_recovered(&mut self, n: usize) {
+        if n > 0 {
+            self.toast(i18n::trn("Recovered {n} unsaved files after the app quit unexpectedly: save them to keep them", n, &[]));
+        }
+    }
+
     /// Act on UI requests queued by commands (dialogs, panels).
     pub fn handle_ui_requests(&mut self) {
         let reqs = std::mem::take(&mut self.session.ui_requests);
@@ -738,6 +747,7 @@ impl FigApp {
         if !self.has_files() || self.ui.home {
             tabs::tab_bar(self, ui);
             home::show(self, ui);
+            dialogs::keys(self, &ctx);
             dialogs::show(self, &ctx);
             windows::requests(self, &ctx);
             return;
@@ -805,6 +815,7 @@ impl FigApp {
         dev_compare::keys(self, &ctx);
         branch_ui::keys(self, &ctx);
         live::dialog_keys(self, &ctx);
+        dialogs::keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);

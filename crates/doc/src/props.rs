@@ -955,7 +955,9 @@ pub enum LayoutMode {
     Grid,
 }
 
-/// Alignment along the main axis.
+/// Alignment along the main axis. The `Space*` modes are the auto gaps: the free space goes
+/// between the children only (between), equally between them and at the edges (evenly), or
+/// between them with half as much at each edge (around).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum MainAlign {
@@ -964,6 +966,26 @@ pub enum MainAlign {
     Center,
     Max,
     SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+impl MainAlign {
+    /// An auto gap (the gap comes from the free space, not the gap value).
+    pub fn is_auto_gap(self) -> bool {
+        matches!(self, MainAlign::SpaceBetween | MainAlign::SpaceAround | MainAlign::SpaceEvenly)
+    }
+}
+
+/// A grid auto layout child's alignment in its cell on one axis (`None` where it is used: the
+/// frame's alignment).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum CellAlign {
+    #[default]
+    Min,
+    Center,
+    Max,
 }
 
 /// Alignment across the main axis.
@@ -998,9 +1020,9 @@ pub struct AutoLayout {
     pub column_tracks: Vec<GridTrack>,
     /// Grid mode: row track sizes (missing tracks are `1fr`).
     pub row_tracks: Vec<GridTrack>,
-    /// Include strokes in layout sizes.
+    /// The frame's own inside strokes take up space in the layout (like padding).
     pub strokes_included: bool,
-    /// Last item on top (canvas stacking).
+    /// Canvas stacking: the first child paints on top (default: the last one does).
     pub reverse_z: bool,
 }
 
@@ -1018,7 +1040,8 @@ impl Default for AutoLayout {
             grid_rows: 2,
             column_tracks: Vec::new(),
             row_tracks: Vec::new(),
-            strokes_included: false,
+            // New auto layout includes inside strokes.
+            strokes_included: true,
             reverse_z: false,
         }
     }
@@ -1092,6 +1115,11 @@ pub struct ChildLayout {
     /// Grid auto layout: how many columns / rows the child spans (0 is read as 1).
     pub grid_column_span: u32,
     pub grid_row_span: u32,
+    /// Grid auto layout: alignment in the cell, horizontally / vertically (`None`: the frame's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid_align_h: Option<CellAlign>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grid_align_v: Option<CellAlign>,
 }
 
 impl ChildLayout {

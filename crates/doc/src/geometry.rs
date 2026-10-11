@@ -139,8 +139,8 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result
     if in_result == Some(false) {
         return None;
     }
-    for c in n.children.iter().rev() {
-        if let Some(h) = hit_rec(doc, *c, pt, tol, depth + 1, result) {
+    for c in n.paint_order().rev() {
+        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result) {
             return Some(h);
         }
     }
@@ -172,8 +172,8 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
             }
             return;
         }
-        for c in n.children.iter().rev() {
-            rec(doc, *c, pt, tol, depth + 1, result, out);
+        for c in n.paint_order().rev() {
+            rec(doc, c, pt, tol, depth + 1, result, out);
         }
         if out.len() > at || hits_node_itself(doc, id, n, pt, tol) {
             out.insert(at, (id, depth));
