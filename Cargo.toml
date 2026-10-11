@@ -6,7 +6,7 @@ exclude = ["plugins"]
 # default-members = ["crates/*", "apps/figcraft", "apps/figcraft-cli", "xtask"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -96,3 +96,15 @@ opt-level = 1
 [profile.release]
 lto = "thin"
 codegen-units = 4
+
+# The browser build only (apps/figcraft-web/index.html: data-cargo-profile). Optimised for size:
+# packaging/web/package.sh fails a .wasm over 24 MiB (Cloudflare's per-file cap is 25 MiB).
+# wasm32-unknown-unknown always aborts on panic, so panic = "abort" changes nothing there.
+[profile.web-release]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = false
+strip = true
+panic = "abort"

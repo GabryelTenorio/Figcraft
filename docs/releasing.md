@@ -150,6 +150,13 @@ tar -xzf figcraft-<v>-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local
 with sample `_headers`/`.htaccess` and the hosting guide. The app uses WebGPU with a WebGL2
 fallback; `?webgl` forces WebGL2. 0.1.0: wasm 17.7 MiB raw, 6.7 MiB gzip, 4.4 MiB Brotli.
 
+The wasm is built with the size-optimised `web-release` Cargo profile (`opt-level = "s"`, fat
+LTO, one codegen unit; `data-cargo-profile` in `apps/figcraft-web/index.html`) and then
+`wasm-opt -Oz`, which needs the wasm features rustc emits by default passed explicitly
+(`data-wasm-opt-params`). Sizes: 0.2.0 21.1 MiB and 0.3.0 25.8 MiB (failed the gate; the plugin
+interpreter and collaboration code landed) with the desktop `release` profile; 0.3.1 17.2 MiB
+with `web-release`. The desktop builds keep `release`.
+
 ## Secrets
 
 All signing secrets are **`release`-environment secrets** (deployment branches: `release` only),
