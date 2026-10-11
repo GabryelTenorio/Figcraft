@@ -33,7 +33,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         // Home.
         let hr = Rect::from_min_size(pos2(x, rect.min.y), vec2(44.0, HEIGHT));
         let hresp = ui.interact(hr, ui.id().with("home"), Sense::click()).tip(tr("Home"));
-        let home_active = app.ui.home || app.session.docs.is_empty();
+        let home_active = app.ui.home || !app.has_files();
         crate::a11y::tab(&hresp, tr("Home"), home_active);
         if home_active {
             ui.painter().rect_filled(hr, CornerRadius::ZERO, t.tab_active);
@@ -48,12 +48,30 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         ui.painter().line_segment([pos2(x, rect.min.y), pos2(x, rect.max.y)], Stroke::new(1.0, t.border));
         let mut switch = None;
         let mut close = None;
-        for (i, d) in app.session.docs.iter().enumerate() {
+        // A tab dragged off the strip, or "Open in new window", moves to a window of its own.
+        let mut detach = None;
+        let several = !ui.ctx().embed_viewports();
+        for (i, d) in app.session.docs.iter().enumerate().filter(|(_, d)| app.shows(d.uid)) {
             let active = i == app.session.active && !app.ui.home;
             let name = d.doc.name.clone();
             let w = (regular(12.0).size * 0.6 * name.chars().count() as f32 + 64.0).clamp(120.0, 220.0);
             let r = Rect::from_min_size(pos2(x, rect.min.y), vec2(w, HEIGHT));
-            let resp = ui.interact(r, ui.id().with(("tab", d.uid)), Sense::click());
+            let resp = ui.interact(r, ui.id().with(("tab", d.uid)), if several { Sense::click_and_drag() } else { Sense::click() });
+            if resp.drag_stopped()
+                && let Some(p) = ui.input(|inp| inp.pointer.latest_pos())
+                && (p.y - rect.center().y).abs() > HEIGHT * 2.0
+            {
+                detach = Some((i, Some(p)));
+            }
+            if several {
+                resp.context_menu(|ui| {
+                    ui.set_width(200.0);
+                    if crate::menus::item(ui, "Open in new window", "", true, false, &t) {
+                        detach = Some((i, None));
+                        ui.close();
+                    }
+                });
+            }
             crate::a11y::tab(&resp, &name, active);
             if active {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.tab_active);
@@ -124,6 +142,13 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         if let Some(i) = switch {
             app.run("doc.switch", json!({"index": i}));
             app.ui.home = false;
+        }
+        if let Some((i, at)) = detach {
+            // Where the pointer let go, on the screen.
+            let at = at.and_then(|p| ui.input(|inp| inp.viewport().inner_rect).map(|r| r.min + p.to_vec2() - vec2(60.0, HEIGHT / 2.0)));
+            if let Err(e) = crate::windows::open(app, ui.ctx(), Some(i), None, at) {
+                app.toast(e);
+            }
         }
         if let Some(i) = close {
             // A branch tab's edits live on in its main file: closing it loses nothing.

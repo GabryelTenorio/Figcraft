@@ -104,6 +104,7 @@ struct JobKey {
     solo: Option<NodeId>,
     /// Text lays out anew when fonts arrive (system fonts load in the background).
     fonts: u64,
+    proof: bool,
 }
 
 impl FigApp {
@@ -291,6 +292,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     // The edited text is drawn live (an IME composition included); the caret is an overlay.
     let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
     let outlined = if ds.view.outlines_selection { ds.selection.clone() } else { vec![] };
+    let proof = ds.view.proof_srgb && !doc.color_profile.is_srgb();
     let key = JobKey {
         doc: Arc::as_ptr(&doc) as usize,
         page: ds.page,
@@ -302,6 +304,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         skip: vec![],
         solo: ds.focused(),
         fonts: figcraft_text::layout_generation(),
+        proof,
     };
     if app.canvas.submitted.as_ref() == Some(&key) {
         return;
@@ -314,6 +317,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         outlined,
         skip: vec![],
         solo: key.solo,
+        proof,
     };
     worker.submit(job);
     app.canvas.submitted = Some(key);

@@ -60,6 +60,7 @@ fn big_job(doc: &Arc<figcraft_doc::Document>, page: figcraft_doc::NodeId, scale:
         outlined: vec![],
         skip: vec![],
         solo: None,
+        proof: false,
     }
 }
 

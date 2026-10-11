@@ -17,7 +17,12 @@
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
+//! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
+//!   windows (desktop)
 //! - `app.quit {}`
+//!
+//! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and
+//! panels; without it, requests go to the window last in front.
 
 use egui::Context;
 use figcraft_engine::cmd::comment::{Filter, Sort};
@@ -45,6 +50,8 @@ pub struct PendingShot {
     pub reply: std::sync::mpsc::Sender<ControlReply>,
     /// When it was asked for (UI clock, seconds).
     pub since: f64,
+    /// The window it captures.
+    pub viewport: egui::ViewportId,
 }
 
 /// How long a screenshot waits for the window to deliver it (the control server gives up then too).
@@ -57,27 +64,43 @@ fn pending(ctx: &Context) -> std::sync::Arc<std::sync::Mutex<Vec<PendingShot>>> 
 pub fn drain(app: &mut FigApp, ctx: &Context) {
     let now = ctx.input(|i| i.time);
     let list = pending(ctx);
-    // Finish screenshots that arrived.
-    let shots: Vec<std::sync::Arc<egui::ColorImage>> = ctx.input(|i| {
+    // Finish screenshots that arrived (a window's capture can arrive in any window's input).
+    let shots: Vec<(egui::ViewportId, std::sync::Arc<egui::ColorImage>)> = ctx.input(|i| {
         i.events
             .iter()
             .filter_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                egui::Event::Screenshot { viewport_id, image, .. } => Some((*viewport_id, image.clone())),
                 _ => None,
             })
             .collect()
     });
-    if let Some(img) = shots.last() {
-        for p in list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).drain(..) {
+    for (vp, img) in &shots {
+        list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|p| {
+            if p.viewport != *vp {
+                return true;
+            }
             let res = save_color_image(img, &p.path).map(|_| json!({"path": p.path, "width": img.size[0], "height": img.size[1]}));
-            let _ = p.reply.send(ControlReply { id: p.id, result: res });
-        }
+            let _ = p.reply.send(ControlReply { id: p.id.clone(), result: res });
+            false
+        });
     }
     let reqs = std::mem::take(&mut app.control_queue);
     for r in reqs {
+        // Requests for another window wait for its frame.
+        let target = r.params.get("window").and_then(Value::as_u64).unwrap_or(app.windows.focused);
+        if target != app.windows.current {
+            if app.windows.exists(target) {
+                ctx.request_repaint_of(crate::windows::viewport(target));
+                app.control_queue.push(r);
+            } else {
+                let _ = r.reply.send(ControlReply { id: r.id, result: Err(format!("no window {target}")) });
+            }
+            continue;
+        }
         if r.method == "ui.screenshot" {
             let path = r.params.get("path").and_then(Value::as_str).unwrap_or("figcraft-screenshot.png").to_string();
-            list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(PendingShot { id: r.id, path, reply: r.reply, since: now });
+            let viewport = ctx.viewport_id();
+            list.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(PendingShot { id: r.id, path, reply: r.reply, since: now, viewport });
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             continue;
         }
@@ -142,6 +165,12 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let depth = p.get("depth").and_then(Value::as_u64).unwrap_or(1) as usize;
             app.session.doc().map(|d| figcraft_engine::inspect::node_json(d, id, depth)).map_err(|e| e.to_string())
         }
+        "window.new" => {
+            let index = p.get("index").and_then(Value::as_u64).map(|i| i as usize);
+            crate::windows::open(app, ctx, index, p.get("path").and_then(Value::as_str), None).map(|id| json!({"window": id}))
+        }
+        "window.list" => Ok(crate::windows::list(app)),
+        "window.focus" => crate::windows::focus(app, ctx, p.get("id").and_then(Value::as_u64).ok_or("`id` required")?),
         "ui.inspect" => {
             let mut v = app.inspect();
             // The name of the control with the keyboard (what a screen reader announces).
@@ -515,7 +544,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         }
         "app.quit" => {
             app.ui.quit = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
             Ok(json!({"ok": true}))
         }
         other => Err(format!("unknown method `{other}`")),

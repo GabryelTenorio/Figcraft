@@ -193,7 +193,8 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                 }
                 continue;
             }
-            let enabled = available(m.id);
+            // One window in the browser.
+            let enabled = available(m.id) && !(m.id == "window.new" && ui.ctx().embed_viewports());
             if item(ui, &i18n::menu_item(m.id, m.label), crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
                 clicked = Some(m.id);
             }
