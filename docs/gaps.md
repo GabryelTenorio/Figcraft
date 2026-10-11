@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices: gap 13 closed; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -26,7 +26,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 10 | Shared (team) libraries | Feature | 10–20 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video fills; HEIC images | File format | 5–10 | [file-format-parity](file-format-parity.md) |
-| 13 | Boolean groups hit-tested by their operands (the rest of the vector tail landed) | Feature | 1–3 | [target-app-parity](target-app-parity.md) |
+| 13 | Vector tail: none left (boolean hit testing on the result landed 2026-10-11) | Feature | — | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections' tail | Feature | 1–2 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
 | 16 | Dev Mode: Code Connect, editor integrations | Feature | 4–8 | [dev-mode-parity](dev-mode-parity.md) |
@@ -167,17 +167,18 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   video need decoders that are C libraries (libheif, FFmpeg) or each platform's media framework.
 - **Estimate:** 5–10 h (video playback in the presenter is most of it; it can reuse the GIF clock).
 
-### 13. Boolean groups hit-tested by their operands
-- **Landed (2026-10-11):** live boolean editing (operands selected by double-click or Cmd/Ctrl-click;
+### 13. Vector tail: none left
+- **Landed (2026-10-11):** boolean groups are clicked where their result is (a click in a
+  subtracted hole reaches what's behind; with the group or an operand selected its operands are
+  hit, so each can still be picked; "Select layer" lists the group only where its result is), live
+  boolean editing (operands selected by double-click or Cmd/Ctrl-click;
   moving, resizing or editing an operand's points redraws the result during the drag, with every
   operand outlined; per-operand operations from the boolean controls and `node.set`; a drag frame
   recombines only the operands from the edited one up), Design panel Arc fields (Start, Sweep,
   Ratio; Mixed across ellipses; bindable), the shape builder on strokes and open paths (strokes take
   part as their outlined areas), one-sided variable widths (Alt-drag a width handle; canvas, PNG,
   SVG, PDF and outline stroke).
-- **Missing:** a click is tested against a boolean group's operands, not its result, so a click in
-  a subtracted hole still picks the group.
-- **Estimate:** 1–3 h.
+- **Estimate:** none left (vector QA with real files is part of gap 3).
 
 ### 14. Variables: extended collections' tail
 - **Landed:** extended collections (`library.extendCollection`: a library collection's modes and
@@ -254,6 +255,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Canvas fixes (gap 13 closed): boolean groups are clicked where their result is (a click in a subtracted hole reaches what's behind; with the group or an operand selected its operands are hit, so each can still be picked), a layer dragged inside a group stays in the group (frames and auto layout still take other drops), View ▸ Frame outlines and View ▸ Slices draw on the canvas, and the idle tests wait for the render thread instead of counting frames. Shapes & vector 1–3 h → 1–2 h (vector QA with real files left); percentages, feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Branches landed (gap 17): File ▸ Create branch… copies the file into a branch tab that remembers its base; Review and merge shows both sides' changes (layers with Inspect-style property changes, styles, variables, comments) and the conflicts (the same property changed on both sides, or a layer deleted on one side and edited on the other), each resolved for the branch or main; merging is one undo step and archives the branch; Update from main; branches are saved in the `.figcraft` file. Comments, versions, find, misc breadth 80% → 85%, ready 58% → 60%, 4–8 h → 2–5 h; collaboration 12% → 13%; menu breadth 204/204 (the catalog gained File ▸ Create branch…); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~378–722 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |

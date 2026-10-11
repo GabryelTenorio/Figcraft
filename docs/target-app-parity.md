@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -97,7 +97,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 1 | Canvas & navigation | 6 | 97% | 72% | Display P3 on screen, QA at extreme zooms (outlines for the selection and mask outlines landed) | 2–5 |
 | 2 | Selection & transform | 8 | 95% | 68% | Handles, measuring and snapping checked tool by tool against Figma; rotated groups and mixed selections | 6–10 |
 | 3 | Layers panel | 5 | 95% | 78% | Keyboard box selection, keyboard rename/context menu, long-list QA | 2–4 |
-| 4 | Shapes & vector | 8 | 97% | 68% | Boolean groups hit-tested by their operands rather than their result; vector QA with real files (live boolean editing, arc fields, shape builder on strokes and open paths and one-sided widths landed) | 1–3 |
+| 4 | Shapes & vector | 8 | 97% | 68% | Vector QA with real files (live boolean editing, boolean hit testing on the result, arc fields, shape builder on strokes and open paths and one-sided widths landed) | 1–2 |
 | 5 | Paint | 7 | 87% | 66% | Video fills, wide-gamut canvas, embedded image profiles, HEIC images (animated GIF fills and TIFF images landed) | 4–7 |
 | 6 | Strokes | 3 | 90% | 72% | Stroke styles, brush strokes (see 20) | 2–4 |
 | 7 | Effects | 4 | 100% | 72% | Glass and progressive blur tuned side by side | 3–6 |
@@ -258,9 +258,9 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    boolean editing (operands selected by double-click or Cmd/Ctrl-click; moving, resizing or
    editing an operand's points redraws the result during the drag with every operand outlined;
    per-operand operations from the boolean controls; only the operands from the edited one up are
-   recombined), the shape builder on strokes and open paths (strokes as their outlined areas), and
+   recombined; clicks hit a boolean group where its result is), the shape builder on strokes and open paths (strokes as their outlined areas), and
    one-sided variable widths (Alt-drag a width handle; canvas, exports and outline stroke).
-   *Left:* boolean groups are hit-tested by their operands rather than their result. 1–3 h.
+   *Left:* vector QA with real files. 1–2 h.
 2. **Text editing depth**: *landed:* OpenType features panel, small caps, lists, title case,
    truncation/max lines, font picker with previews and recents, word/line selection, IME commit,
    inline IME composition (underlined at the caret, reflowing, candidate window at the caret; the
@@ -577,6 +577,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Canvas fixes (gap 13 closed): boolean groups are clicked where their result is (a click in a subtracted hole reaches what's behind; with the group or an operand selected its operands are hit, so each can still be picked), a layer dragged inside a group stays in the group (frames and auto layout still take other drops), View ▸ Frame outlines and View ▸ Slices draw on the canvas, and the idle tests wait for the render thread instead of counting frames. Shapes & vector 1–3 h → 1–2 h (vector QA with real files left); percentages, feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | Branches landed (gap 17): File ▸ Create branch… copies the file into a branch tab that remembers its base; Review and merge shows both sides' changes (layers with Inspect-style property changes, styles, variables, comments) and the conflicts (the same property changed on both sides, or a layer deleted on one side and edited on the other), each resolved for the branch or main; merging is one undo step and archives the branch; Update from main; branches are saved in the `.figcraft` file. Comments, versions, find, misc breadth 80% → 85%, ready 58% → 60%, 4–8 h → 2–5 h; collaboration 12% → 13%; menu breadth 204/204 (the catalog gained File ▸ Create branch…); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~378–722 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
 | 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |

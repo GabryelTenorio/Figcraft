@@ -27,8 +27,8 @@ fn setup() -> (Document, NodeId, NodeId, NodeId, NodeId, NodeId) {
 fn hits_reach_operands_but_clicks_pick_the_group() {
     let (d, f, g, b, r1, r2) = setup();
     let p = page(&d);
-    assert_eq!(d.hit_test(p, Point::new(20.0, 20.0), 0.0), Some(r1));
-    assert_eq!(d.hit_test(p, Point::new(100.0, 100.0), 0.0), Some(r2), "the top operand where they overlap");
+    assert_eq!(d.hit_test(p, Point::new(20.0, 20.0), 0.0, None), Some(r1));
+    assert_eq!(d.hit_test(p, Point::new(100.0, 100.0), 0.0, None), Some(r2), "the top operand where they overlap");
     // A plain click: the group in the frame; Cmd-click: the operand.
     assert_eq!(select_target(&d, r1, &[], false), g);
     assert_eq!(select_target(&d, r1, &[], true), r1);
@@ -36,7 +36,7 @@ fn hits_reach_operands_but_clicks_pick_the_group() {
     // click on another operand picks that one.
     assert_eq!(select_target(&d, r2, &[r1], false), r2);
     // "Select layer" still lists the boolean group as one layer.
-    let listed: Vec<NodeId> = crate::geometry::layers_at(&d, p, Point::new(20.0, 20.0), 0.0).into_iter().map(|(id, _)| id).collect();
+    let listed: Vec<NodeId> = crate::geometry::layers_at(&d, p, Point::new(20.0, 20.0), 0.0, None).into_iter().map(|(id, _)| id).collect();
     assert_eq!(listed, vec![f, g, b]);
 }
 

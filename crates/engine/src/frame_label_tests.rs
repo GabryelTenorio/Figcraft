@@ -40,7 +40,7 @@ fn pressing_a_rotated_frames_label_selects_and_drags_the_frame() {
     let c = center(&q);
     let page = s.page().unwrap();
     // The label lies outside the frame: nothing else is there.
-    assert_eq!(s.doc().unwrap().hit_test(page, c, 1.0), None);
+    assert_eq!(s.doc().unwrap().hit_test(page, c, 1.0, None), None);
     // Hover highlights the frame.
     s.pointer(&ev(PointerKind::Hover, c)).unwrap();
     assert_eq!(s.ds().unwrap().hover, Some(f));

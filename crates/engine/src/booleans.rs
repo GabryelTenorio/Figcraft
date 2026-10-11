@@ -3,7 +3,9 @@
 //! - **Selecting operands.** A click selects the boolean group; a double click (or Cmd/Ctrl-click,
 //!   or a click while a sibling operand is selected) selects the operand under the pointer, and a
 //!   double click on a selected shape operand enters vector edit mode on it. Enter selects every
-//!   operand.
+//!   operand. Clicks hit a boolean group where its result is (a click in a subtracted hole goes
+//!   through to what's behind), except while it or a layer in it is selected: then its operands
+//!   are hit, so each can be picked ([`result_outline`]).
 //! - **Live results.** Moving, resizing or editing the points of an operand changes the document
 //!   on every pointer move, so the group's result is redrawn during the drag (one undo step per
 //!   gesture); a dragged operand stays in its group. The renderer caches every prefix of the group's fold, so only the operands from the
@@ -15,7 +17,8 @@
 //!   group's (and every operand follows it again); otherwise the selection is wrapped in a new
 //!   boolean group ([`apply`]).
 
-use figcraft_doc::{BoolOp, Document, NodeId, NodeKind};
+use figcraft_doc::{BoolOp, Document, Node, NodeId, NodeKind};
+use figcraft_geom::BezPath;
 use serde_json::{Value, json};
 
 use crate::params::req_targets;
@@ -60,6 +63,17 @@ pub fn shown_op(doc: &Document, ids: &[NodeId]) -> Option<BoolOp> {
     let mut ops = ids.iter().map(|i| operand_op(doc, *i));
     let first = ops.next()??;
     ops.all(|o| o == Some(first)).then_some(first)
+}
+
+/// Boolean group results for hit testing ([`figcraft_doc::geometry::BoolResult`]): none for a
+/// group that is selected or holds a selected layer, whose operands are hit instead.
+pub fn result_outline<'a>(doc: &'a Document, selection: &'a [NodeId]) -> impl Fn(NodeId, &Node) -> Option<BezPath> + 'a {
+    move |id, n| {
+        if selection.iter().any(|s| doc.is_ancestor(id, *s)) {
+            return None;
+        }
+        figcraft_render::node_outline(doc, n).map(|(p, _)| p)
+    }
 }
 
 /// The operands to outline on the canvas while layers inside a boolean group are selected or

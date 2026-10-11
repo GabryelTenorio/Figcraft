@@ -1186,6 +1186,8 @@ mod booleans_tests;
 #[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
+mod canvas_fixes_tests;
+#[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]
 mod collab_live_tests;

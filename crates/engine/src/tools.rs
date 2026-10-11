@@ -1016,10 +1016,10 @@ impl Session {
                     let p = ev.p();
                     let home = moving.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent);
                     // Absolute children of an auto layout frame stay in it, and so do the layers of
-                    // an instance (outside its slots: they only move) and the operands of a boolean
-                    // group (its result follows them); the rest may change parent.
+                    // groups, boolean groups and instances ([`crate::drop::keeps_layers`]); the
+                    // rest may change parent.
                     let flow = moving.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute))
-                        && !home.is_some_and(|h| crate::components::structure_locked(doc, h) || crate::booleans::is_group(doc, h));
+                        && !home.is_some_and(|h| crate::drop::keeps_layers(doc, h));
                     let target = if flow { crate::drop::drag_parent(doc, page, p, &moving) } else { home.unwrap_or(page) };
                     let mode = doc.node(target).and_then(|n| n.layout.as_ref()).map(|l| l.mode);
                     if let (true, Some(mode)) = (flow, mode) {
@@ -1411,11 +1411,9 @@ impl Session {
                         let before = ds.doc.clone();
                         let d = ds.doc_mut();
                         for m in &moving {
-                            // Instance layers (outside slots) and boolean operands stay put: they only move.
+                            // Group, boolean group and instance layers stay put: they only move.
                             let from = d.node(*m).and_then(|n| n.parent);
-                            if from.is_some_and(|f| crate::components::structure_locked(d, f) || crate::booleans::is_group(d, f))
-                                || crate::components::structure_locked(d, target)
-                            {
+                            if from.is_some_and(|f| crate::drop::keeps_layers(d, f)) || crate::components::structure_locked(d, target) {
                                 continue;
                             }
                             // A layer can't go into itself; it stays where it is.
@@ -1770,11 +1768,13 @@ impl Session {
     }
 
     /// The layer under `p` for a click: the topmost on `page`, or in the focus view the focused
-    /// frame's.
+    /// frame's. Boolean groups are hit by their results ([`crate::booleans::result_outline`]).
     pub fn hit(&self, doc: &Document, page: NodeId, p: Point, tol: f64) -> Option<NodeId> {
+        let sel = self.selection();
+        let result = crate::booleans::result_outline(doc, &sel);
         match self.ds().ok().and_then(crate::DocState::focused) {
-            Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol),
-            None => doc.hit_test(page, p, tol),
+            Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol, Some(&result)),
+            None => doc.hit_test(page, p, tol, Some(&result)),
         }
     }
 

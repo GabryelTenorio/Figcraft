@@ -116,12 +116,12 @@ fn hit_test_respects_z_and_clip() {
     let a = d.create(f, NodeKind::Rectangle, "A", 10.0, 10.0, 50.0, 50.0).unwrap();
     let b = d.create(f, NodeKind::Rectangle, "B", 30.0, 30.0, 50.0, 50.0).unwrap();
     let outside = d.create(f, NodeKind::Rectangle, "Out", 90.0, 90.0, 50.0, 50.0).unwrap();
-    assert_eq!(d.hit_test(p, Point::new(40.0, 40.0), 0.0), Some(b));
-    assert_eq!(d.hit_test(p, Point::new(15.0, 15.0), 0.0), Some(a));
-    assert_eq!(d.hit_test(p, Point::new(95.0, 95.0), 0.0), Some(outside));
+    assert_eq!(d.hit_test(p, Point::new(40.0, 40.0), 0.0, None), Some(b));
+    assert_eq!(d.hit_test(p, Point::new(15.0, 15.0), 0.0, None), Some(a));
+    assert_eq!(d.hit_test(p, Point::new(95.0, 95.0), 0.0, None), Some(outside));
     // Clipped part of `outside` isn't hit.
-    assert_eq!(d.hit_test(p, Point::new(120.0, 120.0), 0.0), None);
-    assert_eq!(d.hit_test(p, Point::new(5.0, 95.0), 0.0), Some(f));
+    assert_eq!(d.hit_test(p, Point::new(120.0, 120.0), 0.0, None), None);
+    assert_eq!(d.hit_test(p, Point::new(5.0, 95.0), 0.0, None), Some(f));
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn click_target_rules() {
     let g = d.create(f, NodeKind::Group, "G", 0.0, 0.0, 0.0, 0.0).unwrap();
     let r = d.create(g, NodeKind::Rectangle, "R", 10.0, 10.0, 20.0, 20.0).unwrap();
     d.fit_to_children(g).unwrap();
-    let leaf = d.hit_test(p, Point::new(15.0, 15.0), 0.0).unwrap();
+    let leaf = d.hit_test(p, Point::new(15.0, 15.0), 0.0, None).unwrap();
     assert_eq!(leaf, r);
     // Child of a top-level frame: the group.
     assert_eq!(geometry::select_target(&d, leaf, &[], false), g);

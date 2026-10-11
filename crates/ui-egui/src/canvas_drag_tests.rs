@@ -15,7 +15,7 @@ use crate::layers_drag_tests::Ui;
 fn settle(u: &mut Ui) {
     for _ in 0..300 {
         u.frame(vec![]);
-        if u.app.worker.as_ref().is_some_and(|w| !w.in_flight) {
+        if u.app.worker.as_ref().is_some_and(|w| !w.in_flight()) {
             return;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -56,6 +56,6 @@ fn a_drag_shows_on_the_canvas_while_it_moves() {
     // no new documents, so the worker runs dry.
     settle(&mut u);
     assert!(Arc::ptr_eq(&held, &u.app.session.ds().unwrap().doc));
-    assert!(u.app.worker.as_ref().is_some_and(|w| !w.in_flight), "nothing left to render");
+    assert!(u.app.worker.as_ref().is_some_and(|w| !w.in_flight()), "nothing left to render");
     u.button(p + vec2(30.0, 10.0), false);
 }
