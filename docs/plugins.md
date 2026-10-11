@@ -16,6 +16,9 @@ permissions its manifest asks for, and nothing more.
 - **Panels and settings (API 2).** A plugin can show a small panel of its own while it runs: FigCraft
   draws its fields and buttons with its own widgets and calls the plugin back when one is used. A
   plugin can also keep settings from one run to the next.
+- **Widgets (API 3).** A plugin can put a layer of its own on the canvas: it describes the layer
+  (frames with auto layout, text, shapes, images), FigCraft builds it, and a click on one of its
+  parts calls the plugin back to redraw it from its state, which is kept in the document.
 - **Permissions.** The manifest says whether the plugin only reads the document or may edit it, and
   can narrow the commands it may call. FigCraft enforces both.
 
@@ -31,18 +34,32 @@ permissions its manifest asks for, and nothing more.
   Ctrl+Alt+P is Pixel preview) runs the last plugin command again with the same parameters.
 - **Plugins ▸ Manage plugins…** lists the installed plugins (version, access, manifest path) with a
   Remove button for each, and an Import button.
+- **Plugins ▸ Widgets** lists the installed widget plugins; picking one puts its widget in the
+  middle of the view.
 
 A message the plugin shows (`notify`) appears as a toast; so does a text result.
 
 **Plugin panels.** A plugin written for API 2 can show a panel while it runs: a floating window,
 first placed beside the properties panel (drag its title bar to move it), with the plugin's notes,
 fields (text, number, checkbox, menu, list, colour) and buttons, drawn with FigCraft's own widgets
-and named for screen readers. Pressing a button or changing a field calls the plugin back with every
-field's value; what that callback does is one undo step (none when it changes nothing), and the
-plugin can update the panel or close it. The module stays loaded while its panel is open, so the
-plugin keeps its state between callbacks. Closing the window ends the plugin's session. One plugin
-panel is open at a time: running another plugin that shows one replaces it. An open panel costs
-nothing while nobody uses it (no frames are drawn).
+and named for screen readers. A colour field's swatch opens FigCraft's colour picker (the plugin hears
+of the colour when a drag in the picker ends); its hex can also be typed. Pressing a button or
+changing a field calls the plugin back with every field's value; what that callback does is one
+undo step (none when it changes nothing), and the plugin can update the panel or close it. The
+module stays loaded while its panel is open, so the plugin keeps its state between callbacks.
+Closing the window ends the plugin's session. Each plugin has at most one panel, and the panels of
+different plugins open side by side (leftwards from the first, three to a row);
+running a plugin again replaces its own panel. An open panel costs nothing while nobody uses it (no
+frames are drawn).
+
+**Widgets.** A widget is a frame on the canvas that belongs to its plugin. It moves, copies,
+deletes, exports and undoes like any layer, as one layer: the layers inside it are locked. Clicking
+one of its parts that the plugin made clickable (with the Move tool; the pointer turns into a hand
+over them) calls the plugin back, which redraws the widget; that click is one undo step. Dragging
+moves the widget instead, and Shift- or Cmd-clicks only select. Each widget keeps its plugin's id
+and its state (a small JSON object) in its own layer data, so a saved file, a copy, an undo step or
+a live session carries the widget as it is, and a copy is a widget of its own. A widget whose
+plugin isn't installed stays as it was drawn; clicking it says the plugin is missing.
 
 If a callback fails, it is rolled back and its message shown; a plugin that returned an error
 keeps its panel, one that crashed or ran out of fuel or memory loses it.
@@ -58,6 +75,10 @@ From scripts, the CLI and MCP the same commands apply, panels included:
 {"command": "plugin.event", "params": {"id": "org.figcraft.examples.swatch-grid", "control": "palette", "value": "Ocean"}}
 {"command": "plugin.event", "params": {"id": "org.figcraft.examples.swatch-grid", "control": "generate"}}
 {"command": "plugin.close", "params": {"id": "org.figcraft.examples.swatch-grid"}}
+{"command": "plugin.import", "params": {"path": "target/plugins/dist/counter"}}
+{"command": "widget.insert", "params": {"plugin": "org.figcraft.examples.counter", "x": 0, "y": 0}}
+{"command": "widget.list", "params": {}}
+{"command": "widget.click", "params": {"id": 12, "target": "increment"}}
 ```
 
 `figcraft-cli run script.jsonl --in design.figcraft --out tidy.figcraft` runs that headless; over
@@ -70,11 +91,14 @@ plugins: import them in the script.
 | `plugin.import` | `{path}` or `{manifest, wasm}` | `path` is a `figcraft-plugin.json` or its folder. Without files (the browser, tests), pass the manifest (an object or JSON text) and the module as base64 `wasm`; such a plugin lasts for the session only. A plugin with the same id is replaced. The module is checked first. |
 | `plugin.remove` | `{id}` | Uninstalls it. |
 | `plugin.run` | `{id, command?, params?, fuel?}` | Runs a command (default: the first) with its parameters checked against the manifest and the missing ones filled with their defaults; `fuel` lowers the instruction budget (for the panel's callbacks too). Returns `{plugin, command, output, logs, calls, fuel, panel}`; `output` is the plugin's result, parsed as JSON when it is JSON; `panel` is the plugin's open panel (as `plugin.ui` returns it) or null. |
-| `plugin.ui` | `{id?}` | The open plugin panel: `{plugin, command, title, controls, values}` (`values`: every field's current value by name), or null. With `id`, only that plugin's. |
+| `plugin.ui` | `{id?}` | Plugin `id`'s open panel: `{plugin, command, title, controls, values}` (`values`: every field's current value by name), or null. Without `id`, the panel opened last. |
 | `plugin.event` | `{id, control, value?}` | Uses a control of plugin `id`'s open panel, as a click would: a button (no `value`), or a field set to `value` (checked like a parameter: a number is clamped, a list or menu value must be one of its options, a colour must be hex). The plugin is called back; returns like `plugin.run`. |
 | `plugin.close` | `{id}` | Closes plugin `id`'s panel and ends its session. `{closed}` says whether one was open. |
 | `plugins.runLast` | `{}` | Runs the last plugin command again. |
 | `plugins.manage` | `{}` | Opens the Plugins window; returns the list like `plugin.list`. |
+| `widget.insert` | `{plugin, x?, y?, fuel?}` | Puts widget plugin `plugin`'s widget on the current page, its top-left at `x`, `y` (default: centred in the view), and selects it; the plugin draws it. One undo step. Returns `{id, plugin, state, targets, output, logs, calls, fuel}`: `targets` are the names of its clickable parts. |
+| `widget.click` | `{id, target, fuel?}` | Clicks part `target` of widget `id` (or of the widget a layer `id` is in), as a click on the canvas would: the plugin is called back and redraws it. One undo step; returns like `widget.insert`. |
+| `widget.list` | `{}` | `{widgets: [{id, plugin, name, page, state, targets}]}`: every widget in the file. |
 
 ## The manifest: `figcraft-plugin.json`
 
@@ -110,10 +134,11 @@ plugins: import them in the script.
 | `name` | Required. Shown in the Plugins menu (64 characters at most). |
 | `version`, `description` | Optional text. |
 | `main` | Required. The module, a `.wasm` path relative to the manifest, inside its folder. |
-| `api` | The plugin API version the plugin was written for: `1` (the default) or `2` (panels and settings). A manifest asking for a newer one than FigCraft runs is refused, so a plugin that needs panels fails clearly on an older FigCraft. |
+| `api` | The plugin API version the plugin was written for: `1` (the default), `2` (panels and settings) or `3` (widgets). A manifest asking for a newer one than FigCraft runs is refused, so a plugin that needs panels or widgets fails clearly on an older FigCraft. |
+| `widget` | API 3: `true` when the plugin draws a widget (it's listed in Plugins ▸ Widgets). |
 | `permissions.access` | `read` (the default): commands that leave the document as it is; such plugins also run from Dev Mode's Inspect tab. `write`: edits too. |
 | `permissions.commands` | Optional allowlist: exact command ids or prefixes ending in `*` (`node.*`). Empty: any command the access allows. |
-| `commands` | The menu commands, each `{id, label, params?}`. Without any, the plugin has one, `run`. |
+| `commands` | The menu commands, each `{id, label, params?}`. Without any, the plugin has one, `run`, unless it's a widget (a widget needs no command). |
 | `params[]` | `{name, label?, type, default?, options?, min?, max?}`; `type` is `text`, `number` (clamped to `min`/`max`), `boolean`, `select` (one of `options`, a menu), `list` (one of `options`, shown as a list) or `color` (hex, `#RRGGBB` or `#RRGGBBAA`). A default that doesn't fit is dropped. |
 
 ## What a plugin can't do
@@ -126,7 +151,9 @@ it can handle):
 - other documents and the version history: `doc.*` and `version.*` (except `doc.list` and
   `version.list`);
 - the undo history and nesting: `edit.undo`, `edit.redo`, `edit.repeat`, `command.batch` (a run is
-  already one undo step), and `plugin.*` / `plugins.*` (no plugin runs another);
+  already one undo step), `plugin.*` / `plugins.*` (no plugin runs another) and `widget.*`;
+- writing layer data whose key starts with `figcraft.widget` (a widget's own data: no plugin can
+  forge a widget or change another one's state);
 - commands that open a dialog or panel (for example `object.rename` without a `name`, which would
   start renaming in the layers panel): the call is undone and refused;
 - for a `read` plugin, any command that changes the document (checked before the call for commands
@@ -136,12 +163,14 @@ Limits per run, and again per panel callback: 1,000,000,000 fuel (about a second
 WebAssembly in a debug build, far less in a release build), 64 MB of memory, 100,000 host calls
 (each also costs 10,000 fuel), 16 MB per string either way, 1,000 log lines, and modules up to
 16 MB. A panel spec is at most 64 KB with 64 controls; settings are at most 64 KB per plugin (keys
-and JSON values), keys 1–128 characters.
+and JSON values), keys 1–128 characters. A widget callback gets the same limits; its description is
+at most 4 MB with 256 layers nested 16 deep, its state at most 16 KB (keys 1–128 characters), and
+its images 1 MB each, 2 MB together and 4096 pixels on a side.
 
-## ABI (version 2)
+## ABI (version 3)
 
-Version 2 adds panels and settings to version 1; a version 1 module runs unchanged and gets the
-input it always got. Strings are UTF-8 `(ptr, len)` pairs in the plugin's linear memory; all values
+Version 2 adds panels and settings to version 1, and version 3 adds widgets; a version 1 or 2
+module runs unchanged and gets the input it always got. Strings are UTF-8 `(ptr, len)` pairs in the plugin's linear memory; all values
 are `i32`.
 
 The module **exports** `memory` and `figcraft_run(input_len) -> status`. When `figcraft_run` starts,
@@ -156,6 +185,15 @@ same instance (its memory as the last call left it) with the event and every fie
 
 ```json
 {"api": 2, "command": "panel", "params": {}, "selection": [], "event": {"control": "generate", "value": null}, "values": {"palette": "Ocean", "columns": 3, "labels": true}}
+```
+
+When its widget is inserted or clicked, `figcraft_run` runs in a fresh instance (nothing is kept
+from one call to the next: a widget's state is all it remembers, so the same state and click
+always give the same widget) with `widget` added: the widget's layer id, its state (an empty object
+for a new widget) and what was clicked (`event` is null when it's inserted):
+
+```json
+{"api": 3, "command": "widget", "params": {}, "selection": [], "widget": {"id": 12, "state": {"count": 2}, "event": {"target": "increment"}}}
 ```
 
 It returns `0` for success; anything else fails the run (and rolls it back), with the text passed
@@ -178,6 +216,7 @@ included, is refused when the plugin is imported):
 | `setting_get` | `(key_ptr, key_len) -> status` | API 2. `0`: the reply holds the setting's JSON. `1`: there is none. |
 | `setting_set` | `(key_ptr, key_len, value_ptr, value_len) -> status` | API 2. Stores JSON under the key, for this plugin only, kept with the preferences. `1`: refused (not JSON, a bad key, over 64 KB), the reply says why. |
 | `setting_delete` | `(key_ptr, key_len)` | API 2. Forgets a setting. |
+| `widget_render` | `(ptr, len) -> status` | API 3. Draws the widget being inserted or clicked (the widget description below, as JSON). `1`: the description is invalid, the reply says why. A widget call that doesn't draw keeps the widget as it was (inserting one must draw it). |
 
 A pointer or length outside the plugin's memory traps, which fails the run. Host functions can only
 be called while `figcraft_run` runs (not from a start function). Settings are forgotten when the
@@ -205,20 +244,49 @@ a note without resetting the other fields. Buttons next to each other share a ro
 is the primary one. FigCraft checks the whole spec (sizes, kinds, options, bounds) and drops values
 that don't fit their field.
 
+### Widget description
+
+```json
+{"state": {"count": 2}, "root": {"type": "frame", "layout": "horizontal", "gap": 12, "padding": 12, "radius": 12, "fill": "#FFFFFF", "stroke": "#D9D9D9", "children": [
+  {"type": "frame", "target": "decrement", "layout": "horizontal", "justify": "center", "width": 32, "height": 32, "radius": 8, "fill": "#F0F0F0",
+   "children": [{"type": "text", "text": "−", "size": 16, "bold": true}]},
+  {"type": "text", "name": "Count", "text": "2", "size": 24, "bold": true, "color": "#1E1E1E"},
+  {"type": "image", "data": "iVBORw0KGgo…", "width": 24, "height": 24}
+]}}
+```
+
+`state` is the widget's new state, a JSON object (left out: it keeps the one it has). `root` is the
+widget itself, a frame; FigCraft replaces everything inside it with the layers described and keeps
+the widget where it is (and its size, unless the description gives one). Every layer has a `type`
+(`frame`, `text`, `rectangle`, `ellipse`, `image`) and may have a `name`, a `target` (clicking it
+calls the plugin back with that name: letters, digits, `.`, `-`, `_`), `x` and `y` (in its frame,
+ignored in auto layout), `width` and `height`, `fill` and `stroke` (hex colours), `strokeWeight`,
+`radius` (frames, rectangles, images) and `opacity`. A frame may have `layout` (`horizontal` or
+`vertical`), `gap`, `padding`, `justify` and `align` (`min`, `center`, `max`: along and across the
+layout) and `children`;
+with auto layout it hugs its contents on an axis without a size. A text has `text`, `size`,
+`color` and `bold` (with a `width` it wraps). An image has `data`, the image's bytes (PNG, JPEG…)
+as base64, usually carried in the module itself; without a size it takes the image's.
+FigCraft checks the whole description (kinds, sizes, numbers, colours, lengths, counts, depth,
+image sizes) and refuses it if anything is off.
+
 ## Writing a plugin in Rust
 
 `plugins/` in the repository is a workspace of its own: `plugins/sdk` (the crate
 `figcraft-plugin-sdk`, `no_std` with `alloc`) wraps the ABI with serde_json, and
-`plugins/examples` has two plugins:
+`plugins/examples` has three plugins:
 
 - **Tidy names** (`tidy-names`): cleans up the selected layers' names (extra spaces, the "copy" left
   by duplicating) and optionally their letter case, inside the selection too. Two commands: one
   with a form (case, include layers inside), and a quick one without.
 - **Swatch grid** (`swatch-grid`, API 2): a grid of colour swatches, centred in the view, named after
   their colours and optionally labelled. **Palettes…** opens a panel with a list of built-in
-  palettes (picking one shows its colours), columns, labels and a Generate button; the palette
+  palettes (picking one shows its colours), columns, labels and their colour, and a Generate
+  button; the palette
   picked last is remembered as a setting for next time. **From hex colours…** takes a palette of
   hex colours in the parameters form.
+- **Counter** (`counter`, API 3): a widget, a count between − and + buttons; each click changes the
+  count kept in the widget's state. It only reads the document.
 
 `cargo xtask plugins` (part of `cargo xtask wasm` and `cargo xtask ci`; it needs the
 `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`) checks, tests and
@@ -273,8 +341,10 @@ names it, and import the manifest. The SDK gives `call`, `selection`, `log`, `no
 `Input` (`command`, `params` with `str`/`f64`/`bool` helpers, `selection`, and `event` when the
 panel calls back: `control`, `value` and every field's `values`); returning `Err` fails the run and
 rolls it back. With `"api": 2` in the manifest: `show_ui(&json!({...}))` and `close_ui()` for the
-panel, `setting(key)`, `set_setting(key, &value)` and `delete_setting(key)` for settings. Outside WebAssembly every host call fails, so the plugin's own logic can
-be unit-tested with `cargo test`.
+panel, `setting(key)`, `set_setting(key, &value)` and `delete_setting(key)` for settings. With
+`"api": 3` and `"widget": true`: `input.widget` (`id`, `state`, `target`) when the widget is
+inserted or clicked, and `render_widget(&json!({"state": ..., "root": ...}))` to draw it. Outside
+WebAssembly every host call fails, so the plugin's own logic can be unit-tested with `cargo test`.
 
 Any language that compiles to WebAssembly works the same way: export `memory` and `figcraft_run`,
 import what you need from `figcraft`.
@@ -283,9 +353,11 @@ import what you need from `figcraft`.
 
 - Distribution: no plugin directory, signing or automatic updates; plugins are imported from a
   manifest.
-- Widgets (objects on the canvas drawn by a plugin) and plugins written for other apps (JavaScript
-  plugins): neither runs.
-- Panels: one at a time; a colour field is a swatch with a hex field (no colour picker); no images,
-  sliders or free layout inside a panel.
+- Plugins written for other apps (JavaScript plugins) don't run.
+- Widgets: clicks are their only events (no text input, hover, property menu or timers), they
+  can't open a panel, and their layers are frames, text, rectangles, ellipses and images only (no
+  vectors, components or variables). Clicks reach them in the editor, not in a prototype being
+  presented.
+- Panels: no images, sliders or free layout inside a panel.
 - Data in the document: plugins keep data on layers (pages included) with `node.set {props:
   {pluginData: {key: value}}}`; there is no separate per-document store.

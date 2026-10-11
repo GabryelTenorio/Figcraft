@@ -261,6 +261,8 @@ fn every_command_survives_junk_params() {
         // Links (dev resources) and indexes as junk.
         json!({"id": 2, "url": "javascript:alert(1)", "index": 1e308, "name": {"x": 1}}),
         json!({"id": 2, "url": "https://\u{0}x", "index": -1, "name": ""}),
+        // Widgets: plugins, targets and fuel as junk.
+        json!({"id": 1, "plugin": {"x": 1}, "target": [1], "fuel": -1e308, "x": 1e308}),
     ];
     for spec in all_commands() {
         if matches!(

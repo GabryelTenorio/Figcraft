@@ -2,7 +2,7 @@
 //! memory cap, and sees the outside world only through the host functions below. There is no WASI:
 //! no file system, network, clock or randomness.
 //!
-//! # ABI (version 2; version 1 is the first seven imports)
+//! # ABI (version 3; version 1 is the first seven imports, version 2 adds panels and settings)
 //!
 //! The module exports its `memory` and `figcraft_run(input_len: i32) -> i32`. Host functions are
 //! imported from the module `figcraft`; strings are UTF-8 `(ptr, len)` pairs in the plugin's memory.
@@ -21,10 +21,11 @@
 //! | `setting_get` | `(key_ptr, key_len) -> i32` | 0: the reply holds the stored JSON; 1: no such setting. |
 //! | `setting_set` | `(key_ptr, key_len, value_ptr, value_len) -> i32` | Stores JSON under the key. 1: refused, the reply says why. |
 //! | `setting_delete` | `(key_ptr, key_len)` | Forgets a setting. |
+//! | `widget_render` | `(ptr, len) -> i32` | Draws the widget being called back: a [`WidgetRender`] as JSON. 1: invalid, the reply says why. |
 //!
 //! When `figcraft_run` starts, the reply holds the input JSON (`input_len` bytes):
 //! `{"api", "command", "params", "selection"}`, plus `event` and `values` when a panel calls the
-//! plugin back. It returns 0 on success; anything else fails the run.
+//! plugin back, or `widget` (`{id, state, event}`) when a widget does. It returns 0 on success; anything else fails the run.
 //!
 //! An [`Instance`] keeps the module's memory between calls, so a plugin with a panel open keeps its
 //! state from one callback to the next. Every call gets the full [`Limits`] again.
@@ -35,6 +36,7 @@ use wasmi::{
 };
 
 use crate::manifest::Panel;
+use crate::widget::WidgetRender;
 
 /// The module host functions are imported from.
 pub const IMPORT_MODULE: &str = "figcraft";
@@ -55,6 +57,7 @@ const IMPORTS: &[(&str, usize, usize)] = &[
     ("setting_get", 2, 1),
     ("setting_set", 4, 1),
     ("setting_delete", 2, 0),
+    ("widget_render", 2, 1),
 ];
 
 /// What a run may use.
@@ -147,6 +150,8 @@ pub struct RunOutput {
     pub fuel: u64,
     /// The last `ui_show` / `ui_close` of the run.
     pub ui: Option<UiChange>,
+    /// The last `widget_render` of the run.
+    pub widget: Option<WidgetRender>,
 }
 
 /// A host call that needs the [`Host`]: the plugin is paused while the host answers it (see
@@ -478,6 +483,22 @@ fn linker(engine: &Engine) -> Result<Linker<State>, PluginError> {
         Ok(match Panel::parse(&spec) {
             Ok(panel) => {
                 st.out.ui = Some(UiChange::Show(panel));
+                0
+            }
+            Err(why) => {
+                st.set_reply(why.into_bytes());
+                1
+            }
+        })
+    })
+    .map_err(err)?;
+    l.func_wrap(IMPORT_MODULE, "widget_render", |mut c: Ctx<'_>, ptr: i32, len: i32| -> Result<i32, wasmi::Error> {
+        charge(&mut c)?;
+        let spec = read_str(&mut c, ptr, len)?;
+        let st = c.data_mut();
+        Ok(match WidgetRender::parse(&spec) {
+            Ok(w) => {
+                st.out.widget = Some(w);
                 0
             }
             Err(why) => {

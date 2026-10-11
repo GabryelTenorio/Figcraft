@@ -47,6 +47,7 @@ pub mod textedit;
 pub mod textpreview;
 pub mod tools;
 pub mod vectoredit;
+pub mod widgets;
 
 pub use cmd::{CommandSpec, all_commands, find_command};
 pub use figcraft_collab;
@@ -1429,3 +1430,5 @@ mod version_preview_tests;
 mod version_tests;
 #[cfg(test)]
 mod view_behaviour_tests;
+#[cfg(test)]
+mod widgets_tests;

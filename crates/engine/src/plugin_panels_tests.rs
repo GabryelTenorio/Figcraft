@@ -282,7 +282,7 @@ fn a_callback_out_of_fuel_rolls_back_and_closes_the_panel() {
 }
 
 #[test]
-fn closing_removing_or_another_panel_ends_the_session() {
+fn closing_or_removing_ends_the_session_and_panels_open_side_by_side() {
     let mut s = Session::new();
     rect(&mut s, 0.0);
     let mut w = Wat::default();
@@ -295,11 +295,20 @@ fn closing_removing_or_another_panel_ends_the_session() {
     assert_eq!(ex(&mut s, "plugin.close", json!({"id": "org.test.a"}))["closed"], true);
     assert_eq!(ui(&mut s), Value::Null);
     assert!(event_err(&mut s, json!({"id": "org.test.a", "control": "go"})).contains("no panel open"));
-    // Another plugin's panel replaces it; removing the plugin closes it.
+    // Two plugins' panels are open side by side (a plugin's own run replaces its panel);
+    // removing a plugin closes its panel only.
     ex(&mut s, "plugin.run", json!({"id": "org.test.a"}));
     ex(&mut s, "plugin.run", json!({"id": "org.test.b"}));
-    assert_eq!(ui(&mut s)["plugin"], "org.test.b");
-    assert_eq!(ex(&mut s, "plugin.ui", json!({"id": "org.test.a"})), Value::Null);
+    ex(&mut s, "plugin.run", json!({"id": "org.test.a"}));
+    assert_eq!(s.plugins.panels.len(), 2);
+    assert_eq!(ui(&mut s)["plugin"], "org.test.a", "without an id: the one opened last");
+    assert_eq!(ex(&mut s, "plugin.ui", json!({"id": "org.test.b"}))["plugin"], "org.test.b");
+    ex(&mut s, "plugin.event", json!({"id": "org.test.b", "control": "n", "value": 7}));
+    assert_eq!(ex(&mut s, "plugin.ui", json!({"id": "org.test.b"}))["values"]["n"], 7.0, "the event reached b's panel");
+    assert_eq!(ui(&mut s)["plugin"], "org.test.a", "and b's panel kept its place");
     ex(&mut s, "plugin.remove", json!({"id": "org.test.b"}));
+    assert_eq!(ex(&mut s, "plugin.ui", json!({"id": "org.test.b"})), Value::Null);
+    assert_eq!(ui(&mut s)["plugin"], "org.test.a");
+    ex(&mut s, "plugin.close", json!({"id": "org.test.a"}));
     assert_eq!(ui(&mut s), Value::Null);
 }

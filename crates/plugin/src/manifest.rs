@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 /// The manifest's file name.
 pub const MANIFEST_FILE: &str = "figcraft-plugin.json";
 /// The plugin API version this build implements (`api` in the manifest).
-pub const API_VERSION: u32 = 2;
+pub const API_VERSION: u32 = 3;
 /// Largest manifest read.
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 
@@ -40,14 +40,17 @@ pub struct Manifest {
     /// The WebAssembly module, relative to the manifest (`plugin.wasm`).
     pub main: String,
     /// The plugin API version the plugin was written for (1 when not given; panels and settings
-    /// need 2).
+    /// need 2, widgets 3).
     #[serde(default = "api_version")]
     pub api: u32,
     #[serde(default)]
     pub permissions: Permissions,
-    /// Menu commands; a manifest without any gets one, `run`.
+    /// Menu commands; a manifest without any gets one, `run` (a widget needs none).
     #[serde(default)]
     pub commands: Vec<PluginCommand>,
+    /// API 3: the plugin draws a widget (Plugins ▸ Widgets, `widget.insert`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub widget: bool,
 }
 
 /// A manifest without `api` was written for the first one.
@@ -304,7 +307,10 @@ impl Manifest {
                 return Err(format!("`{}` in `permissions.commands` isn't a command id or `prefix.*`", truncate(p)));
             }
         }
-        if self.commands.is_empty() {
+        if self.widget && self.api < 3 {
+            return Err("a widget needs plugin API 3 (`\"api\": 3`)".into());
+        }
+        if self.commands.is_empty() && !self.widget {
             self.commands.push(PluginCommand { id: "run".into(), label: "Run".into(), params: Vec::new() });
         }
         if self.commands.len() > MAX_COMMANDS {
@@ -392,7 +398,7 @@ fn first_duplicate<'a>(names: impl Iterator<Item = &'a str>) -> Option<&'a str> 
 }
 
 /// An id: 1..=`max` ASCII letters, digits, `.`, `-` or `_`.
-fn check_id(what: &str, id: &str, max: usize) -> Result<(), String> {
+pub(crate) fn check_id(what: &str, id: &str, max: usize) -> Result<(), String> {
     if id.is_empty() || id.len() > max || !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) {
         return Err(format!("{what} `{}` must be 1–{max} letters, digits, `.`, `-` or `_`", truncate(id)));
     }
@@ -400,7 +406,7 @@ fn check_id(what: &str, id: &str, max: usize) -> Result<(), String> {
 }
 
 /// Trimmed text of at most `max` characters without control characters.
-fn clean(what: &str, s: &str, max: usize) -> Result<String, String> {
+pub(crate) fn clean(what: &str, s: &str, max: usize) -> Result<String, String> {
     let s = s.trim();
     if s.chars().count() > max {
         return Err(format!("{what} is longer than {max} characters"));

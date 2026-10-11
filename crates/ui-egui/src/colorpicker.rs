@@ -45,6 +45,13 @@ pub enum PickerTarget {
         id: String,
         index: usize,
     },
+    /// A colour field of a plugin's panel or parameters form. A drag only shows `pending`; the
+    /// plugin hears of the colour when the drag ends.
+    PluginField {
+        plugin: String,
+        control: String,
+        pending: Option<String>,
+    },
 }
 
 /// The paints of colour style `id`.
@@ -85,11 +92,31 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             _ => None,
         },
         PickerTarget::Style { id, index } => style_paints(doc, id)?.get(*index).cloned(),
+        PickerTarget::PluginField { plugin, control, pending } => {
+            let hex = match pending {
+                Some(hex) => hex.clone(),
+                None => crate::plugins_ui::field_value(app, plugin, control)?,
+            };
+            let c = Color::from_hex(&hex)?;
+            let mut p = Paint::solid(c.with_alpha(1.0));
+            p.opacity = c.a;
+            Some(p)
+        }
     }
 }
 
 /// Write `paint` to the target. `live` edits are part of an ongoing drag.
 fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
+    if let PickerTarget::PluginField { plugin, control, .. } = target {
+        let c = paint.solid_color().unwrap_or(Color::BLACK);
+        let hex = c.with_alpha(c.a * paint.opacity).to_css_hex();
+        let (plugin, control) = (plugin.clone(), control.clone());
+        if !live {
+            crate::plugins_ui::set_field(app, &plugin, &control, &hex);
+        }
+        app.ui.picker = Some(PickerTarget::PluginField { plugin, control, pending: live.then_some(hex) });
+        return;
+    }
     if live {
         let _ = app.session.begin_interaction("Color");
     }
@@ -115,6 +142,7 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
             let c = paint.solid_color().unwrap_or(Color::BLACK);
             app.session.execute("variable.set", &json!({"variable": id, "mode": mode, "value": c.with_alpha(c.a * paint.opacity).to_css_hex()}))
         }
+        PickerTarget::PluginField { .. } => return,
         PickerTarget::Style { id, index } => {
             let Some(mut paints) = app.session.doc().ok().and_then(|d| style_paints(d, id)) else { return };
             if let Some(slot) = paints.get_mut(*index) {
@@ -134,6 +162,10 @@ fn write(app: &mut FigApp, target: &PickerTarget, paint: &Paint, live: bool) {
 }
 
 fn finish(app: &mut FigApp) {
+    if let Some(PickerTarget::PluginField { plugin, control, pending: Some(hex) }) = app.ui.picker.clone() {
+        crate::plugins_ui::set_field(app, &plugin, &control, &hex);
+        app.ui.picker = Some(PickerTarget::PluginField { plugin, control, pending: None });
+    }
     if app.session.ds().map(|d| d.interaction.is_some()).unwrap_or(false) {
         let _ = app.session.commit_interaction();
     }
@@ -374,7 +406,12 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     };
     let t = Tokens::get(ctx);
     let screen = ctx.content_rect();
-    let pos = pos2(screen.max.x - app.ui.right_width - 260.0, 140.0);
+    // A plugin's colour field: beside its window, which sits where the picker otherwise would.
+    let beside = match &target {
+        PickerTarget::PluginField { plugin, .. } => crate::plugins_ui::field_window(app, ctx, plugin).map(|r| pos2(r.min.x - 248.0, r.min.y)),
+        _ => None,
+    };
+    let pos = beside.unwrap_or(pos2(screen.max.x - app.ui.right_width - 260.0, 140.0));
     let mut open = true;
     let mut close_now = false;
     egui::Window::new("color_picker")
@@ -395,7 +432,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 close_now = true;
             }
             // Paint type.
-            if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. }) {
+            if !matches!(
+                target,
+                PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+            ) {
                 let kinds = [
                     (Icon::Fill, tr("Solid")),
                     (Icon::LayoutH, tr("Linear")),
@@ -460,7 +500,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 });
             }
             // The paint's own blend mode, with the paints and layers under it.
-            if !matches!(target, PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. }) {
+            if !matches!(
+                target,
+                PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+            ) {
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
                     let resp = widgets::dropdown(ui, tr(paint.blend.label()), 208.0, Some(Icon::Blend)).on_hover_text(tr("Blend mode"));

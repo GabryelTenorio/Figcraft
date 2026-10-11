@@ -192,6 +192,8 @@ pub enum Cursor {
     Text,
     Pen,
     Copy,
+    /// Over a clickable part of a widget.
+    Pointer,
 }
 
 /// Selection handle kinds: corners (0 tl, 1 tr, 2 br, 3 bl), edges (0 t, 1 r, 2 b, 3 l) and the
@@ -888,8 +890,11 @@ impl Session {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
-                hover = label_at(&doc, page, &self.tool.labels, ev.p())
-                    .or_else(|| self.hit(&doc, page, ev.p(), ev.tol() * 2.0).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
+                let leaf = self.hit(&doc, page, ev.p(), ev.tol() * 2.0);
+                if leaf.and_then(|l| crate::widgets::target_at(&doc, l, ev.p())).is_some() {
+                    cursor = Cursor::Pointer;
+                }
+                hover = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| leaf.map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
                 if ev.alt || self.tool.redlines {
                     use crate::distance::{Hover, guide_at, hover_lines, padding_frame, parent_of};
                     // Shift+Alt over an auto layout frame: its padding and gaps. Otherwise from the
@@ -982,9 +987,12 @@ impl Session {
         }
         // A frame's name label picks the frame itself. The background of a top-level frame with
         // layers in it is like the canvas (a press starts a marquee inside it) unless the frame is
-        // selected; an empty frame is picked and dragged.
+        // selected; an empty frame (or a widget) is picked and dragged.
         let board_background = |leaf: NodeId| {
-            !sel.contains(&leaf) && doc.node(leaf).is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty())
+            !sel.contains(&leaf)
+                && doc
+                    .node(leaf)
+                    .is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty() && !crate::widgets::is_widget(n))
         };
         let target = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| {
             self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
@@ -1506,7 +1514,7 @@ impl Session {
         self.tool.overlay.drop_cell = None;
         let drop_target = self.tool.overlay.drop_target.take();
         match g {
-            Gesture::Move { ids, moved, duplicate, .. } => {
+            Gesture::Move { ids, moved, duplicate, start, .. } => {
                 if moved {
                     // A free move lands in the frame under the pointer (or the page) where it was
                     // dropped; layers in an auto layout frame already sit in their slot.
@@ -1550,8 +1558,9 @@ impl Session {
                     }
                 } else {
                     self.cancel_interaction()?;
-                    // Plain click on an already-selected layer among several: select just it.
-                    let _ = ev;
+                    if !(ev.shift || ev.cmd || duplicate) {
+                        self.widget_click(start, ev.tol() * 2.0)?;
+                    }
                 }
             }
             Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } | Gesture::Shape { .. } => {
@@ -1629,6 +1638,16 @@ impl Session {
         if self.tool.tool == ToolId::Pen {
             return self.pen_finish();
         }
+        // Quick clicks on a widget's clickable part are clicks, one by one.
+        if matches!(self.tool.tool, ToolId::Move | ToolId::Scale)
+            && !(ev.shift || ev.cmd || ev.alt)
+            && self.hit(&doc, page, ev.p(), ev.tol() * 2.0).and_then(|hit| crate::widgets::target_at(&doc, hit, ev.p())).is_some()
+        {
+            self.tool.gesture = Gesture::None;
+            self.cancel_interaction()?;
+            self.widget_click(ev.p(), ev.tol() * 2.0)?;
+            return Ok(());
+        }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
         let target = select_target(&doc, leaf, &sel, true);
         // Text: edit at the click.
@@ -1651,6 +1670,17 @@ impl Session {
         let deeper = figcraft_doc::geometry::enter_target(&doc, leaf, &sel);
         if deeper != target || !sel.contains(&deeper) {
             self.set_selection(vec![deeper]);
+        }
+        Ok(())
+    }
+
+    /// A plain click at `p` on a clickable part of a widget calls its plugin back (a failure is
+    /// shown as a message).
+    fn widget_click(&mut self, p: Point, tol: f64) -> Result<()> {
+        let (doc, page) = (self.doc()?.clone(), self.page()?);
+        let Some((id, target)) = self.hit(&doc, page, p, tol).and_then(|hit| crate::widgets::target_at(&doc, hit, p)) else { return Ok(()) };
+        if let Err(e) = self.execute("widget.click", &serde_json::json!({"id": id, "target": target})) {
+            self.message = Some(e.to_string());
         }
         Ok(())
     }

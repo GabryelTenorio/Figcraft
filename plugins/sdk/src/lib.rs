@@ -23,6 +23,11 @@
 //! loaded while the panel is open, so statics keep their values between those calls. Settings
 //! ([`setting`], [`set_setting`]) last from one run to the next.
 //!
+//! A widget plugin (API 3, `"widget": true`) draws a layer on the canvas: when it's inserted and
+//! each time a part of it named as a `target` is clicked, the plugin is called with
+//! [`Input::widget`] set (its state and what was clicked) and hands back the new state and the
+//! layers with [`render_widget`]. Each call starts afresh: the state is all a widget remembers.
+//!
 //! The SDK is `no_std` (it needs `alloc`); outside WebAssembly every host call fails, so a plugin's
 //! own logic can still be unit-tested on the host. See `docs/plugins.md` for the ABI underneath.
 #![cfg_attr(not(test), no_std)]
@@ -50,6 +55,19 @@ pub struct Input {
     pub selection: Vec<u64>,
     /// Set when the plugin's panel calls it back.
     pub event: Option<Event>,
+    /// Set when the plugin's widget is inserted or clicked.
+    pub widget: Option<Widget>,
+}
+
+/// A widget being inserted (no `target`) or clicked.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Widget {
+    /// The widget's layer id.
+    pub id: u64,
+    /// Its state as last handed back (an empty object when it's new).
+    pub state: Value,
+    /// The target clicked.
+    pub target: Option<String>,
 }
 
 /// A button pressed or a value changed in the plugin's panel.
@@ -75,6 +93,11 @@ impl Input {
                 control: e.get("control").and_then(Value::as_str).unwrap_or_default().to_string(),
                 value: e.get("value").cloned().unwrap_or(Value::Null),
                 values: v.get("values").cloned().unwrap_or(Value::Null),
+            }),
+            widget: v.get("widget").map(|w| Widget {
+                id: w.get("id").and_then(Value::as_u64).unwrap_or_default(),
+                state: w.get("state").cloned().unwrap_or_else(|| json!({})),
+                target: w.get("event").and_then(|e| e.get("target")).and_then(Value::as_str).map(ToString::to_string),
             }),
         })
     }
@@ -135,6 +158,14 @@ pub fn show_ui(panel: &Value) -> Result<()> {
 /// Close the plugin's panel (the plugin isn't called again until it's run again).
 pub fn close_ui() {
     host::ui_close();
+}
+
+/// Draw the widget being inserted or clicked: `{"state": {...}, "root": {"type": "frame", ...}}`
+/// (see `docs/plugins.md`). Without `state` the widget keeps the one it has. An invalid
+/// description is an error.
+pub fn render_widget(widget: &Value) -> Result<()> {
+    let spec = serde_json::to_string(widget).map_err(|e| e.to_string())?;
+    if host::widget_render(spec.as_bytes()) == 0 { Ok(()) } else { Err(String::from_utf8_lossy(&host::reply()).into_owned()) }
 }
 
 /// The plugin's setting `key`, as stored by [`set_setting`].
@@ -206,6 +237,7 @@ mod host {
             pub fn setting_get(key: *const u8, key_len: usize) -> i32;
             pub fn setting_set(key: *const u8, key_len: usize, value: *const u8, value_len: usize) -> i32;
             pub fn setting_delete(key: *const u8, key_len: usize);
+            pub fn widget_render(ptr: *const u8, len: usize) -> i32;
         }
     }
 
@@ -248,6 +280,9 @@ mod host {
     pub fn setting_delete(key: &[u8]) {
         unsafe { sys::setting_delete(key.as_ptr(), key.len()) }
     }
+    pub fn widget_render(s: &[u8]) -> i32 {
+        unsafe { sys::widget_render(s.as_ptr(), s.len()) }
+    }
 }
 
 /// Outside WebAssembly (a plugin's own unit tests) every host call fails.
@@ -278,6 +313,9 @@ mod host {
         1
     }
     pub fn setting_delete(_key: &[u8]) {}
+    pub fn widget_render(_s: &[u8]) -> i32 {
+        1
+    }
 }
 
 #[cfg(test)]
@@ -300,5 +338,11 @@ mod tests {
             .unwrap_or_default();
         assert_eq!((e.control.as_str(), &e.value, &e.values), ("go", &Value::Null, &json!({"n": 2})));
         assert!(show_ui(&json!({})).is_err() && setting("k").is_none() && set_setting("k", &json!(1)).is_err());
+        assert!(render_widget(&json!({})).is_err() && i.widget.is_none());
+        let w = Input::parse(r#"{"command":"widget","widget":{"id":9,"state":{"n":1},"event":{"target":"inc"}}}"#)
+            .unwrap_or_default()
+            .widget
+            .unwrap_or_default();
+        assert_eq!((w.id, &w.state, w.target.as_deref()), (9, &json!({"n": 1}), Some("inc")));
     }
 }

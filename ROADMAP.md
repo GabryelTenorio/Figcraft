@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~26 points and ~162–292 h away (one Opus 5.5 agent; ~33–67 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; headline percentages recomputed from the area table: feature breadth ~84%, core ~94%, mainstream ~50%; text lists, hanging punctuation and decoration styles; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; styles and variables behaviour suite and fixes; prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -19,13 +19,13 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~49%** | estimated: weekly areas 72.6% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~162–292 h** one agent | estimated |
-| Remaining to full parity | **~281–548 h** one agent (~85–148 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~276–538 h** one agent (~85–148 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~52% | ~286–550 h | multiplayer (42–84), localization (40–65), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
+| Full target (ready for real work) | ~52% | ~281–540 h | multiplayer (42–84), localization (40–65), plugins (10–30), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (5–10) |
 | Mainstream practitioner | ~49% | ~130–244 h | core editor depth incl. the `.fig` import's tail (49–98), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~60–110 h | the `.fig` import's tail so the files people send open well (5–10), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
@@ -65,7 +65,7 @@ Figma's last two languages, Japanese and Korean, on the landed localization laye
 | Hardware | 60% | 10–21 | [hardware-parity](docs/hardware-parity.md) |
 | Localization | 30% (layer; English; Spanish, French, German, Brazilian Portuguese drafts) | 40–65 | [localization-parity](docs/localization-parity.md) |
 | Platforms | 75% | 10–20 | [hardware-parity](docs/hardware-parity.md) |
-| Ecosystem / plugins | 28% (own WASM plugins with panels and settings) | 15–40 | [gaps](docs/gaps.md) |
+| Ecosystem / plugins | 34% (own WASM plugins with panels, settings and widgets) | 10–30 | [gaps](docs/gaps.md) |
 | AI features | 0% | 30–60 | [gaps](docs/gaps.md) |
 
 ## Features
@@ -89,7 +89,7 @@ Figma's last two languages, Japanese and Korean, on the landed localization laye
 | Dev Mode / inspect | 96% | 72% | 0–1 | [dev-mode-parity](docs/dev-mode-parity.md) |
 | Comments, versions, misc | 87% | 63% | 1–3 | [collaboration-parity](docs/collaboration-parity.md) |
 | Multiplayer & sharing | 17% | 5% | 42–84 | [collaboration-parity](docs/collaboration-parity.md) |
-| Plugins & widgets | 45% | 28% | 15–40 | [plugins](docs/plugins.md) |
+| Plugins & widgets | 55% | 32% | 10–30 | [plugins](docs/plugins.md) |
 | Team libraries | 70% | 40% | 4–8 | [components-parity](docs/components-parity.md) |
 | Figma Draw extras | 88% | 60% | 1–3 | [gaps](docs/gaps.md) |
 | AI features | 0% | 0% | 30–60 | [gaps](docs/gaps.md) |
@@ -129,6 +129,12 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Progress log
 
+- **2026-10-12** · Plugin widgets and the panel tail (gap 6, plugin API 3; older plugins run unchanged): a widget
+  plugin puts a layer of its own on the canvas (Plugins ▸ Widgets, `widget.insert`), described by the plugin,
+  validated and built with locked layers inside; clicking a part it named calls it back with the widget's state
+  (kept in the layer, so it saves, copies, undoes, exports and syncs) as one undo step, and it redraws;
+  `widget.click` and `widget.list` for agents; a Counter example. Panels of several plugins open side by side and
+  plugin colour fields open the colour picker. Plugins & widgets 55%.
 - **2026-10-12** · Layers and Assets panels behaviour suite (gap 4): several layers dropped together land
   together, Collapse layers keeps the selection's rows open, dragging across eyes or padlocks sets several layers
   at once, a Rename layers dialog for several layers (number codes as documented, regular expressions, a start
@@ -223,6 +229,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Plugin widgets and the panel tail (gap 6, plugin API 3; v1 and v2 plugins unchanged): a plugin marked as a widget puts a layer of its own on the canvas from Plugins ▸ Widgets or `widget.insert`: it describes the layer (frames with auto layout, text, rectangles, ellipses, images it carries) and FigCraft validates the description (size, layer count, depth, numbers, colours, text and image sizes) and builds it as a frame with locked layers inside; a click on a part the plugin named (on the canvas with the Move tool, a pointing hand over it, or `widget.click`) calls the plugin back in a fresh, metered sandbox with the widget's state, as one undo step, and the widget is redrawn; the state lives in the widget's own layer data, so widgets survive save and reload, copying, undo, export and live sessions; no plugin can write that data or call `widget.*`. `widget.list` lists them. A Counter example widget. Plugin panels of different plugins open side by side, and a colour field's swatch opens the colour picker (the plugin hears of the colour when a drag ends). Plugins & widgets 45%/28% → 55%/32%, 15–40 h → 10–30 h; Ecosystem dimension 28% → 34%; weighted totals unchanged at this rounding; full parity ~286–558 h → ~281–548 h |
 | 2026-10-12 | minor | French, German and Brazilian Portuguese draft catalogs (gap 5): every UI string, command label and menu wording (1,899 entries) machine-drafted in each and marked as drafts awaiting native review, falling back to English per key (new strings need only English and Spanish); 0 counts as singular in French and Brazilian Portuguese; System picks the first OS language with a catalog (pt-PT and pt read pt-BR); long translations elide with a tooltip in dropdowns, two-column labels and the home cards. Localization 20% → 30%, 45–75 h → 40–65 h; ready for real work unchanged (~52%); full parity ~289–564 h → ~284–554 h; beta ~170–305 h → ~162–292 h |
 | 2026-10-12 | minor | Cursor chat and spotlight in live sessions: `/` opens a chat bubble at your pointer that everyone sees as you type and that fades a few seconds after the last change; a spotlight (your avatar's menu, `collab.spotlight`) makes everyone follow your view and page until they move their own. Ephemeral presence the host validates and rate-limits, passed only to clients that read it (older clients keep working). Multiplayer & sharing breadth 15% → 17%, ready unchanged (5%), 45–90 h → 42–84 h; collaboration 13% unchanged, 49–98 h → 46–92 h; feature breadth (~84%) and ready for real work (~51%) unchanged at this rounding; full parity ~301–587 h → ~298–581 h |
 | 2026-10-12 | minor | Layers and Assets panels behaviour suite written from the public documentation (6 engine tests with about 50 table rows and 5 panel tests driven through the UI; about 30 rows that the code before the fixes contradicts) and its fixes (several layers dropped together, Collapse layers, eye and padlock sweeps, Rename layers dialog with the documented number codes, page dragging, dividers, "Copy of" duplicates, Assets folders, hidden-from-publishing names both ways). Layers panel 98%/82% → 99%/85%; percentages and full parity hours unchanged at this rounding |

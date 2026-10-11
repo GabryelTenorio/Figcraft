@@ -1,4 +1,4 @@
-//! A plugin's panel in the UI, driven headless: its controls are drawn with names a screen reader
+//! Plugin panels in the UI, driven headless: their controls are drawn with names a screen reader
 //! reads, pressing its button calls the plugin back, closing it ends the plugin's session, and an
 //! open panel draws no frames while nothing changes.
 
@@ -7,12 +7,13 @@ use egui::Pos2;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
+use crate::colorpicker::PickerTarget;
 use crate::idle_tests::Harness;
 use crate::layers_drag_tests::Ui;
 
-/// A session with a plugin whose first call shows a panel with every kind of control and whose
-/// later calls (the panel's events) make a rectangle.
-fn session() -> Session {
+/// A plugin whose first call shows a panel with every kind of control and whose later calls (the
+/// panel's events) make a rectangle.
+fn panel_module() -> Vec<u8> {
     let spec = json!({"title": "Test panel", "controls": [
         {"type": "note", "label": "Hello from the plugin"},
         {"type": "number", "name": "size", "label": "Size", "value": 10},
@@ -41,7 +42,12 @@ fn session() -> Session {
         spec.len(),
         rect.len()
     );
-    let wasm = wat::parse_str(&wat).unwrap();
+    wat::parse_str(&wat).unwrap()
+}
+
+/// A session with that plugin's panel open.
+fn session() -> Session {
+    let wasm = panel_module();
     let manifest = json!({"id": "org.test.panel", "name": "Panel test", "main": "p.wasm", "api": 2, "permissions": {"access": "write"}});
     let mut s = Session::new();
     s.execute("plugin.import", &json!({"manifest": manifest, "wasm": base64::engine::general_purpose::STANDARD.encode(wasm)})).unwrap();
@@ -71,7 +77,7 @@ fn the_panel_names_its_controls_and_its_button_calls_the_plugin_back() {
     u.button(at, false);
     assert_eq!(layers(&u), before + 1, "Go made the plugin draw a rectangle");
     assert_eq!(u.app.session.ds().unwrap().history.undo.len(), 1);
-    assert!(u.app.session.plugins.panel.is_some(), "the panel stays open");
+    assert_eq!(u.app.session.plugins.panels.len(), 1, "the panel stays open");
     // Its close button ends the session.
     u.app.run("plugin.close", json!({"id": "org.test.panel"}));
     u.frame(vec![]);
@@ -81,4 +87,34 @@ fn the_panel_names_its_controls_and_its_button_calls_the_plugin_back() {
 #[test]
 fn an_open_plugin_panel_draws_no_frames_while_idle() {
     Harness::new(session()).assert_idle("a plugin panel");
+}
+
+#[test]
+fn a_colour_field_opens_the_colour_picker_and_two_panels_show_side_by_side() {
+    let mut u = Ui::new(session());
+    u.ctx.enable_accesskit();
+    u.frame(vec![]);
+    let nodes = |u: &mut Ui| u.frame_output(vec![]).platform_output.accesskit_update.unwrap().nodes;
+    // The swatch beside a colour field opens the colour picker on it.
+    let swatch = nodes(&mut u).iter().map(|(_, n)| n).find(|n| n.label() == Some("Color")).and_then(|n| n.bounds()).unwrap();
+    let at = Pos2::new(((swatch.x0 + swatch.x1) / 2.0) as f32, ((swatch.y0 + swatch.y1) / 2.0) as f32);
+    u.button(at, true);
+    u.button(at, false);
+    let picked = Some(PickerTarget::PluginField { plugin: "org.test.panel".into(), control: "accent".into(), pending: None });
+    assert_eq!(u.app.ui.picker, picked);
+    u.frame(vec![]);
+    assert_eq!(u.app.ui.picker, picked, "the picker shows the field's colour");
+    // A colour picked there calls the plugin back with it.
+    let before = layers(&u);
+    crate::plugins_ui::set_field(&mut u.app, "org.test.panel", "accent", "#00FF00");
+    assert_eq!(u.app.session.plugins.panel("org.test.panel").unwrap().values["accent"], "#00FF00");
+    assert_eq!(layers(&u), before + 1);
+    // A second plugin's panel opens beside the first.
+    let other = json!({"id": "org.test.other", "name": "Other", "main": "p.wasm", "api": 2, "permissions": {"access": "write"}});
+    let module = base64::engine::general_purpose::STANDARD.encode(panel_module());
+    u.app.session.execute("plugin.import", &json!({"manifest": other, "wasm": module})).unwrap();
+    u.app.session.execute("plugin.run", &json!({"id": "org.test.other"})).unwrap();
+    u.frame(vec![]);
+    let accents = nodes(&mut u).iter().filter(|(_, n)| n.label() == Some("Accent")).count();
+    assert_eq!((accents, u.app.session.plugins.panels.len()), (2, 2), "both panels are drawn");
 }

@@ -920,8 +920,9 @@ some commands, and can never touch files, other documents, the undo history, dia
 plugins. A headless MCP session starts with no plugins: import them first. `plugins.runLast` runs
 the last plugin command again.
 
-A plugin that shows a panel (API 2) can be used headless too: `plugin.ui {id?}` returns the open
-panel (`{plugin, command, title, controls, values}`, or null), `plugin.event {id, control, value?}`
+A plugin that shows a panel (API 2) can be used headless too: `plugin.ui {id?}` returns plugin
+`id`'s open panel, or without `id` the one opened last (`{plugin, command, title, controls,
+values}`, or null; several plugins can have panels open at once), `plugin.event {id, control, value?}`
 presses a button or sets a field as a click would (the plugin is called back; one undo step;
 returns like `plugin.run`, with the updated `panel`), and `plugin.close {id}` ends the session.
 Plugin settings are kept per plugin with the preferences (in a headless session, for the session).
@@ -930,6 +931,19 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.run","params":{"id":"org.figcraft.examples.swatch-grid","command":"panel"}}}}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"palette","value":"Forest"}}}}
 {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.event","params":{"id":"org.figcraft.examples.swatch-grid","control":"generate"}}}}
+```
+
+Widgets (API 3, layers on the canvas a plugin draws) are driven the same way: `widget.insert
+{plugin, x?, y?}` puts one on the page (centred in the view without a position) and returns `{id,
+plugin, state, targets, output, logs, calls, fuel}`; `widget.click {id, target}` clicks one of its
+`targets` as a click on the canvas would (the plugin redraws it; one undo step; returns the same);
+`widget.list` lists every widget in the file with its plugin, page, state and targets. A widget's
+state is layer data, so it is saved, undone and synced with the file.
+
+```json
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.counter"}}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"id":12,"target":"increment"}}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
 ```
 
 ### Dev Mode

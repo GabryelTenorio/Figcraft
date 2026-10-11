@@ -248,6 +248,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
                 Cursor::Grabbing => egui::CursorIcon::Grabbing,
                 Cursor::Text => egui::CursorIcon::Text,
                 Cursor::Copy => egui::CursorIcon::Copy,
+                Cursor::Pointer => egui::CursorIcon::PointingHand,
             }
         };
         ctx.set_cursor_icon(c);
