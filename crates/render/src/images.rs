@@ -1,11 +1,15 @@
 //! Decoded image cache (content hash + filters + colour profile → premultiplied pixmap). Images
 //! are taken to be sRGB; a Display P3 document gets them converted into its space.
+//!
+//! Animated GIFs keep their original bytes like any image; their first frame is the image
+//! everywhere (canvas, exports). The presenter plays them: [`frame_at`] decodes every frame on
+//! first use (capped by [`MAX_FRAMES`] and [`MAX_ANIMATION_BYTES`]) and picks the one due.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use figcraft_color::{ColorProfile, ImageFilters};
-use figcraft_doc::ImageData;
+use figcraft_color::{ColorProfile, ImageFilters, PaintKind};
+use figcraft_doc::{Document, ImageData, NodeId};
 use tiny_skia::Pixmap;
 
 type Key = (String, [i32; 7], ColorProfile);
@@ -22,8 +26,11 @@ fn fkey(f: &ImageFilters) -> [i32; 7] {
 
 /// Decode encoded image bytes into a premultiplied pixmap (max 16k per side).
 pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
-    let img = image::load_from_memory(bytes).ok()?;
-    let rgba = img.to_rgba8();
+    premultiplied(&image::load_from_memory(bytes).ok()?.to_rgba8())
+}
+
+/// Straight RGBA → a premultiplied pixmap (max 16k per side).
+fn premultiplied(rgba: &image::RgbaImage) -> Option<Pixmap> {
     let (w, h) = rgba.dimensions();
     if w == 0 || h == 0 || w > 16_384 || h > 16_384 {
         return None;
@@ -50,10 +57,7 @@ pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile
     }
     let data = data?;
     let mut p = decode(&data.bytes)?;
-    if !filters.is_identity() {
-        apply_filters(&mut p, filters);
-    }
-    ColorProfile::Srgb.conversion_to(profile).apply_pixels(p.data_mut());
+    finish(&mut p, filters, profile);
     let p = Arc::new(p);
     let mut c = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if c.len() > 256 {
@@ -61,6 +65,153 @@ pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile
     }
     c.insert(key, p.clone());
     Some(p)
+}
+
+/// The filters, then the conversion into the document's colour space.
+fn finish(p: &mut Pixmap, filters: &ImageFilters, profile: ColorProfile) {
+    if !filters.is_identity() {
+        apply_filters(p, filters);
+    }
+    ColorProfile::Srgb.conversion_to(profile).apply_pixels(p.data_mut());
+}
+
+/// The most frames of an animated GIF that play.
+pub const MAX_FRAMES: usize = 500;
+/// The most decoded bytes an animated GIF's frames take (frames past it don't play).
+pub const MAX_ANIMATION_BYTES: u64 = 128 << 20;
+/// The most decoded bytes the cached animations take together.
+const MAX_CACHED_ANIMATION_BYTES: u64 = 256 << 20;
+
+/// An animated GIF's frames (whole, composited), filtered and in one colour space.
+pub struct Animation {
+    frames: Vec<Arc<Pixmap>>,
+    /// When each frame ends, in seconds from the start of a loop.
+    ends: Vec<f64>,
+}
+
+impl Animation {
+    /// The frame showing `t` seconds in (the animation loops) and the seconds until the next one.
+    pub fn at(&self, t: f64) -> (usize, f64) {
+        let total = self.ends.last().copied().unwrap_or(0.0);
+        if !t.is_finite() || t <= 0.0 || total <= 0.0 {
+            return (0, self.ends.first().copied().unwrap_or(f64::INFINITY));
+        }
+        let t = t.rem_euclid(total);
+        let i = self.ends.partition_point(|e| *e <= t).min(self.ends.len().saturating_sub(1));
+        (i, self.ends.get(i).map_or(f64::INFINITY, |e| e - t))
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    fn bytes(&self) -> u64 {
+        self.frames.iter().map(|f| f.data().len() as u64).sum()
+    }
+}
+
+/// A GIF frame's delay in seconds. Delays under 20 ms play as 100 ms, as browsers do (many GIFs
+/// say 0 and mean "the default").
+pub fn frame_secs(numer: u32, denom: u32) -> f64 {
+    let ms = if denom == 0 { 0.0 } else { f64::from(numer) / f64::from(denom) };
+    if ms < 20.0 { 0.1 } else { ms / 1000.0 }
+}
+
+/// Every frame of an animated GIF with its delay; `None` for other images, stills and GIFs too
+/// big for one frame within [`MAX_ANIMATION_BYTES`]. A damaged frame ends the animation there.
+/// shortcut: GIFs always loop (their repeat count is ignored); read it if a one-shot GIF matters.
+pub fn decode_frames(bytes: &[u8]) -> Option<Vec<(Pixmap, f64)>> {
+    use image::{AnimationDecoder, ImageDecoder};
+    if image::guess_format(bytes).ok()? != image::ImageFormat::Gif {
+        return None;
+    }
+    let dec = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    let (w, h) = dec.dimensions();
+    let frame_bytes = u64::from(w) * u64::from(h) * 4;
+    if frame_bytes == 0 || w > 16_384 || h > 16_384 {
+        return None;
+    }
+    let most = (MAX_ANIMATION_BYTES / frame_bytes).min(MAX_FRAMES as u64) as usize;
+    let mut out = Vec::new();
+    for f in dec.into_frames().take(most) {
+        let Ok(f) = f else { break };
+        let (n, d) = f.delay().numer_denom_ms();
+        out.push((premultiplied(f.buffer())?, frame_secs(n, d)));
+    }
+    (out.len() > 1).then_some(out)
+}
+
+type AnimKey = (String, [i32; 7], ColorProfile);
+type AnimCache = HashMap<AnimKey, Option<Arc<Animation>>>;
+
+fn anim_cache() -> &'static Mutex<AnimCache> {
+    static C: OnceLock<Mutex<AnimCache>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The animated GIF `hash`'s frames for `filters` and `profile`, decoded on first use and cached;
+/// `None` for anything that doesn't move.
+pub fn animation(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile: ColorProfile) -> Option<Arc<Animation>> {
+    let key = (hash.to_string(), fkey(filters), profile);
+    if let Some(a) = anim_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
+        return a.clone();
+    }
+    let a = decode_frames(&data?.bytes).map(|frames| {
+        let mut end = 0.0;
+        let (frames, ends) = frames
+            .into_iter()
+            .map(|(mut p, secs)| {
+                finish(&mut p, filters, profile);
+                end += secs;
+                (Arc::new(p), end)
+            })
+            .unzip();
+        Arc::new(Animation { frames, ends })
+    });
+    let mut c = anim_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held: u64 = c.values().flatten().map(|a| a.bytes()).sum();
+    if held + a.as_ref().map_or(0, |a| a.bytes()) > MAX_CACHED_ANIMATION_BYTES || c.len() > 256 {
+        c.clear();
+    }
+    c.insert(key, a.clone());
+    a
+}
+
+/// The frame an animated GIF shows `t` seconds in, when that isn't its first frame (the still
+/// image every other path draws).
+pub fn frame_at(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile: ColorProfile, t: f64) -> Option<Arc<Pixmap>> {
+    if t.is_nan() || t <= 0.0 {
+        return None;
+    }
+    let a = animation(hash, data, filters, profile)?;
+    match a.at(t).0 {
+        0 => None,
+        i => a.frames.get(i).cloned(),
+    }
+}
+
+/// Where the animated GIFs in `root`'s visible fills and strokes are `t` seconds in: a number for
+/// the frames they show (a cache key) and the seconds until one of them changes. `None` when
+/// nothing there moves.
+/// shortcut: text runs with their own image fills aren't looked at; add them if anyone animates text.
+pub fn animation_clock(doc: &Document, root: NodeId, t: f64) -> Option<(u64, f64)> {
+    let mut clock: Option<(u64, f64)> = None;
+    for n in doc.subtree(root).into_iter().filter_map(|id| doc.node(id)).filter(|n| n.visible) {
+        for p in n.fills.iter().chain(&n.strokes).filter(|p| p.visible) {
+            if let PaintKind::Image(img) = &p.kind
+                && let Some(a) = animation(&img.image, doc.images.get(&img.image), &img.filters, doc.color_profile)
+            {
+                let (i, next) = a.at(t);
+                let (key, soonest) = clock.unwrap_or((0, f64::INFINITY));
+                clock = Some((key.wrapping_mul(31).wrapping_add(i as u64 + 1), soonest.min(next)));
+            }
+        }
+    }
+    clock
 }
 
 /// Image adjustments (approximations of exposure, contrast, saturation, temperature, tint,
@@ -112,6 +263,13 @@ pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     reader.into_dimensions().ok()
 }
 
+/// `pm` with a transparent 1-pixel border.
+pub fn pad(pm: &Pixmap) -> Option<Pixmap> {
+    let mut out = Pixmap::new(pm.width() + 2, pm.height() + 2)?;
+    out.draw_pixmap(1, 1, pm.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+    Some(out)
+}
+
 fn padded_cache() -> &'static Mutex<HashMap<Key, Arc<Pixmap>>> {
     static C: OnceLock<Mutex<HashMap<Key, Arc<Pixmap>>>> = OnceLock::new();
     C.get_or_init(|| Mutex::new(HashMap::new()))
@@ -123,9 +281,7 @@ pub fn padded(hash: &str, filters: &ImageFilters, profile: ColorProfile, pm: &Pi
     if let Some(p) = padded_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Some(p.clone());
     }
-    let mut out = Pixmap::new(pm.width() + 2, pm.height() + 2)?;
-    out.draw_pixmap(1, 1, pm.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
-    let out = Arc::new(out);
+    let out = Arc::new(pad(pm)?);
     let mut c = padded_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if c.len() > 256 {
         c.clear();

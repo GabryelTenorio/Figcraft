@@ -418,7 +418,7 @@ fn load_with(
                 .notes;
             Ok((figcraft_format::Loaded { issues: notes, ..doc.into() }, false))
         }
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
             let (hash, w, h) = figcraft_format::add_image(&mut doc, bytes.to_vec()).map_err(|e| EngineError::Other(e.to_string()))?;

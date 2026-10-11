@@ -63,7 +63,8 @@ pub struct OverlayState {
 
 #[derive(Clone)]
 struct FrameTex {
-    key: (u64, u64),
+    /// The player's revision, the pixel scale and the frames its animated GIFs show.
+    key: (u64, u64, u64),
     tex: egui::TextureHandle,
     /// Page-space rect the texture covers.
     bounds: figcraft_geom::Rect,
@@ -811,15 +812,24 @@ impl Presenter {
         }
     }
 
-    fn texture(&mut self, ctx: &egui::Context, doc: &Document, id: NodeId, px_scale: f64) -> Option<FrameTex> {
-        let key = (self.rev, px_scale.to_bits());
+    fn texture(&mut self, ctx: &egui::Context, doc: &Document, id: NodeId, px_scale: f64, now: f64) -> Option<FrameTex> {
+        // Animated GIFs play from when the frame arrived: a new texture when one of them moves on,
+        // and a wake-up for that moment (nothing else draws frames while it shows). egui wakes a
+        // display frame before the time asked for, a little earlier still at times: ask that much
+        // later, and count a frame due within a few milliseconds as due.
+        let t = (now - self.arrived).max(0.0) + 0.005;
+        let clock = figcraft_render::images::animation_clock(doc, id, t);
+        if let Some((_, next)) = clock {
+            crate::repaint_in(ctx, next + f64::from(ctx.input(|i| i.predicted_dt)));
+        }
+        let key = (self.rev, px_scale.to_bits(), clock.map_or(0, |c| c.0));
         if let Some(t) = self.textures.get(&id)
             && t.key == key
         {
             return Some(t.clone());
         }
         let bounds = figcraft_render::export_bounds(doc, id)?;
-        let pix = figcraft_render::render_node(doc, id, texture_scale(ctx, bounds, px_scale))?;
+        let pix = figcraft_render::render_node_at(doc, id, texture_scale(ctx, bounds, px_scale), t)?;
         let img = crate::render_worker::screen_image(&pix, doc.color_profile);
         let tex = ctx.load_texture(format!("present-{}", id.0), img, egui::TextureOptions::LINEAR);
         let ft = FrameTex { key, tex, bounds };
@@ -2340,7 +2350,7 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
     let ppp = f64::from(ctx.pixels_per_point());
     let px = l.scale * ppp;
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    let to_tex = p.texture(ctx, &l.disp, p.current, px);
+    let to_tex = p.texture(ctx, &l.disp, p.current, px, now);
     // Transition progress.
     let mut drawn = false;
     if let Some(a) = &p.anim {
@@ -2436,7 +2446,7 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
             let c = crate::theme::doc_c32(ctx, bgc);
             on_screen.rect_filled(l.screen, CornerRadius::ZERO, c.gamma_multiply(raw as f32));
         }
-        if let Some(tex) = p.texture(ctx, &l.disp, *id, px) {
+        if let Some(tex) = p.texture(ctx, &l.disp, *id, px, now) {
             let r = place.rect(tex.bounds).translate(vec2(orect.width() * f.to_off.0, orect.height() * f.to_off.1));
             on_screen.image(tex.tex.id(), r, uv, Color32::WHITE.gamma_multiply(f.to_alpha));
         }
