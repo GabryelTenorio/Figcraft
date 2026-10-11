@@ -26,6 +26,13 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             open
         ),
+        spec!(
+            "file.openRecent",
+            "Open recent",
+            "{path? | index? (into the list), clear? (forget them all)}  opens a recent file; a file that no longer exists is dropped from the list. Returns the list, newest first: {files: [{path, name, exists}]} (opening returns what `file.open` does)",
+            false,
+            open_recent
+        ),
         spec!("file.save", "Save", "{path?} (programmatic saves need a path the first time)", false, save),
         spec!("file.saveAs", "Save as", "{path}", false, save_as),
         spec!(
@@ -356,14 +363,14 @@ fn read(path: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn write(path: &str, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &str, bytes: &[u8]) -> Result<()> {
     let tmp = format!("{path}.tmp-figcraft");
     std::fs::write(&tmp, bytes).map_err(|e| EngineError::Other(format!("{tmp}: {e}")))?;
     std::fs::rename(&tmp, path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn write(path: &str, _bytes: &[u8]) -> Result<()> {
+pub(crate) fn write(path: &str, _bytes: &[u8]) -> Result<()> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
@@ -502,7 +509,7 @@ fn sibling_variables(_path: &str) -> Option<Value> {
 }
 
 /// The local variables JSON a command passes as `variables`: an object, JSON text or a file path.
-fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
+pub(crate) fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
     let parse = |text: &[u8]| serde_json::from_slice::<Value>(text).map_err(|e| bad(cmd, format!("variables: {e}")));
     let v = match get(p, "variables") {
         None | Some(Value::Null) => return Ok(None),
@@ -517,15 +524,57 @@ fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
     Ok(Some(v))
 }
 
+/// How many files File ▸ Open recent keeps.
+pub const MAX_RECENT: usize = 20;
+
+/// Put `path` at the top of the recent files.
+fn remember(s: &mut Session, path: &str) {
+    let r = &mut s.prefs.recent_files;
+    r.retain(|p| p != path);
+    r.insert(0, path.to_string());
+    r.truncate(MAX_RECENT);
+}
+
+fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "file.openRecent";
+    if p.get("clear").and_then(Value::as_bool) == Some(true) {
+        s.prefs.recent_files.clear();
+    }
+    let path = match (string(p, "path"), num(p, "index")) {
+        (Some(path), _) => Some(path),
+        (None, Some(i)) => Some(s.prefs.recent_files.get(i.max(0.0) as usize).cloned().ok_or_else(|| bad(CMD, "no such recent file"))?),
+        _ => None,
+    };
+    if let Some(path) = path {
+        if !std::path::Path::new(&path).exists() {
+            s.prefs.recent_files.retain(|r| *r != path);
+            return Err(bad(CMD, format!("{path} no longer exists")));
+        }
+        return open(s, &json!({"path": path}));
+    }
+    let files: Vec<Value> = s
+        .prefs
+        .recent_files
+        .iter()
+        .map(|r| {
+            let name = std::path::Path::new(r).file_name().map_or_else(|| r.clone(), |f| f.to_string_lossy().into_owned());
+            json!({"path": r, "name": name, "exists": std::path::Path::new(r).exists()})
+        })
+        .collect();
+    Ok(json!({"files": files}))
+}
+
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = req_string("file.open", p, "path")?;
     let variables = variables_param("file.open", p)?;
     // Already open: switch to it.
     if let Some(i) = s.docs.iter().position(|d| d.path.as_deref() == Some(path.as_str())) {
         s.active = i;
+        remember(s, &path);
         return Ok(json!({"index": i}));
     }
     let (loaded, rest) = load_path(&path, variables.as_ref())?;
+    remember(s, &path);
     let native = !rest && matches!(ext(&path).as_str(), "figcraft" | "json");
     let warnings = rest || ext(&path) == "svg";
     s.docs.push(DocState::new(loaded.doc, native.then_some(path)).with_versions(loaded.versions));
@@ -577,6 +626,7 @@ fn save_to(s: &mut Session, path: String) -> Result<Value> {
     ds.path = Some(path.clone());
     ds.mark_saved();
     ds.revision += 1;
+    remember(s, &path);
     Ok(json!({"path": path, "bytes": bytes.len()}))
 }
 

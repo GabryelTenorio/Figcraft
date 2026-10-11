@@ -41,7 +41,12 @@ fn colourful() -> (Document, NodeId) {
         description: String::new(),
         kind: StyleKind::Paint { paints: vec![Paint::solid(RED)] },
     });
-    d.variables.collections.push(Collection { id: "c1".into(), name: "C".into(), modes: vec![Mode { id: "m1".into(), name: "M".into() }] });
+    d.variables.collections.push(Collection {
+        id: "c1".into(),
+        name: "C".into(),
+        modes: vec![Mode { id: "m1".into(), name: "M".into() }],
+        extends: None,
+    });
     d.variables.variables.push(Variable {
         id: "v1".into(),
         name: "red".into(),
@@ -51,6 +56,8 @@ fn colourful() -> (Document, NodeId) {
         description: String::new(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     d.document_colors.push(RED);
     (d, r)

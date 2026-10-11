@@ -4,7 +4,7 @@ use crate::props::{Effect, LayoutGrid};
 use crate::text::TextStyle;
 use figcraft_color::{Color, Paint};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub type StyleId = String;
 pub type VariableId = String;
@@ -79,6 +79,16 @@ pub enum VariableValue {
 }
 
 impl VariableValue {
+    /// The value a new variable of `kind` starts with.
+    pub fn default_for(kind: VariableType) -> Self {
+        match kind {
+            VariableType::Color => VariableValue::Color(Color::BLACK),
+            VariableType::Number => VariableValue::Number(0.0),
+            VariableType::String => VariableValue::String(String::new()),
+            VariableType::Boolean => VariableValue::Boolean(true),
+        }
+    }
+
     pub fn type_of(&self) -> Option<VariableType> {
         match self {
             VariableValue::Color(_) => Some(VariableType::Color),
@@ -110,6 +120,10 @@ pub struct Collection {
     pub id: CollectionId,
     pub name: String,
     pub modes: Vec<Mode>,
+    /// An extended collection: the collection (a library copy) it extends. It has that
+    /// collection's modes (same ids) and one inheriting variable per variable of it, plus its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<CollectionId>,
 }
 
 impl Collection {
@@ -148,6 +162,13 @@ pub struct Variable {
     /// uses it).
     #[serde(default, rename = "hiddenFromPublishing", skip_serializing_if = "std::ops::Not::not")]
     pub hidden_from_publishing: bool,
+    /// In an extended collection: the variable it inherits from. Its values follow that variable's
+    /// in every mode not in `overrides`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<VariableId>,
+    /// The modes whose value an inheriting variable overrides.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub overrides: BTreeSet<ModeId>,
 }
 
 impl Variable {

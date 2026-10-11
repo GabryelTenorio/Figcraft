@@ -1,4 +1,4 @@
-//! Desktop services: native file dialogs, clipboard, URLs, persisted preferences and recents.
+//! Desktop services: native file dialogs, clipboard, URLs, persisted preferences.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 
 pub struct Desktop {
     clipboard: Option<arboard::Clipboard>,
-    recents: Vec<String>,
     pub prefs: Option<Prefs>,
     /// The system's reduce-motion setting (read in the background at startup).
     reduce_motion: Arc<AtomicBool>,
@@ -32,16 +31,20 @@ impl Desktop {
             .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(json!({}));
-        let recents = state
-            .get("recents")
-            .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let prefs = state.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok());
+        let prefs = state.get("prefs").and_then(|p| serde_json::from_value::<Prefs>(p.clone()).ok()).map(|mut p| {
+            // Recent files lived next to the preferences before they moved into them.
+            if p.recent_files.is_empty()
+                && let Some(old) = state.get("recents").and_then(Value::as_array)
+            {
+                p.recent_files = old.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+            }
+            p.recent_files.truncate(figcraft_engine::cmd::file::MAX_RECENT);
+            p
+        });
         let reduce_motion = Arc::new(AtomicBool::new(false));
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
-        Self { clipboard: arboard::Clipboard::new().ok(), recents, prefs, reduce_motion }
+        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion }
     }
 }
 
@@ -86,7 +89,7 @@ fn command_says(program: &str, args: &[&str], want: &str) -> bool {
 pub fn save_state(app: &FigApp) {
     let Some(dir) = config_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
-    let v = json!({"recents": app.services.recent_files(), "prefs": app.session.prefs});
+    let v = json!({"prefs": app.session.prefs});
     let tmp = dir.join("state.json.tmp");
     if std::fs::write(&tmp, v.to_string()).is_ok() {
         let _ = std::fs::rename(&tmp, dir.join("state.json"));
@@ -146,14 +149,6 @@ impl Services for Desktop {
     }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
-    }
-    fn recent_files(&self) -> Vec<String> {
-        self.recents.clone()
-    }
-    fn add_recent(&mut self, path: &str) {
-        self.recents.retain(|p| p != path);
-        self.recents.insert(0, path.to_string());
-        self.recents.truncate(20);
     }
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)

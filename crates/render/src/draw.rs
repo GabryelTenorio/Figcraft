@@ -21,6 +21,8 @@ pub struct Ctx<'a> {
     /// Device pixels per document unit (for effect radii).
     pub scale: f64,
     pub outline_mode: bool,
+    /// Layers drawn in outline mode with their contents (outlines for the selection).
+    pub outlined: &'a [NodeId],
     /// Nodes not to draw (e.g. text being edited draws through the editor).
     pub skip: &'a [NodeId],
     /// Approximate what's too small to see in detail (canvas previews; see [`crate::lod`]).
@@ -353,8 +355,8 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     if dev.intersect(view).is_zero_area() && !(dev.width() == 0.0 || dev.height() == 0.0) {
         return;
     }
-    if ctx.outline_mode {
-        draw_outline(ctx, pix, n, xf, depth);
+    if ctx.outline_mode || ctx.outlined.contains(&id) {
+        draw_outline(&Ctx { outline_mode: true, ..*ctx }, pix, n, xf, depth);
         return;
     }
     if ctx.lod && dev.width().max(dev.height()) < lod::TINY_PX && lod::splattable(ctx.doc, n, 0) {

@@ -135,11 +135,6 @@ pub trait Services {
         None
     }
     fn open_url(&mut self, _url: &str) {}
-    /// Recently opened files (persisted by the app).
-    fn recent_files(&self) -> Vec<String> {
-        Vec::new()
-    }
-    fn add_recent(&mut self, _path: &str) {}
     /// The system asks for reduced motion (its accessibility setting).
     fn reduce_motion(&self) -> bool {
         false
@@ -557,7 +552,6 @@ impl FigApp {
         if let Some(p) = self.services.pick_save("Save as", &format!("{name}.figcraft"), &["figcraft"]) {
             let ps = p.to_string_lossy().to_string();
             if self.run("file.saveAs", json!({"path": ps})).is_some() {
-                self.services.add_recent(&ps);
                 self.toast(format!("Saved {}", p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()));
             }
         }
@@ -577,7 +571,6 @@ impl FigApp {
         if let Some(p) = self.services.pick_open("Open", &["figcraft", "json", "svg", "png", "jpg", "jpeg", "webp", "gif"]) {
             let ps = p.to_string_lossy().to_string();
             if self.run("file.open", json!({"path": ps})).is_some() {
-                self.services.add_recent(&ps);
                 self.ui.home = false;
             }
         }

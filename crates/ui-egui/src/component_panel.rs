@@ -621,14 +621,17 @@ fn instance_props(app: &mut FigApp, ui: &mut Ui, doc: &Document, n: &Node, comps
             row(ui, 32.0, |ui| {
                 prop_label(ui, &k, Icon::ComponentSet);
                 let w = ui.available_width().max(60.0);
-                let resp = widgets::dropdown(ui, &cur, w, None);
-                menu_popup(&resp).show(|ui| {
-                    for v in &vals {
-                        if menu_item(ui, v, "") {
-                            app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): v}}));
-                            ui.close();
+                // A string variable naming one of the values can choose it.
+                crate::variable_ui::bindable(app, ui, &[id], &format!("{PROP_BINDING}{k}"), VariableType::String, w, |app, ui| {
+                    let resp = widgets::dropdown(ui, &cur, w, None);
+                    menu_popup(&resp).show(|ui| {
+                        for v in &vals {
+                            if menu_item(ui, v, "") {
+                                app.run("instance.setProperties", json!({"ids": [id], "properties": {k.clone(): v}}));
+                                ui.close();
+                            }
                         }
-                    }
+                    });
                 });
             });
         }

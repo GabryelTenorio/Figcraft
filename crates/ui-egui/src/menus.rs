@@ -182,6 +182,12 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                 continue;
             }
             last_sep = false;
+            if m.id == "file.openRecent" {
+                if recent_menu(app, ui, prefix, m.label, &t) {
+                    return true;
+                }
+                continue;
+            }
             let enabled = available(m.id);
             if item(ui, m.label, crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, false, &t) && enabled {
                 clicked = Some(m.id);
@@ -203,6 +209,35 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
         return true;
     }
     false
+}
+
+/// File ▸ Open recent: the recent files (greyed when the file is gone) and Clear recent. Returns
+/// whether an item ran.
+fn recent_menu(app: &mut FigApp, ui: &mut Ui, prefix: &str, label: &str, t: &Tokens) -> bool {
+    let picked = submenu(ui, prefix, &format!("{prefix}/{label}"), label, t, |ui| {
+        let recents = &app.session.prefs.recent_files;
+        let mut picked = None;
+        for (i, p) in recents.iter().enumerate() {
+            let path = std::path::Path::new(p);
+            let name = path.file_name().map_or_else(|| p.clone(), |f| f.to_string_lossy().into_owned());
+            let exists = path.exists();
+            if item(ui, &name, "", exists, false, t) && exists {
+                picked = Some(json!({"index": i}));
+            }
+        }
+        if !recents.is_empty() {
+            separator(ui);
+        }
+        if item(ui, "Clear recent", "", !recents.is_empty(), false, t) && !recents.is_empty() {
+            picked = Some(json!({"clear": true}));
+        }
+        picked
+    });
+    let Some(params) = picked else { return false };
+    if app.run("file.openRecent", params).is_some_and(|r| r.get("index").is_some()) {
+        app.ui.home = false;
+    }
+    true
 }
 
 /// A submenu row `label` in the menu at `prefix`; while it's open (hovered last), `add` draws its

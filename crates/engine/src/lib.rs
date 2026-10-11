@@ -122,6 +122,10 @@ pub struct ViewState {
     pub layout_grids: bool,
     pub rulers: bool,
     pub outlines: bool,
+    /// Outline mode for the selected layers only (the rest draws normally).
+    pub outlines_selection: bool,
+    /// Outline the masks (they don't draw themselves).
+    pub mask_outlines: bool,
     pub pixel_preview: bool,
     /// Pixel preview resolution: rendered pixels per page pixel (1 or 2).
     pub pixel_scale: u8,
@@ -146,6 +150,8 @@ impl Default for ViewState {
             layout_grids: true,
             rulers: false,
             outlines: false,
+            outlines_selection: false,
+            mask_outlines: false,
             pixel_preview: false,
             pixel_scale: 1,
             show_slices: false,
@@ -461,6 +467,9 @@ pub struct Prefs {
     /// Installed plugins (Plugins menu), in menu order.
     #[serde(serialize_with = "plugins::persisted")]
     pub plugins: Vec<plugins::InstalledPlugin>,
+    /// Recently opened or saved files, newest first (File ▸ Open recent; at most
+    /// [`cmd::file::MAX_RECENT`]).
+    pub recent_files: Vec<String>,
 }
 
 impl Default for Prefs {
@@ -478,6 +487,7 @@ impl Default for Prefs {
             reduce_motion: false,
             invite_links: None,
             plugins: Vec::new(),
+            recent_files: Vec::new(),
         }
     }
 }
@@ -1199,6 +1209,8 @@ mod mask_tests;
 #[cfg(test)]
 mod measure_tests;
 #[cfg(test)]
+mod menu_gaps_tests;
+#[cfg(test)]
 mod nested_override_tests;
 #[cfg(test)]
 mod paint_reorder_tests;
@@ -1258,6 +1270,8 @@ mod text_style_picker_tests;
 mod variable_tests;
 #[cfg(test)]
 mod variables_editor_tests;
+#[cfg(test)]
+mod variables_io_tests;
 #[cfg(test)]
 mod version_preview_tests;
 #[cfg(test)]

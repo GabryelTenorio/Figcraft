@@ -88,7 +88,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             app.ui.home = false;
         }
         y += 16.0;
-        let recents = app.services.recent_files();
+        let recents = app.session.prefs.recent_files.clone();
         if !recents.is_empty() {
             ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, "Recent files", semibold(12.0), t.text_secondary);
             y += 28.0;

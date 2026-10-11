@@ -1,6 +1,7 @@
 //! A layer's ordered lists (fills, strokes, effects, layout grids): reordering them, and keeping
-//! the variable bindings on their items (`fills/<i>/color`, `effects/<i>/radius`,
-//! `layoutGrids/<i>/gutter`, …) with their items when a list is reordered or shrinks.
+//! the variable bindings on their items (`fills/<i>/color`, `fills/<i>/stops/<j>/color`,
+//! `effects/<i>/radius`, `layoutGrids/<i>/gutter`, …) with their items when a list is reordered
+//! or shrinks, and on gradient stops when a stop is removed.
 //!
 //! Every list is stored bottom first: index 0 paints (or applies) first, the last one is on top;
 //! the Design panel shows them in reverse, the topmost row first.
@@ -97,6 +98,58 @@ pub fn list_binding(key: &str) -> Option<(BoundList, usize, &str)> {
 pub fn paint_binding_key(n: &Node, fills: bool, index: usize) -> Option<&str> {
     let list = if fills { BoundList::Fills } else { BoundList::Strokes };
     n.bound.keys().map(String::as_str).find(|k| list_binding(k) == Some((list, index, "color")))
+}
+
+/// The gradient stop a paint field names (`stops/<j>/color` → j).
+pub fn stop_binding(field: &str) -> Option<usize> {
+    let j = field.strip_prefix("stops/")?.strip_suffix("/color")?;
+    if j.is_empty() || !j.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    j.parse().ok()
+}
+
+/// Keep the gradient stop bindings of paint `index` of `n`'s fills (or strokes) on their stops after
+/// the paint changed from `old`: one stop removed shifts the later ones down (the removed one's
+/// binding goes); a paint that is no longer a gradient drops them. Other edits keep stop indices.
+pub(crate) fn remap_stop_bindings(n: &mut Node, fills: bool, index: usize, old: &figcraft_color::Paint) {
+    use figcraft_color::PaintKind;
+    let list = if fills { BoundList::Fills } else { BoundList::Strokes };
+    let new = if fills { n.fills.get(index) } else { n.strokes.get(index) };
+    // Some(k): stop k was removed; None: the paint has no stops any more.
+    let removed = match (&old.kind, new.map(|p| &p.kind)) {
+        (PaintKind::Gradient(a), Some(PaintKind::Gradient(b))) if a.stops.len() == b.stops.len() + 1 => {
+            // The first stop that differs is the removed one when the rest moved down unchanged.
+            let k = a.stops.iter().zip(&b.stops).position(|(x, y)| x != y).unwrap_or(b.stops.len());
+            if a.stops.get(k + 1..) != b.stops.get(k..) {
+                return;
+            }
+            Some(k)
+        }
+        (_, Some(PaintKind::Gradient(_))) => return,
+        _ => None,
+    };
+    let keys: Vec<(String, Option<String>)> = n
+        .bound
+        .keys()
+        .filter_map(|key| {
+            let (l, i, field) = list_binding(key).filter(|(l, i, _)| *l == list && *i == index)?;
+            let j = stop_binding(field)?;
+            match removed.and_then(|k| removed_index(j, k)) {
+                Some(to) if to == j => None,
+                to => Some((key.clone(), to.map(|to| l.key(i, &format!("stops/{to}/color"))))),
+            }
+        })
+        .collect();
+    let mut kept = Vec::new();
+    for (old_key, new_key) in keys {
+        if let Some(var) = n.bound.remove(&old_key)
+            && let Some(k) = new_key
+        {
+            kept.push((k, var));
+        }
+    }
+    n.bound.extend(kept);
 }
 
 /// Where item `k` lands when the item at `from` moves to `to`.

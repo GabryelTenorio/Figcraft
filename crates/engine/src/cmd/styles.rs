@@ -96,7 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 _ => vec!["Mode 1".into()],
             };
             let modes = modes.into_iter().enumerate().map(|(i, m)| Mode { id: format!("{id}/mode{}", i + 1), name: m }).collect();
-            doc.variables.collections.push(Collection { id: id.clone(), name, modes });
+            doc.variables.collections.push(Collection { id: id.clone(), name, modes, extends: None });
             Ok(json!({"id": id}))
         }),
         spec!("variable.addMode", "Add mode", "{collection, name}", true, |s, p| {
@@ -105,6 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             let missing = || bad("variable.addMode", "no such collection");
             let doc = s.doc_mut()?;
             let cid = doc.variables.collections.iter().find(|x| x.id == c || x.name == c).map(|x| x.id.clone()).ok_or_else(missing)?;
+            super::variables::check_modes_editable(doc, "variable.addMode", &cid)?;
             // A fresh id (modes can be deleted, so the count alone may repeat one; in a live
             // session it comes from this client's id space).
             let mid = doc.new_mode_id(&cid).ok_or_else(missing)?;
@@ -136,14 +137,18 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("variable.delete", "Delete variable", "{variable}", true, |s, p| {
             let v = req_string("variable.delete", p, "variable")?;
             let doc = s.doc_mut()?;
-            let id = doc.variables.get(&v).map(|x| x.id.clone()).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+            let var = doc.variables.get(&v).ok_or_else(|| bad("variable.delete", "no such variable"))?;
+            if var.extends.is_some() {
+                return Err(bad("variable.delete", "an inherited variable stays while the collection it extends has it"));
+            }
+            let id = var.id.clone();
             doc.variables.variables.retain(|x| x.id != id);
             ok()
         }),
         spec!(
             "variable.bind",
             "Bind variable",
-            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color>|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
+            "{ids?, field (fill|stroke (first paint)|fills/<i>/color|strokes/<i>/color|fills/<i>/stops/<j>/color (gradient stops)|effects/<i>/<offsetX|offsetY|radius|startRadius|spread|color>|layoutGrids/<i>/<size|count|gutter|offset>|componentProperties/<name> (instances: boolean/text properties; variant properties take string variables naming a value)|width|height|opacity (percent)|cornerRadius|gap|paddingHorizontal|characters|visible|fontSize…; list indices bottom first), variable (null unbinds)}",
             true,
             bind
         ),
@@ -591,12 +596,7 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
             values.entry(m.id.clone()).or_insert_with(|| val.clone());
         }
     }
-    let default = match kind {
-        VariableType::Color => VariableValue::Color(Color::BLACK),
-        VariableType::Number => VariableValue::Number(0.0),
-        VariableType::String => VariableValue::String(String::new()),
-        VariableType::Boolean => VariableValue::Boolean(true),
-    };
+    let default = VariableValue::default_for(kind);
     for m in &coll.modes {
         values.entry(m.id.clone()).or_insert_with(|| default.clone());
     }
@@ -610,6 +610,8 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
         description: string(p, "description").unwrap_or_default(),
         scopes: None,
         hidden_from_publishing: false,
+        extends: None,
+        overrides: Default::default(),
     });
     Ok(json!({"id": id}))
 }
@@ -629,6 +631,10 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
         v => v,
     };
     if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == var.id) {
+        // An inherited variable's value of its own overrides the inherited one in that mode.
+        if slot.extends.is_some() {
+            slot.overrides.insert(mode.clone());
+        }
         slot.values.insert(mode, val);
     }
     ok()
@@ -655,7 +661,7 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
         let binds = n.bound.clone();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
-        let mut paint_sets: Vec<(bool, usize, Color)> = Vec::new();
+        let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
         let mut grid_sets: Vec<(usize, String, f64)> = Vec::new();
         let mut prop_sets: Vec<(String, VariableValue)> = Vec::new();
         for (field, var) in binds {
@@ -664,7 +670,12 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
             if let Some((list, i, prop)) = list_binding(&field) {
                 match (list, &val) {
                     (BoundList::Fills | BoundList::Strokes, VariableValue::Color(c)) if prop == "color" => {
-                        paint_sets.push((list == BoundList::Fills, i, *c));
+                        paint_sets.push((list == BoundList::Fills, i, None, *c));
+                    }
+                    (BoundList::Fills | BoundList::Strokes, VariableValue::Color(c)) => {
+                        if let Some(j) = super::lists::stop_binding(prop) {
+                            paint_sets.push((list == BoundList::Fills, i, Some(j), *c));
+                        }
                     }
                     (BoundList::Effects, _) => effect_sets.push((i, prop.to_string(), val)),
                     (BoundList::Grids, VariableValue::Number(x)) => grid_sets.push((i, prop.to_string(), *x)),
@@ -722,18 +733,26 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
     }
 }
 
-/// Write bound colours into a node's fills (`true`) or strokes by index, keeping the rest of the
-/// list and each paint's opacity, visibility and blend mode (only what changed, so unchanged layers
-/// stay shared). A first-paint binding on an empty list adds the paint.
-fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Color)]) {
+/// Write bound colours into a node's fills (`true`) or strokes by index (or into a gradient
+/// paint's stop), keeping the rest of the list and each paint's opacity, visibility and blend mode
+/// (only what changed, so unchanged layers stay shared). A first-paint binding on an empty list
+/// adds the paint.
+fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Option<usize>, Color)]) {
     let Some(n) = doc.node(id) else { return };
     let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
-    for (is_fill, i, c) in sets {
+    for (is_fill, i, stop, c) in sets {
         let list = if *is_fill { &mut fills } else { &mut strokes };
-        match list.get_mut(*i) {
-            Some(p) => p.kind = PaintKind::Solid { color: *c },
-            None if *i == 0 => list.push(Paint::solid(*c)),
-            None => {}
+        match (list.get_mut(*i), stop) {
+            (Some(p), Some(j)) => {
+                if let PaintKind::Gradient(g) = &mut p.kind
+                    && let Some(s) = g.stops.get_mut(*j)
+                {
+                    s.color = *c;
+                }
+            }
+            (Some(p), None) => p.kind = PaintKind::Solid { color: *c },
+            (None, None) if *i == 0 => list.push(Paint::solid(*c)),
+            (None, _) => {}
         }
     }
     if doc.node(id).is_some_and(|n| n.fills != fills || n.strokes != strokes)

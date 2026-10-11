@@ -331,6 +331,16 @@ name and sets them this way);
   `library.importVariable {library, variable}` only copies it (then `variable.bind`, `variable.set
   {value: {alias}}`). The copies render without the library file. Editing the copies (library
   components, styles, variables or collections) is refused; edit the library file and publish.
+- **Extended collections**: `library.extendCollection {library, collection, name?}` → `{id}` makes
+  a collection of this file (default name "<name> (extended)") with the library collection's modes
+  and one inheriting variable per variable of it. `variable.set` on an inheriting variable
+  overrides its value in that mode (the variable lists it in `overrides`);
+  `variable.resetOverride {variable, mode?}` goes back to the inherited value (every mode when
+  `mode` is left out). Variables of its own come from `variable.create`. Modes, and the names of
+  inheriting variables, come from the library collection (renaming, adding or deleting them is
+  refused); accepting library updates brings new values (overrides stay), renames and new
+  variables. The Variables editor offers Extend collection on a library collection and marks
+  overridden values, with a reset button.
 - **Update**: `library.updates` lists the components, styles, variable collections and variables
   with a newer published version; `library.acceptUpdates {ids? (library ids)}` pulls them in,
   keeping instance overrides; bound layers, aliases and explicit modes follow the updated values.
@@ -491,6 +501,24 @@ file JSON. Layers' `boundVariables` (sizes, gaps and padding, corner radii, opac
 visibility, text, font properties, single solid fills and strokes) and `explicitVariableModes` then
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
+
+The same JSON carries variables between FigCraft files: `variable.export {collections?, format?,
+path?}` writes this file's collections (default: all but library copies) as a local variables
+response (`format: "json"`, the default) or as CSS custom properties (`format: "css"`: the default
+mode on `:root`, each other mode on `[data-<collection>="<mode>"]`, aliases as `var(--name)`), and
+returns `{text}` (or writes `path` and returns `{path}`). `variable.import {variables}` (an object,
+JSON text or a path) reads one back: a collection joins this file's collection of the same name
+(values matched by mode name, new modes and variables added, a same-named variable of another type
+skipped with a warning; library copies and extended collections are never targets), others are
+added; aliases are checked for loops; it returns `{collections, variables, updated, warnings}`. The
+Variables editor's Import… and Export… buttons do the same through file dialogs.
+
+`variable.bind` also binds gradient stops (`fills/<i>/stops/<j>/color`, `strokes/<i>/stops/<j>/color`;
+the binding follows its stop when an earlier stop is removed and its paint when the list is
+reordered) and variant properties of instances (`componentProperties/<property>` with a string
+variable: the instance shows the variant its value names; a value naming no variant changes
+nothing). The colour picker binds the selected stop; the Design panel's variant dropdowns take a
+string variable.
 
 ### Comments
 

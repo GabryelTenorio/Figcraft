@@ -52,6 +52,8 @@ pub struct Options {
     /// Fill the background (None = transparent, e.g. export without page colour).
     pub background: Option<Color>,
     pub outline_mode: bool,
+    /// Layers drawn in outline mode (with their contents) whatever `outline_mode` says.
+    pub outlined: Vec<NodeId>,
     /// Nodes to leave out (an editor drawing them itself).
     pub skip: Vec<NodeId>,
     /// Draw only this layer of the page, where it is (Dev Mode's focus view).
@@ -151,7 +153,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
         pix.fill(paint::ts_color(bg));
     }
     let lod = opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE;
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, skip: &opts.skip, lod, under: None };
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, outlined: &opts.outlined, skip: &opts.skip, lod, under: None };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
     match opts.solo.filter(|id| *id != page && doc.page_of(*id) == Some(page)) {
@@ -167,7 +169,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 
 /// Render several nodes (in z-order) into an existing pixmap through `view`.
 pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap) {
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, skip: &[], lod: false, under: None };
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None };
     for id in ids {
         draw::draw_node(&ctx, pix, *id, view.transform() * parent_transform(doc, *id), 0);
     }

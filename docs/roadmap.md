@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server and swapping a library: team libraries 40% → 70% breadth, full parity ~380–720 h; the standalone server with share links to edit or view, wording only; live boolean editing and the vector tail: feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (team libraries on the server and swapping a library: team libraries 40% → 70% breadth, full parity ~375–715 h; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -47,9 +47,9 @@ blockers.
 |---|---|---|---|
 | M0 Foundation: workspace, model, renderer, engine, UI shell, app, control channel | done (2026-10-09) | — | — |
 | M0.9 CLI + MCP, web build, release packaging, PDF export | done (v0.2.0 released 2026-10-10 for every platform) | — | — |
-| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~75% | Open recent, outline mode variants, keyboard box selection, interaction pass | 8–14 + pass |
+| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~77% | keyboard box selection, interaction pass (Open recent and the outline mode variants landed 2026-10-11) | 6–12 + pass |
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
-| M3 Components & styles depth | ~75% | extended collections, variables import/export, real libraries | 10–20 |
+| M3 Components & styles depth | ~78% (extended collections, variables import/export, gradient stop and variant bindings landed 2026-10-11) | real libraries, component playground | 7–14 |
 | M4 Vector & text depth | ~75% (live booleans, arc fields, shape builder on strokes, one-sided widths landed 2026-10-11) | spell check, Figma Draw (brushes, pressure, text on a path, patterns), boolean hit testing on the result | 18–32 |
 | M5 Prototype & present | ~85% | media, gamepad, separate window | 5–9 |
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
@@ -72,7 +72,9 @@ blockers.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~385–730 h → ~380–720 h |
+| 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |
+| 2026-10-11 | minor | The last three catalogued menu items got commands (gap 21): File ▸ Open recent (recent files kept in the preferences, at most 20, a file that's gone greyed in the menu and dropped when picked, Clear recent), View ▸ Outlines ▸ Show outlines for selection and View ▸ Mask outlines: menu breadth 98.5% → 100% (203/203); Canvas & navigation breadth 95% → 97%, 3–6 h → 2–5 h; feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |
+| 2026-10-11 | minor | Extended collections, variables import/export and gradient stop and variant property bindings landed (gap 14): Styles & variables breadth 85% → 92%, ready 70% → 72%, 4–8 h → 1–2 h; feature breadth unchanged (~79%); ready for real work unchanged (~47%); full parity ~385–730 h → ~380–725 h |
 | 2026-10-11 | minor | Collaboration wording after the standalone server: `figcraft-server` keeps many files, persisted as a snapshot plus a log of what changed (compacted, checksummed, damaged files skipped and reported), restarts lose nothing confirmed and apps resume where they were; the app publishes its file to it; share links per file let people edit or only view (the server refuses a viewer's edits), are revocable and stored as hashes; TLS comes from a reverse proxy (the desktop app has none of its own yet); percentages and hours unchanged until the next re-measure |
 | 2026-10-11 | minor | Live boolean editing, Design panel arc fields, the shape builder on strokes and open paths and one-sided variable widths landed (gap 13): Shapes & vector breadth 92% → 97%, ready 66% → 68%, 8–14 h → 1–3 h; feature breadth ~78% → ~79%; ready for real work unchanged (~47%); full parity ~390–745 h → ~385–730 h |
 | 2026-10-11 | minor | Collaboration wording after the collaboration polish: styles, variables, collections, modes and comments created in a live session take ids from their creator's id space (concurrent creations no longer overwrite each other; the server checks it), others' text carets and selections show on the canvas, and typing in a layer someone else is typing in says so; percentages unchanged |

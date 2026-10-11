@@ -42,6 +42,7 @@ struct Frame {
     doc: Arc<Document>,
     page: NodeId,
     outline: bool,
+    outlined: Vec<NodeId>,
     lod: bool,
     skip: Vec<NodeId>,
     solo: Option<NodeId>,
@@ -134,6 +135,7 @@ impl Retained {
         if let Some(last) = self.last.take()
             && last.page == page
             && last.outline == opts.outline_mode
+            && last.outlined == opts.outlined
             && last.lod == opts.lod
             && last.skip == opts.skip
             && last.solo == opts.solo
@@ -176,6 +178,7 @@ impl Retained {
             doc: doc.clone(),
             page,
             outline: opts.outline_mode,
+            outlined: opts.outlined.clone(),
             lod: opts.lod,
             skip: opts.skip.clone(),
             solo: opts.solo,
