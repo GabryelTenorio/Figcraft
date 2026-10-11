@@ -140,7 +140,7 @@ impl Sim {
             let mut rest = Vec::new();
             for o in out {
                 match o {
-                    Outgoing::To(to, m) if to == id => welcome = Some(m),
+                    Outgoing::To(to, m @ ServerMsg::Welcome { .. }) if to == id => welcome = Some(m),
                     o => rest.push(o),
                 }
             }

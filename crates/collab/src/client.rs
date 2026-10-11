@@ -77,7 +77,7 @@ impl Client {
             token: token.to_string(),
             name: name.to_string(),
             color: color.to_string(),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_version: crate::message::client_version(),
             resume: None,
         })
     }
@@ -449,7 +449,8 @@ impl Client {
                 self.presence.remove(&client_id);
                 Ok(Vec::new())
             }
-            ServerMsg::Pong => Ok(Vec::new()),
+            // Cursor chat and spotlights are the app's (the transport hands them over).
+            ServerMsg::Pong | ServerMsg::Signal { .. } => Ok(Vec::new()),
             ServerMsg::Welcome { .. } if self.online => Err(Error::Protocol("already joined".into())),
             ServerMsg::Welcome { session, client_id, seq, catch_up, processed, peers, access } => {
                 if session != self.session || client_id != self.id {

@@ -5,11 +5,15 @@
 //! Publish to server dialog. Everything acts through the `collab.*` commands; the state is the engine's
 //! (`Session::live`). The network wakes the UI when something arrives, and cursors only ask for
 //! frames while they glide, so an idle session draws nothing.
+//!
+//! Cursor chat: `/` opens a bubble at your pointer to type in; others see it next to your cursor
+//! and it fades a few seconds after the last change (frames are asked for only until then).
+//! Spotlight: your avatar's menu asks everyone to follow you; a banner says so and stops it.
 
 use std::collections::BTreeMap;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
-use figcraft_engine::live::{Access, PEOPLE, Role, Status, initials, parse_color, presence_page};
+use figcraft_engine::live::{Access, PEOPLE, Role, Signal, Status, initials, parse_color, presence_page};
 use serde_json::json;
 
 use crate::FigApp;
@@ -40,6 +44,24 @@ const PUBLISHED_NOTE: &str = tr_noop(
 const GLIDE: f64 = 20.0;
 /// Most of one person's selection outlined.
 const MAX_OUTLINES: usize = 500;
+/// A cursor chat message shows this long after its last change, then fades out over
+/// `CHAT_FADE` (seconds); your chat box closes when you haven't typed for both.
+const CHAT_HOLD: f64 = 5.0;
+const CHAT_FADE: f64 = 1.0;
+/// Widest a chat bubble's text gets before it wraps.
+const CHAT_WIDTH: f32 = 220.0;
+/// A speech bubble's corners: sharp at the pointer.
+const BUBBLE: CornerRadius = CornerRadius { nw: 2, ne: 14, sw: 14, se: 14 };
+
+/// Your cursor chat.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ChatBox {
+    pub text: String,
+    /// When you last typed (UI clock; `None` until the box first shows).
+    typed: Option<f64>,
+    /// Typing; else sent, showing until it fades.
+    pub editing: bool,
+}
 
 /// UI-only live session state.
 #[derive(Default)]
@@ -62,6 +84,10 @@ pub struct LiveUi {
     focus_publish: bool,
     /// The last server address published to (kept for this run only: it carries the server key).
     last_server: String,
+    /// Others' chat messages as last seen, with when they changed (UI clock): they fade from then.
+    chat_seen: BTreeMap<u32, (String, f64)>,
+    /// Your cursor chat (open when `Some`).
+    pub chat: Option<ChatBox>,
 }
 
 /// What the Publish to server dialog asks for.
@@ -121,6 +147,41 @@ pub(crate) fn name_tag(painter: &egui::Painter, anchor: Pos2, align: Align2, nam
     painter.galley(r.min + vec2(6.0, 3.0), galley, text_on(fill));
 }
 
+/// How opaque a chat message `age` seconds after its last change is (0: gone); asks for the frame
+/// where it next looks different.
+fn chat_fade(ctx: &egui::Context, age: f64, reduce: bool) -> f32 {
+    let after = |s: f64| ctx.request_repaint_after(std::time::Duration::from_secs_f64(s.max(0.0)));
+    if age < CHAT_HOLD {
+        after(CHAT_HOLD - age);
+        1.0
+    } else if age >= CHAT_HOLD + CHAT_FADE {
+        0.0
+    } else if reduce {
+        after(CHAT_HOLD + CHAT_FADE - age);
+        1.0
+    } else {
+        ctx.request_repaint();
+        (1.0 - (age - CHAT_HOLD) / CHAT_FADE) as f32
+    }
+}
+
+/// A cursor chat bubble next to the pointer at `tip`: the person's name (when given) over their
+/// message, in their colour, `alpha` opaque.
+fn chat_bubble(painter: &egui::Painter, tip: Pos2, name: Option<&str>, text: &str, fill: Color32, alpha: f32) {
+    let fg = text_on(fill).gamma_multiply(alpha);
+    let body = painter.layout(text.to_string(), regular(12.0), fg, CHAT_WIDTH);
+    let head = name.map(|n| painter.layout_no_wrap(n.to_string(), semibold(10.0), fg.gamma_multiply(0.8)));
+    let head_h = head.as_ref().map_or(0.0, |g| g.size().y + 2.0);
+    let w = body.size().x.max(head.as_ref().map_or(0.0, |g| g.size().x));
+    let r = Rect::from_min_size(tip + vec2(12.0, 16.0), vec2(w + 20.0, head_h + body.size().y + 12.0));
+    painter.rect_filled(r, BUBBLE, fill.gamma_multiply(alpha));
+    let x = r.min.x + 10.0;
+    if let Some(g) = head {
+        painter.galley(pos2(x, r.min.y + 6.0), g, fg);
+    }
+    painter.galley(pos2(x, r.min.y + 6.0 + head_h), body, fg);
+}
+
 /// Hand the pointer's page position to the session when it moved (or the view under it did).
 pub fn track_pointer(app: &mut FigApp, ctx: &egui::Context) {
     if app.session.live.status != Status::Live {
@@ -139,7 +200,17 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
     let live = &app.session.live;
     if live.peers.is_empty() {
         app.ui.live.shown.clear();
+        app.ui.live.chat_seen.clear();
         return;
+    }
+    let now = ctx.input(|i| i.time);
+    // A chat message fades from its last change.
+    let seen = &mut app.ui.live.chat_seen;
+    seen.retain(|id, _| live.chats.contains_key(id));
+    for (id, text) in &live.chats {
+        if seen.get(id).is_none_or(|(t, _)| t != text) {
+            seen.insert(*id, (text.clone(), now));
+        }
     }
     let Ok(ds) = app.session.ds() else { return };
     let (doc, page, shared) = (ds.doc.clone(), ds.page, app.session.live_shared());
@@ -169,10 +240,10 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
     if let Some(peer) = live.follow.and_then(|f| live.peers.get(&f)) {
         follow_frame(painter, app.canvas.rect, &peer.name, color(&peer.color));
     }
-    let now = ctx.input(|i| i.time);
     let dt = (now - app.ui.live.last).clamp(0.0, 0.1);
     app.ui.live.last = now;
-    let k = if app.reduce_motion() { 1.0 } else { 1.0 - (-dt * GLIDE).exp() };
+    let reduce = app.reduce_motion();
+    let k = if reduce { 1.0 } else { 1.0 - (-dt * GLIDE).exp() };
     let zoom = ds.view.zoom.max(1e-9);
     let mut gliding = false;
     let mut shown = BTreeMap::new();
@@ -189,11 +260,124 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
         shown.insert(id, (sx, sy));
         let tip = app.to_screen(sx, sy);
         pointer(painter, tip, fill);
-        name_tag(painter, tip + vec2(12.0, 16.0), Align2::LEFT_TOP, &name, fill);
+        // Their chat message takes the name tag's place while it shows.
+        let chat = app.ui.live.chat_seen.get(&id).map(|(text, at)| (text, chat_fade(ctx, now - at, reduce))).filter(|(_, a)| *a > 0.0);
+        match chat {
+            Some((text, alpha)) => chat_bubble(painter, tip, Some(&name), text, fill, alpha),
+            None => name_tag(painter, tip + vec2(12.0, 16.0), Align2::LEFT_TOP, &name, fill),
+        }
     }
     app.ui.live.shown = shown;
     if gliding {
         ctx.request_repaint();
+    }
+}
+
+/// Open your cursor chat (`/`, `collab.cursorChat` without text), with your current message.
+pub fn open_chat(app: &mut FigApp) {
+    if app.ui.live.chat.as_ref().is_none_or(|c| !c.editing) {
+        app.ui.live.chat = Some(ChatBox { text: app.session.live.chat.clone(), typed: None, editing: true });
+    }
+}
+
+/// Your cursor chat at your pointer: a bubble to type in. What you type shows to everyone as you
+/// type; Enter (or clicking away) sends it and closes the box, and the message fades; Escape takes
+/// it back at once. The box closes by itself when you haven't typed for a while.
+pub fn chat_box(app: &mut FigApp, ctx: &egui::Context) {
+    let Some(mut chat) = app.ui.live.chat.take() else { return };
+    if app.session.live.status != Status::Live {
+        return;
+    }
+    let now = ctx.input(|i| i.time);
+    let first = chat.typed.is_none();
+    let typed = *chat.typed.get_or_insert(now);
+    let live = &app.session.live;
+    let fill = live.info.as_ref().map_or(ACCENT, |i| color(&i.color));
+    let tip = live.cursor.map_or(app.canvas.rect.center(), |(x, y)| app.to_screen(x, y));
+    let reduce = app.reduce_motion();
+    if !chat.editing {
+        let alpha = chat_fade(ctx, now - typed, reduce);
+        if alpha <= 0.0 || app.session.live.chat.is_empty() {
+            let _ = app.session.live_chat("");
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("live_chat")));
+        chat_bubble(&painter, tip, None, &chat.text, fill, alpha);
+        app.ui.live.chat = Some(chat);
+        return;
+    }
+    let idle = now - typed;
+    if idle >= CHAT_HOLD + CHAT_FADE {
+        let _ = app.session.live_chat("");
+        return;
+    }
+    ctx.request_repaint_after(std::time::Duration::from_secs_f64(CHAT_HOLD + CHAT_FADE - idle));
+    let fg = text_on(fill);
+    let resp = egui::Area::new(egui::Id::new("live_chat_box"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(tip + vec2(12.0, 16.0))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(fill)
+                .corner_radius(BUBBLE)
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    let w = ui.painter().layout_no_wrap(chat.text.clone(), regular(12.0), fg).size().x + 8.0;
+                    ui.add(
+                        egui::TextEdit::singleline(&mut chat.text)
+                            .id(egui::Id::new("live_chat_text"))
+                            .frame(egui::Frame::NONE)
+                            .font(regular(12.0))
+                            .text_color(fg)
+                            .hint_text(egui::RichText::new(tr("Say something")).color(fg.gamma_multiply(0.7)))
+                            .char_limit(Signal::MAX_CHAT)
+                            .desired_width(w.clamp(110.0, CHAT_WIDTH)),
+                    )
+                })
+                .inner
+        })
+        .inner;
+    a11y::text(&resp, tr("Cursor chat"), &chat.text);
+    if first {
+        resp.request_focus();
+    }
+    if resp.changed() {
+        chat.typed = Some(now);
+        if let Err(e) = app.session.live_chat(&chat.text) {
+            app.toast(e.to_string());
+            return;
+        }
+    }
+    if resp.lost_focus() {
+        // Escape takes it back (before the canvas sees the key: it doesn't deselect).
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) || chat.text.trim().is_empty() {
+            let _ = app.session.live_chat("");
+            return;
+        }
+        chat.editing = false;
+        chat.typed = Some(now);
+    }
+    app.ui.live.chat = Some(chat);
+}
+
+/// While you spotlight, or someone does and you stopped following them: a banner on the canvas to
+/// stop, or to follow again.
+pub fn spotlight_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
+    let live = &app.session.live;
+    let (text, button, cmd, params) = if live.spotlighting {
+        (tr("You're spotlighting: everyone follows your view").to_string(), tr("Stop"), "collab.spotlight", json!({"on": false}))
+    } else if let Some(p) = live.spotlight.filter(|p| live.follow != Some(*p)).and_then(|p| live.peers.get(&p)) {
+        (trf("{name} is spotlighting", &[("name", &p.name)]), tr("Follow"), "collab.follow", json!({"client": p.client_id}))
+    } else {
+        return;
+    };
+    let t = Tokens::get(ctx);
+    let clicked = widgets::canvas_banner(ctx, egui::Id::new("live_spotlight"), canvas, |ui| {
+        ui.label(egui::RichText::new(text).font(regular(11.0)).color(t.text));
+        widgets::button(ui, button, true, true).clicked()
+    });
+    if clicked {
+        app.run(cmd, params);
     }
 }
 
@@ -222,12 +406,29 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     let me_fill = live.info.as_ref().map_or(t.success, |i| color(&i.color));
     let peers: Vec<(u32, String, Color32)> = live.peers.values().map(|p| (p.client_id, p.name.clone(), color(&p.color))).collect();
     let follow = live.follow;
+    let (in_session, spotlighting) = (live.status == Status::Live, live.spotlighting);
     // Room for the avatars after yours and the chevron.
     let fit = (((area.width() - 2.0 * R - 18.0) / STEP).floor() as usize).max(1);
     let (show, more) = if peers.len() > fit { (fit - 1, peers.len() - (fit - 1)) } else { (peers.len(), 0) };
     let mut x = area.min.x + R + 2.0;
     let ring = |ui: &Ui, c: Pos2| ui.painter().circle_stroke(c, R + 1.0, Stroke::new(2.0, t.panel));
     avatar(ui.painter(), pos2(x, cy), R, &me_name, me_fill);
+    // Your avatar's menu: spotlight.
+    let mut spotlight = false;
+    if in_session {
+        let c = pos2(x, cy);
+        let resp = ui.interact(Rect::from_center_size(c, vec2(2.0 * R, 2.0 * R)), ui.id().with("live_me"), Sense::click());
+        a11y::menu_button(&resp, tr("You"), a11y::menu_open(&resp));
+        if spotlighting || resp.hovered() {
+            ui.painter().circle_stroke(c, R + 2.5, Stroke::new(2.0, me_fill));
+        }
+        menu_popup(&resp).width(200.0).show(|ui| {
+            if menu_item(ui, if spotlighting { tr("Stop spotlighting") } else { tr("Spotlight me") }, "") {
+                spotlight = true;
+                ui.close();
+            }
+        });
+    }
     let mut clicked = None;
     for (id, name, fill) in peers.iter().take(show) {
         x += STEP;
@@ -282,6 +483,9 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     if let Some(id) = clicked {
         let params = if follow == Some(id) { json!({}) } else { json!({"client": id}) };
         app.run("collab.follow", params);
+    }
+    if spotlight {
+        app.run("collab.spotlight", json!({"on": !spotlighting}));
     }
 }
 
@@ -566,6 +770,12 @@ pub fn inspect(app: &FigApp) -> serde_json::Value {
         "role": l.role(),
         "peers": l.peers.len(),
         "follow": l.follow,
+        "signals": l.signals,
+        "spotlight": l.spotlight,
+        "spotlighting": l.spotlighting,
+        "chat": l.chat,
+        "chats": l.chats,
+        "chatBox": app.ui.live.chat.as_ref().map(|c| json!({"text": c.text, "editing": c.editing})),
         "cursorsShown": app.ui.live.shown(),
         "joinDialog": app.ui.live.join.is_some(),
         "publishDialog": app.ui.live.publish.is_some(),

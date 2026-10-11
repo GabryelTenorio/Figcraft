@@ -42,6 +42,11 @@ use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 /// How long a closing connection waits for the peer to hang up.
 const LINGER: Duration = Duration::from_secs(2);
 
+/// Signals (cursor chat, spotlight) a client may send per second on average, and in a burst;
+/// beyond that they are dropped.
+pub const SIGNAL_RATE: f64 = 20.0;
+pub const SIGNAL_BURST: f64 = 40.0;
+
 /// Most messages the hub handles before it sends what they produced (bounds the delay a burst
 /// adds).
 const BURST: usize = 256;
@@ -425,12 +430,19 @@ fn serve(stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _
 
 fn read_loop(ws: &mut WebSocket<Duplex>, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, end: &dyn Fn(Option<&str>)) {
     let mut bucket = Bucket::new(limits.rate, limits.burst);
+    let mut signals = Bucket::new(SIGNAL_RATE, SIGNAL_BURST);
     loop {
         match next_message(ws, limits.max_client_message) {
             Ok(Some(msg)) => {
-                if !bucket.take(Instant::now()) {
+                let now = Instant::now();
+                if !bucket.take(now) {
                     log::info!("live session: connection {conn} sends too much; disconnecting it");
                     return end(Some("too many messages"));
+                }
+                // Typing sends a chat signal per keystroke; more than this is dropped.
+                if matches!(msg, ClientMsg::Signal(_)) && !signals.take(now) {
+                    log::debug!("live session: connection {conn} sends signals too fast; dropping one");
+                    continue;
                 }
                 if hub.send(HubIn::Msg { conn, msg }).is_err() {
                     return;
@@ -863,12 +875,13 @@ impl<B: Backend> Hub<B> {
 }
 
 /// What the hosting person's window should know.
-fn to_local(inbox: &Inbox, local: u32, msg: &ServerMsg) {
+pub(crate) fn to_local(inbox: &Inbox, local: u32, msg: &ServerMsg) {
     match msg {
         ServerMsg::PeerJoined(p) if p.client_id != local => inbox.push(Event::PeerJoined(p.clone())),
         ServerMsg::PeerLeft { client_id } => inbox.push(Event::PeerLeft(*client_id)),
         ServerMsg::Presence { client_id, presence } => inbox.presence(*client_id, presence.clone()),
         ServerMsg::Changes { .. } | ServerMsg::Reject { .. } => inbox.push(Event::Sync(msg.clone())),
+        ServerMsg::Signal { client_id, signal } => inbox.push(Event::Signal(*client_id, signal.clone())),
         _ => {}
     }
 }

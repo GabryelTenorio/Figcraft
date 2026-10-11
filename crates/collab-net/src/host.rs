@@ -11,7 +11,7 @@ use figcraft_collab::{Outgoing, Server, same_secret};
 use figcraft_doc::Document;
 use figcraft_engine::live::{Event, PEOPLE};
 
-use crate::hub::{Admission, Backend, Closing, Hosting, Local, clean_name};
+use crate::hub::{Admission, Backend, Closing, Hosting, Local, clean_name, to_local};
 use crate::inbox::Inbox;
 pub use crate::join::ENDED;
 use crate::net::NetLimits;
@@ -85,16 +85,16 @@ impl Host {
             token: String::new(),
             name,
             color: PEOPLE[0].to_string(),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_version: figcraft_collab::message::client_version(),
             resume: None,
         };
         let (me, outs) = server.join(hello).map_err(|r| io::Error::other(format!("{r:?}")))?;
         // The host's window syncs through its own client too: its welcome carries the document.
         for o in outs {
-            if let Outgoing::To(id, w @ ServerMsg::Welcome { .. }) = o
-                && id == me
-            {
-                inbox.push(Event::Sync(w));
+            match o {
+                Outgoing::To(id, w @ ServerMsg::Welcome { .. }) if id == me => inbox.push(Event::Sync(w)),
+                Outgoing::To(id, ref m @ ServerMsg::Signal { .. }) if id == me => to_local(&inbox, me, m),
+                _ => {}
             }
         }
         let me = server.peers().find(|p| p.client_id == me).cloned().ok_or_else(|| io::Error::other("the host didn't join its own session"))?;

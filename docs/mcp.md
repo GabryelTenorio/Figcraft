@@ -865,9 +865,12 @@ joined file opens as a new document).
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
   access (edit|view), readOnly (the active document can't be edited now: view only, or being
   published), published (a file you published: {server, file, name, edit, view}),
-  follow, syncing (the document arrived), document (the index of the synced open document),
+  follow, signals (the host passes cursor chat and spotlights on), chat (your cursor chat),
+  spotlight (who spotlights, or null), spotlighting (you do), syncing (the document arrived),
+  document (the index of the synced open document),
   editing (the text layer you are typing in: {node, layer, caret, selection}, or null), peers: [{id,
-  name, color, editing (the text layer they are typing in, same shape, or null), presence: {cursor:
+  name, color, editing (the text layer they are typing in, same shape, or null), chat (their open
+  cursor chat message, or null), presence: {cursor:
   [page, x, y], selection: [ids], viewport: [page, x, y, w, h], editing_text: {node, caret,
   selection?}}}]}`. Carets and selections count characters; someone's typing syncs when they
   finish, so their caret may be past the end of your copy until then. Starting `text.edit.begin`
@@ -878,6 +881,17 @@ joined file opens as a new document).
   pointer. Your selection, page and view go out by themselves when they change.
 - `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
   pan or zoom of your own, or Escape).
+- `collab.cursorChat {text}` shows `text` next to your cursor for everyone in the session (put the
+  cursor somewhere first with `collab.cursor`): at most 100 characters, control characters become
+  spaces, `""` closes it. Others see it fade 5 seconds after its last change, so send it again to
+  keep it up. Without `text` it opens the chat box in the app (`/` on the canvas), which a
+  programmatic call never does: it returns `{open}`. Others' messages are each peer's `chat` in
+  `collab.peers`.
+- `collab.spotlight {on?}` (no `on`: switch) asks everyone in the session to follow your view and
+  page; people who join later follow too, and anyone who pans or zooms stops following (the
+  spotlight goes on; they can follow again). Someone else's spotlight takes over yours. Returns
+  `{spotlighting}`. Both commands need a live session whose host is this version or newer (`signals`
+  in `collab.peers`); otherwise they say why.
 - Styles, variables, collections, modes and comments you create on the session's document take
   ids from your own id space (`S:<n>`, `VariableID:<n>`, … with large numbers), so two people
   creating them at once never overwrite each other's; outside a session ids look as before (`S:1`,

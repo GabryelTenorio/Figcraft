@@ -171,6 +171,8 @@ pub static KEYS: &[Binding] = &[
     k(Essential, "file.saveVersion", &["Alt+Cmd+S"]),
     k(Essential, "file.close", &["Cmd+W"]),
     k(Essential, "edit.findReplace", &["Cmd+F"]),
+    // In a live session.
+    k(Essential, "collab.cursorChat", &["/"]),
     // Ctrl+Alt+P is Pixel preview on Windows and Linux here.
     k(Essential, "plugins.runLast", &["Alt+Cmd+P"]).win(&["Ctrl+Alt+Shift+P"]),
     // Tools

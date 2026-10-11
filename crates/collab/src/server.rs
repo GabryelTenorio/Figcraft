@@ -7,7 +7,7 @@ use figcraft_doc::{Document, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::change::{Change, Entry, Prop, Target};
-use crate::message::{Accepted, Access, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, ServerMsg};
+use crate::message::{Accepted, Access, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, ServerMsg, Signal, reads_signals};
 use crate::replica::{Mode, Replica, create_change};
 use crate::{Error, Limits, docprops, same_secret};
 
@@ -69,6 +69,10 @@ pub struct Server {
     viewers: BTreeSet<u32>,
     /// What changed the lasting state since it was last taken (`None`: not kept).
     journal: Option<Vec<Journal>>,
+    /// The connected clients that read signals (cursor chat, spotlight).
+    signals: BTreeSet<u32>,
+    /// Who spotlights now (a newcomer is told).
+    spotlight: Option<u32>,
 }
 
 /// The most client ids a session remembers for reconnecting (the oldest disconnected ones go
@@ -115,6 +119,8 @@ impl Server {
             log_changes: 0,
             viewers: BTreeSet::new(),
             journal: None,
+            signals: BTreeSet::new(),
+            spotlight: None,
         }
     }
 
@@ -287,6 +293,7 @@ impl Server {
         };
         let processed = self.issued.get(&id).cloned().unwrap_or_default();
         self.presence.remove(&id);
+        let signals = reads_signals(&hello.client_version);
         let peer = Peer { client_id: id, name: hello.name, color: hello.color };
         let others = self.peers.values().filter(|p| p.client_id != id).cloned().collect();
         let welcome = ServerMsg::Welcome { session: self.session, client_id: id, seq: self.seq, catch_up, processed, peers: others, access };
@@ -296,7 +303,17 @@ impl Server {
         } else {
             self.viewers.remove(&id);
         }
-        Ok((id, vec![Outgoing::To(id, welcome), Outgoing::Others(id, ServerMsg::PeerJoined(peer))]))
+        let mut outs = vec![Outgoing::To(id, welcome), Outgoing::Others(id, ServerMsg::PeerJoined(peer))];
+        if signals {
+            self.signals.insert(id);
+            outs.push(Outgoing::To(id, ServerMsg::Signal { client_id: id, signal: Signal::ready() }));
+            if let Some(p) = self.spotlight.filter(|p| *p != id) {
+                outs.push(Outgoing::To(id, ServerMsg::Signal { client_id: p, signal: Signal::spotlight(true) }));
+            }
+        } else {
+            self.signals.remove(&id);
+        }
+        Ok((id, outs))
     }
 
     /// Client `id`'s connection closed.
@@ -304,6 +321,10 @@ impl Server {
         self.presence.remove(&id);
         self.acked.remove(&id);
         self.viewers.remove(&id);
+        self.signals.remove(&id);
+        if self.spotlight == Some(id) {
+            self.spotlight = None;
+        }
         match self.peers.remove(&id) {
             Some(_) => vec![Outgoing::Others(id, ServerMsg::PeerLeft { client_id: id })],
             None => Vec::new(),
@@ -342,6 +363,20 @@ impl Server {
             ClientMsg::Presence(p) => {
                 self.presence.insert(from, p.clone());
                 vec![Outgoing::Others(from, ServerMsg::Presence { client_id: from, presence: p })]
+            }
+            // Checked and cleaned, then passed on to those who read signals; never stored but the
+            // current spotlight.
+            ClientMsg::Signal(sig) => {
+                let Some(sig) = sig.clean().filter(|s| s.kind != Signal::READY) else { return Vec::new() };
+                if sig.kind == Signal::SPOTLIGHT {
+                    if sig.on() {
+                        self.spotlight = Some(from);
+                    } else if self.spotlight == Some(from) {
+                        self.spotlight = None;
+                    }
+                }
+                let to = self.signals.iter().filter(|id| **id != from);
+                to.map(|id| Outgoing::To(*id, ServerMsg::Signal { client_id: from, signal: sig.clone() })).collect()
             }
             ClientMsg::Ack { seq } => {
                 self.acked.insert(from, seq.min(self.seq));

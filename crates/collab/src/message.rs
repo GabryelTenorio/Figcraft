@@ -15,6 +15,20 @@ pub const PROTOCOL: u32 = 2;
 /// The first byte of every binary message.
 pub const WIRE_VERSION: u8 = 1;
 
+/// The word a client puts in its [`Hello::client_version`] when it reads [`ServerMsg::Signal`]: a
+/// server sends signals only to clients that say so (older ones couldn't read the message).
+pub const SIGNALS: &str = "signals";
+
+/// The `client_version` this build announces: its version, then what it reads beyond the protocol.
+pub fn client_version() -> String {
+    format!("{} {SIGNALS}", env!("CARGO_PKG_VERSION"))
+}
+
+/// A [`Hello::client_version`] that announces [`SIGNALS`].
+pub fn reads_signals(client_version: &str) -> bool {
+    client_version.split_whitespace().any(|w| w == SIGNALS)
+}
+
 /// Join a file's session.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Hello {
@@ -100,6 +114,65 @@ pub struct EditingText {
     pub caret: usize,
     /// The selected characters `(start, end)`, if any.
     pub selection: Option<(usize, usize)>,
+}
+
+/// Presence beyond [`Presence`]: someone's cursor chat, or their spotlight. Ephemeral like presence
+/// (never in the document or the log), latest per kind wins. Kinds a side doesn't know are
+/// ignored: a server drops them, a client skips them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Signal {
+    /// [`Signal::CHAT`], [`Signal::SPOTLIGHT`] or (server to client) [`Signal::READY`].
+    pub kind: String,
+    /// Chat: the message (empty: closed). Spotlight: `"on"`, or empty when it stopped.
+    pub text: String,
+}
+
+impl Signal {
+    /// The message typed next to someone's pointer.
+    pub const CHAT: &str = "chat";
+    /// Someone asks everyone to follow their view.
+    pub const SPOTLIGHT: &str = "spotlight";
+    /// From the server, about the client itself, right after its welcome: signals may be sent.
+    pub const READY: &str = "ready";
+    /// Longest chat message (characters).
+    pub const MAX_CHAT: usize = 100;
+    /// Longest signal on the wire before it is cleaned (bytes of kind and text together).
+    pub const MAX_BYTES: usize = 1024;
+
+    pub fn chat(text: &str) -> Signal {
+        Signal { kind: Signal::CHAT.into(), text: text.into() }
+    }
+
+    pub fn spotlight(on: bool) -> Signal {
+        Signal { kind: Signal::SPOTLIGHT.into(), text: if on { "on".into() } else { String::new() } }
+    }
+
+    pub fn ready() -> Signal {
+        Signal { kind: Signal::READY.into(), text: String::new() }
+    }
+
+    /// A spotlight that is on.
+    pub fn on(&self) -> bool {
+        self.text == "on"
+    }
+
+    /// Untrusted input made safe to pass on or show: `None` for an unknown kind, a malformed
+    /// spotlight or anything oversized; a chat's control characters become spaces and it is cut to
+    /// [`MAX_CHAT`](Self::MAX_CHAT) characters (an all-blank one is empty: closed).
+    pub fn clean(self) -> Option<Signal> {
+        if self.kind.len() + self.text.len() > Signal::MAX_BYTES {
+            return None;
+        }
+        match self.kind.as_str() {
+            Signal::CHAT => {
+                let text: String = self.text.chars().map(|c| if c.is_control() { ' ' } else { c }).take(Signal::MAX_CHAT).collect();
+                Some(Signal::chat(if text.trim().is_empty() { "" } else { &text }))
+            }
+            Signal::SPOTLIGHT if self.text.is_empty() || self.on() => Some(self),
+            Signal::READY if self.text.is_empty() => Some(self),
+            _ => None,
+        }
+    }
 }
 
 /// A batch the server accepted: its sequence number, who sent it and their batch id.
@@ -326,6 +399,8 @@ pub enum ClientMsg {
     OpenLibrary(OpenLibrary),
     /// A request on a library connection.
     Library(LibraryReq),
+    /// Your cursor chat or spotlight (only to a server that sent [`Signal::READY`]).
+    Signal(Signal),
 }
 
 /// Server → client.
@@ -373,6 +448,12 @@ pub enum ServerMsg {
     Admin(Box<AdminReply>),
     /// The answer to a library connection's request.
     Library(Box<LibraryReply>),
+    /// Someone's cursor chat or spotlight; sent only to clients whose hello announced
+    /// [`SIGNALS`].
+    Signal {
+        client_id: u32,
+        signal: Signal,
+    },
 }
 
 /// The binary form of `msg`: [`WIRE_VERSION`], then postcard.

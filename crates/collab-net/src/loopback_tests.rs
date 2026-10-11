@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
+use figcraft_collab::message::{self, ClientMsg, Hello, Presence, ServerMsg, Signal};
 use figcraft_collab::{Client, Limits};
 use figcraft_doc::{Document, NodeId};
 use figcraft_engine::live::{Event, PEOPLE, Status};
@@ -556,4 +556,58 @@ fn quiet_guests_stay_and_silent_connections_are_dropped() {
     assert!(!gp.events.iter().any(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))), "pings keep a quiet guest in: {:?}", gp.events);
     assert!(!hp.left().contains(&ada));
     host.stop();
+}
+
+#[test]
+fn signals_reach_only_clients_that_read_them_and_are_rate_limited() {
+    let (mut host, mut hp, invite) = start();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
+    hp.wait("the host's own ready", |e| e.iter().any(|e| matches!(e, Event::Signal(_, s) if s.kind == Signal::READY)));
+    // A client from before signals: its hello doesn't announce them.
+    let mut old = Raw::connect(addr);
+    let ClientMsg::Hello(h) = Client::hello(FILE, TOKEN, "Old", "") else { panic!("not a hello") };
+    assert!(old.send(&ClientMsg::Hello(Hello { client_version: "0.3.1".into(), ..h })));
+    assert!(matches!(old.next(), Some(ServerMsg::Welcome { .. })));
+    let mut new = Raw::hello(addr, TOKEN);
+    let Some(ServerMsg::Welcome { client_id: me, .. }) = new.next() else { panic!("no welcome") };
+    assert_eq!(new.next(), Some(ServerMsg::Signal { client_id: me, signal: Signal::ready() }));
+    // The host chats, then moves its pointer: the old client gets the pointer only.
+    host.send(ClientMsg::Signal(Signal::chat("hi")));
+    host.presence(presence(1.0, 2.0));
+    let until_presence = |r: &mut Raw| {
+        let mut got = Vec::new();
+        loop {
+            match r.next() {
+                Some(ServerMsg::Presence { .. }) | None => return got,
+                Some(m) => got.push(m),
+            }
+        }
+    };
+    let old_got = until_presence(&mut old);
+    assert!(!old_got.iter().any(|m| matches!(m, ServerMsg::Signal { .. })), "{old_got:?}");
+    let new_got = until_presence(&mut new);
+    let hana = host.me().client_id;
+    assert!(new_got.contains(&ServerMsg::Signal { client_id: hana, signal: Signal::chat("hi") }), "{new_got:?}");
+    // A flood of signals: the excess is dropped (the connection stays), the host gets them cleaned.
+    for i in 0..200 {
+        assert!(new.send(&ClientMsg::Signal(Signal::chat(&format!("{i}\u{7}")))));
+    }
+    assert!(new.send(&ClientMsg::Presence(presence(3.0, 4.0))));
+    hp.wait("the flood's end", |e| e.iter().any(|e| matches!(e, Event::Presence(id, _) if *id == me)));
+    let chats: Vec<&Signal> = hp.events.iter().filter_map(|e| if let Event::Signal(id, s) = e { (*id == me).then_some(s) } else { None }).collect();
+    assert!(chats.len() >= 40 && chats.len() < 200, "{} of 200 got through", chats.len());
+    assert!(chats.iter().all(|s| s.kind == Signal::CHAT && s.text.ends_with(' ')), "cleaned on the way");
+    assert!(new.send(&ClientMsg::Ping));
+    assert_eq!(until_presence_or_pong(&mut new), Some(ServerMsg::Pong), "still connected");
+    host.stop();
+}
+
+/// The next message that isn't someone's presence or signal.
+fn until_presence_or_pong(r: &mut Raw) -> Option<ServerMsg> {
+    loop {
+        match r.next() {
+            Some(ServerMsg::Presence { .. } | ServerMsg::Signal { .. }) => {}
+            m => return m,
+        }
+    }
 }

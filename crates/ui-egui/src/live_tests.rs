@@ -83,6 +83,11 @@ impl Harness {
         (flat(&out.shapes), delay)
     }
 
+    /// Let `secs` of UI time pass before the next frame.
+    pub(crate) fn skip(&mut self, secs: f64) {
+        self.time += secs;
+    }
+
     pub(crate) fn frames(&mut self, n: usize) -> Vec<Shape> {
         let mut last = Vec::new();
         for _ in 0..n {
@@ -191,7 +196,7 @@ fn outlined(shapes: &[Shape], c: Color32) -> usize {
         .count()
 }
 
-fn cursor(page: NodeId, x: f64, y: f64) -> Presence {
+pub(crate) fn cursor(page: NodeId, x: f64, y: f64) -> Presence {
     Presence { cursor: Some((page, x, y)), ..Presence::default() }
 }
 

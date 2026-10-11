@@ -21,12 +21,17 @@
 //! syncs that tab through the server, whose share links let others edit or only view. A view link
 //! makes the synced document read-only here (every edit is refused before it is sent; the server
 //! refuses it too).
+//!
+//! Cursor chat (`collab.cursorChat`) and spotlights (`collab.spotlight`) travel as signals:
+//! short-lived presence the host passes on to everyone, never stored. A spotlight makes everyone
+//! follow the person who started it; moving your own view stops following, as with any follow.
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
 use figcraft_collab::Client;
+pub use figcraft_collab::message::Signal;
 use figcraft_collab::message::{ClientMsg, EditingText, LibraryReply, LibraryReq, ServerMsg};
 
 pub use figcraft_collab::message::Access;
@@ -171,6 +176,8 @@ pub enum Event {
     PeerJoined(Peer),
     PeerLeft(u32),
     Presence(u32, Presence),
+    /// Someone's cursor chat or spotlight, or (about you) the host's [`Signal::READY`].
+    Signal(u32, Signal),
     /// For the document sync client: the welcome (with the whole document), or a batch of
     /// changes the server ordered, or the rejection of one of yours.
     Sync(ServerMsg),
@@ -310,6 +317,16 @@ pub struct Live {
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
     /// The file you published to a server in this session, with its links.
     pub published: Option<Published>,
+    /// The host passes cursor chat and spotlights on (it said so after the welcome).
+    pub signals: bool,
+    /// Others' open cursor chat messages.
+    pub chats: BTreeMap<u32, String>,
+    /// Your cursor chat message (empty: none).
+    pub chat: String,
+    /// Who spotlights (you follow them until you move your view).
+    pub spotlight: Option<u32>,
+    /// You spotlight: everyone follows you.
+    pub spotlighting: bool,
 }
 
 impl Live {
@@ -352,6 +369,11 @@ impl Live {
         self.deferred.clear();
         self.hold = 0;
         self.published = None;
+        self.signals = false;
+        self.chats.clear();
+        self.chat.clear();
+        self.spotlight = None;
+        self.spotlighting = false;
     }
 
     /// The document sync client (once the welcome arrived): peers, pending batches, the user's
@@ -532,6 +554,12 @@ impl Session {
                         live.peers.clear();
                         live.presence.clear();
                         live.sent = None;
+                        // Until the host says it reads them again (a spotlight of yours goes out
+                        // again then).
+                        live.signals = false;
+                        live.chats.clear();
+                        live.chat.clear();
+                        live.spotlight = None;
                         if let Some(c) = live.client.as_mut() {
                             c.disconnect();
                         }
@@ -563,6 +591,10 @@ impl Session {
             }
             Event::PeerLeft(id) => {
                 live.presence.remove(&id);
+                live.chats.remove(&id);
+                if live.spotlight == Some(id) {
+                    live.spotlight = None;
+                }
                 if let Some(p) = live.peers.remove(&id) {
                     self.message = Some(format!("{} left", p.name));
                 }
@@ -576,6 +608,7 @@ impl Session {
                     live.presence.insert(id, p);
                 }
             }
+            Event::Signal(id, sig) => self.live_signal_in(id, sig),
             // Back after a dropped connection: the client catches up in order with the rest.
             Event::Sync(msg @ ServerMsg::Welcome { .. }) if live.client.is_some() => live.deferred.push(msg),
             Event::Sync(ServerMsg::Welcome { .. }) => {
@@ -596,6 +629,98 @@ impl Session {
             }
             Event::Library { link, reply } => self.library_answer(&link, reply),
         }
+    }
+
+    /// Someone's cursor chat or spotlight (checked again: the host is untrusted too), or the host
+    /// saying it reads them.
+    fn live_signal_in(&mut self, id: u32, sig: Signal) {
+        let Some(sig) = sig.clean() else { return };
+        let live = &mut self.live;
+        let name = live.peers.get(&id).map(|p| p.name.clone());
+        match (sig.kind.as_str(), name) {
+            (Signal::READY, _) if live.info.as_ref().is_some_and(|i| i.me == id) => {
+                live.signals = true;
+                if live.spotlighting
+                    && let Some(l) = live.link.as_mut()
+                {
+                    l.send(ClientMsg::Signal(Signal::spotlight(true)));
+                }
+            }
+            (Signal::CHAT, Some(_)) if sig.text.is_empty() => {
+                live.chats.remove(&id);
+            }
+            (Signal::CHAT, Some(_)) => {
+                live.chats.insert(id, sig.text);
+            }
+            (Signal::SPOTLIGHT, Some(name)) if sig.on() => {
+                // Theirs takes over from yours or anyone else's.
+                live.spotlight = Some(id);
+                live.spotlighting = false;
+                live.follow = Some(id);
+                live.followed = None;
+                self.message = Some(format!("{name} is spotlighting: you follow their view (move it to stop)"));
+            }
+            (Signal::SPOTLIGHT, Some(name)) if live.spotlight == Some(id) => {
+                live.spotlight = None;
+                if live.follow == Some(id) {
+                    live.follow = None;
+                    live.followed = None;
+                }
+                self.message = Some(format!("{name} stopped spotlighting"));
+            }
+            _ => {}
+        }
+    }
+
+    /// Why cursor chat or a spotlight can't go out now, if it can't.
+    fn signal_blocker(&self) -> Option<&'static str> {
+        if self.live.status != Status::Live {
+            Some("cursor chat and spotlight need a live session")
+        } else if !self.live.signals {
+            Some("the session's host runs an older version without cursor chat and spotlight")
+        } else {
+            None
+        }
+    }
+
+    fn live_signal_out(&mut self, sig: Signal) {
+        if let Some(l) = self.live.link.as_mut() {
+            l.send(ClientMsg::Signal(sig));
+        }
+    }
+
+    /// Show `text` next to your pointer for everyone (empty closes it); returns it as sent
+    /// (control characters out, at most [`Signal::MAX_CHAT`] characters).
+    pub fn live_chat(&mut self, text: &str) -> Result<String> {
+        let sig = Signal::chat(text).clean().unwrap_or_default();
+        if sig.text.is_empty() && self.live.chat.is_empty() {
+            return Ok(String::new());
+        }
+        if let Some(why) = self.signal_blocker() {
+            return Err(EngineError::Disabled("collab.cursorChat".into(), why.into()));
+        }
+        if sig.text != self.live.chat {
+            self.live.chat.clone_from(&sig.text);
+            self.live_signal_out(sig);
+        }
+        Ok(self.live.chat.clone())
+    }
+
+    /// Start (`on`) or stop asking everyone to follow your view.
+    pub fn live_spotlight(&mut self, on: bool) -> Result<()> {
+        if on == self.live.spotlighting {
+            return Ok(());
+        }
+        if on && let Some(why) = self.signal_blocker() {
+            return Err(EngineError::Disabled("collab.spotlight".into(), why.into()));
+        }
+        if on {
+            self.live_unfollow();
+            self.live.spotlight = None;
+        }
+        self.live.spotlighting = on;
+        self.live_signal_out(Signal::spotlight(on));
+        Ok(())
     }
 
     /// The welcome: start the sync client; the host keeps editing the document it shared, a guest
@@ -905,7 +1030,8 @@ impl Session {
             .map(|p| {
                 let presence = l.presence.get(&p.client_id);
                 let typing = presence.and_then(|pr| pr.editing_text.as_deref()).map(editing);
-                json!({"id": p.client_id, "name": p.name, "color": p.color, "editing": typing, "presence": presence})
+                let chat = l.chats.get(&p.client_id);
+                json!({"id": p.client_id, "name": p.name, "color": p.color, "editing": typing, "chat": chat, "presence": presence})
             })
             .collect();
         let mine = synced.and_then(|d| d.text_edit.as_ref()).map(|t| editing(&editing_of(t)));
@@ -929,6 +1055,10 @@ impl Session {
             "readOnly": self.active_read_only().is_some(),
             "published": l.published,
             "follow": l.follow,
+            "signals": l.signals,
+            "chat": l.chat,
+            "spotlight": l.spotlight,
+            "spotlighting": l.spotlighting,
             "syncing": l.syncing(),
             "document": l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u)),
             "editing": mine,
@@ -1030,6 +1160,28 @@ fn cursor(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"cursor": s.live.cursor.map(|(x, y)| [x, y])}))
 }
 
+fn cursor_chat(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some(v) = get(p, "text") else {
+        // The app's chat box (programmatic calls never open dialogs).
+        let open = s.signal_blocker().is_none();
+        if open {
+            s.request_ui("dialog.cursorChat", json!({}));
+        }
+        return Ok(json!({"open": open, "chat": s.live.chat}));
+    };
+    let text = v.as_str().ok_or_else(|| bad("collab.cursorChat", "`text` must be a string (empty closes the chat)"))?;
+    Ok(json!({"chat": s.live_chat(text)?}))
+}
+
+fn spotlight(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = match get(p, "on") {
+        None => !s.live.spotlighting,
+        Some(v) => v.as_bool().ok_or_else(|| bad("collab.spotlight", "`on` must be true or false"))?,
+    };
+    s.live_spotlight(on)?;
+    Ok(json!({"spotlighting": s.live.spotlighting}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
@@ -1069,6 +1221,20 @@ pub fn specs() -> Vec<CommandSpec> {
             "{x?, y? (page coordinates on the current page; omit both to hide)} (agents; in the app the pointer drives it)",
             false,
             cursor
+        ),
+        spec!(
+            "collab.cursorChat",
+            "Cursor chat",
+            "{text? (shown next to your cursor for everyone, at most 100 characters; empty closes it; omit to open the chat box in the app)} → {chat} (or {open}); others see it fade after 5 s without changes",
+            false,
+            cursor_chat
+        ),
+        spec!(
+            "collab.spotlight",
+            "Spotlight me",
+            "{on? (default: toggle)} → {spotlighting}: everyone in the session follows your view and page until they move theirs",
+            false,
+            spotlight
         ),
     ]
 }

@@ -10,7 +10,7 @@ handling and offline queueing with reconnect (`crates/collab`, wired into the en
 session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
 app hosts, and `figcraft://` invite links open the app and join. Styles, variables, collections,
 modes and comments created in a session take ids from their creator's id space, and others' text
-carets show on the canvas. **Step 5 is implemented**: the
+carets, cursor chat and spotlights show live (see Presence). **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
 the app publishes to it, and a file's team library lives there for other files to use. The rest is the plan the next implementation PRs follow and update;
@@ -161,6 +161,15 @@ server's files or use a file's team library instead of joining one; a client of 
 refused with the reason. (The library messages came later within version 2: a server from before
 them can't read them and refuses the connection.)
 
+**Signals (cursor chat, spotlight)** came later within version 2 too, without breaking older apps
+in either direction. A client that reads them says so with the word `signals` in its hello's
+`client_version` (`"0.3.1 signals"`); the server sends `Signal` messages only to those clients, so
+an older client never gets a message it can't read. A server that takes them answers such a
+client, right after its welcome, with a `ready` signal about the client itself; a client sends
+signals only after that, so an older server never gets one either (the app says the host runs an
+older version). A signal is a kind and a text, so kinds added later are skipped by clients and
+dropped by servers that don't know them.
+
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
 document types use tagged and flattened serde forms that only self-describing formats can read
@@ -184,6 +193,7 @@ Client → server:
 | `Admin {publish {name, snapshot} \| files \| links {file} \| createLink {file, access, label} \| revoke {file, link} \| remove {file}}` | A request on a managing connection; each gets one `Admin` reply, in order. |
 | `OpenLibrary {protocol, file, token, client_version}` | Instead of `Hello`: use a file's team library with one of the file's share links. |
 | `Library {fetch {have?, usage?} \| publish {archive} \| usage}` | A request on a library connection; each gets one `Library` reply, in order. `usage` is `{file, components: [(id, instances)]}`. |
+| `Signal {kind, text}` | Ephemeral presence, only after the server's `ready`: `chat` (the cursor chat message; empty: closed) or `spotlight` (`"on"`, or empty: stopped). |
 
 Server → client:
 
@@ -197,6 +207,7 @@ Server → client:
 | `Pong` | Keep-alive. |
 | `Admin {ready \| published {file, edit, view} \| files \| links \| link \| done \| failed {reason}}` | A managing connection's answer: the key is right, a published file with its first two links (tokens shown once), listings, a new link, done, or why not. |
 | `Library {ready {access} \| library {version, archive} \| unchanged {version} \| empty \| published {version} \| usage [{usage, updated}] \| failed {reason}}` | A library connection's answer: the link is right (with its access), the library (a `.figcraft` archive holding it), no newer version, no library yet, kept, the usage reports, or why not. |
+| `Signal {client_id, signal: {kind, text}}` | Someone's cursor chat or spotlight, cleaned by the server; `ready` (about the client itself, after its welcome): signals may be sent. Only to clients whose hello announced `signals`. |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -355,6 +366,29 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   learns its name and colour.
 - Idle cost is zero: network threads block, wake the window (`request_repaint`) only when a
   message arrives, cursors only ask for frames while they glide, and text carets never do.
+- **Cursor chat.** In a live session `/` on the canvas (`collab.cursorChat` without `text`) opens a
+  bubble in your colour at your pointer. What you type goes out as you type (a `chat` signal per
+  change, at most 100 characters; control characters become spaces), and others see it next to
+  your cursor in place of your name tag, under your name. Enter (or clicking away) sends it and
+  closes the box; it fades a few seconds after its last change on every screen (5 s, then a
+  1 s fade; reduced motion makes it vanish without fading), and your app then closes it with an
+  empty `chat`. Escape takes it back at once (and doesn't deselect); a box left open without typing
+  closes the same way. Bubbles ask for frames only until they have faded. Agents use
+  `collab.cursorChat {text}` (their bubble fades on others' screens unless they send it again).
+- **Spotlight.** Your avatar's menu (Spotlight me / Stop spotlighting, `collab.spotlight {on?}`)
+  sends a `spotlight` signal: everyone else follows your view and page as with a follow, the
+  session says who started it, and someone who pans, zooms or presses Escape stops following while
+  a banner on the canvas ("Hana is spotlighting", Follow) lets them follow again. People who join
+  later are told by the server and follow too. A newer spotlight takes over (the earlier presenter
+  follows it); the presenter leaving or stopping ends it. While you spotlight a banner says so,
+  with Stop. After a reconnect your spotlight goes out again once the host says it reads signals.
+  With no accounts, anyone in a session can spotlight.
+- **Signals are presence**: never in the document, the log or a saved state; the server keeps only
+  who spotlights (for newcomers). It cleans each one (unknown kinds, malformed spotlights, a
+  client's `ready` and anything over 1 KiB are dropped; chat text is cut to 100 characters with
+  control characters replaced) and passes it on to the others that read signals; the app checks
+  what arrives again before showing it. A client may send 20 signals a second on average (bursts
+  of 40); more are dropped without closing the connection.
 
 ## Hosting and joining
 
@@ -379,7 +413,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   Join live session…" (and "Join a session…" in the popover) asks for the link. Commands:
   `collab.host {port?, bind?: "local" | "lan" | <ip>}`, `collab.stop`, `collab.join {link}`,
   `collab.leave`, `collab.peers`, `collab.follow {client?}`, `collab.cursor {x?, y?}` (an agent's
-  pointer).
+  pointer), `collab.cursorChat {text?}`, `collab.spotlight {on?}`.
 - The host listens on port 47900 (any free port when it's taken, or `port`), on 127.0.0.1 unless
   the user chooses the local network (`lan`: the address of the interface the default route uses)
   or names an interface (`bind: "<ip>"`, e.g. a VPN's). It runs the core's `Server` as the
@@ -592,7 +626,8 @@ host, publish and join sessions; an agent can be a participant with its own curs
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
 `"connecting"` and `collab.peers` tells when it is live (or why it failed) and who is typing in
-which text layer. An agent's pointer is `collab.cursor {x, y}`. The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
+which text layer. An agent's pointer is `collab.cursor {x, y}`; it can chat next to it
+(`collab.cursorChat {text}`) and spotlight (`collab.spotlight`). The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
 live sessions aren't available.
 
 ## Security
@@ -623,7 +658,9 @@ chooses to share on the network; the default is the invite link with a random to
   core's 64 MiB cap: a welcome carries the whole document); a client sending more than 100
   messages a second on average (bursts of 400) is disconnected, and so is one whose 1,024-message
   outgoing queue fills (it can't keep up); names are cut to 64 characters without control
-  characters; presence numbers must be finite and selections are cut to 10,000 ids.
+  characters; presence numbers must be finite and selections are cut to 10,000 ids; signals are
+  at most 1 KiB, chat 100 characters without control characters, 20 a second (bursts of 40,
+  the rest dropped), and only known kinds are passed on.
 - **Malformed input.** Anything that isn't a binary message of the current wire version that
   decodes in full is answered with `Refused` and a close; the first message must be `Hello` (for
   this file) or, on a server, `Manage`. The invite parser and the host's reader are fuzzed

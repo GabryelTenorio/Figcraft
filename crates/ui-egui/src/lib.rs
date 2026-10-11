@@ -85,6 +85,8 @@ mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
 #[cfg(test)]
+mod live_chat_tests;
+#[cfg(test)]
 mod live_join_tests;
 #[cfg(test)]
 mod live_server_tests;
@@ -601,6 +603,7 @@ impl FigApp {
                 }
                 "dialog.unsaved" => self.toast(i18n::tr("This file has unsaved changes")),
                 "dialog.plugins" => self.ui.plugins_window = true,
+                "dialog.cursorChat" => live::open_chat(self),
                 "window.new" | "window.focus" => self.window_requests.push(r),
                 _ => {}
             }

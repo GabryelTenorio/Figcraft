@@ -288,6 +288,8 @@ fn collab_commands_survive_junk() {
         json!([1, 2]),
         json!({"port": 1e300, "bind": 5, "link": 7, "client": -3, "x": "NaN", "y": {}}),
         json!({"link": "", "client": 4_294_967_296u64}),
+        json!({"text": 5, "on": "yes"}),
+        json!({"text": "\u{0}\u{7f}".repeat(10_000), "on": null}),
     ];
     for cmd in crate::all_commands().iter().filter(|c| c.id.starts_with("collab.")) {
         for j in &junk {

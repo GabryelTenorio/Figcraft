@@ -212,3 +212,40 @@ fn edits_sync_between_apps() {
     assert!(same(&hd, c.doc().unwrap()), "the server's document is everyone's");
     host.execute("collab.stop", &json!({})).unwrap();
 }
+
+#[test]
+fn cursor_chat_and_spotlight_between_apps() {
+    let (mut host, mut guest, hana, ada) = host_and_join();
+    pump(&mut host, &mut guest, "both told signals work", |h, g| h.live.signals && g.live.signals);
+    // The guest chats next to its cursor; the host sees it, cleaned, and then sees it close.
+    guest.execute("collab.cursor", &json!({"x": 40, "y": 30})).unwrap();
+    guest.execute("collab.cursorChat", &json!({"text": "over\there"})).unwrap();
+    pump(&mut host, &mut guest, "the chat", |h, _| h.live.chats.get(&ada).is_some_and(|t| t == "over here"));
+    guest.execute("collab.cursorChat", &json!({"text": ""})).unwrap();
+    pump(&mut host, &mut guest, "the chat closing", |h, _| h.live.chats.is_empty());
+    // The host spotlights: the guest follows its view, page included.
+    let second = host.execute("page.add", &json!({"name": "Two"})).unwrap()["id"].as_u64().map(NodeId).unwrap();
+    pump(&mut host, &mut guest, "the new page at the guest", |_, g| g.doc().unwrap().pages.contains(&second));
+    assert_eq!(host.execute("collab.spotlight", &json!({})).unwrap()["spotlighting"], true);
+    {
+        let ds = host.ds_mut().unwrap();
+        ds.page = second;
+        ds.view.cx = 777.0;
+        ds.view.cy = -55.0;
+    }
+    pump(&mut host, &mut guest, "the guest following the spotlight", |_, g| {
+        let ds = g.ds().unwrap();
+        g.live.spotlight == Some(hana) && g.live.follow == Some(hana) && ds.page == second && (ds.view.cx - 777.0).abs() < 1e-6
+    });
+    // A late joiner is told and follows too.
+    let mut late = session("Lin");
+    late.execute("collab.join", &json!({"link": host.live.info.as_ref().unwrap().link.clone()})).unwrap();
+    pump(&mut host, &mut late, "the late joiner following", |_, l| l.live.follow == Some(hana) && l.live.spotlight == Some(hana));
+    // The guest moves: it stops following, the spotlight stays; the host stops it for everyone.
+    guest.ds_mut().unwrap().view.cx += 300.0;
+    guest.live_sync();
+    assert_eq!((guest.live.follow, guest.live.spotlight), (None, Some(hana)));
+    host.execute("collab.spotlight", &json!({"on": false})).unwrap();
+    pump(&mut host, &mut guest, "the spotlight ending", |_, g| g.live.spotlight.is_none());
+    pump(&mut host, &mut late, "the spotlight ending for the late joiner", |_, l| l.live.spotlight.is_none() && l.live.follow.is_none());
+}

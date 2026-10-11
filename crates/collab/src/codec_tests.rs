@@ -5,7 +5,8 @@ use figcraft_doc::{Document, NodeId, NodeKind};
 use crate::change::{Change, Json, Prop};
 use crate::message::{
     Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, FileUsage, Hello, LibraryReply, LibraryReq, LinkInfo, Manage,
-    NewLink, OpenLibrary, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, Usage, WIRE_VERSION, decode, decode_json, encode, encode_json,
+    NewLink, OpenLibrary, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, Signal, Usage, WIRE_VERSION, decode, decode_json, encode,
+    encode_json,
 };
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
@@ -60,6 +61,8 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ClientMsg::Library(LibraryReq::Fetch { have: Some(3), usage: Some(Usage { file: "Checkout".into(), components: vec![(NodeId(7), 12)] }) }),
         ClientMsg::Library(LibraryReq::Publish { archive: vec![0x50, 0x4B, 3, 4] }),
         ClientMsg::Library(LibraryReq::Usage),
+        ClientMsg::Signal(Signal::chat("Hi ☕")),
+        ClientMsg::Signal(Signal::spotlight(true)),
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
     let file = FileInfo { id: "f".into(), name: "Café".into(), created: 1, updated: 2, seq: 3, bytes: 4, people: 5 };
@@ -108,6 +111,8 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
             updated: 9,
         }]))),
         ServerMsg::Library(Box::new(LibraryReply::Failed { reason: "no".into() })),
+        ServerMsg::Signal { client_id: 4, signal: Signal::chat("Hi ☕") },
+        ServerMsg::Signal { client_id: 4, signal: Signal::ready() },
     ];
     (client, server)
 }
@@ -127,6 +132,8 @@ fn every_message_round_trips_in_both_forms() {
     let json = encode_json(&moved_layer()).unwrap();
     assert!(json.starts_with(r#"{"changes":{"base_seq":1234,"batch_id":56,"changes":[{"set":"#), "{json}");
     assert!(json.contains(r#""prop":"transform","value":[1.0,0.0,0.0,1.0,164.5,92.25]"#), "{json}");
+    let chat = encode_json(&ClientMsg::Signal(Signal::chat("hi"))).unwrap();
+    assert_eq!(chat, r#"{"signal":{"kind":"chat","text":"hi"}}"#);
     // The binary form starts with the wire version and carries values as JSON text.
     let bin = encode(&moved_layer()).unwrap();
     assert_eq!(bin[0], WIRE_VERSION);
