@@ -166,6 +166,12 @@ icons! {
     Reaction,
     /// Drag to reorder: two columns of three dots.
     DragHandle,
+    /// Arc start: a circle with a radius to the dot where the arc begins.
+    ArcStart,
+    /// Arc sweep: a circle with a wedge cut out of it.
+    ArcSweep,
+    /// Arc ratio: a ring.
+    ArcRatio,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -967,6 +973,20 @@ fn draw(p: &P, icon: Icon) {
             for (x, y) in [(2.5, 2.5), (9.5, 2.5), (2.5, 9.5), (9.5, 9.5)] {
                 p.rect(x, y, x + 4.0, y + 4.0, 1.0);
             }
+        }
+        ArcStart => {
+            p.circle(8.0, 8.0, 5.5);
+            p.line(8.0, 8.0, 13.5, 8.0);
+            p.dot(13.5, 8.0, 1.6);
+        }
+        ArcSweep => {
+            let mut wedge = vec![(8.0, 8.0)];
+            wedge.extend(arc_pts(8.0, 8.0, 5.5, 0.0, 1.5 * PI));
+            p.path(&wedge, true);
+        }
+        ArcRatio => {
+            p.circle(8.0, 8.0, 5.5);
+            p.circle(8.0, 8.0, 2.5);
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

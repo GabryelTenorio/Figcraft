@@ -112,17 +112,74 @@ impl StrokeProps {
 }
 
 /// One point of a variable width profile.
+///
+/// The width can differ on the two sides of the path. Looking along the path on screen (y down),
+/// the left side reaches `weight × scale × (1 − bias) / 2` from the centre line and the right side
+/// `weight × scale × (1 + bias) / 2`. A side's **side scale** (`scale × (1 ∓ bias)`) is in the units
+/// of `scale`: a symmetric point has both side scales equal to `scale`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WidthPoint {
     /// Position along the path by length: 0 at its start, 1 at its end (each subpath on its own).
     pub t: f64,
-    /// The stroke's width here as a multiple of the stroke weight.
+    /// The stroke's width here as a multiple of the stroke weight (the mean of the side scales).
     pub scale: f64,
+    /// How much wider the right side is than the left, -1..=1 (0: symmetric; 1: all on the right).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bias: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// A side of a path for one-sided widths (looking along the path on screen, y down).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WidthSide {
+    Left,
+    Right,
+}
+
+impl WidthSide {
+    pub fn from_id(s: &str) -> Option<WidthSide> {
+        match s.to_ascii_lowercase().as_str() {
+            "left" => Some(WidthSide::Left),
+            "right" => Some(WidthSide::Right),
+            _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            WidthSide::Left => "left",
+            WidthSide::Right => "right",
+        }
+    }
 }
 
 impl WidthPoint {
+    /// A symmetric point.
     pub const fn new(t: f64, scale: f64) -> Self {
-        Self { t, scale }
+        Self { t, scale, bias: 0.0 }
+    }
+
+    /// A point from its left and right side scales (negative or non-finite sides count as 0).
+    pub fn from_sides(t: f64, left: f64, right: f64) -> Self {
+        let clean = |v: f64| if v.is_finite() { v.max(0.0) } else { 0.0 };
+        let (l, r) = (clean(left), clean(right));
+        let sum = l + r;
+        let bias = if sum > 1e-12 { ((r - l) / sum).clamp(-1.0, 1.0) } else { 0.0 };
+        Self { t, scale: sum / 2.0, bias }
+    }
+
+    /// The left and right side scales.
+    pub fn sides(&self) -> (f64, f64) {
+        (self.scale * (1.0 - self.bias), self.scale * (1.0 + self.bias))
+    }
+
+    /// Whether both sides are as wide.
+    pub fn symmetric(&self) -> bool {
+        self.bias == 0.0
     }
 }
 
@@ -160,73 +217,125 @@ impl WidthProfile {
             .iter()
             .filter(|p| p.t.is_finite() && p.scale.is_finite())
             .take(Self::MAX_POINTS)
-            .map(|p| WidthPoint::new(p.t.clamp(0.0, 1.0), p.scale.clamp(0.0, Self::MAX_SCALE)))
+            .map(|p| WidthPoint {
+                t: p.t.clamp(0.0, 1.0),
+                scale: p.scale.clamp(0.0, Self::MAX_SCALE),
+                bias: if p.bias.is_finite() { p.bias.clamp(-1.0, 1.0) } else { 0.0 },
+            })
             .collect();
         points.sort_by(|a, b| a.t.total_cmp(&b.t));
         Self { points }
     }
 
-    /// The width scale at `t` (0..1 along the path).
+    /// The width scale at `t` (0..1 along the path): the mean of the two sides' scales.
     pub fn scale_at(&self, t: f64) -> f64 {
+        let (l, r) = self.sides_at(t);
+        (l + r) / 2.0
+    }
+
+    /// The left and right side scales at `t`, each side interpolated on its own.
+    pub fn sides_at(&self, t: f64) -> (f64, f64) {
+        if self.symmetric() {
+            let s = self.interp(t, |p| p.scale);
+            return (s, s);
+        }
+        (self.interp(t, |p| p.sides().0), self.interp(t, |p| p.sides().1))
+    }
+
+    /// Whether every point is as wide on both sides.
+    pub fn symmetric(&self) -> bool {
+        self.points.iter().all(WidthPoint::symmetric)
+    }
+
+    /// `value` of the points at `t`: monotone cubic between points, held flat before the first and
+    /// after the last.
+    fn interp(&self, t: f64, value: impl Fn(&WidthPoint) -> f64) -> f64 {
         let pts = &self.points;
         let (Some(first), Some(last)) = (pts.first(), pts.last()) else { return 1.0 };
         if !t.is_finite() || t <= first.t {
-            return first.scale;
+            return value(first);
         }
         if t >= last.t {
-            return last.scale;
+            return value(last);
         }
         let k = pts.partition_point(|p| p.t <= t).saturating_sub(1);
-        let (Some(a), Some(b)) = (pts.get(k), pts.get(k + 1)) else { return last.scale };
+        let (Some(a), Some(b)) = (pts.get(k), pts.get(k + 1)) else { return value(last) };
         let h = b.t - a.t;
         if h <= 1e-12 {
-            return b.scale;
+            return value(b);
         }
         let u = (t - a.t) / h;
         let (u2, u3) = (u * u, u * u * u);
-        let w = (2.0 * u3 - 3.0 * u2 + 1.0) * a.scale
-            + (u3 - 2.0 * u2 + u) * h * self.tangent(k)
-            + (3.0 * u2 - 2.0 * u3) * b.scale
-            + (u3 - u2) * h * self.tangent(k + 1);
+        let w = (2.0 * u3 - 3.0 * u2 + 1.0) * value(a)
+            + (u3 - 2.0 * u2 + u) * h * self.tangent(k, &value)
+            + (3.0 * u2 - 2.0 * u3) * value(b)
+            + (u3 - u2) * h * self.tangent(k + 1, &value);
         w.max(0.0)
     }
 
-    /// Slope of the segment from point `i` to `i + 1` (0 when they share a position).
-    fn secant(&self, i: usize) -> f64 {
+    /// Slope of `value` from point `i` to `i + 1` (0 when they share a position).
+    fn secant(&self, i: usize, value: &impl Fn(&WidthPoint) -> f64) -> f64 {
         match (self.points.get(i), self.points.get(i + 1)) {
-            (Some(a), Some(b)) if b.t - a.t > 1e-12 => (b.scale - a.scale) / (b.t - a.t),
+            (Some(a), Some(b)) if b.t - a.t > 1e-12 => (value(b) - value(a)) / (b.t - a.t),
             _ => 0.0,
         }
     }
 
     /// Fritsch–Carlson style tangent at point `i`: one-sided at the ends, the harmonic mean of the
     /// neighbouring slopes inside, flat at local extremes (keeps the curve monotone between points).
-    fn tangent(&self, i: usize) -> f64 {
+    fn tangent(&self, i: usize, value: &impl Fn(&WidthPoint) -> f64) -> f64 {
         let last = self.points.len().saturating_sub(1);
         if i == 0 {
-            return self.secant(0);
+            return self.secant(0, value);
         }
         if i >= last {
-            return self.secant(last.saturating_sub(1));
+            return self.secant(last.saturating_sub(1), value);
         }
-        let (d0, d1) = (self.secant(i - 1), self.secant(i));
+        let (d0, d1) = (self.secant(i - 1, value), self.secant(i, value));
         if d0 * d1 <= 0.0 { 0.0 } else { 2.0 * d0 * d1 / (d0 + d1) }
     }
 
-    /// The largest scale (the interpolation never exceeds its points).
+    /// The largest side scale (the interpolation never exceeds its points): the widest the
+    /// stroke reaches from its centre line is `weight × max_scale / 2`.
     pub fn max_scale(&self) -> f64 {
-        self.points.iter().map(|p| p.scale).fold(0.0, f64::max)
+        self.points.iter().map(|p| p.sides().0.max(p.sides().1)).fold(0.0, f64::max)
     }
 
-    /// Add a point (kept sorted); returns its index.
+    /// Add a symmetric point (kept sorted); returns its index.
     pub fn insert(&mut self, t: f64, scale: f64) -> usize {
-        let p = WidthPoint::new(
-            if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 },
-            if scale.is_finite() { scale.clamp(0.0, Self::MAX_SCALE) } else { 1.0 },
-        );
+        self.insert_point(WidthPoint::new(t, if scale.is_finite() { scale } else { 1.0 }))
+    }
+
+    /// Add a point at `t` as wide on each side as the stroke already is there; returns its index.
+    pub fn insert_here(&mut self, t: f64) -> usize {
+        let (l, r) = self.sides_at(t);
+        self.insert_point(WidthPoint::from_sides(t, l, r))
+    }
+
+    fn insert_point(&mut self, mut p: WidthPoint) -> usize {
+        p.t = if p.t.is_finite() { p.t.clamp(0.0, 1.0) } else { 0.0 };
+        p.scale = p.scale.clamp(0.0, Self::MAX_SCALE);
         let i = self.points.partition_point(|q| q.t <= p.t);
         self.points.insert(i, p);
         i
+    }
+
+    /// Set one side of point `i` to side scale `scale`, keeping the other side. Returns false when
+    /// there is no such point.
+    pub fn set_side(&mut self, i: usize, side: WidthSide, scale: f64) -> bool {
+        let Some(p) = self.points.get_mut(i) else { return false };
+        if !scale.is_finite() {
+            return true;
+        }
+        let s = scale.clamp(0.0, 2.0 * Self::MAX_SCALE);
+        let (l, r) = p.sides();
+        let q = match side {
+            WidthSide::Left => WidthPoint::from_sides(p.t, s, r),
+            WidthSide::Right => WidthPoint::from_sides(p.t, l, s),
+        };
+        p.scale = q.scale.min(Self::MAX_SCALE);
+        p.bias = q.bias;
+        true
     }
 
     /// Move point `i` along the path (kept between its neighbours, so indices stay put) and/or
@@ -238,8 +347,10 @@ impl WidthProfile {
         if let Some(t) = t.filter(|t| t.is_finite()) {
             p.t = t.clamp(lo, hi.max(lo));
         }
+        // A new width makes the point symmetric again.
         if let Some(s) = scale.filter(|s| s.is_finite()) {
             p.scale = s.clamp(0.0, Self::MAX_SCALE);
+            p.bias = 0.0;
         }
         true
     }

@@ -21,7 +21,8 @@ fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (l
 (widthAndHeight|height|none|truncate), textDecoration, textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
 listStyle (none|bulleted|numbered), maxLines, features ({tag: bool}, e.g. {\"liga\": false, \"tnum\": true}), \
 fontVariations / variationSettings ({axis: number}, e.g. {\"wght\": 550, \"wdth\": 85}; null = none), pointCount, innerRadius, arcStart, arcSweep, \
-arcInner, constrainProportions, description, interactions, overflow, pluginData {k: v}";
+arcInner, booleanOperation (a boolean group's operation, or an operand's own; null: the group's), operandOperation (a layer in a boolean \
+group: how it combines with the operands below it; null: the group's), constrainProportions, description, interactions, overflow, pluginData {k: v}";
 
 /// camelCase object keys → snake_case (accept the inspect/camel forms for serde-backed values).
 pub fn snake(v: &Value) -> Value {
@@ -117,27 +118,69 @@ fn four(v: &Value) -> Option<[f64; 4]> {
     }
 }
 
-pub(crate) const WIDTH_PROFILE_HELP: &str = "widthProfile: a preset (uniform|wedge|taper|eye|rounded|pinch), points [[t (0-1 along the path), scale (× stroke weight)], ...] or [{t, scale}], {preset} | {points}, or null (uniform)";
+const BOOL_OP_HELP: &str = "booleanOperation / operandOperation: union|subtract|intersect|exclude (null: the group's, for operands)";
 
-/// A width profile from a preset name, points (`[[t, scale], ...]` or `[{t, scale}]`), `{preset}`
-/// / `{points}`, or null. `Some(None)` = uniform; `None` = not a profile.
+/// An operand's own boolean operation (`null`: its group's).
+fn set_operand_op(doc: &mut Document, id: NodeId, v: &Value, cmd: &str) -> Result<()> {
+    if crate::booleans::group_of(doc, id).is_none() {
+        return Err(bad(cmd, "not a boolean group or a layer in one"));
+    }
+    doc.get_mut(id)?.bool_op = if v.is_null() { None } else { Some(enum_of(v).ok_or_else(|| bad(cmd, BOOL_OP_HELP))?) };
+    Ok(())
+}
+
+pub(crate) const WIDTH_PROFILE_HELP: &str = "widthProfile: a preset (uniform|wedge|taper|eye|rounded|pinch), points [[t (0-1 along the path), scale (× stroke weight)] | [t, left, right] (one-sided: each side's scale, looking along the path), ...] or [{t, scale} | {t, left, right}], {preset} | {points}, or null (uniform)";
+
+/// A width profile from a preset name, points (`[[t, scale] | [t, left, right], ...]` or
+/// `[{t, scale} | {t, left, right}]`), `{preset}` / `{points}`, or null. `Some(None)` = uniform;
+/// `None` = not a profile.
 pub fn width_profile_of(v: &Value) -> Option<Option<WidthProfile>> {
     match v {
         Value::Null => Some(None),
         Value::String(s) => WidthPreset::from_id(s).map(WidthPreset::profile),
         Value::Array(a) => {
-            let pts = a
+            let num = |x: Option<&Value>| x.and_then(f64_of);
+            let points = a
                 .iter()
                 .map(|p| match p {
-                    Value::Array(xy) => Some((xy.first().and_then(f64_of)?, xy.get(1).and_then(f64_of)?)),
-                    Value::Object(o) => Some((o.get("t").and_then(f64_of)?, o.get("scale").or_else(|| o.get("width")).and_then(f64_of)?)),
+                    Value::Array(xy) => match (num(xy.first()), num(xy.get(1)), num(xy.get(2))) {
+                        (Some(t), Some(l), Some(r)) => Some(WidthPoint::from_sides(t, l, r)),
+                        (Some(t), Some(s), None) => Some(WidthPoint::new(t, s)),
+                        _ => None,
+                    },
+                    Value::Object(o) => {
+                        let t = num(o.get("t"))?;
+                        match (num(o.get("left")), num(o.get("right"))) {
+                            (Some(l), Some(r)) => Some(WidthPoint::from_sides(t, l, r)),
+                            _ => Some(WidthPoint::new(t, num(o.get("scale").or_else(|| o.get("width")))?)),
+                        }
+                    }
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()?;
-            Some(Some(WidthProfile::new(pts)).filter(|p| !p.points.is_empty()))
+            Some(Some(WidthProfile { points }.sanitized()).filter(|p| !p.points.is_empty()))
         }
         Value::Object(o) => o.get("points").or_else(|| o.get("preset")).and_then(width_profile_of),
         _ => None,
+    }
+}
+
+/// A width point as [`width_profile_of`] reads it back: `[t, scale]`, or `[t, left, right]` when
+/// its sides differ.
+pub fn width_point_json(p: &WidthPoint) -> Value {
+    if p.symmetric() {
+        json!([p.t, p.scale])
+    } else {
+        let (l, r) = p.sides();
+        json!([p.t, l, r])
+    }
+}
+
+/// A profile's points as [`width_profile_of`] reads them back (`null` without points).
+pub fn width_points_json(profile: Option<&WidthProfile>) -> Value {
+    match profile.filter(|p| !p.points.is_empty()) {
+        Some(p) => Value::Array(p.points.iter().map(width_point_json).collect()),
+        None => Value::Null,
     }
 }
 
@@ -597,10 +640,13 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                     }
                 }
             }
-            "booleanOperation" => match &mut doc.get_mut(id)?.kind {
-                NodeKind::BooleanOp { op } => *op = enum_of(v).ok_or_else(|| bad(cmd, "booleanOperation: union|subtract|intersect|exclude"))?,
-                _ => return Err(bad(cmd, "not a boolean group")),
-            },
+            "booleanOperation" if !matches!(doc.get(id)?.kind, NodeKind::BooleanOp { .. }) => set_operand_op(doc, id, v, cmd)?,
+            "booleanOperation" => {
+                if let NodeKind::BooleanOp { op } = &mut doc.get_mut(id)?.kind {
+                    *op = enum_of(v).ok_or_else(|| bad(cmd, BOOL_OP_HELP))?;
+                }
+            }
+            "operandOperation" => set_operand_op(doc, id, v, cmd)?,
             "sectionContentsHidden" => {
                 if let NodeKind::Section { contents_hidden } = &mut doc.get_mut(id)?.kind {
                     *contents_hidden = v.as_bool().unwrap_or(false);

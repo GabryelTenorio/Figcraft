@@ -53,7 +53,7 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
                 o.insert("dashes".into(), json!(n.stroke.dashes));
             }
             if let Some(p) = n.stroke.profile() {
-                let points: Vec<[f64; 2]> = p.points.iter().map(|q| [q.t, q.scale]).collect();
+                let points = crate::cmd::props::width_points_json(Some(p));
                 o.insert("widthProfile".into(), json!({"preset": p.preset().map(|x| x.id()), "points": points}));
             }
         }
@@ -144,6 +144,10 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
         if let Some(slot) = crate::components::slot_name(doc, n.id) {
             o.insert("slot".into(), json!(slot));
+        }
+        // An operand combining by an operation of its own.
+        if let Some(op) = n.bool_op.filter(|_| crate::booleans::group_of(doc, n.id).is_some()) {
+            o.insert("operandOperation".into(), json!(op));
         }
     }
     match &n.kind {

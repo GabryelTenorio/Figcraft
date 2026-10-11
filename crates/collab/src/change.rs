@@ -166,6 +166,7 @@ node_props! {
     Styles => styles,
     Bound => bound,
     VarModes => var_modes,
+    BoolOp => bool_op,
     ConstrainProportions => constrain_proportions,
     Source => source,
     Exposed => exposed,

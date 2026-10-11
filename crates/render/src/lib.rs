@@ -7,6 +7,7 @@
 
 pub mod backdrop;
 pub mod blur;
+pub mod boolean;
 pub mod draw;
 pub mod fx;
 pub mod glass;
@@ -17,7 +18,7 @@ pub mod paint;
 pub mod retained;
 pub mod shadow;
 
-pub use draw::{node_outline, paint_bounds, subtree_outline, ts_path};
+pub use draw::{node_outline, paint_bounds, stroke_fill, subtree_outline, ts_path};
 pub use retained::{Retained, Work};
 pub use tiny_skia::{FillRule, Pixmap};
 
@@ -375,6 +376,8 @@ pub fn png_insert_chunk(png: Vec<u8>, kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
 mod backdrop_tests;
 #[cfg(test)]
 mod band_tests;
+#[cfg(test)]
+mod boolean_cache_tests;
 #[cfg(test)]
 mod effect_order_tests;
 #[cfg(test)]

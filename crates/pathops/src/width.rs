@@ -2,9 +2,10 @@
 //! follows a [`WidthProfile`] along each subpath.
 //!
 //! The path is flattened into polylines (sampled densely enough for the width to vary smoothly),
-//! each point is offset along the polyline's normals by the interpolated half-width, the sides are
-//! joined (round, miter or bevel on the outer side, through the centre on the inner side) and
-//! capped. The result may overlap itself; fill it with the non-zero rule.
+//! each point is offset along the polyline's normals by the interpolated half-width of that side
+//! (the two sides can differ: one-sided widths), the sides are joined (round, miter or bevel on the
+//! outer side, through the centre on the inner side) and capped. The result may overlap itself;
+//! fill it with the non-zero rule.
 
 use figcraft_doc::{StrokeCap, StrokeJoin, StrokeProps, WidthProfile};
 use figcraft_geom::kurbo::{self, BezPath, PathEl, Point, Vec2};
@@ -132,13 +133,22 @@ pub fn nearest(lines: &[Polyline], p: Point) -> Option<(usize, f64, f64)> {
     lines.iter().enumerate().filter_map(|(i, l)| l.nearest(p).map(|(t, d)| (i, t, d))).min_by(|a, b| a.2.total_cmp(&b.2))
 }
 
+/// Half-widths at a sample: `[along the normal, against it]`. The normal is the direction turned
+/// clockwise on screen (y down), so the first is the right side looking along the path.
+type Half = [f64; 2];
+
+/// The half-width of `h` on side `sigma` (+1 = along the normal).
+fn on(h: Half, sigma: f64) -> f64 {
+    if sigma > 0.0 { h[0] } else { h[1] }
+}
+
 /// One straight piece of an offset polyline: its ends, the half-widths there, its direction and
 /// normal.
 struct Seg {
     a: Point,
     b: Point,
-    ha: f64,
-    hb: f64,
+    ha: Half,
+    hb: Half,
     d: Vec2,
     n: Vec2,
 }
@@ -179,8 +189,9 @@ fn arc(out: &mut Vec<Point>, c: Point, from: Vec2, sweep: f64, r0: f64, r1: f64)
 
 /// The corner between segments `p` and `c` on side `sigma` (+1 = the normal's side).
 fn join(out: &mut Vec<Point>, p: &Seg, c: &Seg, sigma: f64, style: Style) {
-    let pe = p.b + p.n * (sigma * p.hb);
-    let cs = c.a + c.n * (sigma * c.ha);
+    let (phb, cha) = (on(p.hb, sigma), on(c.ha, sigma));
+    let pe = p.b + p.n * (sigma * phb);
+    let cs = c.a + c.n * (sigma * cha);
     out.push(pe);
     let (cross, dot) = (p.d.cross(c.d), p.d.dot(c.d));
     if cross.abs() < 1e-12 && dot > 0.0 {
@@ -193,12 +204,12 @@ fn join(out: &mut Vec<Point>, p: &Seg, c: &Seg, sigma: f64, style: Style) {
     if outer {
         let theta = if cross.abs() < 1e-12 { std::f64::consts::PI } else { cross.atan2(dot) };
         match style.join {
-            StrokeJoin::Round => arc(out, v, pe - v, theta, p.hb, c.ha),
+            StrokeJoin::Round => arc(out, v, pe - v, theta, phb, cha),
             StrokeJoin::Miter => {
                 let half = (theta / 2.0).cos();
                 let bis = p.n + c.n;
                 if half > 1e-6 && 1.0 / half <= style.miter_limit && bis.hypot() > 1e-9 {
-                    out.push(v + bis * (sigma * (p.hb + c.ha) / 2.0 / half / bis.hypot()));
+                    out.push(v + bis * (sigma * (phb + cha) / 2.0 / half / bis.hypot()));
                 }
             }
             StrokeJoin::Bevel => {}
@@ -217,25 +228,26 @@ fn side(segs: &[Seg], sigma: f64, closed: bool, style: Style) -> Vec<Point> {
         let prev = if j == 0 { closed.then(|| segs.last()).flatten() } else { segs.get(j - 1) };
         match prev {
             Some(p) => join(&mut out, p, s, sigma, style),
-            None => out.push(s.a + s.n * (sigma * s.ha)),
+            None => out.push(s.a + s.n * (sigma * on(s.ha, sigma))),
         }
     }
     if !closed && let Some(l) = segs.last() {
-        out.push(l.b + l.n * (sigma * l.hb));
+        out.push(l.b + l.n * (sigma * on(l.hb, sigma)));
     }
     out
 }
 
-/// A cap at `c` facing `dir` (unit, outwards) with half-width `h`: from the `dir.turn_90()` side
-/// to the other one.
-fn cap(out: &mut Vec<Point>, c: Point, dir: Vec2, h: f64, kind: StrokeCap) {
+/// A cap at `c` facing `dir` (unit, outwards) from the `dir.turn_90()` side, `from` wide, to the
+/// other side, `to` wide. Lopsided ends are capped around the middle of the end.
+fn cap(out: &mut Vec<Point>, c: Point, dir: Vec2, from: f64, to: f64, kind: StrokeCap) {
     let n = dir.turn_90();
+    let (m, r) = (c + n * ((from - to) / 2.0), (from + to) / 2.0);
     match cap_shape(kind) {
         StrokeCap::Square => {
-            out.push(c + n * h + dir * h);
-            out.push(c - n * h + dir * h);
+            out.push(m + n * r + dir * r);
+            out.push(m - n * r + dir * r);
         }
-        StrokeCap::Round => arc(out, c, n, -std::f64::consts::PI, h, h),
+        StrokeCap::Round => arc(out, m, n, -std::f64::consts::PI, r, r),
         _ => {}
     }
 }
@@ -251,7 +263,7 @@ fn push_contour(path: &mut BezPath, pts: impl IntoIterator<Item = Point>) {
 }
 
 /// Outline one piece (a subpath or a dash) with its half-widths.
-fn outline_piece(path: &mut BezPath, pts: &[Point], hw: &[f64], closed: bool, style: Style) {
+fn outline_piece(path: &mut BezPath, pts: &[Point], hw: &[Half], closed: bool, style: Style) {
     let segs: Vec<Seg> = pts
         .windows(2)
         .zip(hw.windows(2))
@@ -266,11 +278,12 @@ fn outline_piece(path: &mut BezPath, pts: &[Point], hw: &[f64], closed: bool, st
         .collect();
     let (Some(first), Some(last)) = (segs.first(), segs.last()) else {
         // A zero-length piece is a dot with round caps.
-        if let (Some(p), Some(h)) = (pts.first(), hw.first())
+        let r = hw.first().map_or(0.0, |h| (h[0] + h[1]) / 2.0);
+        if let Some(p) = pts.first()
             && cap_shape(style.cap_start) == StrokeCap::Round
-            && *h > 0.0
+            && r > 0.0
         {
-            path.extend(kurbo::Shape::path_elements(&kurbo::Circle::new(*p, *h), FLATTEN_TOL));
+            path.extend(kurbo::Shape::path_elements(&kurbo::Circle::new(*p, r), FLATTEN_TOL));
         }
         return;
     };
@@ -282,18 +295,18 @@ fn outline_piece(path: &mut BezPath, pts: &[Point], hw: &[f64], closed: bool, st
         return;
     }
     let mut ring = left;
-    cap(&mut ring, last.b, last.d, last.hb, style.cap_end);
+    cap(&mut ring, last.b, last.d, last.hb[0], last.hb[1], style.cap_end);
     ring.extend(right.into_iter().rev());
-    cap(&mut ring, first.a, -first.d, first.ha, style.cap_start);
+    cap(&mut ring, first.a, -first.d, first.ha[1], first.ha[0], style.cap_start);
     push_contour(path, ring);
 }
 
 /// Split a sampled polyline into dashes (`pattern` alternates dash and gap lengths).
-fn dashes(pts: &[Point], hw: &[f64], pattern: &[f64]) -> Vec<(Vec<Point>, Vec<f64>)> {
+fn dashes(pts: &[Point], hw: &[Half], pattern: &[f64]) -> Vec<(Vec<Point>, Vec<Half>)> {
     let mut out = Vec::new();
     let Some(&first) = pattern.first() else { return out };
     let (mut idx, mut left, mut on) = (0usize, first, true);
-    let mut cur: (Vec<Point>, Vec<f64>) = (pts.iter().take(1).copied().collect(), hw.iter().take(1).copied().collect());
+    let mut cur: (Vec<Point>, Vec<Half>) = (pts.iter().take(1).copied().collect(), hw.iter().take(1).copied().collect());
     for (p, h) in pts.windows(2).zip(hw.windows(2)) {
         let (a, b, ha, hb) = (p[0], p[1], h[0], h[1]);
         let len = (b - a).hypot();
@@ -301,7 +314,7 @@ fn dashes(pts: &[Point], hw: &[f64], pattern: &[f64]) -> Vec<(Vec<Point>, Vec<f6
         while len - used > left {
             used += left;
             let f = if len > 0.0 { used / len } else { 0.0 };
-            let (q, hq) = (a.lerp(b, f), ha + (hb - ha) * f);
+            let (q, hq) = (a.lerp(b, f), [ha[0] + (hb[0] - ha[0]) * f, ha[1] + (hb[1] - ha[1]) * f]);
             if on {
                 cur.0.push(q);
                 cur.1.push(hq);
@@ -381,7 +394,13 @@ pub fn variable_outline(path: &BezPath, width: f64, props: &StrokeProps, profile
             continue;
         }
         let (pts, lens) = resample(line, len / SAMPLES_PER_SUBPATH, &mut budget)?;
-        let hw: Vec<f64> = lens.iter().map(|s| 0.5 * width * profile.scale_at(s / len)).collect();
+        let hw: Vec<Half> = lens
+            .iter()
+            .map(|s| {
+                let (left, right) = profile.sides_at(s / len);
+                [0.5 * width * right, 0.5 * width * left]
+            })
+            .collect();
         match &pattern {
             Some(pat) if len / pat.iter().sum::<f64>() * (pat.len() as f64) < MAX_DASHES as f64 => {
                 for (p, h) in dashes(&pts, &hw, pat) {

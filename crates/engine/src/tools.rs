@@ -1016,9 +1016,10 @@ impl Session {
                     let p = ev.p();
                     let home = moving.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent);
                     // Absolute children of an auto layout frame stay in it, and so do the layers of
-                    // an instance (outside its slots: they only move); the rest may change parent.
+                    // an instance (outside its slots: they only move) and the operands of a boolean
+                    // group (its result follows them); the rest may change parent.
                     let flow = moving.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute))
-                        && !home.is_some_and(|h| crate::components::structure_locked(doc, h));
+                        && !home.is_some_and(|h| crate::components::structure_locked(doc, h) || crate::booleans::is_group(doc, h));
                     let target = if flow { crate::drop::drag_parent(doc, page, p, &moving) } else { home.unwrap_or(page) };
                     let mode = doc.node(target).and_then(|n| n.layout.as_ref()).map(|l| l.mode);
                     if let (true, Some(mode)) = (flow, mode) {
@@ -1410,9 +1411,11 @@ impl Session {
                         let before = ds.doc.clone();
                         let d = ds.doc_mut();
                         for m in &moving {
-                            // Instance layers stay put (outside slots): they only move.
+                            // Instance layers (outside slots) and boolean operands stay put: they only move.
                             let from = d.node(*m).and_then(|n| n.parent);
-                            if from.is_some_and(|f| crate::components::structure_locked(d, f)) || crate::components::structure_locked(d, target) {
+                            if from.is_some_and(|f| crate::components::structure_locked(d, f) || crate::booleans::is_group(d, f))
+                                || crate::components::structure_locked(d, target)
+                            {
                                 continue;
                             }
                             // A layer can't go into itself; it stays where it is.
@@ -1506,9 +1509,8 @@ impl Session {
         if doc.node(target).is_some_and(|n| n.kind.is_shape()) && sel.contains(&target) {
             return crate::vectoredit::begin(self, target);
         }
-        // Groups/frames: select one level deeper (the child under the pointer).
-        let deeper =
-            select_target(&doc, leaf, &[select_target(&doc, leaf, &sel, false)].into_iter().chain(sel.iter().copied()).collect::<Vec<_>>(), false);
+        // Groups, frames and boolean groups: select one level deeper (the layer under the pointer).
+        let deeper = figcraft_doc::geometry::enter_target(&doc, leaf, &sel);
         if deeper != target || !sel.contains(&deeper) {
             self.set_selection(vec![deeper]);
         }

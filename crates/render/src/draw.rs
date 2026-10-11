@@ -10,6 +10,7 @@ use figcraft_geom::{Affine, BezPath, Rect, Shape};
 use tiny_skia::{FillRule, IntRect, Mask, MaskType, Pixmap, PixmapPaint, Transform};
 
 use crate::backdrop::{self, Under};
+use crate::boolean::{PathCache, locked};
 use crate::paint::{prepare, ts_blend};
 use crate::{blur, grain, lod, shadow};
 
@@ -68,9 +69,9 @@ fn fill_with(
 }
 
 /// Stroke outline cache: (geometry hash) → outline path.
-fn stroke_cache() -> &'static Mutex<HashMap<u64, Arc<BezPath>>> {
-    static C: OnceLock<Mutex<HashMap<u64, Arc<BezPath>>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(HashMap::new()))
+fn stroke_cache() -> &'static Mutex<PathCache> {
+    static C: OnceLock<Mutex<PathCache>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(PathCache::new(4096)))
 }
 
 pub(crate) fn hash_path(p: &BezPath, h: &mut impl Hasher) {
@@ -143,19 +144,30 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     }
     props.dashes.len().hash(&mut h);
     for p in props.profile().map(|p| p.points.as_slice()).unwrap_or_default() {
-        (p.t.to_bits(), p.scale.to_bits()).hash(&mut h);
+        (p.t.to_bits(), p.scale.to_bits(), p.bias.to_bits()).hash(&mut h);
     }
     let key = h.finish();
-    if let Some(p) = stroke_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
-        return p.clone();
+    if let Some(p) = locked(stroke_cache()).get(key) {
+        return p;
     }
     let out = Arc::new(figcraft_pathops::stroke_outline(path, props, closed));
-    let mut c = stroke_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if c.len() > 4096 {
-        c.clear();
-    }
-    c.insert(key, out.clone());
+    locked(stroke_cache()).insert(key, out.clone());
     out
+}
+
+/// A node's painted stroke area in local coordinates with the rule to fill it by (`None` without a
+/// visible stroke or geometry). Text strokes follow its glyphs and aren't covered.
+pub fn stroke_fill(doc: &Document, n: &Node) -> Option<(Arc<BezPath>, FillRule)> {
+    if !n.has_visible_stroke() {
+        return None;
+    }
+    let closed = figcraft_doc::geometry::is_closed(n) || matches!(n.kind, NodeKind::BooleanOp { .. });
+    let geom = match &n.kind {
+        NodeKind::BooleanOp { .. } => node_outline(doc, n).map(|(p, _)| p),
+        NodeKind::Text(_) | NodeKind::Group | NodeKind::Page { .. } => None,
+        _ => figcraft_doc::geometry::stroke_geometry(n),
+    }?;
+    Some((stroke_area(n, &geom, closed), stroke_rule(n, closed)))
 }
 
 /// Even-odd ring paths need the even-odd rule; everything else non-zero.
@@ -172,7 +184,7 @@ pub(crate) fn stroke_rule(n: &Node, closed: bool) -> FillRule {
 pub fn node_outline(doc: &Document, n: &Node) -> Option<(BezPath, FillRule)> {
     match &n.kind {
         NodeKind::BooleanOp { op } => {
-            let paths: Vec<BezPath> = n
+            let operands: Vec<(BezPath, figcraft_doc::BoolOp)> = n
                 .children
                 .iter()
                 .filter_map(|c| doc.node(*c))
@@ -180,11 +192,10 @@ pub fn node_outline(doc: &Document, n: &Node) -> Option<(BezPath, FillRule)> {
                 .filter_map(|c| {
                     let (mut p, _) = subtree_outline(doc, c, 0)?;
                     p.apply_affine(c.transform);
-                    Some(p)
+                    Some((p, c.bool_op.unwrap_or(*op)))
                 })
                 .collect();
-            let p = boolean_cached(&paths, *op);
-            Some((p, FillRule::EvenOdd))
+            Some((crate::boolean::fold_cached(&operands), FillRule::EvenOdd))
         }
         NodeKind::Text(_) => {
             let (l, dy) = figcraft_text::layout_node(n)?;
@@ -228,31 +239,6 @@ pub fn subtree_outline(doc: &Document, n: &Node, depth: usize) -> Option<(BezPat
         }
         _ => node_outline(doc, n),
     }
-}
-
-fn boolean_cache() -> &'static Mutex<HashMap<u64, Arc<BezPath>>> {
-    static C: OnceLock<Mutex<HashMap<u64, Arc<BezPath>>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn boolean_cached(paths: &[BezPath], op: figcraft_doc::BoolOp) -> BezPath {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (op as u8).hash(&mut h);
-    for p in paths {
-        hash_path(p, &mut h);
-        9u8.hash(&mut h);
-    }
-    let key = h.finish();
-    if let Some(p) = boolean_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
-        return (**p).clone();
-    }
-    let out = figcraft_pathops::boolean(paths, op).unwrap_or_default();
-    let mut c = boolean_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if c.len() > 2048 {
-        c.clear();
-    }
-    c.insert(key, Arc::new(out.clone()));
-    out
 }
 
 fn device_rect(xf: Affine, r: Rect) -> Rect {

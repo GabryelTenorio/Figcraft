@@ -117,15 +117,9 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Opt
     if clips && !hits_node_itself(doc, id, n, pt, 0.0) {
         return None;
     }
-    if matches!(n.kind, NodeKind::BooleanOp { .. }) {
-        // A boolean group is hit as one shape (approximated by any child hit).
-        for c in n.children.iter().rev() {
-            if hit_rec(doc, *c, pt, tol, depth + 1).is_some() {
-                return Some(id);
-            }
-        }
-        return None;
-    }
+    // A boolean group is hit where an operand is (an approximation of its result). The leaf is the
+    // operand, so a plain click still selects the group (see `select_target`) while a deep click,
+    // a double click or a selected sibling operand reaches the operand itself.
     for c in n.children.iter().rev() {
         if let Some(h) = hit_rec(doc, *c, pt, tol, depth + 1) {
             return Some(h);
@@ -220,6 +214,17 @@ pub fn select_target(doc: &Document, leaf: NodeId, context: &[NodeId], deep: boo
         return chain.get(i).copied().unwrap_or(leaf);
     }
     top
+}
+
+/// What a double click on `leaf` selects: one level deeper than the selection, i.e. the layer
+/// holding `leaf` just inside the deepest selected layer that holds it (entering groups, frames
+/// and boolean groups), or the plain click target when no selected layer holds it.
+pub fn enter_target(doc: &Document, leaf: NodeId, selection: &[NodeId]) -> NodeId {
+    let mut chain: Vec<NodeId> = doc.ancestors(leaf);
+    chain.reverse();
+    chain.push(leaf);
+    let inner = chain.iter().rposition(|c| selection.contains(c)).and_then(|i| chain.get(i + 1)).copied();
+    inner.unwrap_or_else(|| select_target(doc, leaf, selection, false))
 }
 
 /// Nodes on `page` whose world bounds intersect `rect` (marquee): top-level children, or the

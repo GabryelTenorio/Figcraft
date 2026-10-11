@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (created; collected from the ROADMAP, the keymap and the canvas code) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -52,10 +52,11 @@ interaction feel not yet compared.
 |---|---|---|
 | Move, hand (Space), zoom (hold Z, Alt out, drag area) | done | |
 | Frame (presets panel, swap orientation), section, slice | done | |
-| Rectangle, ellipse (arc handles), polygon, star, line, arrow; Shift/Alt | done | Design panel arc fields missing |
+| Rectangle, ellipse (arc handles and Design panel arc fields), polygon, star, line, arrow; Shift/Alt | done | |
 | Pen: vector networks, branch, close, bend; pencil | done | no pen pressure |
-| Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | live boolean editing missing |
-| Shape builder (Shift+M), variable width (Shift+W) | done | |
+| Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
+| Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
+| Boolean groups: double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | hit-tested by the operands, not the result |
 | Text: point, auto height, fixed; caret, words, lines, IME | done | no spell check |
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
@@ -90,4 +91,5 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Design panel arc fields, live boolean editing (operands on the canvas, live results, per-operand operations), shape builder on strokes and open paths, one-sided widths (Alt-drag a width handle) |
 | 2026-10-10 | major | Created from the ROADMAP's look-and-feel and interaction items, the keymap and the canvas code |

@@ -94,6 +94,8 @@ mod proto_responsive_tests;
 mod shortcuts_tests;
 #[cfg(test)]
 mod titlebar_tests;
+#[cfg(test)]
+mod vector_tail_ui_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

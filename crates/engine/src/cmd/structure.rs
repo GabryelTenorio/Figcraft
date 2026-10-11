@@ -37,10 +37,10 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("bool.union", "Union selection", "{ids?}", true, |s, p| wrap(s, p, Wrap::Bool(BoolOp::Union))),
-        spec!("bool.subtract", "Subtract selection", "{ids?}", true, |s, p| wrap(s, p, Wrap::Bool(BoolOp::Subtract))),
-        spec!("bool.intersect", "Intersect selection", "{ids?}", true, |s, p| wrap(s, p, Wrap::Bool(BoolOp::Intersect))),
-        spec!("bool.exclude", "Exclude selection", "{ids?}", true, |s, p| wrap(s, p, Wrap::Bool(BoolOp::Exclude))),
+        spec!("bool.union", "Union selection", BOOL_PARAMS, true, |s, p| crate::booleans::apply(s, "bool.union", p, BoolOp::Union)),
+        spec!("bool.subtract", "Subtract selection", BOOL_PARAMS, true, |s, p| crate::booleans::apply(s, "bool.subtract", p, BoolOp::Subtract)),
+        spec!("bool.intersect", "Intersect selection", BOOL_PARAMS, true, |s, p| crate::booleans::apply(s, "bool.intersect", p, BoolOp::Intersect)),
+        spec!("bool.exclude", "Exclude selection", BOOL_PARAMS, true, |s, p| crate::booleans::apply(s, "bool.exclude", p, BoolOp::Exclude)),
         spec!("bool.flatten", "Flatten boolean", "{ids?}", true, flatten),
         spec!("vector.flatten", "Flatten", "{ids?}", true, flatten),
         spec!("vector.outlineStroke", "Outline stroke", "{ids?}", true, outline_stroke),
@@ -102,6 +102,14 @@ enum Wrap {
 
 /// Room a section made around layers leaves on each side.
 const SECTION_PAD: f64 = 40.0;
+
+/// What the boolean commands do with what they're given.
+const BOOL_PARAMS: &str = "{ids?} — layers inside boolean groups: sets their own operation (how each combines with the operands below it); one boolean group: sets its operation (every operand follows it); otherwise wraps the layers in a new boolean group";
+
+/// Wrap the selection in a new boolean group doing `op`.
+pub(crate) fn wrap_boolean(s: &mut Session, p: &Value, op: BoolOp) -> Result<Value> {
+    wrap(s, p, Wrap::Bool(op))
+}
 
 /// Wrap the selection in a new container at the topmost selected layer's place.
 fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
@@ -178,6 +186,10 @@ fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {
         let op = n.opacity;
         for (k, c) in kids.iter().enumerate() {
             doc.reparent(*c, parent, Some(idx + k))?;
+            // Released operands no longer combine with anything.
+            if doc.get(*c)?.bool_op.is_some() {
+                doc.get_mut(*c)?.bool_op = None;
+            }
             if op < 1.0 {
                 let cn = doc.get_mut(*c)?;
                 cn.opacity *= op;
