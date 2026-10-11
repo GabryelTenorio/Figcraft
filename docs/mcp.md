@@ -652,8 +652,9 @@ joined file opens as a new document).
 - `collab.join {link}` (any form: an app's invite, a `figcraft-server` share link, or the
   `ws(s)://…?file=…&token=…` URL) returns at once with `status: "connecting"`; poll
   `collab.peers` until `status` is `"live"`, or `"failed"` with a `reason` (a wrong token, a full
-  session, a revoked link, an unreachable host). `collab.leave {}` leaves; the synced document
-  stays open as your copy.
+  session, a revoked link, an unreachable host, a `wss://` server whose certificate isn't trusted:
+  see `FIGCRAFT_CA_FILE` in [`server.md`](server.md#behind-a-reverse-proxy-tls)). `collab.leave {}`
+  leaves; the synced document stays open as your copy.
 - `collab.publish {server, name?, key?}` puts the active document on a `figcraft-server`
   ([`server.md`](server.md)) and syncs it from there: `server` is the address
   `figcraft-server key` prints (`ws://host:47900/?key=…`; or give `key` separately), `name` the

@@ -461,8 +461,10 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   joins.
 - **Links** name the server's endpoint: `figcraft://join?host=<host:port>&file=…&token=…` for a
   plain `ws://` endpoint at `/`, `figcraft://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
-  for any endpoint (TLS, a path behind a proxy), or `ws(s)://…?file=…&token=…`. The desktop app
-  can't open `wss://` yet (no TLS of its own); the browser can.
+  for any endpoint (TLS, a path behind a proxy), or `ws(s)://…?file=…&token=…`. The desktop app,
+  `figcraft-cli` and the browser all open `wss://`: natively through rustls (ring, Mozilla's root
+  certificates compiled in, plus any authority in the PEM file `FIGCRAFT_CA_FILE` names), always
+  verifying the certificate; the browser through its own WebSocket.
 - **Managing files.** A connection that opens with `Manage {key}` instead of `Hello` sends
   `Admin` requests: publish a document (its snapshot) as a new file, which returns an edit link
   and a view link; list files and links; make and revoke links; remove a file. The server key is
@@ -644,7 +646,9 @@ chooses to share on the network; the default is the invite link with a random to
 - **Abuse limits.** On top of the transport's: at most `max_files` files, `max_file_mb` per file
   (a publish over it is refused), `max_links` links per file, `max_people` per file and
   `max_connections` sockets.
-- **TLS.** None in the server: a reverse proxy terminates it. Tokens and keys are never in the
+- **TLS.** None in the server: a reverse proxy terminates it (Caddy and nginx examples in
+  `packaging/server/`, deployment in [`server.md`](server.md#deploy-on-a-linux-server)); clients
+  speak `wss://` to the proxy. Tokens and keys are never in the
   WebSocket request (only in the first message), so proxies don't log them, and the server logs
   file and link ids, never secrets.
 - **Not yet**: accounts and per-person permissions, per-address rate limits, audit logs,
@@ -672,5 +676,4 @@ chooses to share on the network; the default is the invite link with a random to
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
    publishing from the app; see [`server.md`](server.md)).
-6. **Accounts**: people signing in, per-person permissions, teams and projects; TLS in the
-   desktop app.
+6. **Accounts**: people signing in, per-person permissions, teams and projects.

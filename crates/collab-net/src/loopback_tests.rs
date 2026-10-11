@@ -97,7 +97,7 @@ fn start_with(limits: NetLimits, core: Limits) -> (Host, Probe, Invite) {
     (host, probe, invite)
 }
 
-fn start() -> (Host, Probe, Invite) {
+pub(crate) fn start() -> (Host, Probe, Invite) {
     start_with(fast_limits(), Limits::default())
 }
 

@@ -3,20 +3,15 @@
 //! through it, and the server's command line uses it to reach a running server), and using a
 //! file's team library with one of the file's share links ([`OpenLibrary`], [`library`]).
 
-use std::net::TcpStream;
 use std::time::Duration;
 
 use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, Manage, OpenLibrary, PROTOCOL, ServerMsg};
 use tungstenite::{Bytes, Message, WebSocket};
 
 use crate::invite::{Endpoint, Invite};
-use crate::net::{NetLimits, config, dial};
+use crate::net::{Duplex, NetLimits, config, open};
 
-/// Why the desktop app can't reach a `wss://` address (it has no TLS of its own yet).
-pub const NO_TLS: &str =
-    "The desktop app can't open secure (wss://) connections yet: use the server's ws:// address, or join from FigCraft in the browser";
-
-type Ws = WebSocket<TcpStream>;
+type Ws = WebSocket<Duplex>;
 
 /// Send `requests` to the server at `server` with its `key`; the replies, in order. Fails when the
 /// server can't be reached, refuses the key or closes the connection (a request it can't do is a
@@ -67,10 +62,7 @@ pub fn library(link: &str, req: LibraryReq, limits: &NetLimits, timeout: Duratio
 /// A WebSocket to `server` that waits for answers up to the idle timeout (a large upload takes the
 /// server a while to keep).
 fn connect(server: &Endpoint, limits: &NetLimits, timeout: Duration) -> Result<Ws, String> {
-    if server.secure {
-        return Err(NO_TLS.into());
-    }
-    let stream = dial(&server.host, timeout, limits)?;
+    let (stream, _, _) = open(server, timeout, limits)?;
     let (ws, _) = tungstenite::client::client_with_config(server.url(), stream, Some(config(limits.max_server_message)))
         .map_err(|e| format!("{} doesn't answer as a FigCraft server: {e}", server.display()))?;
     ws.get_ref().set_read_timeout(Some(limits.idle_timeout)).map_err(|e| e.to_string())?;

@@ -377,7 +377,7 @@ fn serve(stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _
     if stream.set_read_timeout(Some(limits.hello_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
     }
-    let Ok((rd, wr, sock)) = Duplex::split(stream) else { return };
+    let Ok((rd, wr, sock)) = Duplex::split(stream, None) else { return };
     let cfg = config(limits.max_client_message);
     let mut ws = match tungstenite::accept_with_config(rd, Some(config(limits.max_hello))) {
         Ok(ws) => ws,

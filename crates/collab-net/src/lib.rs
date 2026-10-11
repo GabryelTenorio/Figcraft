@@ -36,6 +36,8 @@ pub mod manage;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod net;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod tls;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod token;
 
 #[cfg(target_arch = "wasm32")]
@@ -59,3 +61,5 @@ mod links_tests;
 mod loopback_tests;
 #[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod tls_tests;
