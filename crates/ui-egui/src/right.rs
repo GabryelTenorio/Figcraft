@@ -1173,6 +1173,112 @@ fn width_profile_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], profile: Opt
     });
 }
 
+/// A brush drawn along a short line across `rect`, as outlines (egui fills only convex shapes).
+pub(crate) fn brush_art(painter: &egui::Painter, rect: Rect, preset: &str, col: Color32) {
+    use figcraft_geom::kurbo::{self, PathEl};
+    let mut line = figcraft_geom::BezPath::new();
+    line.move_to((0.0, 0.0));
+    line.line_to((f64::from(rect.width()), 0.0));
+    let brush = Brush::new(preset);
+    let props = StrokeProps { weight: f64::from(rect.height()), align: StrokeAlign::Center, brush: Some(brush.clone()), ..Default::default() };
+    let Some(out) = figcraft_pathops::brush::outline(&line, props.weight, &props, &brush) else { return };
+    for sub in figcraft_geom::split_subpaths(&out) {
+        let mut pts = Vec::new();
+        kurbo::flatten(sub.iter(), 0.25, |el| {
+            if let PathEl::MoveTo(p) | PathEl::LineTo(p) = el {
+                pts.push(pos2(rect.min.x + p.x as f32, rect.center().y + p.y as f32));
+            }
+        });
+        painter.add(egui::Shape::closed_line(pts, Stroke::new(1.0, col)));
+    }
+}
+
+/// Stroke settings ▸ Brush: a plain stroke, a stretch brush or a scatter brush, each with its look.
+fn brush_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], brush: Option<Option<Brush>>, width: f32) {
+    use figcraft_pathops::brush::{PRESETS, preset};
+    let t = Tokens::get(ui.ctx());
+    widgets::sublabels(ui, "Brush", None);
+    row(ui, 32.0, |ui| {
+        let label = match &brush {
+            None => "Mixed",
+            Some(b) => b.as_ref().and_then(|b| preset(&b.preset)).map_or("None", |p| p.label),
+        };
+        let resp = widgets::dropdown(ui, label, width, None);
+        a11y::combo(&resp, "Brush", label, a11y::menu_open(&resp));
+        if let Some(Some(b)) = &brush {
+            let r = resp.rect;
+            brush_art(
+                ui.painter(),
+                Rect::from_min_max(pos2(r.max.x - 22.0 - 56.0, r.center().y - 5.0), pos2(r.max.x - 22.0, r.center().y + 5.0)),
+                &b.preset,
+                t.icon_secondary,
+            );
+        }
+        menu_popup(&resp).show(|ui| {
+            if menu_item(ui, "None", "") {
+                app.run("stroke.brush", json!({"ids": ids, "preset": null}));
+                ui.close();
+            }
+            for p in PRESETS {
+                let art = |pt: &egui::Painter, r: Rect, col: Color32| {
+                    brush_art(
+                        pt,
+                        Rect::from_min_max(pos2(r.max.x - 8.0 - 64.0, r.center().y - 5.0), pos2(r.max.x - 8.0, r.center().y + 5.0)),
+                        p.id,
+                        col,
+                    );
+                };
+                if menu_item_with(ui, p.label, "", 8.0 + 64.0, art) {
+                    app.run("stroke.brush", json!({"ids": ids, "preset": p.id}));
+                    ui.close();
+                }
+            }
+        });
+    });
+    // A scatter brush's spacing and jitter.
+    let Some(Some(b)) =
+        brush.filter(|b| b.as_ref().and_then(|b| preset(&b.preset)).is_some_and(|p| p.kind == figcraft_pathops::brush::BrushKind::Scatter))
+    else {
+        return;
+    };
+    let half = (width - 8.0) / 2.0;
+    let with = |f: &dyn Fn(&mut Brush)| {
+        let mut nb = b.clone();
+        f(&mut nb);
+        serde_json::to_value(nb.sanitized()).unwrap_or_default()
+    };
+    widgets::sublabels(ui, "Spacing", Some("Scatter"));
+    row(ui, 32.0, |ui| {
+        let e = widgets::number_field(ui, Id::new("brush_spacing"), Lead::Icon(Icon::Gap, "Brush spacing"), Some(b.spacing), "×", half, 0.1);
+        app.field(ids, "brush", e, |v| with(&|nb| nb.spacing = v));
+        let e = widgets::number_field(ui, Id::new("brush_scatter"), Lead::Icon(Icon::Dots, "Brush scatter"), Some(b.scatter), "×", half, 0.1);
+        app.field(ids, "brush", e, |v| with(&|nb| nb.scatter = v));
+    });
+    widgets::sublabels(ui, "Size jitter", Some("Rotation jitter"));
+    row(ui, 32.0, |ui| {
+        let e = widgets::number_field(
+            ui,
+            Id::new("brush_size_jitter"),
+            Lead::Icon(Icon::Scale, "Brush size jitter"),
+            Some(b.size_jitter * 100.0),
+            "%",
+            half,
+            1.0,
+        );
+        app.field(ids, "brush", e, |v| with(&|nb| nb.size_jitter = v / 100.0));
+        let e = widgets::number_field(
+            ui,
+            Id::new("brush_rotation_jitter"),
+            Lead::Icon(Icon::Rotate, "Brush rotation jitter"),
+            Some(b.rotation_jitter * 100.0),
+            "%",
+            half,
+            1.0,
+        );
+        app.field(ids, "brush", e, |v| with(&|nb| nb.rotation_jitter = v / 100.0));
+    });
+}
+
 /// Advanced stroke settings: dash pattern, width profile, join and the end points of open paths.
 fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
@@ -1206,6 +1312,7 @@ fn stroke_settings(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
         });
     }
     width_profile_row(app, ui, &ids, st.as_ref().map(|s| s.profile().cloned()), half);
+    brush_row(app, ui, &ids, st.as_ref().map(|s| s.brush.clone()), half * 2.0 + 8.0);
     let join = st.as_ref().map(|s| s.join);
     widgets::sublabels(ui, "Join", (join == Some(StrokeJoin::Miter)).then_some("Miter angle"));
     row(ui, 32.0, |ui| {
@@ -1387,6 +1494,7 @@ fn paint_label(p: &Paint) -> String {
         PaintKind::Solid { color } => color.to_hex(),
         PaintKind::Gradient(g) => format!("{:?}", g.kind),
         PaintKind::Image(_) => "Image".into(),
+        PaintKind::Pattern(_) => "Pattern".into(),
     }
 }
 

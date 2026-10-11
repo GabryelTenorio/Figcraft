@@ -148,7 +148,7 @@ fn first_fill(n: &Node) -> Option<Color> {
     n.fills.iter().filter(|p| p.visible).find_map(|p| match &p.kind {
         PaintKind::Solid { color } => Some(color.with_alpha(color.a * p.opacity)),
         PaintKind::Gradient(g) => g.sorted_stops().first().map(|s| s.color),
-        PaintKind::Image(_) => None,
+        PaintKind::Image(_) | PaintKind::Pattern(_) => None,
     })
 }
 
@@ -316,6 +316,7 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
                 put("background", format!("linear-gradient({})", stops.join(", ")));
             }
             PaintKind::Image(_) => put("background", "url(image.png) center / cover".into()),
+            PaintKind::Pattern(_) => put("background", "url(pattern.png) repeat".into()),
         }
     }
     if let Some(c) = stroke_color(n) {

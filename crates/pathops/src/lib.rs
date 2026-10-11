@@ -3,9 +3,12 @@
 //! - [`boolean`]: Union, Subtract, Intersect and Exclude over any number of closed paths (robust
 //!   sweep-line topology from `linesweeper`); results use the even-odd rule.
 //! - [`stroke_outline`]: a stroke as a fill, with Figma's Inside / Center / Outside alignment,
-//!   dashes, caps, joins, arrowheads and variable width profiles ([`width`]).
+//!   dashes, caps, joins, arrowheads, variable width profiles ([`width`]) and brushes ([`brush`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod brush;
+#[cfg(test)]
+mod brush_tests;
 #[cfg(test)]
 mod ops_tests;
 #[cfg(test)]
@@ -53,15 +56,7 @@ pub fn closed(path: &BezPath) -> BezPath {
 }
 
 /// Every coordinate is finite and of a sane magnitude (the sweep needs bounded input).
-pub fn finite(path: &BezPath) -> bool {
-    let ok = |p: &Point| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9;
-    path.elements().iter().all(|el| match el {
-        PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
-        PathEl::QuadTo(a, b) => ok(a) && ok(b),
-        PathEl::CurveTo(a, b, c) => ok(a) && ok(b) && ok(c),
-        PathEl::ClosePath => true,
-    })
-}
+pub use figcraft_geom::measure::finite_path as finite;
 
 fn binary(a: &BezPath, b: &BezPath, op: linesweeper::BinaryOp) -> Result<BezPath, PathOpsError> {
     if a.elements().is_empty() && b.elements().is_empty() {
@@ -287,9 +282,10 @@ pub fn stroke_outline(path: &BezPath, props: &StrokeProps, closed_shape: bool) -
         return BezPath::new();
     }
     // Centred at `width` (twice the weight for Inside/Outside, which clip half of it away).
-    let centred = |width: f64| match props.profile() {
-        Some(p) => width::variable_outline(path, width, props, p).unwrap_or_else(|| stroke_center(path, width, props)),
-        None => stroke_center(path, width, props),
+    let centred = |width: f64| match (&props.brush, props.profile()) {
+        (Some(b), _) => brush::outline(path, width, props, b).unwrap_or_else(|| stroke_center(path, width, props)),
+        (None, Some(p)) => width::variable_outline(path, width, props, p).unwrap_or_else(|| stroke_center(path, width, props)),
+        (None, None) => stroke_center(path, width, props),
     };
     let align = if closed_shape { props.align } else { StrokeAlign::Center };
     let mut out = match align {

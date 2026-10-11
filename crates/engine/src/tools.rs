@@ -160,11 +160,13 @@ pub struct PointerEvent {
     pub ctrl: bool,
     /// Screen pixels per page unit.
     pub zoom: f64,
+    /// Pen pressure, 0..1, where the device reports it (`None`: a mouse, or a platform that doesn't).
+    pub pressure: Option<f32>,
 }
 
 impl PointerEvent {
     pub fn at(kind: PointerKind, x: f64, y: f64, zoom: f64) -> Self {
-        Self { kind, x, y, sx: x * zoom, sy: y * zoom, shift: false, alt: false, cmd: false, ctrl: false, zoom }
+        Self { kind, x, y, sx: x * zoom, sy: y * zoom, shift: false, alt: false, cmd: false, ctrl: false, zoom, pressure: None }
     }
     pub(crate) fn p(&self) -> Point {
         Point::new(self.x, self.y)
@@ -300,6 +302,8 @@ pub(crate) enum Gesture {
     },
     Pencil {
         points: Vec<Point>,
+        /// The pen pressure at each point, where the device reports it.
+        pressure: Vec<Option<f32>>,
     },
     TextSelect {
         id: NodeId,
@@ -361,6 +365,39 @@ pub struct ToolState {
     /// corners on the page, turned with its frame): the Move and Scale tools treat a press or
     /// hover on one as on its frame.
     pub labels: Vec<(NodeId, [Point; 4])>,
+    /// The brush the Pencil draws with (`tool.pencilBrush`; `None`: a plain stroke).
+    pub pencil_brush: Option<figcraft_doc::Brush>,
+}
+
+/// Pen pressure along drawn samples as width profile points `[t, scale]`: `t` by length, at most
+/// 32 points, medium pressure (0.5) at the stroke weight, from a tenth to twice it. `None` when no
+/// sample has pressure.
+pub(crate) fn pressure_profile(points: &[Point], pressure: &[Option<f32>]) -> Option<Vec<[f64; 2]>> {
+    if pressure.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut lengths = vec![0.0];
+    for w in points.windows(2) {
+        let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+        lengths.push(lengths.last().copied().unwrap_or(0.0) + (*b - *a).hypot());
+    }
+    let total = lengths.last().copied().unwrap_or(0.0);
+    if !(total.is_finite() && total > 0.0) {
+        return None;
+    }
+    let at = |i: usize| f64::from(pressure.get(i).copied().flatten().filter(|p| p.is_finite()).unwrap_or(0.5).clamp(0.0, 1.0));
+    let n = points.len().clamp(2, 32);
+    let profile = (0..n).map(|k| {
+        let t = k as f64 / (n - 1) as f64;
+        let s = t * total;
+        let i = lengths.partition_point(|l| *l < s).min(lengths.len().saturating_sub(1));
+        let p = match (i.checked_sub(1).and_then(|j| lengths.get(j)), lengths.get(i)) {
+            (Some(a), Some(b)) if b > a => at(i - 1) + (at(i) - at(i - 1)) * ((s - a) / (b - a)),
+            _ => at(i),
+        };
+        [t, (p / 0.5).clamp(0.1, 2.0)]
+    });
+    Some(profile.collect())
 }
 
 /// The frame whose name label (see [`ToolState::labels`]) is under `p` on `page`: the topmost
@@ -770,7 +807,7 @@ impl Session {
                 ToolId::Text => self.text_down(ev),
                 ToolId::Pen => self.pen_down(ev),
                 ToolId::Pencil => {
-                    self.tool.gesture = Gesture::Pencil { points: vec![ev.p()] };
+                    self.tool.gesture = Gesture::Pencil { points: vec![ev.p()], pressure: vec![ev.pressure] };
                     Ok(())
                 }
                 ToolId::Comment => {
@@ -1123,13 +1160,14 @@ impl Session {
                 ds.revision += 1;
                 Ok(())
             }
-            Gesture::Pencil { points } => {
-                let mut pts = points.clone();
+            Gesture::Pencil { points, pressure } => {
+                let (mut pts, mut pressure) = (points.clone(), pressure.clone());
                 if pts.last().is_none_or(|l| (*l - ev.p()).hypot() > 0.5 / ev.zoom.max(1e-6)) {
                     pts.push(ev.p());
+                    pressure.push(ev.pressure);
                 }
                 self.tool.overlay.pen = pts.iter().map(|p| [p.x, p.y]).collect();
-                self.tool.gesture = Gesture::Pencil { points: pts };
+                self.tool.gesture = Gesture::Pencil { points: pts, pressure };
                 if let Ok(ds) = self.ds_mut() {
                     ds.revision += 1;
                 }
@@ -1474,9 +1512,9 @@ impl Session {
                     self.tool.tool = t;
                 }
             }
-            Gesture::Pencil { points } => {
+            Gesture::Pencil { points, pressure } => {
                 self.tool.overlay.pen.clear();
-                self.pencil_finish(&points)?;
+                self.pencil_finish(&points, &pressure)?;
             }
             Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
             Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } => {}
@@ -1731,7 +1769,7 @@ impl Session {
         Ok(())
     }
 
-    fn pencil_finish(&mut self, points: &[Point]) -> Result<()> {
+    fn pencil_finish(&mut self, points: &[Point], pressure: &[Option<f32>]) -> Result<()> {
         if points.len() < 2 {
             return Ok(());
         }
@@ -1752,10 +1790,18 @@ impl Session {
         let mut local = fitted.clone();
         local.apply_affine(pw.inverse());
         let _ = d;
+        let mut props =
+            json!({"fills": [], "strokes": ["#000000"], "strokeWeight": 2, "strokeCap": "round", "strokeJoin": "round", "strokeAlign": "center"});
+        // Pen pressure becomes the stroke's width profile (brushes follow it too).
+        if let Some(points) = pressure_profile(points, pressure) {
+            props["widthProfile"] = json!(points);
+        }
+        if let Some(b) = &self.tool.pencil_brush {
+            props["brush"] = serde_json::to_value(b).unwrap_or_default();
+        }
         self.execute(
             "node.create",
-            &json!({"type": "vector", "path": local.to_svg(), "closed": false, "parent": parent, "name": "Vector",
-                    "props": {"fills": [], "strokes": ["#000000"], "strokeWeight": 2, "strokeCap": "round", "strokeJoin": "round", "strokeAlign": "center"}}),
+            &json!({"type": "vector", "path": local.to_svg(), "closed": false, "parent": parent, "name": "Vector", "props": props}),
         )?;
         Ok(())
     }

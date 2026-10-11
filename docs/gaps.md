@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect and Dev Mode plugins; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -22,7 +22,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 6 | Plugins: no run-time UI, distribution or widgets; Figma's plugins don't run | Ecosystem | 25–55 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA is mostly macOS | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
-| 9 | Figma Draw: brushes, pressure, text on a path, pattern fills | Feature | 10–18 | [target-app-parity](target-app-parity.md) |
+| 9 | Figma Draw: multi-edit, pen pressure on macOS/Linux tablets (brushes, pressure, text on a path and pattern fills landed) | Feature | 2–5 | [target-app-parity](target-app-parity.md) |
 | 10 | Team libraries: no team-wide lists or accounts; analytics are counts | Feature | 4–8 | [components-parity](components-parity.md) |
 | 11 | Spell check | Feature | 4–8 | [target-app-parity](target-app-parity.md) |
 | 12 | Video fills; HEIC images | File format | 5–10 | [file-format-parity](file-format-parity.md) |
@@ -137,13 +137,18 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   desktop app).
 - **Estimate:** 10–20 h, partly human (hardware).
 
-### 9. Figma Draw: brushes, pressure, text on a path, pattern fills
-- **Missing:** stretch and scatter brushes, pen pressure for the pencil and brushes, text on a
-  path, pattern fills, multi-edit.
-- **Evidence:** `PaintKind` has solid, gradient and image only (`crates/color/src/lib.rs`); no
-  pressure input anywhere; SVG text on a path imports as outlines.
+### 9. Figma Draw: multi-edit and tablet pressure
+- **Missing:** multi-edit; pen pressure on macOS and Linux tablets (winit reports none there).
+- **Landed:** text on a path (`text.onPath`, `text.pathOptions`, `text.removeFromPath`; the
+  Design panel's Typography section; canvas, PNG, SVG and PDF as outlines; SVG `<textPath>` imports
+  as text on a path), pattern fills (`PaintKind::Pattern`, `fill.pattern`, the colour picker's
+  Pattern tab; SVG `<pattern>`, PDF tiling patterns), stretch and scatter brushes (`stroke.brush`,
+  eight presets drawn in code; canvas, PNG, SVG, PDF and outline stroke) and pen pressure for the
+  Pencil (Windows pens and browser styluses; recorded as the stroke's width profile, which brushes
+  follow).
+- **Evidence:** no pressure input anywhere; strokes have uniform and variable widths only.
 - **Impact:** illustration-flavoured work moved into Figma Draw in 2025.
-- **Estimate:** 10–18 h.
+- **Estimate:** 5–10 h.
 
 ### 10. Team libraries: no team-wide lists or accounts; analytics are counts
 - **Missing:** libraries listed for a whole team or organization (each file enables a library by
@@ -270,6 +275,8 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-11 | minor | Code connect and Dev Mode plugins (gap 16): a component or set links to its code component per language (import path, name, a template with `{property}` and `{property ? "a" : "b"}` placeholders); `inspect.code`, `inspect.componentCode` and the Inspect panel show that snippet with the instance's values (also inside generated layer trees), edited in Connect to code with a live preview; links are saved, synced and undoable, and travel as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`). Plugins that only read run from the Inspect tab. Dev Mode breadth 80% → 90%, ready 62% → 64%, 4–8 h → 1–3 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~378–722 h → ~375–717 h |
+| 2026-10-11 | minor | Stretch and scatter brushes and pen pressure landed (gap 9): eight brushes drawn in code (four stretched along the path, four scattered with spacing, size, rotation and scatter jitter from a seed) in the stroke settings, drawn everywhere strokes are and flattened by outline stroke; the Pencil records pen pressure as the stroke's width profile (Windows pens, browser styluses; macOS and Linux tablets report none) and can draw with a brush; Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–9 h; Strokes 2–4 h → 1–3 h; Hardware 50% → 55%, 15–30 h → 13–27 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~378–722 h → ~373–712 h |
+| 2026-10-11 | minor | Text on a path and pattern fills landed (gap 9): text follows a path or shape (start, side, alignment; edited in place; canvas, PNG, SVG and PDF; SVG `<textPath>` imports as text on a path) and pattern fills tile a layer (grid or half-shifted rows or columns, scale, spacing, alignment; live as the source changes; SVG `<pattern>`, PDF tiling patterns); Figma Draw extras breadth 45% → 65%, ready 30% → 45%, 10–18 h → 5–10 h; Text 8–14 h → 7–13 h; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Team libraries on `figcraft-server` landed (gap 10): a file's library is published to the server under the file and enabled in other files by a share link (per-asset versions; updates noticed in the background and accepted with overrides kept), the server counts which files use which components, and a whole library can be swapped for another by names; Team libraries breadth 40% → 70%, ready 25% → 40%, 10–20 h → 4–8 h; collaboration 12% → 13%, 55–110 h → 49–98 h; feature breadth (~79%) and ready for real work (~47%) unchanged; full parity ~380–725 h → ~375–715 h |
 | 2026-10-11 | minor | Branches landed (gap 17): File ▸ Create branch… copies the file into a branch tab that remembers its base; Review and merge shows both sides' changes (layers with Inspect-style property changes, styles, variables, comments) and the conflicts (the same property changed on both sides, or a layer deleted on one side and edited on the other), each resolved for the branch or main; merging is one undo step and archives the branch; Update from main; branches are saved in the `.figcraft` file. Comments, versions, find, misc breadth 80% → 85%, ready 58% → 60%, 4–8 h → 2–5 h; collaboration 12% → 13%; menu breadth 204/204 (the catalog gained File ▸ Create branch…); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~380–725 h → ~378–722 h |
 | 2026-10-11 | minor | Animated GIF fills and TIFF images (gap 12, without video and HEIC): GIF fills keep the original file, show the first frame on the canvas and in exports and play in the presenter and the preview (frames decoded on first play, at most 500 frames and 128 MB; always looping; the window wakes only for a GIF's next frame); TIFF images open, import, place and paste. Paint breadth 85% → 87%, 5–9 h → 4–7 h; gap 12 6–12 h → 5–10 h (video playback and HEIC left, both needing non-Rust decoders); feature breadth (~79%), ready for real work (~47%) and full parity hours unchanged at this rounding |

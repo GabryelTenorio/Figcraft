@@ -99,11 +99,12 @@ session itself is `engine.execute {command: "collab.peers"}` (hosting, joining a
 see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
 was started with (`figcraft "figcraft://join?…"`).
 
-### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
+### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?, pressure?, pressureTo?}`
 
 A mouse gesture with the current tool. `kind`: `down`, `move`, `up`, `click`, `double`, `hover`,
 `drag` (needs `to: [x, y]`; `steps` intermediate moves, default 8). Position in page coordinates
-(`x`, `y`) or screen pixels (`sx`, `sy`). Returns `{selection, tool}`. With the Move and Scale
+(`x`, `y`) or screen pixels (`sx`, `sy`). `pressure` (0–1) is pen pressure (the Pencil records
+it); a drag's pressure goes from `pressure` to `pressureTo`. Returns `{selection, tool}`. With the Move and Scale
 tools, a press on a frame's or section's name label (as the canvas last drew it, along a rotated
 frame's top edge) selects and drags that frame.
 

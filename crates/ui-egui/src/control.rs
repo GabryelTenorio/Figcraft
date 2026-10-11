@@ -536,6 +536,7 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
     };
     let f = |k: &str| p.get(k).and_then(Value::as_f64);
     let (x, y) = at(f("x"), f("y"), f("sx"), f("sy")).ok_or("pass x, y (page) or sx, sy (screen)")?;
+    let pressure = |k: &str| f(k).filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0) as f32);
     let mk = |kind: PointerKind, x: f64, y: f64| PointerEvent {
         kind,
         x,
@@ -547,7 +548,10 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
         cmd: b(p, "cmd"),
         ctrl: b(p, "ctrl"),
         zoom,
+        pressure: pressure("pressure"),
     };
+    // A drag's pressure goes from `pressure` to `pressureTo`.
+    let (pr0, pr1) = (pressure("pressure"), pressure("pressureTo").or(pressure("pressure")));
     let kind = p.get("kind").and_then(Value::as_str).unwrap_or("click");
     let run = |app: &mut FigApp, ev: PointerEvent| app.session.pointer(&ev).map_err(|e| e.to_string());
     match kind {
@@ -568,9 +572,10 @@ fn pointer(app: &mut FigApp, p: &Value) -> Result<Value, String> {
             run(app, mk(PointerKind::Down, x, y))?;
             for i in 1..=steps {
                 let t = i as f64 / steps as f64;
-                run(app, mk(PointerKind::Move, x + (tx - x) * t, y + (ty - y) * t))?;
+                let pressure = pr0.zip(pr1).map(|(a, b)| a + (b - a) * t as f32);
+                run(app, PointerEvent { pressure, ..mk(PointerKind::Move, x + (tx - x) * t, y + (ty - y) * t) })?;
             }
-            run(app, mk(PointerKind::Up, tx, ty))?;
+            run(app, PointerEvent { pressure: pr1, ..mk(PointerKind::Up, tx, ty) })?;
         }
         other => return Err(format!("unknown pointer kind `{other}`")),
     }

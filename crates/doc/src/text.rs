@@ -324,6 +324,50 @@ pub struct TextData {
     /// OpenType feature toggles (e.g. "liga": false).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub features: std::collections::BTreeMap<String, bool>,
+    /// The path the text follows (text on a path); `None`: lines in the box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<TextPath>,
+}
+
+/// Text on a path: the baseline follows `d`. The text starts at `start` (aligned there by the
+/// horizontal alignment: left starts, centre centres, right ends at it); glyphs past an open
+/// path's ends are hidden, a closed path wraps them around.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TextPath {
+    /// SVG path data in the layer's own space.
+    pub d: String,
+    /// Where the text starts along the path, 0..1 by length.
+    pub start: f64,
+    /// On the other side of the path, running the other way.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub flip: bool,
+}
+
+impl TextPath {
+    /// A text path following `path` (layer space).
+    pub fn new(path: &figcraft_geom::BezPath) -> Self {
+        Self { d: path.to_svg(), start: 0.0, flip: false }
+    }
+
+    /// The path (empty when `d` doesn't parse).
+    pub fn path(&self) -> figcraft_geom::BezPath {
+        figcraft_geom::BezPath::from_svg(&self.d).unwrap_or_default()
+    }
+
+    /// The start offset clamped into 0..1 (NaN: 0).
+    pub fn start(&self) -> f64 {
+        if self.start.is_finite() { self.start.clamp(0.0, 1.0) } else { 0.0 }
+    }
+
+    /// Scale the path by `sx`, `sy` (the layer was resized).
+    pub fn scale(&mut self, sx: f64, sy: f64) {
+        if sx.is_finite() && sy.is_finite() {
+            let mut p = self.path();
+            p.apply_affine(figcraft_geom::Affine::scale_non_uniform(sx, sy));
+            self.d = p.to_svg();
+        }
+    }
 }
 
 /// Whether `tag` is a valid OpenType feature tag (four printable ASCII chars).
@@ -339,6 +383,17 @@ pub fn valid_axis_tag(tag: &str) -> bool {
 impl TextData {
     pub fn new(characters: impl Into<String>) -> Self {
         Self { characters: characters.into(), ..Default::default() }
+    }
+
+    /// How far text on a path paints past its path's box (glyphs stand on the path, lines after
+    /// the first run beside it): about one and a half of the largest size per line; 0 off a path.
+    pub fn path_reach(&self) -> f64 {
+        if self.path.is_none() {
+            return 0.0;
+        }
+        let size = self.spans().iter().map(|(_, _, s)| s.font_size).filter(|v| v.is_finite()).fold(0.0, f64::max).min(5000.0);
+        let lines = self.characters.lines().count().clamp(1, 10_000) as f64;
+        size * 1.5 * lines
     }
 
     pub fn char_count(&self) -> usize {

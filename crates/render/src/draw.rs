@@ -55,8 +55,9 @@ pub fn ts_path(p: &BezPath) -> Option<tiny_skia::Path> {
 }
 
 fn fill_with(pix: &mut Pixmap, path: &tiny_skia::Path, paints: &[Paint], w: f64, h: f64, xf: Affine, rule: FillRule, ctx: &Ctx, mask: Option<&Mask>) {
+    let scale = xf.determinant().abs().sqrt();
     for p in paints {
-        let Some(prep) = prepare_at(p, w, h, ctx.doc, ctx.time) else { continue };
+        let Some(prep) = prepare_at(p, w, h, scale, ctx.doc, ctx.time) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
         pix.fill_path(path, &paint, rule, ts_transform(xf), mask);
     }
@@ -91,7 +92,7 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
         return Arc::new(figcraft_pathops::rect_side_strokes(n.width, n.height, sides, props.align));
     }
     // Rect/ellipse inside/outside strokes without booleans: an even-odd ring of two outlines.
-    if props.dashes.is_empty() && props.profile().is_none() && closed && props.align != StrokeAlign::Center {
+    if props.dashes.is_empty() && props.profile().is_none() && props.brush.is_none() && closed && props.align != StrokeAlign::Center {
         let w = props.weight;
         let ring = |inset: f64| -> Option<BezPath> {
             let (x0, y0, ww, hh) = (inset, inset, n.width - 2.0 * inset, n.height - 2.0 * inset);
@@ -139,6 +140,9 @@ pub fn stroke_area(n: &Node, path: &BezPath, closed: bool) -> Arc<BezPath> {
     props.dashes.len().hash(&mut h);
     for p in props.profile().map(|p| p.points.as_slice()).unwrap_or_default() {
         (p.t.to_bits(), p.scale.to_bits(), p.bias.to_bits()).hash(&mut h);
+    }
+    if let Some(b) = &props.brush {
+        (&b.preset, b.spacing.to_bits(), b.size_jitter.to_bits(), b.rotation_jitter.to_bits(), b.scatter.to_bits(), b.seed).hash(&mut h);
     }
     let key = h.finish();
     if let Some(p) = locked(stroke_cache()).get(key) {

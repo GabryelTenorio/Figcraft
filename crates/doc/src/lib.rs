@@ -701,8 +701,8 @@ impl Document {
     }
 
     /// Insert copies of `nodes` (a subtree rooted at `root`, from this or another document) with ids
-    /// remapped by `map`. Interactions and instance references pointing inside the subtree are
-    /// remapped too.
+    /// remapped by `map`. Interactions, instance references and pattern sources pointing inside the
+    /// subtree are remapped too.
     pub fn paste_nodes(
         &mut self,
         nodes: &[Node],
@@ -729,6 +729,14 @@ impl Document {
                 && let Some(m) = map.get(component)
             {
                 *component = *m;
+            }
+            // A pattern tiling a layer of the copy tiles the copy's layer.
+            for p in c.fills.iter_mut().chain(c.strokes.iter_mut()) {
+                if let figcraft_color::PaintKind::Pattern(pt) = &mut p.kind
+                    && let Some(m) = map.get(&NodeId(pt.source))
+                {
+                    pt.source = m.0;
+                }
             }
             self.reserve_ids(*new_id);
             self.nodes.insert(*new_id, Arc::new(c));

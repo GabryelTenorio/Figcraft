@@ -92,10 +92,12 @@ pub fn set_size(doc: &mut Document, id: NodeId, w: f64, h: f64) {
     if (ow - w).abs() < 1e-9 && (oh - h).abs() < 1e-9 {
         return;
     }
-    if let NodeKind::Vector { network } = &mut n.kind {
-        let sx = if ow > 1e-9 { w / ow } else { 1.0 };
-        let sy = if oh > 1e-9 { h / oh } else { 1.0 };
-        network.scale(sx, sy);
+    let sx = if ow > 1e-9 { w / ow } else { 1.0 };
+    let sy = if oh > 1e-9 { h / oh } else { 1.0 };
+    match &mut n.kind {
+        NodeKind::Vector { network } => network.scale(sx, sy),
+        NodeKind::Text(figcraft_doc::TextData { path: Some(tp), .. }) => tp.scale(sx, sy),
+        _ => {}
     }
     n.width = w;
     n.height = h;

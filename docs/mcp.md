@@ -137,7 +137,7 @@ Or in a project's `.mcp.json`:
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
-| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
+| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
@@ -452,6 +452,30 @@ click or drag across regions with `pointer` to merge, add `alt` to remove; `shap
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"shapeBuilder.merge","params":{"ids":[2,3],"points":[[120,80],[160,80]]}}}}
 ```
 
+### Text on a path and pattern fills
+
+- **Text on a path**: `text.onPath {text?, path?, start?, flip?}` (default: the selected text layer
+  and the other selected layer) puts a text layer on a vector's or shape's path: the text takes the
+  path layer's place, transform and box, and the path layer is removed (`edit.undo` brings it back).
+  The baseline follows the path from `start` (0..1 of its length); the text's horizontal alignment
+  places it there (left starts, centre centres, right ends at it); `flip` runs it on the other side
+  the other way. Glyphs past an open path's end are hidden; a closed path (ellipse, rectangle) wraps
+  them around; only the first subpath is followed. `text.pathOptions {start?, flip?, ids?}` changes
+  them, `text.removeFromPath {ids?}` makes it plain auto-width text again. Resizing the layer
+  scales the path. The text stays editable (`text.edit.*`, `type_text`); `get_node` shows
+  `textPath {d (SVG path data in the layer's space), start, flip}`. Exports draw it as outlines
+  (PDF too: not selectable); underline and strikethrough aren't drawn on a path.
+- **Pattern fills**: `fill.pattern {source (layer id), ids?, index?, tile? (grid|horizontalHex|
+  verticalHex), scale?, spacing? [x, y], align? (start|center|end), opacity?}` makes the fill at
+  `index` (default the top one) the source layer repeated, at `scale` × its own size with `spacing`
+  between tiles; hex tiles shift every other row (column) by half a tile; `align` puts a tile in the
+  box's top-left corner, centre or bottom-right corner. The fill is `{type: "pattern", source,
+  tile, scale, spacing, align}` and can also be set with `fill.set {paint}`. It updates as the
+  source changes; a layer can't tile itself or a layer containing it (a pattern nested more than
+  two deep draws nothing). Copies made together with their source tile the copied source. Exports:
+  SVG `<pattern>` and PDF tiling patterns of the source's vectors (a source with effects as an image
+  of the tile); the canvas draws one tile at the zoom it shows (at most 2048 px a side) and repeats it.
+
 ### Importing SVG
 
 `open_file {path}` opens an SVG as a new document; `run_command {command: "file.import", params:
@@ -466,7 +490,8 @@ and masks as luminance or alpha masks; shadow and blur filters (`feDropShadow`, 
 flood / composite chains, colour-matrix shadows, inner shadows, `feMorphology` spread) as drop
 shadows, inner shadows and layer blurs; opacity and `mix-blend-mode`; text as text layers (fonts
 the SVG names when installed, anchors, letter spacing, styled `<tspan>` runs, stacked lines as one
-layer); images as image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
+layer; text on one `<textPath>` as text on a path, with its start offset and anchor); images as
+image fills, and SVG images imported in place. CSS, `<use>`/`<symbol>`, units
 and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list what was left out
 (filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
 Linked files are never read, only data URIs; documents nested more than 512 elements deep are
@@ -804,6 +829,25 @@ noise and texture over the result.
   DeviceCMYK without an output intent, because embedding one needs a CMYK ICC profile and none
   ships with FigCraft. Soft masks stay RGB (they aren't printed) and transparency groups blend in
   RGB, as the PDF writer declares them.
+
+### Brushes and pen pressure
+
+- `stroke.brush {ids?, preset, spacing?, sizeJitter?, rotationJitter?, scatter?, seed?}` draws a
+  layer's stroke with a brush (`preset: null` back to a plain stroke; a layer without a stroke gets
+  a black one); `node.set {brush}` takes the same (a preset id, an object or `null`) and `get_node`
+  shows `brush`. Stretch brushes bend one shape along each subpath: `taper`, `ink`, `ribbon`,
+  `bristle`. Scatter brushes drop copies along it every `spacing` stroke weights (default 1.5; at
+  most 5,000 copies a path): `dots`, `stars`, `confetti`, `leaves`, varied by `sizeJitter` (0–1),
+  `rotationJitter` (0–1, up to half a turn) and `scatter` (0–4 weights off the path), repeatably
+  from `seed`. The stroke weight sets the brush's size and a width profile scales it along the
+  path. Brushes draw on the canvas, in PNG, SVG and PDF (as filled outlines) and `vector.outlineStroke`
+  flattens them; dashes don't apply to brushes.
+- **Pen pressure**: the Pencil records pressure into the stroke's width profile (up to 32 points by
+  length; medium pressure, 0.5, draws the stroke weight, from a tenth of it to twice it); without
+  pressure (a mouse) the stroke stays uniform. `pointer` takes `pressure` and, for drags,
+  `pressureTo`. `tool.pencilBrush {preset?, …}` sets the brush new Pencil strokes get (`null`
+  clears it; no `preset` reads it). The desktop app reads pressure from pen input on Windows; in the
+  browser from stylus touch events that report a force; macOS and Linux tablets report none.
 
 ### Paint, effect and layout grid lists
 

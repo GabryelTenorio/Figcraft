@@ -1189,6 +1189,8 @@ mod booleans_tests;
 #[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
+mod brush_tests;
+#[cfg(test)]
 mod code_connect_tests;
 #[cfg(test)]
 mod collab_ids_tests;
@@ -1210,6 +1212,8 @@ mod devcompare_tests;
 mod devfocus_tests;
 #[cfg(test)]
 mod devinspect_tests;
+#[cfg(test)]
+mod draw_tools_tests;
 #[cfg(test)]
 mod effects_tests;
 #[cfg(test)]

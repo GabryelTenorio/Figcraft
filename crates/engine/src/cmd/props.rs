@@ -11,7 +11,7 @@ use crate::{Result, bad};
 /// Keys `node.set` understands (documented for agents).
 pub const KEYS: &str = "name, visible, locked, opacity (0-1), blend, x, y (parent-relative), width, height, rotation (degrees), \
 fills (paints or colours), fill (colour), strokes, stroke (colour), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], \
-strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
+strokeCap / startCap / endCap, strokeJoin, dashes [..], widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
 mainAlign (min|center|max|spaceBetween), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), wrap, \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
@@ -130,6 +130,20 @@ fn set_operand_op(doc: &mut Document, id: NodeId, v: &Value, cmd: &str) -> Resul
 }
 
 pub(crate) const WIDTH_PROFILE_HELP: &str = "widthProfile: a preset (uniform|wedge|taper|eye|rounded|pinch), points [[t (0-1 along the path), scale (× stroke weight)] | [t, left, right] (one-sided: each side's scale, looking along the path), ...] or [{t, scale} | {t, left, right}], {preset} | {points}, or null (uniform)";
+
+pub(crate) const BRUSH_HELP: &str = "brush: a preset (taper|ink|ribbon|bristle: stretched; dots|stars|confetti|leaves: scattered), {preset, spacing? (× weight), sizeJitter? (0-1), rotationJitter? (0-1), scatter? (0-4 × weight), seed?}, or null (a plain stroke)";
+
+/// A brush from a preset id, `{preset, spacing?, sizeJitter?, rotationJitter?, scatter?, seed?}`
+/// or null. `Some(None)` = no brush; `None` = not a brush (or an unknown preset).
+pub fn brush_of(v: &Value) -> Option<Option<Brush>> {
+    let b = match v {
+        Value::Null => return Some(None),
+        Value::String(id) => Brush::new(id.as_str()),
+        Value::Object(_) => serde_json::from_value::<Brush>(snake(v)).ok()?,
+        _ => return None,
+    };
+    figcraft_pathops::brush::preset(&b.preset).map(|_| Some(b.sanitized()))
+}
 
 /// A width profile from a preset name, points (`[[t, scale] | [t, left, right], ...]` or
 /// `[{t, scale} | {t, left, right}]`), `{preset}` / `{points}`, or null. `Some(None)` = uniform;
@@ -342,6 +356,7 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
                 doc.get_mut(id)?.stroke.dashes = d;
             }
             "widthProfile" => doc.get_mut(id)?.stroke.width_profile = width_profile_of(v).ok_or_else(|| bad(cmd, WIDTH_PROFILE_HELP))?,
+            "brush" | "strokeBrush" => doc.get_mut(id)?.stroke.brush = brush_of(v).ok_or_else(|| bad(cmd, BRUSH_HELP))?,
             "cornerRadius" => {
                 let r = four(v).ok_or_else(|| bad(cmd, "cornerRadius: n or [tl,tr,br,bl]"))?;
                 doc.get_mut(id)?.corners.radii = r.map(|x| x.max(0.0));
@@ -689,7 +704,7 @@ pub fn override_group(k: &str) -> &'static str {
     match k {
         "fills" | "fill" => "fills",
         "strokes" | "stroke" | "strokeWeight" | "strokeAlign" | "dashes" | "strokeCap" | "startCap" | "endCap" | "strokeJoin" | "strokeSides"
-        | "widthProfile" => "strokes",
+        | "widthProfile" | "brush" | "strokeBrush" => "strokes",
         "effects" => "effects",
         "opacity" | "blend" | "blendMode" => "opacity",
         "visible" => "visible",
