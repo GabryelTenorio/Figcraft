@@ -73,22 +73,25 @@ pub fn can_show(code: &str) -> bool {
     let need = language(code);
     need == 0
         || !cfg!(target_arch = "wasm32")
-        || samples(need, false).iter().all(|(c, _)| figcraft_text::face_with_char(*c, &["BIZ UDPGothic", "Noto Sans CJK SC"]).is_some())
+        || samples(need, 0).iter().all(|(c, _)| figcraft_text::face_with_char(*c, &["BIZ UDPGothic", "Noto Sans CJK SC"]).is_some())
 }
 
-/// A character standing for each script in `need`, with the families to look for it in, the
-/// language's own script first. Han without kana in a non-Japanese, non-Korean UI reads as Chinese
-/// (a simplified character, Chinese faces first); else a Japanese or Korean face draws it.
-fn samples(need: u8, korean_first: bool) -> Vec<(char, Vec<&'static str>)> {
-    let chinese = need & HAN != 0 && need & KANA == 0 && !korean_first;
-    let han: (char, Vec<&str>) = match (chinese, korean_first) {
+/// A character standing for each script in `need`, with the families to look for it in, the UI
+/// language's script (`ui`, see [`language`]) first. Han reads as Chinese (a simplified character,
+/// Chinese faces first) in a Chinese UI, and without kana in a UI that isn't Japanese or Korean;
+/// else a Japanese or Korean face draws it.
+fn samples(need: u8, ui: u8) -> Vec<(char, Vec<&'static str>)> {
+    let chinese = need & HAN != 0 && (ui == HAN || (ui == 0 && need & KANA == 0));
+    let han: (char, Vec<&str>) = match (chinese, ui) {
         (true, _) => ('们', [CHINESE, JAPANESE, KOREAN].concat()),
-        (false, true) => ('漢', [KOREAN, JAPANESE, CHINESE].concat()),
-        (false, false) => ('漢', [JAPANESE, KOREAN, CHINESE].concat()),
+        (false, HANGUL) => ('漢', [KOREAN, JAPANESE, CHINESE].concat()),
+        (false, _) => ('漢', [JAPANESE, KOREAN, CHINESE].concat()),
     };
     let mut v = vec![(KANA, ('あ', JAPANESE.to_vec())), (HAN, han), (HANGUL, ('한', KOREAN.to_vec()))];
-    if korean_first {
-        v.reverse();
+    match ui {
+        HANGUL => v.reverse(),
+        HAN => v.swap(0, 1),
+        _ => {}
     }
     v.into_iter().filter(|(bit, _)| need & bit != 0).map(|(_, s)| s).collect()
 }
@@ -98,7 +101,7 @@ fn samples(need: u8, korean_first: bool) -> Vec<(char, Vec<&'static str>)> {
 /// tried are read from disk.
 pub fn faces(need: u8, lang: &str, have: &dyn Fn(char) -> bool) -> Vec<Arc<Face>> {
     let mut out: Vec<Arc<Face>> = Vec::new();
-    for (c, families) in samples(need, language(lang) == HANGUL) {
+    for (c, families) in samples(need, language(lang)) {
         if have(c) || out.iter().any(|f| f.has_char(c)) {
             continue;
         }
@@ -123,20 +126,27 @@ mod tests {
         assert_eq!(language("ja"), KANA | HAN);
         assert_eq!(language("ko"), HANGUL);
         assert_eq!(language("zh-Hant"), HAN);
+        assert_eq!(language("zh-Hans"), HAN);
         assert_eq!(language("fr"), 0);
-        assert!(["en", "es", "fr", "de", "pt-BR"].iter().all(|c| can_show(c)));
+        assert!(["en", "es", "es-419", "fr", "de", "pt-BR"].iter().all(|c| can_show(c)));
     }
 
     #[test]
     fn the_ui_language_script_comes_first() {
-        let order = |need, ko| samples(need, ko).into_iter().map(|(c, _)| c).collect::<String>();
-        assert_eq!(order(KANA | HAN | HANGUL, false), "あ漢한");
-        assert_eq!(order(KANA | HAN | HANGUL, true), "한漢あ");
-        assert_eq!(order(HANGUL, false), "한");
+        let order = |need, ui| samples(need, ui).into_iter().map(|(c, _)| c).collect::<String>();
+        let first_face = |need, ui| samples(need, ui).first().and_then(|(_, f)| f.first()).copied();
+        assert_eq!(order(KANA | HAN | HANGUL, 0), "あ漢한");
+        assert_eq!(order(KANA | HAN | HANGUL, KANA | HAN), "あ漢한");
+        assert_eq!(order(KANA | HAN | HANGUL, HANGUL), "한漢あ");
+        assert_eq!(order(HANGUL, 0), "한");
         // Han without kana outside a Japanese or Korean UI reads as Chinese.
-        assert_eq!(order(HAN, false), "们");
-        assert_eq!(samples(HAN, false).first().and_then(|(_, f)| f.first()).copied(), Some("Noto Sans CJK SC"));
-        assert_eq!(samples(HAN, true).first().and_then(|(_, f)| f.first()).copied(), Some("Malgun Gothic"));
+        assert_eq!(order(HAN, 0), "们");
+        assert_eq!(first_face(HAN, 0), Some("Noto Sans CJK SC"));
+        assert_eq!(first_face(HAN, HANGUL), Some("Malgun Gothic"));
+        // A Chinese UI draws Han in a Chinese face first, Japanese names in it too.
+        assert_eq!(order(KANA | HAN | HANGUL, HAN), "们あ한");
+        assert_eq!(order(KANA | HAN, language("zh-Hans")), "们あ");
+        assert!(["Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC"].iter().all(|f| samples(HAN, HAN)[0].1[..4].contains(f)));
         assert!(faces(0, "en", &|_| false).is_empty());
         assert!(faces(KANA | HANGUL | HAN, "ja", &|_| true).is_empty(), "nothing is looked up for scripts the UI draws");
     }

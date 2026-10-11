@@ -7,11 +7,14 @@ and the interface switches at once. System takes the first of the OS's preferred
 a catalog (the browser's language on the web): a regional tag reads its language's catalog
 (`fr-CA` → `fr`), a language with only a regional catalog reads that one (`pt-PT` → `pt-BR`), and
 Latin American and US Spanish (`es-MX`, `es-AR`, `es-CO`, `es-US`, `es-419`…) read `es-419`.
+Chinese (`zh`, `zh-CN`, `zh-SG`, `zh-Hans`) reads `zh-Hans`; Traditional Chinese (`zh-Hant`,
+`zh-TW`, `zh-HK`, `zh-MO`) has no catalog and reads English (or the next OS language), not
+Simplified.
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
 The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
-`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`) and Korean
-(`ko`), machine-drafted and waiting for native speakers' review.
+`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`), Korean (`ko`)
+and Simplified Chinese (`zh-Hans`), machine-drafted and waiting for native speakers' review.
 
 ## The catalogs
 
@@ -38,12 +41,15 @@ Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European one
 Spanish overrides Spain's wording where it differs (agregar, presionar, configuración for settings,
 Enter for the key, control for a gamepad, resorte) and keeps Spanish's tú. Japanese is
 concise, without です/ます endings, with full-width （）「」：、。 where Japanese UI text has them;
-Korean labels end without 합니다 (instructions in -세요). Neither has plural forms.
+Korean labels end without 합니다 (instructions in -세요). Simplified Chinese is concise, with
+full-width （）：，、。“” in Chinese text and a space between Chinese and Latin words or numbers.
+None of the three has plural forms.
 
 CJK text needs a CJK font, which egui and Inter lack: the desktop app adds an installed one when
 something on screen needs it (see `crates/ui-egui/src/cjk.rs`). The web build has no system fonts,
-so Japanese and Korean appear there only in a build with craft-fonts and `FIGCRAFT_EMBED_CJK=1`
-(Noto Sans CJK, +16 MB); otherwise they are left out of the picker. A new CJK or other non-Latin
+so Japanese, Korean and Chinese appear there only in a build with craft-fonts and
+`FIGCRAFT_EMBED_CJK=1` (Noto Sans CJK SC, +16 MB); otherwise they are left out of the picker. A
+Chinese UI puts its Chinese face first so Han takes Simplified Chinese shapes. A new CJK or other non-Latin
 language also needs its script in `cjk::language`.
 
 ## Adding a language
@@ -59,9 +65,8 @@ language also needs its script in `cjk::language`.
 4. To require full coverage, add the code to `COMPLETE` in
    [`crates/ui-egui/src/i18n_tests.rs`](../crates/ui-egui/src/i18n_tests.rs). Every later PR that
    adds a string then has to translate it into each complete language, so only Spanish is there:
-   French, German, Brazilian Portuguese, Japanese and Korean are complete today but registered as
-   drafts, and a
-   string added later shows English in them until it is translated. To list what a draft lacks,
+   French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese are registered as
+   drafts, and a string added later shows English in them until it is translated. To list what a draft lacks,
    add its code to `COMPLETE` locally and run the check.
 5. Run the check and look at the panels in the app (longer words must fit the right panel):
 

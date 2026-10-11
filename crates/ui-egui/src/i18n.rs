@@ -69,12 +69,16 @@ const LATIN_AMERICA: &[&str] =
 
 /// The [`LANGS`] index for one tag: the exact tag ("pt-BR"), else its base language ("es" for
 /// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT"); Latin American
-/// Spanish ("es-MX") reads es-419. A language the UI can't draw (CJK on the web without CJK faces
-/// built in) doesn't count.
+/// Spanish ("es-MX") reads es-419, and Traditional Chinese (zh-Hant, zh-TW, zh-HK, zh-MO) none: it
+/// has no catalog and Simplified isn't a stand-in. A language the UI can't draw (CJK on the web
+/// without CJK faces built in) doesn't count.
 fn resolve_one(want: &str) -> Option<usize> {
     let tag = want.trim().split(['.', '@']).next().unwrap_or("").replace('_', "-");
     let base = tag.split('-').next().unwrap_or("");
     let has = |subtags: &[&str]| tag.split('-').skip(1).any(|t| subtags.iter().any(|s| s.eq_ignore_ascii_case(t)));
+    if base.eq_ignore_ascii_case("zh") && (has(&["Hant"]) || (!has(&["Hans"]) && has(&["TW", "HK", "MO"]))) {
+        return None;
+    }
     let find = |t: &str| LANGS.iter().position(|l| l.code.eq_ignore_ascii_case(t));
     let alias = (base.eq_ignore_ascii_case("es") && has(LATIN_AMERICA)).then(|| find("es-419")).flatten();
     let regional = || LANGS.iter().position(|l| !base.is_empty() && l.code.split('-').next().is_some_and(|b| b.eq_ignore_ascii_case(base)));
@@ -130,12 +134,12 @@ pub fn trn(key: &str, n: usize, args: &[(&str, &dyn Display)]) -> String {
 }
 
 /// Whether count `n` takes the "one" form: 0 and 1 in French and Brazilian Portuguese, never in
-/// Japanese and Korean (no plural forms: always "other"), 1 elsewhere (CLDR's integer rules).
+/// Japanese, Korean and Chinese (no plural forms: always "other"), 1 elsewhere (CLDR's integer rules).
 // shortcut: CLDR's "many" (French, Spanish and Portuguese millions) reads as "other" here; add it
 // when a language needs a third form.
 fn plural_one(lang: usize, n: usize) -> bool {
     match LANGS.get(lang).map(|l| l.code) {
-        Some("ja" | "ko") => false,
+        Some("ja" | "ko" | "zh-Hans") => false,
         Some("fr" | "pt-BR") => n <= 1,
         _ => n == 1,
     }

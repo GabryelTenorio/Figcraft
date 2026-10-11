@@ -254,35 +254,34 @@ pub fn install_fonts(ctx: &Context, system: bool, cjk: u8) {
     fonts.families.insert(FontFamily::Name("semibold".into()), semi);
     // CJK and other scripts from craft-fonts as fallbacks (Noto Sans CJK only with FIGCRAFT_EMBED_CJK).
     const BUILT_IN: [&str; 4] = ["Inter", "BIZ UDPGothic", "Noto Sans CJK SC", "Noto Sans Arabic"];
-    for f in figcraft_text::CRAFT_FONTS.iter().filter(|f| f.family != "Inter" && f.style == "Regular") {
-        if BUILT_IN.contains(&f.family) {
-            let key = format!("craft-{}", f.family);
-            fonts.font_data.insert(key.clone(), Arc::new(FontData::from_static(f.bytes)));
-            for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
-                if let Some(list) = fonts.families.get_mut(&fam) {
-                    list.push(key.clone());
-                }
-            }
-        }
-    }
+    let lang = crate::i18n::current().map_or("en", |l| l.code);
+    // A Chinese UI draws Han in a Chinese face: the built-in Japanese one goes after the system faces.
+    let late = |family: &str| family == "BIZ UDPGothic" && crate::cjk::language(lang) == crate::cjk::HAN;
+    let craft = |last: bool| {
+        figcraft_text::CRAFT_FONTS
+            .iter()
+            .filter(move |f| f.family != "Inter" && f.style == "Regular" && BUILT_IN.contains(&f.family) && late(f.family) == last)
+            .map(|f| (format!("craft-{}", f.family), FontData::from_static(f.bytes)))
+    };
+    let mut extra: Vec<(String, FontData)> = craft(false).collect();
     if system {
         // What the built-in faces above already draw.
         let embedded = |c: char| {
             BUILT_IN
                 .into_iter()
-                .filter(|f| figcraft_text::CRAFT_FONTS.iter().any(|cf| cf.family == *f))
+                .filter(|f| !late(f) && figcraft_text::CRAFT_FONTS.iter().any(|cf| cf.family == *f))
                 .filter_map(|f| figcraft_text::find_face(f, "Regular"))
                 .any(|x| x.has_char(c))
         };
-        let mut extra = crate::bidi::script_fallbacks(&embedded);
-        let lang = crate::i18n::current().map_or("en", |l| l.code);
+        extra.extend(crate::bidi::script_fallbacks(&embedded));
         extra.extend(crate::cjk::faces(cjk, lang, &embedded).iter().map(|f| (format!("system-{}-{}", f.family, f.style), font_data(f))));
-        for (key, data) in extra {
-            fonts.font_data.insert(key.clone(), Arc::new(data));
-            for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
-                if let Some(list) = fonts.families.get_mut(&fam) {
-                    list.push(key.clone());
-                }
+    }
+    extra.extend(craft(true));
+    for (key, data) in extra {
+        fonts.font_data.insert(key.clone(), Arc::new(data));
+        for fam in [FontFamily::Proportional, FontFamily::Name("semibold".into())] {
+            if let Some(list) = fonts.families.get_mut(&fam) {
+                list.push(key.clone());
             }
         }
     }

@@ -359,17 +359,32 @@ fn french_and_portuguese_count_zero_as_singular() {
 }
 
 #[test]
-fn japanese_and_korean_have_no_plural_forms() {
+fn japanese_korean_and_chinese_have_no_plural_forms() {
     let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
     assert_eq!(code("system", Some("ja-JP")), "ja");
     assert_eq!(code("system", Some("ko_KR.UTF-8")), "ko");
     assert_eq!(code("system", Some("ja,en-US")), "ja");
-    for code in ["ja", "ko"] {
+    for code in ["ja", "ko", "zh-Hans"] {
         let lang = LANGS.iter().position(|l| l.code == code).unwrap();
         assert!(!plural_one(lang, 0) && !plural_one(lang, 1) && !plural_one(lang, 2), "{code}");
         let ones: Vec<_> = LANGS[lang].ui.iter().filter(|(_, t)| matches!(t, Text::Plural(Some(_), _))).map(|(k, _)| k).collect();
         assert!(ones.is_empty(), "{code}: plural entries give only `other`: {ones:?}");
     }
+}
+
+#[test]
+fn chinese_reads_simplified_and_traditional_has_no_catalog() {
+    let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
+    for tag in ["zh-CN", "zh_CN.UTF-8", "zh-SG", "zh-Hans", "zh-Hans-CN", "zh-Hans-HK", "zh"] {
+        assert_eq!(code("system", Some(tag)), "zh-Hans", "{tag}");
+    }
+    // No Traditional Chinese catalog: English, never Simplified; else the next OS language.
+    for tag in ["zh-TW", "zh-HK", "zh-MO", "zh-Hant", "zh-Hant-TW", "zh_TW.UTF-8"] {
+        assert_eq!(code("system", Some(tag)), "en", "{tag}");
+        assert_eq!(code(tag, None), "en", "{tag}");
+    }
+    assert_eq!(code("system", Some("zh-TW,ja-JP")), "ja");
+    assert_eq!(LANGS[resolve("zh-Hans", None)].name, "简体中文");
 }
 
 #[test]

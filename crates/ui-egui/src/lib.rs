@@ -419,8 +419,8 @@ pub struct FigApp {
     worker: Option<render_worker::Worker>,
     fonts_installed: bool,
     /// System faces for scripts the built-in fonts lack were added (after the font scan), with
-    /// faces for these CJK scripts ([`cjk`]).
-    script_fonts: Option<u8>,
+    /// faces for these CJK scripts ([`cjk`]) in this UI language's order.
+    script_fonts: Option<(u8, &'static str)>,
     /// The tab (uid) and revision whose names were last checked for CJK scripts.
     cjk_checked: Option<(u64, u64)>,
     /// The language preference the UI strings follow (applied when it changes).
@@ -718,10 +718,12 @@ impl FigApp {
         } else if figcraft_text::system_fonts_scanned() {
             // Once the system fonts are indexed: faces for names in scripts the UI fonts lack, and
             // for each CJK script once something shows it.
-            let installed = self.script_fonts.unwrap_or(0);
+            let installed = self.script_fonts.map_or(0, |(s, _)| s);
             let cjk = installed | self.cjk_needed(ctx, installed);
-            if self.script_fonts != Some(cjk) {
-                self.script_fonts = Some(cjk);
+            // The UI language's script leads the CJK faces, so another language lays them out again.
+            let lang = i18n::current().map_or("en", |l| l.code);
+            if self.script_fonts != Some((cjk, lang)) {
+                self.script_fonts = Some((cjk, lang));
                 theme::install_fonts(ctx, true, cjk);
             }
         }
