@@ -152,7 +152,7 @@ Or in a project's `.mcp.json`:
 | `select {ids}` | Replace the selection (`[]` deselects). |
 | `export {ids, format, scale \| size, path?, bleed?, cropMarks?, bleedMarks?, cmyk?}` | png, jpg, svg, webp, pdf; `size` is `2x`, `512w` or `512h`. PDF: frames one page each (sized in points), anything else together on one page; print options: `bleed` (points or a length like `"3mm"`, `"0.125in"`), crop and bleed marks, CMYK colour (see Exports below), also taken by `file.export`, `file.exportLayers`, `file.exportFramesPdf` and stored per export setting by `export.add` / `export.update`; `run_command` `file.exportFramesPdf {page?, path?}` writes every top-level frame of a page. Without `path`, images come back as MCP image content, SVG as text. Layers' own export settings: `run_command` with `export.add` / `export.update {index, size?, suffix?, format?}` / `export.remove` and `file.exportLayers {ids?, dir?}` (every layer once per setting, named `<layer><suffix>.<format>`). |
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window in front when attached, a window id (see Windows below) that window. |
-| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
+| `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.fig` (best effort, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
 | `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
@@ -518,6 +518,18 @@ and `viewBox`/`preserveAspectRatio` are resolved. The result's `warnings` list w
 (filters that aren't shadows or blurs, rotated repeating patterns, a clip path's own clip path).
 Linked files are never read, only data URIs; documents nested more than 512 elements deep are
 refused.
+
+### Importing `.fig` files
+
+`open_file {path}` (a new, untitled document; the file is never saved over) and `file.import`
+(pages appended) read `.fig` files, best effort. Each file carries the schema its data is encoded
+with, so the data is decoded generically and mapped by field name onto the REST import below: the
+same layers, paints, text, auto layout, components, styles, variables and prototyping come across,
+with image fills from the file's own `images/` folder. Instances are rebuilt from their main
+component with the overrides and property values the file records. Vectors come in as their
+outlines (not editable vector networks); sticky notes, connectors, tables and other non-design
+layers, set-variable and conditional actions and video fills are skipped. The result's `warnings`
+list what was skipped.
 
 ### Importing REST API file JSON
 

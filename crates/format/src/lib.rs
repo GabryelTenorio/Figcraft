@@ -13,9 +13,10 @@
 //! JSON (the `document.json` alone) also opens. Reading is lenient: structural problems are
 //! repaired (see [`Document::repair`]) and reported, damaged versions and libraries are skipped.
 //!
-//! [`rest`] imports the public REST API file JSON.
+//! [`rest`] imports the public REST API file JSON; [`fig`] imports `.fig` files (best effort).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod fig;
 pub mod library;
 pub mod rest;
 
@@ -421,7 +422,7 @@ pub fn load_bytes(bytes: &[u8]) -> Result<(Document, Vec<String>), FormatError> 
 }
 
 /// Read archive member `name`, refusing members larger than `limit` bytes.
-fn read_member<R: Read + Seek>(z: &mut zip::ZipArchive<R>, name: &str, limit: u64) -> Result<Vec<u8>, FormatError> {
+pub(crate) fn read_member<R: Read + Seek>(z: &mut zip::ZipArchive<R>, name: &str, limit: u64) -> Result<Vec<u8>, FormatError> {
     let f = z.by_name(name).map_err(|e| FormatError::Corrupt(format!("{name}: {e}")))?;
     let too_large = || FormatError::Corrupt(format!("{name} is too large"));
     if f.size() > limit {

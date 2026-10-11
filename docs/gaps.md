@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (`.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -14,7 +14,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | # | Gap | Kind | Hours | Doc |
 |---|---|---|---|---|
-| 1 | `.fig` files can't be opened (**beta blocker**) | File format | 30–60 | [file-format-parity](file-format-parity.md) |
+| 1 | `.fig` files: best-effort import landed; editable vector networks, more layer kinds, real-file checks and export left (**beta blocker** until checked on real files, gap 3) | File format | 8–15 | [file-format-parity](file-format-parity.md) |
 | 2 | Multiplayer and sharing are a preview, without accounts (**beta blocker**) | Feature | 45–90 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
@@ -40,19 +40,21 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ## Entries
 
-### 1. `.fig` files can't be opened
-- **Missing:** a reader for Figma's native document (`com.figma.document`, extensions `fig`, `jam`,
-  `deck` in the installed app's `Info.plist`). Figma's files live in the cloud; "Save local copy"
-  writes a `.fig`. Today the only way in is the REST API file JSON (`file.open` / `file.import`),
-  which needs an access token and a separate download of images and variables.
-- **Evidence:** no `.fig` code anywhere in `crates/format` (searched 2026-10-10); ROADMAP listed
-  ".fig import (best effort)" as left.
-- **Impact:** blocks beta by definition: a designer can't bring existing work across. The single
-  biggest gap.
-- **Estimate:** 30–60 h for a best-effort reader written from public format knowledge (a
-  compressed binary schema plus a message per node; mapping onto the existing REST importer's
-  model), with a corpus of synthetic `.fig` files saved from the installed Figma. Export to `.fig`
-  is a further 15–30 h and lower priority.
+### 1. `.fig` files: the import's tail
+- **Landed (2026-10-11):** `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors (as outlines), auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning (`crates/format/src/fig`). `file.open`,
+  `file.import`, drag and drop, the CLI and MCP's `open_file` read `.fig`; the file is never saved
+  over.
+- **Missing:** vectors come in as their outlines (fill or stroke geometry), not editable vector
+  networks with per-vertex caps; sticky notes, connectors, tables, slides and other non-design layer
+  kinds are skipped; set-variable and conditional prototype actions, variables bound to fields other
+  than the common ones, non-flexible grid tracks and video fills aren't read; text lays out again with
+  local fonts. Nothing has been checked against real-world files yet (gap 3). Export to `.fig` is
+  not started.
+- **Evidence:** fixtures generated in code (`crates/format/src/fig/tests.rs`: kiwi round trips,
+  every mapped feature, truncation, bit flips and junk never panic); `crates/engine/src/fig_import_tests.rs`.
+- **Impact:** existing work can be brought across, but only real files will show how much of it.
+- **Estimate:** 8–15 h for the read tail (vector networks, the skipped layer kinds that matter,
+  real-file fixes); export to `.fig` a further 15–30 h and lower priority.
 
 ### 2. Multiplayer and sharing are a preview, without accounts
 - **Missing:** accounts, teams and projects, per-person permissions, spotlight, cursor chat, audio,
@@ -289,6 +291,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | `.fig` import, best effort (gap 1): `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors (as outlines), auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning. Gap 1 30–60 h → 8–15 h (vector networks, other layer kinds, real-file checks; export 15–30 h on top, as before) |
 | 2026-10-11 | minor | Display P3 honest minimum (gap 18): the colour picker of a Display P3 file warns when a colour is outside sRGB (Outside sRGB, with what the canvas and exports do), and View ▸ Soft-proof sRGB (`view.proofSrgb`) stripes the canvas pixels sRGB can't show. Why the canvas still shows sRGB: wgpu 30 can present Display P3 or extended-range sRGB surfaces (Metal, DX12, Vulkan, WebGPU canvases), but eframe/egui-wgpu 0.36 configure an 8-bit sRGB surface with no option for the format or colour space, and egui's renderer writes sRGB-encoded UI colours; showing P3 needs those two upstream (or a patched egui-wgpu). Hardware 13–27 h → 12–26 h; gap 18 6–12 h → 5–11 h; percentages, feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~362–696 h |
 | 2026-10-11 | minor | Several windows (gap 18): File ▸ New window, a tab's Open in new window or a tab dragged off the tab strip opens files in another window with its own tabs, panels and canvas, sharing the files, preferences, libraries and clipboard; each window draws only when it needs to (idle: ~0% CPU), closing one closes its files after asking about unsaved changes (the main window too, which takes over another window instead of quitting; the last window quits), and the control channel and MCP open, list, focus and capture windows (`window.new`, `window.list`, `window.focus`, `window` on any request); the screen-reader tree covers the main window only (eframe 0.36), so with a screen reader running files stay tabs; one window in the browser. Hardware 55% → 60%, 13–27 h → 10–21 h; gap 18 6–12 h → 4–8 h (P3 on screen left); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~360–691 h |
 | 2026-10-11 | minor | Localization layer landed (gap 5): per-language catalogs baked in at build time with English text as keys and fallback, placeholders and plurals, command labels by id, Preferences ▸ Language (System follows the OS or the browser) applied live and `pref.language`; English catalog and a complete Spanish draft awaiting native review. Localization 10% → 20%, 60–100 h → 45–75 h; ready for real work unchanged (~47%); full parity ~363–697 h → ~348–672 h |

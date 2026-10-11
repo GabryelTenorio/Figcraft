@@ -231,7 +231,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "open_file",
             "Open file",
-            "Open a .figcraft or .json document (FigCraft or REST API file JSON), an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
+            "Open a .figcraft or .json document (FigCraft or REST API file JSON), a .fig file (best effort, with `warnings` for what wasn't imported), an .svg (becomes vectors) or an image (becomes an image layer) as the active document. Returns the new document's summary.",
             obj(
                 json!({
                     "path": string("File path"),
