@@ -18,6 +18,10 @@ use crate::right::{menu_item, menu_item_with, menu_popup};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
+/// In the browser: what joining needs (a page can't host, and https pages can't reach `ws://`).
+const BROWSER_NOTE: &str =
+    "In the browser you can join sessions hosted by the desktop app. A page opened over https can only reach sessions on this computer.";
+
 /// How undo works in a session (per person).
 const UNDO_NOTE: &str = "Undo takes back only your own changes; what others changed since stays.";
 
@@ -37,6 +41,8 @@ pub struct LiveUi {
     seen: Option<(f64, f64)>,
     /// The Join dialog's link field (open when `Some`).
     pub join: Option<String>,
+    /// Put the keyboard in the Join dialog's field on its next frame.
+    focus_join: bool,
     /// Start sessions on the local network (else this machine only).
     pub lan: bool,
 }
@@ -80,10 +86,11 @@ pub fn pointer(painter: &egui::Painter, tip: Pos2, fill: Color32) {
     painter.add(Shape::closed_line(vec![tip, left, notch, right], Stroke::new(1.5, Color32::WHITE)));
 }
 
-/// The name tag next to a remote pointer.
-fn name_tag(painter: &egui::Painter, tip: Pos2, name: &str, fill: Color32) {
+/// A name tag in a person's colour, placed by `align` at `anchor` (next to their pointer, above
+/// their text caret).
+pub(crate) fn name_tag(painter: &egui::Painter, anchor: Pos2, align: Align2, name: &str, fill: Color32) {
     let galley = painter.layout_no_wrap(name.to_string(), semibold(11.0), text_on(fill));
-    let r = Rect::from_min_size(tip + vec2(12.0, 16.0), galley.size() + vec2(12.0, 6.0));
+    let r = align.anchor_size(anchor, galley.size() + vec2(12.0, 6.0));
     painter.rect_filled(r, CornerRadius::same(4), fill);
     painter.galley(r.min + vec2(6.0, 3.0), galley, text_on(fill));
 }
@@ -156,7 +163,7 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
         shown.insert(id, (sx, sy));
         let tip = app.to_screen(sx, sy);
         pointer(painter, tip, fill);
-        name_tag(painter, tip, &name, fill);
+        name_tag(painter, tip + vec2(12.0, 16.0), Align2::LEFT_TOP, &name, fill);
     }
     app.ui.live.shown = shown;
     if gliding {
@@ -306,6 +313,14 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             app.run("pref.userName", json!({"name": n}));
         }
     });
+    if !app.session.live.can_host() {
+        widgets::label(ui, "Hosting a session needs the desktop app; here you can join one.", t.text_secondary);
+        if widgets::button(ui, "Join a session…", true, true).clicked() {
+            open_join(app, "");
+            ui.close();
+        }
+        return;
+    }
     if widgets::checkbox(ui, app.ui.live.lan, "Share on the local network") {
         app.ui.live.lan = !app.ui.live.lan;
     }
@@ -321,7 +336,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
             app.run("collab.host", json!({"bind": bind}));
         }
         if widgets::button(ui, "Join a session…", false, true).clicked() {
-            app.ui.live.join = Some(String::new());
+            open_join(app, "");
             ui.close();
         }
     });
@@ -353,21 +368,51 @@ fn host_ui(app: &mut FigApp, ui: &mut Ui) {
     }
 }
 
+/// Open the Join dialog, with `link` in its field (focused).
+pub fn open_join(app: &mut FigApp, link: &str) {
+    app.ui.live.join = Some(link.to_string());
+    app.ui.live.focus_join = true;
+}
+
+/// An invite link the app was opened with (`figcraft figcraft://join?…`): join at once; a link
+/// that can't be used shows in the Join dialog with the reason.
+pub fn open_invite(app: &mut FigApp, link: &str) {
+    if app.run("collab.join", json!({"link": link.trim()})).is_none() {
+        open_join(app, link.trim());
+    }
+}
+
+/// Escape closes the Join dialog (before the canvas's shortcuts see it: it doesn't deselect).
+pub fn join_keys(app: &mut FigApp, ctx: &egui::Context) {
+    if app.ui.live.join.is_some() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        app.ui.live.join = None;
+    }
+}
+
 /// File ▸ Join live session: paste an invite link.
 pub fn join_dialog(app: &mut FigApp, ctx: &egui::Context) {
+    // The editor takes Escape before its shortcuts; the home screen has none.
+    join_keys(app, ctx);
     let Some(mut link) = app.ui.live.join.take() else { return };
     let t = Tokens::get(ctx);
     let mut open = true;
     let mut cancel = false;
     let mut go = false;
+    let focus = std::mem::take(&mut app.ui.live.focus_join);
     crate::dialogs::window("Join live session", ctx).open(&mut open).show(ctx, |ui| {
         ui.set_width(380.0);
         widgets::label(ui, "Paste the invite link the host shared with you.", t.text);
         let resp = ui
             .add(egui::TextEdit::singleline(&mut link).hint_text("figcraft://join?host=…").desired_width(380.0).id(egui::Id::new("live_join_link")));
         a11y::text(&resp, "Invite link", "");
+        if focus {
+            resp.request_focus();
+        }
         go = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         widgets::label(ui, "You'll get the host's file as a new tab and edit it together.", t.text_secondary);
+        if !app.session.live.can_host() {
+            widgets::label(ui, BROWSER_NOTE, t.text_secondary);
+        }
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             go |= widgets::button(ui, "Join", true, !link.trim().is_empty()).clicked();

@@ -192,6 +192,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::dev_mode::draw(app, &painter);
     crate::handles::draw(app, &painter);
     crate::comments::draw(app, &painter);
+    crate::live_text::draw(app, &painter);
     crate::live::draw(app, &painter, &ctx);
     crate::comments::popovers(app, &ctx);
     crate::versions::preview_banner(app, &ctx, rect);
@@ -477,6 +478,52 @@ fn dropped_bytes(_f: &std::sync::Arc<dyn egui::DroppedFile + Send + Sync>) -> Op
 
 fn stroke(c: Color32, w: f32) -> Stroke {
     Stroke::new(w, c)
+}
+
+/// A text layer's layout placed on the canvas: where carets and selected characters show (yours
+/// and other people's in a live session).
+pub(crate) struct TextOnScreen {
+    pub layout: Arc<figcraft_text::TextLayout>,
+    /// How many characters the text has.
+    pub chars: usize,
+    /// The layout's vertical offset in the box (vertical alignment).
+    dy: f64,
+    world: figcraft_geom::Affine,
+}
+
+impl TextOnScreen {
+    /// Text layer `id` of `doc` (`None`: not a text layer).
+    pub(crate) fn of(doc: &Document, id: NodeId) -> Option<Self> {
+        let n = doc.node(id)?;
+        let NodeKind::Text(t) = &n.kind else { return None };
+        let (layout, dy) = figcraft_text::layout_node(n)?;
+        Some(Self { layout, chars: t.char_count(), dy, world: doc.world_transform(id) })
+    }
+
+    /// Layout point `(x, y)` on screen.
+    pub(crate) fn at(&self, app: &FigApp, x: f64, y: f64) -> Pos2 {
+        let p = self.world * Point::new(x, y + self.dy);
+        app.to_screen(p.x, p.y)
+    }
+
+    /// The highlight of characters `a..b`, one screen quad per line.
+    pub(crate) fn selection(&self, app: &FigApp, a: usize, b: usize) -> Vec<[Pos2; 4]> {
+        let rects = self.layout.selection_rects(a, b);
+        rects.iter().map(|r| [self.at(app, r.x0, r.y0), self.at(app, r.x1, r.y0), self.at(app, r.x1, r.y1), self.at(app, r.x0, r.y1)]).collect()
+    }
+
+    /// The caret before character `index`: its top and bottom on screen (an empty layer: a line
+    /// of default height at its origin).
+    pub(crate) fn caret(&self, app: &FigApp, index: usize, zoom: f64) -> [Pos2; 2] {
+        let (cx, li) = self.layout.caret(index);
+        match self.layout.lines.get(li).or(self.layout.lines.last()) {
+            Some(line) => [self.at(app, cx, line.top), self.at(app, cx, line.top + line.height)],
+            None => {
+                let p = self.at(app, 0.0, 0.0);
+                [p, p + vec2(0.0, 14.0 * zoom as f32)]
+            }
+        }
+    }
 }
 
 /// A node's oriented outline in screen space.
@@ -781,22 +828,16 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     let preedit = app.preedit_view();
     let edoc: &Document = preedit.map(|p| &*p.doc).unwrap_or(&doc);
     if let Some(te) = editing
-        && let Some(n) = edoc.node(te.id)
-        && let Some((layout, dy)) = figcraft_text::layout_node(n)
+        && let Some(text) = TextOnScreen::of(edoc, te.id)
     {
-        let w = edoc.world_transform(te.id);
-        let to = |x: f64, y: f64| {
-            let p = w * Point::new(x, y + dy);
-            app.to_screen(p.x, p.y)
-        };
+        let layout = &text.layout;
         if let Some(q) = node_quad(app, edoc, te.id) {
             quad(painter, q, stroke(ACCENT, 1.0));
         }
         let (a, b) = (te.caret.min(te.anchor), te.caret.max(te.anchor));
         if a != b && preedit.is_none() {
-            for r in layout.selection_rects(a, b) {
-                let qq = [to(r.x0, r.y0), to(r.x1, r.y0), to(r.x1, r.y1), to(r.x0, r.y1)];
-                painter.add(Shape::convex_polygon(qq.to_vec(), ACCENT.gamma_multiply(0.3), Stroke::NONE));
+            for q in text.selection(app, a, b) {
+                painter.add(Shape::convex_polygon(q.to_vec(), ACCENT.gamma_multiply(0.3), Stroke::NONE));
             }
         }
         if let Some(p) = preedit {
@@ -812,21 +853,15 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
                     .map(|g| g.x + g.advance)
                     .fold(r.x0, f64::max);
                 let y = line.baseline + (line.top + line.height - line.baseline) * 0.35;
-                painter.line_segment([to(r.x0, y), to(x1, y)], stroke(t.text, 1.0));
+                painter.line_segment([text.at(app, r.x0, y), text.at(app, x1, y)], stroke(t.text, 1.0));
             }
         }
         let caret = preedit.map(|p| p.cursor).unwrap_or(te.caret);
-        let (cx, li) = layout.caret(caret);
-        if let Some(line) = layout.lines.get(li).or(layout.lines.last()) {
-            let blink = (painter.ctx().input(|i| i.time) * 2.0) as i64 % 2 == 0;
-            if blink || a != b {
-                painter.line_segment([to(cx, line.top), to(cx, line.top + line.height)], stroke(t.text, 1.0));
-            }
-            painter.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-        } else {
-            let p = to(0.0, 0.0);
-            painter.line_segment([p, p + vec2(0.0, 14.0 * zoom as f32)], stroke(t.text, 1.0));
+        let blink = (painter.ctx().input(|i| i.time) * 2.0) as i64 % 2 == 0;
+        if blink || a != b {
+            painter.line_segment(text.caret(app, caret, zoom), stroke(t.text, 1.0));
         }
+        painter.ctx().request_repaint_after(std::time::Duration::from_millis(500));
     }
     // Smart guides and measurements (their labels kept clear of the size label).
     crate::measure_overlay::draw(app, painter, t, size_label);

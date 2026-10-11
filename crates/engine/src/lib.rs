@@ -24,6 +24,7 @@ pub mod drop;
 pub mod guard;
 pub mod guides;
 pub mod inspect;
+pub mod invite_links;
 pub mod keymap;
 pub mod library;
 pub mod live;
@@ -452,6 +453,9 @@ pub struct Prefs {
     /// Reduce motion: the interface's own animations are off (the system's setting turns them off
     /// too). Prototype transitions still play.
     pub reduce_motion: bool,
+    /// `figcraft://` invite links open this app (`collab.registerLinks`); `None`: on for installed
+    /// builds, off for development builds.
+    pub invite_links: Option<bool>,
     /// Installed plugins (Plugins menu), in menu order.
     #[serde(serialize_with = "plugins::persisted")]
     pub plugins: Vec<plugins::InstalledPlugin>,
@@ -470,6 +474,7 @@ impl Default for Prefs {
             theme: "light".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
+            invite_links: None,
             plugins: Vec::new(),
         }
     }
@@ -1129,6 +1134,8 @@ mod binding_lists_tests;
 #[cfg(test)]
 mod booleans_tests;
 #[cfg(test)]
+mod collab_ids_tests;
+#[cfg(test)]
 mod collab_live_tests;
 #[cfg(test)]
 mod collab_tests;
@@ -1160,6 +1167,8 @@ mod gesture_preview_tests;
 mod html_codegen_tests;
 #[cfg(test)]
 mod import_export_tests;
+#[cfg(test)]
+mod invite_links_tests;
 #[cfg(test)]
 mod keymap_tests;
 #[cfg(test)]

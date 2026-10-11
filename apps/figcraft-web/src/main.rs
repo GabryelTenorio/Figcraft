@@ -7,7 +7,11 @@
 //! Differences from the desktop app:
 //! - no TCP control server (browsers can't listen on sockets);
 //! - no native file dialogs yet: the session starts with one new document;
-//! - links open in a new browser tab.
+//! - links open in a new browser tab;
+//! - live sessions: it joins sessions a desktop app hosts (File ▸ Join live session…) but can't
+//!   host one. A page served over `https://` can only reach sessions on the same computer
+//!   (browsers block `ws://` from secure pages); serve it over `http://` on a trusted network to
+//!   join from other machines.
 //!
 //! URL query flag: `?webgl` forces the WebGL2 backend instead of WebGPU.
 

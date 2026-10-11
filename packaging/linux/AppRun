@@ -41,7 +41,7 @@ integrate() {
   mkdir -p "$apps" 2>/dev/null || return 0
   tmp="$apps/.$DESK_ID.tmp.$$"
   esc="$(printf '%s' "$appimage" | sed 's/[\\&|]/\\&/g')"
-  if sed -e "s|^Exec=.*|Exec=\"$esc\" %F|" -e '/^TryExec=/d' "$src_desktop" 2>/dev/null >"$tmp"; then
+  if sed -e "s|^Exec=.*|Exec=\"$esc\" %U|" -e '/^TryExec=/d' "$src_desktop" 2>/dev/null >"$tmp"; then
     if cmp -s "$tmp" "$apps/$DESK_ID.desktop"; then
       rm -f "$tmp"
     else

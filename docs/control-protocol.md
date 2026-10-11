@@ -91,8 +91,10 @@ screen reader announces; empty when nothing has it). `reduceMotion` is true when
 the system's accessibility setting turns the interface's animations off. `live` is the live
 session as the window shows it: `status`, `role`, the number of `peers`, who you `follow`, the
 peers whose cursors are drawn on the canvas (`cursorsShown`) and whether the Join dialog is open
-(`joinDialog`); the session itself is `engine.execute {command: "collab.peers"}` (hosting and
-joining are `collab.host` and `collab.join`, see [mcp.md](mcp.md#live-sessions)).
+(`joinDialog`; Escape closes it); the session itself is `engine.execute {command: "collab.peers"}`
+(hosting and joining are `collab.host` and `collab.join`, opening invite links
+`collab.registerLinks`, see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
+was started with (`figcraft "figcraft://join?…"`).
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?}`
 

@@ -130,6 +130,13 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
             for c in toggles {
                 app.run(c, json!({}));
             }
+            // Where the app registers itself as the opener of invite links (Windows).
+            if let Some(on) = app.session.invite_links_on() {
+                if crate::widgets::checkbox(ui, on, "Open invite links in FigCraft") {
+                    app.run("collab.registerLinks", json!({"on": !on}));
+                }
+                crate::widgets::label(ui, "figcraft:// links from a browser, chat or email open this app and join the session.", t.text_secondary);
+            }
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.label("Your name in comments");

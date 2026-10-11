@@ -340,6 +340,31 @@ pub(crate) fn entry_value(doc: &Document, entry: &Entry) -> Result<Option<Json>,
     value.transpose()
 }
 
+/// Whether `doc` has entry `entry`.
+pub(crate) fn has(doc: &Document, entry: &Entry) -> bool {
+    match entry {
+        Entry::Style(k) => doc.styles.iter().any(|s| s.id == *k),
+        Entry::Comment(k) => doc.comments.iter().any(|c| c.id == *k),
+        Entry::Collection(k) => doc.variables.collections.iter().any(|c| c.id == *k),
+        Entry::Variable(k) => doc.variables.variables.iter().any(|v| v.id == *k),
+        Entry::DevSnapshot(k) => doc.dev_snapshots.contains_key(k),
+        Entry::Image(k) => doc.images.contains_key(k),
+    }
+}
+
+/// The entries of list `family` in `doc`.
+pub(crate) fn entries(doc: &Document, family: Family) -> Vec<Entry> {
+    fn keys<T: Keyed>(list: &List<T>, doc: &Document) -> Vec<Entry> {
+        (list.get)(doc).iter().map(|t| (list.entry)(t.key())).collect()
+    }
+    match family {
+        Family::Styles => keys(&STYLES, doc),
+        Family::Comments => keys(&COMMENTS, doc),
+        Family::Collections => keys(&COLLECTIONS, doc),
+        Family::Variables => keys(&VARIABLES, doc),
+    }
+}
+
 /// The current value of what `change` writes, as a change (for a rejected batch's fixes): the
 /// property or entry as it is now, or the entry's removal. List properties revert whole.
 pub(crate) fn current(doc: &Document, change: &Change) -> Result<Option<Change>, Error> {

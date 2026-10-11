@@ -1,6 +1,7 @@
 //! FigCraft desktop app.
 //!
-//! Usage: `figcraft [--control <port>] [files…]`
+//! Usage: `figcraft [--control <port>] [files…] [figcraft://join?…]` (an invite link joins that
+//! live session; the app registers itself as the opener of such links: `collab.registerLinks`).
 //!
 //! `--control <port>` (or `FIGCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"engine.execute","params":{"command":"shape.rectangle","params":{"x":0,"y":0,"width":100,"height":100}}}`
@@ -8,8 +9,12 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
+mod args;
 mod control_server;
 mod services;
+
+#[cfg(test)]
+mod args_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -82,20 +87,8 @@ fn main() -> eframe::Result {
         );
         return Ok(());
     }
-    let mut port: Option<u16> = std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
-    let mut files = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        match args.get(i).map(String::as_str) {
-            Some("--control") => {
-                port = args.get(i + 1).and_then(|p| p.parse().ok());
-                i += 1;
-            }
-            Some(f) if !f.starts_with("--") => files.push(f.to_string()),
-            _ => {}
-        }
-        i += 1;
-    }
+    let args = args::parse(&args);
+    let port = args.control.or_else(|| std::env::var("FIGCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()));
     // System fonts: index them in the background, then wake the UI (an idle window draws no frames)
     // to lay text out again with them.
     let ctx_slot: Arc<Mutex<Option<egui::Context>>> = Arc::new(Mutex::new(None));
@@ -114,7 +107,7 @@ fn main() -> eframe::Result {
             c.request_repaint();
         }
     }))));
-    for f in &files {
+    for f in &args.files {
         if let Err(e) = session.execute("file.open", &json!({"path": f})) {
             log::error!("{f}: {e}");
         }
@@ -123,11 +116,18 @@ fn main() -> eframe::Result {
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
+    // Invite links open this app (Windows registers per user at run time; installed builds by
+    // default, never a build from source unless asked).
+    session.live.links = figcraft_collab_net::links::system();
+    session.invite_links_startup();
     if session.docs.is_empty() {
         let _ = session.execute("file.new", &json!({}));
     }
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
+    if let Some(link) = &args.join {
+        figcraft_ui_egui::live::open_invite(&mut fig, link);
+    }
     let queue: Arc<Mutex<Vec<ControlRequest>>> = Arc::new(Mutex::new(Vec::new()));
     if let Some(p) = port {
         control_server::start(p, queue.clone(), ctx_slot.clone());

@@ -36,8 +36,10 @@ pub fn start() {
                     }
                     let reduce_motion = web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
                     let mut session = Session::new();
-                    // Live sessions say they need the desktop app until the browser client lands.
-                    session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(|| {}))));
+                    // Live sessions: the browser joins sessions a desktop app hosts; whatever arrives
+                    // on the socket wakes the page for a frame.
+                    let ctx = cc.egui_ctx.clone();
+                    session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(move || ctx.request_repaint()))));
                     let fig = FigApp::new(session, Box::new(WebServices { reduce_motion }));
                     Ok(Box::new(WebShell { fig }))
                 }),

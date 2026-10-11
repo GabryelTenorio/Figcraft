@@ -70,6 +70,19 @@
     </dict>
   </array>
 
+  <!-- figcraft://join?... live session invite links open FigCraft. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>ai.storyteller.figcraft.invite</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>figcraft</string></array>
+    </dict>
+  </array>
+
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>

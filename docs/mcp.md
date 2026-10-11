@@ -519,8 +519,9 @@ is per user (`edit.undo` / `edit.redo` take back only your own steps, see
 ### Live sessions
 
 People (and agents) edit one file together and see each other's cursors, selections and
-viewports. Both the headless session and the attached app can host and join; each call takes in
-what happened since the last one and sends your edits (a joined file opens as a new document).
+viewports. Both the headless session and the attached app can host and join (the web build can
+join but not host); each call takes in what happened since the last one and sends your edits (a
+joined file opens as a new document).
 
 - `collab.host {port?, bind?}` starts hosting the active document: `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
@@ -531,19 +532,36 @@ what happened since the last one and sends your edits (a joined file opens as a 
 - `collab.join {link}` (either form) returns at once with `status: "connecting"`; poll
   `collab.peers` until `status` is `"live"`, or `"failed"` with a `reason` (a wrong token, a full
   session, an unreachable host). `collab.leave {}` leaves.
-- `collab.peers {}` → `{available, status (off|connecting|live|reconnecting|failed), reason?,
+- `collab.peers {}` → `{available, canHost (false in the web build), status
+  (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
-  follow, syncing (the document arrived), document (the index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection: [ids], viewport:
-  [page, x, y, w, h], editing_text: {node, caret, selection?}}}]}`.
+  follow, syncing (the document arrived), document (the index of the synced open document),
+  editing (the text layer you are typing in: {node, layer, caret, selection}, or null), peers: [{id,
+  name, color, editing (the text layer they are typing in, same shape, or null), presence: {cursor:
+  [page, x, y], selection: [ids], viewport: [page, x, y, w, h], editing_text: {node, caret,
+  selection?}}}]}`. Carets and selections count characters; someone's typing syncs when they
+  finish, so their caret may be past the end of your copy until then. Starting `text.edit.begin`
+  in a layer someone else is typing in sets the message "<name> is editing this text too: the
+  version finished last is kept" (both edits sync as whole values when each person finishes; the
+  last one wins).
 - `collab.cursor {x, y}` puts your cursor at a page position (omit both to hide it): an agent's
   pointer. Your selection, page and view go out by themselves when they change.
 - `collab.follow {client}` follows that person's viewport; `collab.follow {}` stops (so does any
   pan or zoom of your own, or Escape).
+- Styles, variables, collections, modes and comments you create on the session's document take
+  ids from your own id space (`S:<n>`, `VariableID:<n>`, … with large numbers), so two people
+  creating them at once never overwrite each other's; outside a session ids look as before (`S:1`,
+  `VariableID:1`…).
 - On the session's document every command (or `batch`, or gesture) is one step of your own undo
   history: `edit.undo` / `edit.redo` take back only your steps and leave what others changed since.
   An edit the host refuses (someone deleted the layer) is rolled back and the reason is the
   session's message. While the connection is reconnecting, editing goes on; the edits go out when
   it is back (the same client, catching up with what it missed).
+- `collab.registerLinks {on?}` → `{on, registered}` makes the desktop app the opener of
+  `figcraft://` invite links, or stops (no `on`: switch). Only where the app registers them itself
+  (Windows, per user); elsewhere it reports the command unavailable. It also sets the
+  Preferences checkbox. Starting the app with an invite link (`figcraft "figcraft://join?…"`)
+  joins that session.
 
 ### Plugins
 
