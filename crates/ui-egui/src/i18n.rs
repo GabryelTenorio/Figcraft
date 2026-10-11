@@ -24,6 +24,9 @@ pub struct Lang {
     pub name: &'static str,
     /// Machine-drafted, waiting for a native speaker's review (`[meta] status`).
     pub draft: bool,
+    /// Index into [`LANGS`] of the catalog a regional one overlays ("es" under "es-419": it lists
+    /// only what differs), else 0 (English).
+    pub parent: usize,
     /// UI strings by English text, sorted.
     pub ui: &'static [(&'static str, Text)],
     /// Command labels by command id, sorted.
@@ -60,24 +63,37 @@ fn resolve(pref: &str, system: Option<&str>) -> usize {
     want.split(',').find_map(resolve_one).unwrap_or(0)
 }
 
+/// Regions whose Spanish reads the Latin American catalog (es-419): Latin America and the US.
+const LATIN_AMERICA: &[&str] =
+    &["419", "AR", "BO", "CL", "CO", "CR", "CU", "DO", "EC", "GT", "HN", "MX", "NI", "PA", "PE", "PR", "PY", "SV", "US", "UY", "VE"];
+
 /// The [`LANGS`] index for one tag: the exact tag ("pt-BR"), else its base language ("es" for
-/// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT"). A language the
-/// UI can't draw (CJK on the web without CJK faces built in) doesn't count.
+/// "es_ES.UTF-8"), else a regional catalog of that language ("pt-BR" for "pt-PT"); Latin American
+/// Spanish ("es-MX") reads es-419. A language the UI can't draw (CJK on the web without CJK faces
+/// built in) doesn't count.
 fn resolve_one(want: &str) -> Option<usize> {
     let tag = want.trim().split(['.', '@']).next().unwrap_or("").replace('_', "-");
     let base = tag.split('-').next().unwrap_or("");
+    let has = |subtags: &[&str]| tag.split('-').skip(1).any(|t| subtags.iter().any(|s| s.eq_ignore_ascii_case(t)));
     let find = |t: &str| LANGS.iter().position(|l| l.code.eq_ignore_ascii_case(t));
+    let alias = (base.eq_ignore_ascii_case("es") && has(LATIN_AMERICA)).then(|| find("es-419")).flatten();
     let regional = || LANGS.iter().position(|l| !base.is_empty() && l.code.split('-').next().is_some_and(|b| b.eq_ignore_ascii_case(base)));
-    find(&tag).or_else(|| find(base)).or_else(regional).filter(|i| LANGS.get(*i).is_some_and(|l| crate::cjk::can_show(l.code)))
+    alias.or_else(|| find(&tag)).or_else(|| find(base)).or_else(regional).filter(|i| LANGS.get(*i).is_some_and(|l| crate::cjk::can_show(l.code)))
 }
 
 fn find(table: &'static [(&'static str, Text)], key: &str) -> Option<&'static Text> {
     table.binary_search_by(|(k, _)| (*k).cmp(key)).ok().and_then(|i| table.get(i)).map(|(_, t)| t)
 }
 
-/// `key`'s entry in language `lang`, else in English.
+/// Language `lang`, the catalog it overlays ("es" under "es-419"), then English.
+fn chain(lang: usize) -> impl Iterator<Item = &'static Lang> {
+    let parent = LANGS.get(lang).map_or(0, |l| l.parent);
+    [lang, parent, 0].into_iter().filter_map(|i| LANGS.get(i))
+}
+
+/// `key`'s entry in language `lang`, else in the catalog it overlays, else in English.
 fn lookup(lang: usize, key: &str) -> Option<&'static Text> {
-    [lang, 0].iter().filter_map(|i| LANGS.get(*i)).find_map(|l| find(l.ui, key))
+    chain(lang).find_map(|l| find(l.ui, key))
 }
 
 /// The UI string for `key` (its English text) in the current language. One English text that needs
@@ -164,8 +180,7 @@ pub fn menu_item<'a>(id: &str, english: &'a str) -> Cow<'a, str> {
 }
 
 fn label<'a>(menu: bool, id: &str, english: &'a str) -> Cow<'a, str> {
-    let lang = LANGS.get(CURRENT.load(Ordering::Relaxed));
-    let text = lang.and_then(|l| menu.then(|| find(l.menu, id)).flatten().or_else(|| find(l.commands, id)));
+    let text = chain(CURRENT.load(Ordering::Relaxed)).find_map(|l| menu.then(|| find(l.menu, id)).flatten().or_else(|| find(l.commands, id)));
     match text {
         Some(Text::Plain(s) | Text::Plural(_, s)) if english.ends_with('…') && !s.ends_with('…') => Cow::Owned(format!("{s}…")),
         Some(Text::Plain(s) | Text::Plural(_, s)) => Cow::Borrowed(s),

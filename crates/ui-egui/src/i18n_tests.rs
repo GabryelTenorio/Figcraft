@@ -318,6 +318,36 @@ fn system_languages_pick_the_first_one_with_a_catalog() {
 }
 
 #[test]
+fn latin_american_spanish_overlays_spanish() {
+    let code = |pref: &str, system: Option<&str>| LANGS[resolve(pref, system)].code;
+    for tag in ["es-419", "es-MX", "es-AR", "es_CO.UTF-8", "es-US", "es-Latn-MX"] {
+        assert_eq!(code("system", Some(tag)), "es-419", "{tag}");
+    }
+    for tag in ["es", "es-ES", "es_ES.UTF-8", "es-GQ"] {
+        assert_eq!(code("system", Some(tag)), "es", "{tag}");
+    }
+    let es = LANGS.iter().position(|l| l.code == "es").unwrap();
+    let la = LANGS.iter().position(|l| l.code == "es-419").unwrap();
+    assert_eq!(LANGS[la].parent, es);
+    assert!(es < la, "the picker lists Español first");
+    // Its own wording, else Spanish's, else English's.
+    assert!(matches!(lookup(la, "Add fill"), Some(Text::Plain("Agregar relleno"))));
+    assert!(matches!(lookup(la, "Fill"), Some(Text::Plain("Relleno"))));
+    let undo = |i: usize| chain(i).find_map(|l| find(l.commands, "edit.undo")).map(forms);
+    assert!(undo(es).is_some() && undo(la) == undo(es), "command labels fall back too");
+    // An overlay lists only what differs from the catalog under it.
+    for lang in LANGS.iter().filter(|l| l.parent != 0) {
+        let under = &LANGS[lang.parent];
+        for (table, base) in [(lang.ui, under.ui), (lang.commands, under.commands), (lang.menu, under.menu)] {
+            for (k, t) in table {
+                let same = find(base, k).is_some_and(|b| forms(b) == forms(t));
+                assert!(!same, "{}: {k:?} reads as in {}", lang.code, under.code);
+            }
+        }
+    }
+}
+
+#[test]
 fn french_and_portuguese_count_zero_as_singular() {
     let one = |code: &str, n: usize| plural_one(LANGS.iter().position(|l| l.code == code).unwrap(), n);
     for code in ["fr", "pt-BR"] {

@@ -39,21 +39,29 @@ fn locales() -> String {
     println!("cargo::rerun-if-changed={}", dir.display());
     let mut files: Vec<_> =
         std::fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
-    files.sort_by_key(|p| (p.file_stem().is_none_or(|s| s != "en"), p.clone()));
+    // By code, so "es" comes before "es-419".
+    files.sort_by_key(|p| (p.file_stem().is_none_or(|s| s != "en"), p.file_stem().map(ToOwned::to_owned)));
+    let langs: Vec<_> = files
+        .into_iter()
+        .filter_map(|path| {
+            let t = read(&path, "the language is left out", |t| t.parse::<toml::Table>().map_err(|e| e.to_string()))?;
+            Some((path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), path, t))
+        })
+        .collect();
     let mut o = String::from(
         "pub static LANGS: &[Lang] = &[
 ",
     );
-    for path in files {
-        let Some(t) = read(&path, "the language is left out", |t| t.parse::<toml::Table>().map_err(|e| e.to_string())) else { continue };
-        let code = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    for (code, path, t) in &langs {
         let meta = |k: &str| t.get("meta").and_then(|m| m.get(k)).and_then(toml::Value::as_str).unwrap_or("").to_string();
-        let _ = writeln!(o, "    Lang {{ code: {code:?}, name: {:?}, draft: {}, ui: &[", meta("name"), !meta("status").is_empty());
-        table(&mut o, &path, t.get("ui"));
+        // A regional catalog ("es-419") overlays its language's ("es"), if there is one.
+        let parent = code.split_once('-').and_then(|(base, _)| langs.iter().position(|(c, ..)| c == base)).unwrap_or(0);
+        let _ = writeln!(o, "    Lang {{ code: {code:?}, name: {:?}, draft: {}, parent: {parent}, ui: &[", meta("name"), !meta("status").is_empty());
+        table(&mut o, path, t.get("ui"));
         let _ = writeln!(o, "    ], commands: &[");
-        table(&mut o, &path, t.get("commands"));
+        table(&mut o, path, t.get("commands"));
         let _ = writeln!(o, "    ], menu: &[");
-        table(&mut o, &path, t.get("menu"));
+        table(&mut o, path, t.get("menu"));
         let _ = writeln!(o, "    ] }},");
     }
     o.push_str(

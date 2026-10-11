@@ -5,12 +5,13 @@ FigCraft's interface strings live in one TOML catalog per language in
 binary (desktop and web); nothing is read at run time. Preferences ▸ Language picks the language
 and the interface switches at once. System takes the first of the OS's preferred languages that has
 a catalog (the browser's language on the web): a regional tag reads its language's catalog
-(`fr-CA` → `fr`), and a language with only a regional catalog reads that one (`pt-PT` → `pt-BR`).
+(`fr-CA` → `fr`), a language with only a regional catalog reads that one (`pt-PT` → `pt-BR`), and
+Latin American and US Spanish (`es-MX`, `es-AR`, `es-CO`, `es-US`, `es-419`…) read `es-419`.
 `pref.language {language}` does the same from the CLI, MCP and the control channel.
 
-The catalogs: English (`en`, the source), and Spanish (`es`), French (`fr`), German (`de`),
-Brazilian Portuguese (`pt-BR`), Japanese (`ja`) and Korean (`ko`), machine-drafted and waiting for
-native speakers' review.
+The catalogs: English (`en`, the source), and Spanish (`es`, with the Latin American overlay
+`es-419`), French (`fr`), German (`de`), Brazilian Portuguese (`pt-BR`), Japanese (`ja`) and Korean
+(`ko`), machine-drafted and waiting for native speakers' review.
 
 ## The catalogs
 
@@ -25,12 +26,17 @@ native speakers' review.
   English.
 - `[meta] name` is the language's own name (the picker shows it untranslated); `[meta] status` marks
   a draft (the Preferences window says so).
+- A **regional overlay** (`es-419.toml`: a code with a region whose language has a catalog) lists
+  only the entries worded differently there; everything else reads the language's catalog, then
+  English. The check fails on an overlay entry that reads as in the catalog under it.
 
 A key a catalog lacks shows its English text, so a partial catalog is safe to ship.
 
 Typography follows each language: French puts a no-break space (`\u00A0` in the TOML) before
 `:` `;` `?` `!`, inside « » and before `%`; German uses „ “ and formal address (Sie); Brazilian
-Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European ones. Japanese is
+Portuguese uses Brazilian words (arquivo, salvar, tela, você), not European ones. Latin American
+Spanish overrides Spain's wording where it differs (agregar, presionar, configuración for settings,
+Enter for the key, control for a gamepad, resorte) and keeps Spanish's tú. Japanese is
 concise, without です/ます endings, with full-width （）「」：、。 where Japanese UI text has them;
 Korean labels end without 합니다 (instructions in -세요). Neither has plural forms.
 

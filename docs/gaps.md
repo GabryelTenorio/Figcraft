@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figcraft-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Latin American Spanish overlay; prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figcraft-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -18,7 +18,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 2 | Multiplayer and sharing are a preview, without accounts (**beta blocker**) | Feature | 42–84 | [collaboration-parity](collaboration-parity.md) |
 | 3 | Nothing checked against real Figma files | Fidelity | 15–30 | [target-app-parity](target-app-parity.md) |
 | 4 | Interaction fidelity not compared tool by tool | UI/UX | 40–60 | [ui-parity](ui-parity.md) |
-| 5 | Localization: English plus unreviewed Spanish, French, German, Brazilian Portuguese, Japanese and Korean drafts | Localization | 32–55 | [localization-parity](localization-parity.md) |
+| 5 | Localization: English plus unreviewed Spanish (and Latin American Spanish), French, German, Brazilian Portuguese, Japanese and Korean drafts | Localization | 31–54 | [localization-parity](localization-parity.md) |
 | 6 | Plugins: widgets take clicks only, a self-hosted directory but no public catalogue; Figma's plugins don't run | Ecosystem | 8–26 | [target-app-parity](target-app-parity.md) |
 | 7 | CPU canvas where Figma uses the GPU | Hardware/performance | 30–60 | [hardware-parity](hardware-parity.md) |
 | 8 | Platform QA: Linux and the browser left (Windows pass done 2026-10-11) | Stability/platforms | 10–20 | [hardware-parity](hardware-parity.md) |
@@ -102,19 +102,20 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 ### 5. Localization: English plus unreviewed drafts
 - **Missing:** native reviews of the Spanish, French, German, Brazilian Portuguese, Japanese and
-  Korean drafts, Latin American Spanish, localized engine messages and number formatting; CJK UI
-  text on the web without the craft-fonts CJK build.
+  Korean drafts and the Latin American Spanish overlay, localized engine messages and number
+  formatting; CJK UI text on the web without the craft-fonts CJK build.
 - **Evidence (measured from source):** the layer landed 2026-10-11: catalogs in
   `crates/ui-egui/locales/` (1,351 UI keys plus 519 command labels and 29 menu wordings),
   Preferences ▸ Language, `pref.language`; `en.toml` is complete, and `es.toml`, `fr.toml`,
-  `de.toml`, `pt-BR.toml`, `ja.toml` and `ko.toml` (2026-10-12) are complete machine drafts (only
-  Spanish is held to completeness by the check; the others show English for strings added later).
+  `de.toml`, `pt-BR.toml`, `ja.toml` and `ko.toml` (2026-10-12) are complete machine drafts, with
+  `es-419.toml` a Latin American overlay listing only what differs from Spanish (only Spanish is
+  held to completeness by the check; the others show English for strings added later).
   CJK UI text uses an installed CJK face the desktop app loads when something on screen needs it
   (`crates/ui-egui/src/cjk.rs`). Engine error messages and Dev Mode values stay English.
 - **Impact:** non-English designers get machine drafts nobody has reviewed yet, and English
   errors.
 - **Estimate:** 3–7 h per language plus native review, 4–6 h for engine messages and numbers;
-  32–55 h for the key languages left and the drafts' follow-ups. Detail in
+  31–54 h for the key languages left and the drafts' follow-ups. Detail in
   [`localization-parity.md`](localization-parity.md); how to add one in
   [`translating.md`](translating.md).
 
@@ -349,6 +350,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Latin American Spanish overlay (gap 5): `es-419.toml` lists only the 87 entries (61 UI strings, 26 command labels) whose wording differs in Latin American usage (agregar for añadir, presionar for pulsar, configuración for settings, Enter for the Intro key, control for a gamepad, resorte for a spring) and reads `es.toml`, then English, for the rest (a regional catalog overlays its language's); same tú register as Spanish; a draft awaiting native review. Preferences ▸ Language lists Español (Latinoamérica); System maps es-419, es-MX, es-AR, es-CO and the other Latin American and US Spanish tags to it, es-ES and es to Spanish. Gap 5 32–55 h → 31–54 h, rank unchanged |
 | 2026-10-12 | minor | Gap 15: controller buttons on key/gamepad triggers (Windows and the browser), widgets reacting in prototypes and `proto.evaluate` landed; gap 15 now media plus controllers off Windows, 3–6 h → 2–5 h; ranking unchanged |
 | 2026-10-12 | minor | Plugin directory on `figcraft-server` (publish with the server key, browse, install after a permissions confirmation, hash-checked downloads, updates by version, operator moderation) added to gap 6's landed list; gap 6 10–30 h → 8–26 h; ranking unchanged |
 | 2026-10-12 | minor | Japanese and Korean draft catalogs and CJK UI fonts (gap 5): `ja.toml` and `ko.toml` translate every UI string (1,351 keys; plurals give only `other`, and `plural_one` never picks "one" in either), command label (519) and menu wording (29), machine-drafted and marked as drafts awaiting native review; Preferences ▸ Language lists 日本語 and 한국어, System picks ja* and ko*. CJK UI text renders: once the UI language, the open file's names or comments, typed text or the language picker needs Japanese kana, Hangul or Han, the desktop app appends one installed face per script to egui's fallbacks (Windows Yu Gothic UI / Meiryo / Malgun Gothic / Microsoft YaHei, macOS Hiragino Sans / Apple SD Gothic Neo / PingFang SC, Linux Noto Sans CJK; the craft-fonts build's BIZ UDPGothic first), reading only that face's file and sharing its bytes with egui (English users load none: startup and memory unchanged); the web shows Japanese and Korean only when built with craft-fonts' Noto Sans CJK (`FIGCRAFT_EMBED_CJK`), else it keeps them out of the picker and System. Gap 5 40–65 h → 32–55 h, rank unchanged |
