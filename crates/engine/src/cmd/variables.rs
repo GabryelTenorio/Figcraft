@@ -100,7 +100,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|k| if k == 1 { format!("{} copy", copy.name) } else { format!("{} copy {k}", copy.name) })
         .find(|n| !taken(n))
         .ok_or_else(|| bad(cmd, "too many copies"))?;
-    copy.id = super::styles::unique_id("VariableID", doc.variables.variables.iter().map(|x| x.id.as_str()));
+    copy.id = doc.new_variable_id();
     copy.name = name;
     let id = copy.id.clone();
     doc.variables.variables.insert(pos + 1, copy);

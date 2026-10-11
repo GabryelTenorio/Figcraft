@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use figcraft_doc::{Document, NodeId};
 use serde::{Deserialize, Serialize};
 
-use crate::change::{Change, Prop, Target};
+use crate::change::{Change, Entry, Prop, Target};
 use crate::message::{Accepted, CatchUp, ClientMsg, Hello, PROTOCOL, Peer, Presence, Processed, ServerMsg};
 use crate::replica::{Mode, Replica, create_change};
 use crate::{Error, Limits, docprops};
@@ -38,6 +38,9 @@ pub struct Server {
     /// Deleted node ids: only these may be created again (by undo); new ids must come from the
     /// creating client's id space.
     deleted: BTreeSet<NodeId>,
+    /// Removed document-level entries (styles, variables, collections, comments): these may be
+    /// put back by anyone (undo); a new one must not have an id from another client's space.
+    removed: BTreeSet<Entry>,
     /// Every client id handed out (a reconnecting client keeps its id) and what was done with
     /// its batches.
     issued: BTreeMap<u32, Processed>,
@@ -53,7 +56,7 @@ const MAX_REMEMBERED: usize = 65_536;
 
 /// What a session server needs to carry on after a restart: the document, the sequence number,
 /// the client-id counter (so ids are never handed out twice), the clients that can reconnect,
-/// the deleted ids that may be created again and the log of recent batches.
+/// the deleted ids and removed entries that may be created again and the log of recent batches.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionState {
     pub session: u64,
@@ -62,16 +65,18 @@ pub struct SessionState {
     pub next_client: u32,
     pub issued: BTreeMap<u32, Processed>,
     pub deleted: BTreeSet<NodeId>,
+    /// Absent in states saved before entries were tracked.
+    #[serde(default)]
+    pub removed: BTreeSet<Entry>,
     pub log: Vec<Accepted>,
 }
 
 impl Server {
     /// A session for `doc`. Joining requires `token` (empty: no token). Client ids start above every
-    /// client id space already used in the document, so ids from earlier sessions are never handed
-    /// out again.
+    /// client id space already used in the document (by layers, styles, variables, collections,
+    /// modes or comments), so ids from earlier sessions are never handed out again.
     pub fn new(doc: Document, token: impl Into<String>, limits: Limits) -> Server {
-        let used = doc.ids().map(|id| id.0 >> 32).max().unwrap_or(0);
-        let next_client = u32::try_from(used.saturating_add(1)).unwrap_or(u32::MAX).max(1);
+        let next_client = doc.highest_id_space().saturating_add(1);
         Server {
             session: new_session_id(),
             state: Replica::new(doc),
@@ -83,6 +88,7 @@ impl Server {
             presence: BTreeMap::new(),
             acked: BTreeMap::new(),
             deleted: BTreeSet::new(),
+            removed: BTreeSet::new(),
             issued: BTreeMap::new(),
             log: VecDeque::new(),
             log_changes: 0,
@@ -98,6 +104,7 @@ impl Server {
             next_client: self.next_client,
             issued: self.issued.clone(),
             deleted: self.deleted.clone(),
+            removed: self.removed.clone(),
             log: self.log.iter().cloned().collect(),
         })
     }
@@ -114,6 +121,7 @@ impl Server {
         server.next_client = server.next_client.max(state.next_client);
         server.issued = state.issued.into_iter().filter(|(id, _)| *id < server.next_client).collect();
         server.deleted = state.deleted;
+        server.removed = state.removed;
         let contiguous = state.log.windows(2).all(|w| matches!(w, [a, b] if a.seq + 1 == b.seq));
         if contiguous && state.log.last().is_none_or(|a| a.seq == state.seq) {
             for a in state.log {
@@ -283,15 +291,63 @@ impl Server {
         if next.document().node_count() > self.limits.max_nodes {
             return Err(Error::Invalid(format!("more than {} layers", self.limits.max_nodes)));
         }
+        let entries = self.check_entries(from, changes, next.document())?;
         for c in changes {
             if let Change::Create { id, .. } = c {
                 self.deleted.remove(id);
             }
         }
         self.deleted.extend(applied.deleted);
+        for (entry, now) in entries {
+            if now {
+                self.removed.remove(&entry);
+            } else {
+                self.removed.insert(entry);
+            }
+        }
         self.state = next;
         self.seq += 1;
         Ok(())
+    }
+
+    /// The document-level entries (styles, variables, collections, comments) a batch adds or
+    /// removes, each with whether it is there afterwards. A new one is refused when its id lies in
+    /// the space of another client this session gave an id to (unless it was removed before: undo
+    /// puts entries back); ids from before the session (space 0, earlier sessions, other files)
+    /// are fine.
+    fn check_entries(&self, from: u32, changes: &[Change], after: &Document) -> Result<Vec<(Entry, bool)>, Error> {
+        let before = self.state.document();
+        let mut touched: BTreeSet<Entry> = BTreeSet::new();
+        for c in changes {
+            match c {
+                Change::Put { entry, .. } | Change::Remove { entry } if entry.id_space().is_some() => {
+                    touched.insert(entry.clone());
+                }
+                // A whole list replaced (the fallback for lists whose ids aren't unique).
+                Change::SetDoc { prop, .. } => {
+                    if let Some(Ok(family)) = prop.list() {
+                        touched.extend(docprops::entries(before, family));
+                        touched.extend(docprops::entries(after, family));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for entry in touched {
+            let (was, now) = (docprops::has(before, &entry), docprops::has(after, &entry));
+            if was == now {
+                continue;
+            }
+            if now
+                && !self.removed.contains(&entry)
+                && let Some(space) = entry.id_space().filter(|s| *s != from && self.issued.contains_key(s))
+            {
+                return Err(Error::Invalid(format!("new {} isn't in client {from}'s id space (it is client {space}'s)", entry.describe())));
+            }
+            out.push((entry, now));
+        }
+        Ok(out)
     }
 
     /// The current values of what a refused batch touched, so a client can roll its optimistic

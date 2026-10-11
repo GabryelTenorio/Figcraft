@@ -15,7 +15,7 @@ use serde_json::json;
 use crate::present_tests::id;
 use crate::{FigApp, NoServices};
 
-const HANA: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
+pub(crate) const HANA: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 
 /// A link that hands out scripted events.
 struct Mock(Arc<Mutex<Vec<LiveEvent>>>);
@@ -43,7 +43,7 @@ pub(crate) struct Harness {
 }
 
 /// Everything painted, flattened.
-fn flat(shapes: &[egui::epaint::ClippedShape]) -> Vec<Shape> {
+pub(crate) fn flat(shapes: &[egui::epaint::ClippedShape]) -> Vec<Shape> {
     fn walk(s: &Shape, out: &mut Vec<Shape>) {
         match s {
             Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
@@ -97,12 +97,12 @@ impl Harness {
         }
     }
 
-    fn send(&mut self, e: Vec<LiveEvent>) {
+    pub(crate) fn send(&mut self, e: Vec<LiveEvent>) {
         self.events.lock().unwrap().extend(e);
     }
 
     /// Joined as Ada, with Hana (the host) already here.
-    fn joined(&mut self) {
+    pub(crate) fn joined(&mut self) {
         self.app.session.live.status = Status::Connecting;
         let info = SessionInfo {
             role: Role::Guest,
@@ -121,7 +121,7 @@ impl Harness {
 
     /// The host's welcome with the document (a session server seeded with this document): it opens
     /// as a new tab, which is then the synced document.
-    fn sync(&mut self) {
+    pub(crate) fn sync(&mut self) {
         use figcraft_engine::figcraft_collab::message::{ClientMsg, ServerMsg};
         use figcraft_engine::figcraft_collab::{Client, Limits, Outgoing, Server};
         let mut server = Server::new(self.app.session.doc().unwrap().clone(), "", Limits::default());
@@ -135,12 +135,30 @@ impl Harness {
         assert!(self.app.session.live_shared());
     }
 
-    fn page(&self) -> NodeId {
+    pub(crate) fn page(&self) -> NodeId {
         self.app.session.page().unwrap()
+    }
+
+    /// Frames until the window stops asking for more (the canvas render finishing aside):
+    /// whether it did within a few hundred frames.
+    pub(crate) fn goes_quiet(&mut self) -> bool {
+        let mut quiet = 0;
+        for _ in 0..200 {
+            let rendering = self.app.worker.as_ref().is_some_and(|w| w.in_flight);
+            if rendering {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let (_, d) = self.frame(vec![]);
+            quiet = if d >= Duration::from_secs(1) && !rendering { quiet + 1 } else { 0 };
+            if quiet >= 3 {
+                return true;
+            }
+        }
+        false
     }
 }
 
-fn texts(shapes: &[Shape]) -> Vec<(String, Pos2, egui::Vec2)> {
+pub(crate) fn texts(shapes: &[Shape]) -> Vec<(String, Pos2, egui::Vec2)> {
     shapes
         .iter()
         .filter_map(|s| match s {
@@ -161,7 +179,7 @@ pub(crate) fn text_center(shapes: &[Shape], s: &str) -> Pos2 {
 }
 
 /// Filled polygons and outlines in `c`.
-fn filled(shapes: &[Shape], c: Color32) -> usize {
+pub(crate) fn filled(shapes: &[Shape], c: Color32) -> usize {
     shapes.iter().filter(|s| matches!(s, Shape::Path(p) if p.fill == c)).count()
 }
 
@@ -220,19 +238,7 @@ fn a_cursor_glides_then_rests() {
     h.frames(60);
     assert_eq!(crate::live::shown_at(&h.app)[0].1, (400.0, 0.0), "arrived");
     // Settled: no more frames until something happens.
-    let mut quiet = 0;
-    for _ in 0..200 {
-        let rendering = h.app.worker.as_ref().is_some_and(|w| w.in_flight);
-        if rendering {
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        let (_, d) = h.frame(vec![]);
-        quiet = if d >= Duration::from_secs(1) && !rendering { quiet + 1 } else { 0 };
-        if quiet >= 3 {
-            break;
-        }
-    }
-    assert!(quiet >= 3, "a resting cursor draws no frames: {:?}", h.ctx.repaint_causes());
+    assert!(h.goes_quiet(), "a resting cursor draws no frames: {:?}", h.ctx.repaint_causes());
     // Reduced motion: it jumps.
     h.app.session.prefs.reduce_motion = true;
     h.send(vec![LiveEvent::Presence(1, cursor(page, -50.0, 20.0))]);

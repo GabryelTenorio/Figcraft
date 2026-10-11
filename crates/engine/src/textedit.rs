@@ -24,6 +24,7 @@ pub fn begin(s: &mut Session, id: NodeId, caret: Option<usize>, created: bool) -
     ds.text_edit = Some(TextEdit { id, caret, anchor, created, preedit: None });
     ds.selection = vec![id];
     ds.revision += 1;
+    s.live_text_notice(id);
     Ok(())
 }
 

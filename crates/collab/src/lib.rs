@@ -115,6 +115,8 @@ mod codec_tests;
 #[cfg(test)]
 mod diff_tests;
 #[cfg(test)]
+mod entry_ids_tests;
+#[cfg(test)]
 mod frac_tests;
 #[cfg(test)]
 mod reconnect_tests;

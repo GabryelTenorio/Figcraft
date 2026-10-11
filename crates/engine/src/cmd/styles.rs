@@ -90,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("variable.createCollection", "Create variable collection", "{name, modes? [names]}", true, |s, p| {
             let name = req_string("variable.createCollection", p, "name")?;
             let doc = s.doc_mut()?;
-            let id = unique_id("VariableCollectionId", doc.variables.collections.iter().map(|c| c.id.as_str()));
+            let id = doc.new_collection_id();
             let modes: Vec<String> = match get(p, "modes") {
                 Some(Value::Array(a)) => a.iter().filter_map(|m| m.as_str().map(str::to_string)).collect(),
                 _ => vec!["Mode 1".into()],
@@ -102,19 +102,15 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("variable.addMode", "Add mode", "{collection, name}", true, |s, p| {
             let c = req_string("variable.addMode", p, "collection")?;
             let name = req_string("variable.addMode", p, "name")?;
+            let missing = || bad("variable.addMode", "no such collection");
             let doc = s.doc_mut()?;
-            let coll = doc
-                .variables
-                .collections
-                .iter_mut()
-                .find(|x| x.id == c || x.name == c)
-                .ok_or_else(|| bad("variable.addMode", "no such collection"))?;
-            // A fresh id: modes can be deleted, so the count alone may repeat one.
-            let mid =
-                (coll.modes.len() + 1..).map(|k| format!("{}/mode{k}", coll.id)).find(|m| !coll.modes.iter().any(|x| x.id == *m)).unwrap_or_default();
+            let cid = doc.variables.collections.iter().find(|x| x.id == c || x.name == c).map(|x| x.id.clone()).ok_or_else(missing)?;
+            // A fresh id (modes can be deleted, so the count alone may repeat one; in a live
+            // session it comes from this client's id space).
+            let mid = doc.new_mode_id(&cid).ok_or_else(missing)?;
+            let coll = doc.variables.collections.iter_mut().find(|x| x.id == cid).ok_or_else(missing)?;
             let first = coll.modes.first().map(|m| m.id.clone());
             coll.modes.push(Mode { id: mid.clone(), name });
-            let cid = coll.id.clone();
             // New mode starts with the default mode's values.
             for v in doc.variables.variables.iter_mut().filter(|v| v.collection == cid) {
                 if let Some(val) = first.as_ref().and_then(|f| v.values.get(f)).cloned() {
@@ -160,17 +156,6 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         spec!("variable.list", "List variables", "{}", false, |s, _| Ok(serde_json::to_value(&s.doc()?.variables).unwrap_or(Value::Null))),
     ]
-}
-
-fn next_style_id(doc: &Document) -> String {
-    let mut k = doc.styles.len() + 1;
-    loop {
-        let id = format!("S:{k}");
-        if doc.style(&id).is_none() {
-            return id;
-        }
-        k += 1;
-    }
 }
 
 /// A text layer and the chars a command covers in it (None = all of them).
@@ -290,7 +275,7 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         let n = from.and_then(|f| doc.node(f)).ok_or_else(|| bad(cmd, "pass `value` or select a layer to take it from"))?;
         kind_from_node(&t, n).ok_or_else(|| bad(cmd, "that layer has no such property"))?
     };
-    let sid = next_style_id(doc);
+    let sid = doc.new_style_id();
     doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind: kind.clone() });
     // The source layer (or the selected chars) becomes linked to the new style.
     if let (Some((tid, a, b)), StyleKind::Text { style }) = (range, &kind) {
@@ -615,7 +600,7 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     for m in &coll.modes {
         values.entry(m.id.clone()).or_insert_with(|| default.clone());
     }
-    let id = unique_id("VariableID", doc.variables.variables.iter().map(|v| v.id.as_str()));
+    let id = doc.new_variable_id();
     doc.variables.variables.push(Variable {
         id: id.clone(),
         name,
@@ -781,12 +766,6 @@ fn apply_effect_bindings(doc: &mut Document, id: NodeId, sets: &[(usize, String,
     {
         n.effects = effects;
     }
-}
-
-/// `prefix:N` with N one more than the largest existing.
-pub(crate) fn unique_id<'a>(prefix: &str, existing: impl Iterator<Item = &'a str>) -> String {
-    let max = existing.filter_map(|e| e.strip_prefix(prefix)?.strip_prefix(':')?.parse::<u64>().ok()).max().unwrap_or(0);
-    format!("{prefix}:{}", max + 1)
 }
 
 /// Solid fill and stroke colours used under `page` (alpha includes the paint's opacity), most used

@@ -32,7 +32,7 @@ pub use figcraft_collab::message::{Peer, Presence};
 use crate::cmd::CommandSpec;
 use crate::collab::EngineRecompute;
 use crate::params::{get, num, req_string, string};
-use crate::{DocState, EngineError, Result, Session, ViewState, bad, spec};
+use crate::{DocState, EngineError, Result, Session, TextEdit, ViewState, bad, spec};
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;
@@ -331,6 +331,24 @@ fn close(a: f64, b: f64) -> bool {
     (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
 }
 
+/// What others are told about your text editing: the layer, caret and selected characters.
+fn editing_of(t: &TextEdit) -> EditingText {
+    let (a, b) = (t.anchor.min(t.caret), t.anchor.max(t.caret));
+    EditingText { node: t.id, caret: t.caret, selection: (a != b).then_some((a, b)) }
+}
+
+/// The note shown while others type in the text layer you look at: "Hana is editing this text",
+/// "Hana and Ada are…", "Hana and 2 others are…" (`None`: nobody).
+pub fn editing_hint(names: &[&str]) -> Option<String> {
+    let verb = "editing this text";
+    Some(match names {
+        [] => return None,
+        [one] => format!("{one} is {verb}"),
+        [a, b] => format!("{a} and {b} are {verb}"),
+        [first, rest @ ..] => format!("{first} and {} others are {verb}", rest.len()),
+    })
+}
+
 /// A gesture, version preview or live text preview shows a document that isn't the edit to
 /// sync yet.
 fn busy(ds: &DocState) -> bool {
@@ -375,11 +393,26 @@ impl Session {
             cursor: self.live.cursor.map(|(x, y)| (ds.page, x, y)),
             selection: Some(ds.selection.clone()),
             viewport: Some((ds.page, x0, y0, ds.view.vw / z, ds.view.vh / z)),
-            editing_text: ds.text_edit.as_ref().map(|t| {
-                let (a, b) = (t.anchor.min(t.caret), t.anchor.max(t.caret));
-                Box::new(EditingText { node: t.id, caret: t.caret, selection: (a != b).then_some((a, b)) })
-            }),
+            editing_text: ds.text_edit.as_ref().map(|t| Box::new(editing_of(t))),
         })
+    }
+
+    /// The others typing in text layer `id` of the session document (only while it is in front).
+    pub fn live_text_editors(&self, id: NodeId) -> Vec<&Peer> {
+        if !self.live_shared() {
+            return Vec::new();
+        }
+        let live = &self.live;
+        live.presence.iter().filter(|(_, p)| p.editing_text.as_ref().is_some_and(|e| e.node == id)).filter_map(|(c, _)| live.peers.get(c)).collect()
+    }
+
+    /// You started typing in text layer `id`: say so when someone else is typing in it too (both
+    /// edits sync when they finish; the one finished last wins).
+    pub(crate) fn live_text_notice(&mut self, id: NodeId) {
+        let names: Vec<&str> = self.live_text_editors(id).iter().map(|p| p.name.as_str()).collect();
+        if let Some(hint) = editing_hint(&names) {
+            self.message = Some(format!("{hint} too: the version finished last is kept"));
+        }
     }
 
     /// Take in what happened in the session (the UI calls it every frame; the network wakes the
@@ -728,11 +761,22 @@ impl Session {
     pub fn live_summary(&self) -> Value {
         let l = &self.live;
         let info = l.info.as_ref();
+        let synced = l.doc_uid.and_then(|u| self.docs.iter().find(|d| d.uid == u));
+        // Who types in which layer of the session document.
+        let editing = |e: &EditingText| {
+            let layer = synced.and_then(|d| d.doc.node(e.node)).map(|n| n.name.as_str());
+            json!({"node": e.node, "layer": layer, "caret": e.caret, "selection": e.selection})
+        };
         let peers: Vec<Value> = l
             .peers
             .values()
-            .map(|p| json!({"id": p.client_id, "name": p.name, "color": p.color, "presence": l.presence.get(&p.client_id)}))
+            .map(|p| {
+                let presence = l.presence.get(&p.client_id);
+                let typing = presence.and_then(|pr| pr.editing_text.as_deref()).map(editing);
+                json!({"id": p.client_id, "name": p.name, "color": p.color, "editing": typing, "presence": presence})
+            })
             .collect();
+        let mine = synced.and_then(|d| d.text_edit.as_ref()).map(|t| editing(&editing_of(t)));
         json!({
             "available": l.available(),
             "canHost": l.can_host(),
@@ -752,6 +796,7 @@ impl Session {
             "follow": l.follow,
             "syncing": l.syncing(),
             "document": l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u)),
+            "editing": mine,
             "peers": peers,
         })
     }
@@ -850,7 +895,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
+            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
             false,
             |s, _| Ok(s.live_summary())
         ),

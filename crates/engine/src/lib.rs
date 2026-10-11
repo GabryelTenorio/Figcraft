@@ -1129,6 +1129,8 @@ mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
 #[cfg(test)]
+mod collab_ids_tests;
+#[cfg(test)]
 mod collab_live_tests;
 #[cfg(test)]
 mod collab_tests;
