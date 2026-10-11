@@ -180,10 +180,31 @@ fn marquee_selects_what_it_touches() {
     let rows: Vec<((f64, f64), (f64, f64), Mods, Vec<NodeId>, Vec<NodeId>, &str)> = vec![
         ((480.0, -20.0), (505.0, 10.0), NONE, vec![], vec![k.r], "a marquee selects layers it touches, not only those it contains"),
         ((480.0, -20.0), (560.0, 260.0), NONE, vec![], vec![k.r, k.r2], "locked and hidden layers aren't selected by a marquee"),
-        ((-10.0, -10.0), (450.0, 40.0), NONE, vec![], vec![], "from the canvas, a top-level frame is selected only when the marquee covers all of it"),
+        (
+            (-10.0, -10.0),
+            (450.0, 40.0),
+            NONE,
+            vec![],
+            vec![],
+            "from the canvas, a top-level frame is selected only when the marquee covers all of it",
+        ),
         ((-10.0, -10.0), (450.0, 310.0), NONE, vec![], vec![k.f], "a marquee covering a top-level frame selects the frame"),
-        ((390.0, 290.0), (25.0, 125.0), NONE, vec![], vec![k.c, k.n, k.u], "starting on a top-level frame's background selects the layers in it the marquee touches"),
-        ((450.0, 290.0), (25.0, 25.0), CMD, vec![], vec![k.a, k.b, k.c, k.d, k.u], "silent: Cmd/Ctrl-marquee selects the innermost layers it touches (pinned)"),
+        (
+            (390.0, 290.0),
+            (25.0, 125.0),
+            NONE,
+            vec![],
+            vec![k.c, k.n, k.u],
+            "starting on a top-level frame's background selects the layers in it the marquee touches",
+        ),
+        (
+            (450.0, 290.0),
+            (25.0, 25.0),
+            CMD,
+            vec![],
+            vec![k.a, k.b, k.c, k.d, k.u],
+            "silent: Cmd/Ctrl-marquee selects the innermost layers it touches (pinned)",
+        ),
         ((480.0, -20.0), (505.0, 10.0), SHIFT, vec![k.c], vec![k.c, k.r], "Shift-marquee adds to the selection"),
         ((480.0, -20.0), (505.0, 10.0), SHIFT, vec![k.c, k.r], vec![k.c], "Shift-marquee takes out what was selected and is touched again"),
     ];
@@ -209,7 +230,12 @@ fn keyboard_selection() {
         ("select.previous", vec![k.a], vec![k.b], "Shift+Tab selects the previous one"),
         ("select.all", vec![k.a], vec![k.a, k.b], "Select all selects the selection's siblings"),
         ("select.all", vec![], visible_unlocked.clone(), "with nothing selected, all layers on the page (hidden and locked ones can't be selected)"),
-        ("select.inverse", vec![k.r], visible_unlocked.iter().copied().filter(|i| *i != k.r).collect(), "Select inverse: the other layers Select all would select"),
+        (
+            "select.inverse",
+            vec![k.r],
+            visible_unlocked.iter().copied().filter(|i| *i != k.r).collect(),
+            "Select inverse: the other layers Select all would select",
+        ),
     ];
     for (cmd, before, after, why) in rows {
         ex(&mut s, "select.set", json!({"ids": before}));

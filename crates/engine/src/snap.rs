@@ -225,7 +225,8 @@ impl Targets {
         let mut out: Vec<Guide> = Vec::new();
         for (_, gaps) in self.spacings(r, horizontal).into_iter().filter(|(d, _)| d.abs() < 1e-6) {
             for (from, to, across) in gaps {
-                let (p, q) = if horizontal { (Point::new(from, across), Point::new(to, across)) } else { (Point::new(across, from), Point::new(across, to)) };
+                let (p, q) =
+                    if horizontal { (Point::new(from, across), Point::new(to, across)) } else { (Point::new(across, from), Point::new(across, to)) };
                 let line = Guide { label: Some(crate::distance::label(to - from)), ..Guide::new(p, q) };
                 if !out.contains(&line) {
                     out.push(line);

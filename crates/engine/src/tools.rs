@@ -534,7 +534,12 @@ pub fn handle_at_corners(corners: &[Point; 4], p: Point, zoom: f64, is_line: boo
     // The nearest corner, then the nearest edge, in reach (a small box's reaches overlap).
     let nearest = |hits: &mut dyn Iterator<Item = (f64, Handle)>| hits.min_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, h)| h);
     let corner = nearest(
-        &mut corners.iter().enumerate().filter(|(i, _)| !(is_line && *i >= 2)).map(|(i, c)| ((*c - p).hypot(), Handle::Corner(i as u8))).filter(|(d, _)| *d <= corner_reach),
+        &mut corners
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(is_line && *i >= 2))
+            .map(|(i, c)| ((*c - p).hypot(), Handle::Corner(i as u8)))
+            .filter(|(d, _)| *d <= corner_reach),
     );
     if corner.is_some() {
         return corner;
@@ -892,10 +897,13 @@ impl Session {
         // A frame's name label picks the frame itself. The background of a top-level frame with
         // layers in it is like the canvas (a press starts a marquee inside it) unless the frame is
         // selected; an empty frame is picked and dragged.
-        let board_background =
-            |leaf: NodeId| !sel.contains(&leaf) && doc.node(leaf).is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty());
+        let board_background = |leaf: NodeId| {
+            !sel.contains(&leaf) && doc.node(leaf).is_some_and(|n| n.parent == Some(page) && n.kind.is_frame_like() && !n.children.is_empty())
+        };
         let target = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| {
-            self.hit(&doc, page, ev.p(), ev.tol() * 2.0).filter(|leaf| ev.cmd || !board_background(*leaf)).map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
+            self.hit(&doc, page, ev.p(), ev.tol() * 2.0)
+                .filter(|leaf| ev.cmd || !board_background(*leaf))
+                .map(|leaf| select_target(&doc, leaf, &sel, ev.cmd))
         });
         match target {
             Some(target) => {
