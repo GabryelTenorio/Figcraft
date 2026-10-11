@@ -59,6 +59,7 @@ refuses them (0 steps) and no release is created. The `version` input is applied
 | macOS 11+ (universal) | `figcraft-<v>-macos-universal.dmg`, `figcraft-cli-<v>-macos-universal.zip` | `macos-15-xlarge` |
 | Windows 10+ x64 / x86 / arm64 | `figcraft-<v>-windows-<arch>.msi`, `figcraft-<v>-windows-<arch>-portable.zip` | `windows-latest` (arm64 cross-compiled) |
 | Linux x86_64 / aarch64 | `figcraft-<v>-linux-<arch>.{AppImage,AppImage.zsync,deb,rpm,tar.gz,flatpak}` | `ubuntu-22.04` / `ubuntu-22.04-arm` (Flatpak: 24.04) |
+| Linux riscv64 | `figcraft-<v>-linux-riscv64.tar.gz` (CLI smoke-tested under QEMU; needs glibc ≥ 2.39) | cross-compiled on `ubuntu-24.04` against ports.ubuntu.com riscv64 libraries |
 | FreeBSD 14 x86_64 | `figcraft-<v>-freebsd-x86_64.tar.gz` | FreeBSD 14.3 VM on `ubuntu-latest` |
 | Web | `figcraft-web-<v>.zip` (static site; [`packaging/web/README.md`](../packaging/web/README.md)) | `ubuntu-latest` |
 
@@ -128,6 +129,8 @@ libraries as dependencies); and an `.AppImage` with update information and a `.z
 is the from-source manifest for a Flathub submission (not built in CI; vendor crates with
 `flatpak-cargo-generator.py` first). Both manifests keep the same runtime and `finish-args`
 (packaging-lint checks). Binaries are built on Ubuntu 22.04 and need glibc ≥ 2.35.
+The `linux-riscv64` job cross-compiles with `CROSS_ARCH`/`CROSS_TARGET`/`CROSS_COMPILE` and
+`EMULATOR=qemu-riscv64` and packages only the tarball (`--formats tar`).
 
 ### FreeBSD
 
@@ -146,6 +149,13 @@ tar -xzf figcraft-<v>-freebsd-x86_64.tar.gz --strip-components 1 -C /usr/local
 `public_url = "./"`, output `dist/web`), fails if a `.wasm` exceeds 24 MiB, and zips the site
 with sample `_headers`/`.htaccess` and the hosting guide. The app uses WebGPU with a WebGL2
 fallback; `?webgl` forces WebGL2. 0.1.0: wasm 17.7 MiB raw, 6.7 MiB gzip, 4.4 MiB Brotli.
+
+The wasm is built with the size-optimised `web-release` Cargo profile (`opt-level = "s"`, fat
+LTO, one codegen unit; `data-cargo-profile` in `apps/figcraft-web/index.html`) and then
+`wasm-opt -Oz`, which needs the wasm features rustc emits by default passed explicitly
+(`data-wasm-opt-params`). Sizes: 0.2.0 21.1 MiB and 0.3.0 25.8 MiB (failed the gate; the plugin
+interpreter and collaboration code landed) with the desktop `release` profile; 0.3.1 17.2 MiB
+with `web-release`. The desktop builds keep `release`.
 
 ## Secrets
 
