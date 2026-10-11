@@ -7,8 +7,9 @@ reconciliation, derived data and the message encoding. **Step 2 is implemented**
 embeds, invite links, document sync end to end (several apps edit one file), live cursors,
 selections, avatars and follow. **Step 3 is implemented**: per-user undo and redo, rejection
 handling and offline queueing with reconnect (`crates/collab`, wired into the engine's live
-session and the transport). The rest is the plan the next implementation PRs follow and update;
-sections say what is built.
+session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
+app hosts, and `figcraft://` invite links open the app and join. The rest is the plan the next
+implementation PRs follow and update; sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -336,15 +337,15 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   authority and takes part itself without a socket.
 - Links: `figcraft://join?host=<ip:port>&file=<id>&token=<secret>` or
   `ws://<ip:port>/?file=<id>&token=<secret>` (either works for joining). The client connects to
-  `ws://<ip:port>/` and sends the token only inside its `Hello`. No `figcraft://` handler is
-  registered with the operating system yet: links are pasted into the Join dialog.
+  `ws://<ip:port>/` and sends the token only inside its `Hello`. Links are pasted into the Join
+  dialog (its field has the keyboard when it opens; Escape closes it), or opened from anywhere:
+  see *Opening invite links* below.
 - Reconnect: a connection that drops after it was live reconnects with growing pauses (0.5 s,
   doubling up to 10 s, 12 attempts); a refusal (wrong token, full) or the host ending the session
   is final; a first join that can't reach the host fails at once. A reconnect resumes as the same
   client: the guest's connection keeps the session id, client id and last sequence number from
   the messages it read and sends them in its next `Hello` (see Offline and reconnect).
-- The browser build has the commands but says live sessions need the desktop app (its WebSocket
-  client is step 4).
+- The browser build joins (see *Built (the browser client)*); hosting needs the desktop app.
 
 *Built* (document sync between apps):
 
@@ -365,6 +366,51 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   space (`client_id << 32 | counter`). Closing the session's document leaves the session.
 - Each applied batch wakes the window (the inbox calls `request_repaint`); nothing runs while
   nobody edits or moves.
+
+*Built* (the browser client):
+
+- The web build's link speaks the same binary messages through the browser's WebSocket API
+  (`web-sys`, binary frames as `ArrayBuffer`). Its connection logic is a target-independent state
+  machine (`crates/collab-net/src/driver.rs`) that mirrors the native guest: hello on open
+  (resuming as the same client after a drop), presence held until the welcome and changes made
+  for an earlier connection dropped (the sync client sends them again once caught up), presence throttled to about 30 updates a second
+  (latest wins), a `Ping` after 15 s without sending (browsers don't expose WebSocket ping frames;
+  the host answers `Pong`), a connection silent for 45 s counted as dropped, reconnects with the
+  same growing pauses after a live connection drops, refusals and the end of the session final,
+  and a first join that can't reach the host failing at once. The browser layer only feeds it the
+  socket's events and one `setTimeout` for its next deadline, and every arrival wakes egui
+  (`request_repaint`): an idle session draws nothing. The machine is tested natively against a
+  scripted socket and against a real host over loopback.
+- The page runs on one thread: sockets, callbacks and timers live in a thread-local table and the
+  engine's link (which must be `Send`) holds only the session's number and its inbox.
+- Hosting stays desktop-only (a page can't listen on a socket); the Share popover in the browser
+  says so and offers only joining, and `collab.peers` reports `canHost: false`.
+- **Mixed content.** A desktop-hosted session is plain `ws://`. Browsers block `ws://` from a page
+  loaded over `https://`, except to this machine (`127.0.0.1`, `[::1]`, `localhost`), so an https
+  page refuses other hosts up front with a message instead of failing obscurely. To join from
+  other machines, serve the web build over `http://` on a trusted network (locally:
+  `python3 -m http.server 8767` in the built site, then `http://localhost:8767/` or the machine's
+  LAN address); `wss://` comes with the standalone server behind TLS. Some browsers also ask
+  before a public site may reach private network addresses.
+
+*Built* (opening invite links):
+
+- The desktop app takes an invite link on its command line (`figcraft "figcraft://join?…"`): once
+  the window is up it joins (`collab.join`); a link it can't use opens the Join dialog with the
+  link and the reason. Other arguments are files, as paths or `file://` URLs.
+- **Windows**: the app registers itself per user as the opener of `figcraft://` under
+  `HKEY_CURRENT_USER\Software\Classes\figcraft` (no administrator rights): the scheme, its icon
+  and `"<figcraft.exe>" "%1"`. Preferences ▸ **Open invite links in FigCraft** (and
+  `collab.registerLinks {on?}`) turns it on or off; it defaults to on for installed builds, which
+  register on first run, and off for builds from source (inside a Cargo build directory, or debug
+  builds), which leave any registration alone. Turning it off removes only this copy's
+  registration. The registry sits behind a trait, so tests use a fake.
+- **macOS**: the bundle declares the scheme (`CFBundleURLTypes`), so links open FigCraft; the
+  link itself arrives as an Apple Event, which the windowing layer doesn't pass on yet, so the app
+  opens without joining (paste the link) until it does.
+- **Linux and FreeBSD**: the desktop entry declares `x-scheme-handler/figcraft` and passes URLs
+  (`%U`); the app joins from its command line.
+- An app that is already running doesn't receive the link: a second window starts and joins.
 
 ## Offline and reconnect
 
@@ -473,5 +519,6 @@ chooses to share on the network; the default is the invite link with a random to
 3. **Per-user undo**, reconnect and offline queueing, rejection handling, presence for text
    editing. **Done** (the core's client and server, the engine's live session, the guest's
    resuming connection).
-4. **Browser client** (WebSocket through `web-sys`).
+4. **Browser client** (WebSocket through `web-sys`). **Done** (the web build joins
+   desktop-hosted sessions; `figcraft://` links open the desktop app and join).
 5. **Standalone `figcraft-server`** with persistence, compaction and accounts.

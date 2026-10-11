@@ -2,7 +2,10 @@
 //! (replacing any older waiting value) until the interval has passed, so the last one is never
 //! lost. Used for presence on both ends (about 30 updates a second).
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+// `std::time::Instant` on native builds; the browser's clock in the web build.
+use web_time::Instant;
 
 /// How often presence goes out at most.
 pub const PRESENCE_INTERVAL: Duration = Duration::from_millis(33);

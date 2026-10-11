@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~200–365 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged #101–#103: plugins and the multiplayer core; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -59,7 +59,7 @@ the localization layer with Figma's own languages (20–35 h).
 | Features (depth) | 57% (core editor 67%) | 78–146 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
-| Collaboration | 12% (core in; live sessions with document sync and cursors, preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
+| Collaboration | 12% (core in; live sessions with document sync and cursors, the browser joins, invite links open the app; preview) | 55–110 | [collaboration-parity](docs/collaboration-parity.md) |
 | Stability | 55% | 20–40 | [gaps](docs/gaps.md) |
 | Performance | 60% | 30–60 | [hardware-parity](docs/hardware-parity.md) |
 | Hardware | 50% | 15–30 | [hardware-parity](docs/hardware-parity.md) |
@@ -123,7 +123,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 2. Real-file corpus and measured fidelity: 15–30 h.
 3. Tool-by-tool interaction pass against Figma: 40–60 h.
 4. Localization layer, then ja, ko, es, pt-BR, fr, de: 35–55 h.
-5. Multiplayer (M9): the browser client and sharing on top of the live sessions (transport, hosting, invite links, document sync, presence, per-user undo and reconnect with offline edits landed): 45–90 h.
+5. Multiplayer (M9): sharing and a standalone server with TLS on top of the live sessions (transport, hosting, invite links that open the app, document sync, presence, per-user undo, reconnect with offline edits and the browser client landed): 45–90 h.
 
 ## Progress log
 
@@ -152,6 +152,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | minor | Readiness by audience with hours to ~95% (full ~400–750, mainstream ~180–330, essentials ~85–160) |
 | 2026-10-10 | minor | Added essentials user (~53%) and mainstream practitioner (~43%); ready for real work unchanged at ~46% |

@@ -1,6 +1,6 @@
 # FigCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged #101–#103: plugins and the multiplayer core) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; numbers unchanged) · **Target:** Figma Design (desktop app 126.10.7)
 
 Forward-looking plan. Where FigCraft stands today: [`ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the full ranked list: [`gaps.md`](gaps.md). Hours
@@ -17,7 +17,7 @@ are one Opus 5.5 agent; most milestones split across 4–6 agents on disjoint cr
    40–60 h, parallel by tool.
 4. **Localization layer**, then Figma's own languages first (ja, ko, es, pt-BR, fr, de): 15–25 h
    for the layer, 3–5 h per language plus native review.
-5. **Multiplayer M9**: the browser client, a standalone server and sharing on top of the live sessions (the WebSocket transport, hosting from the app, invite links, document sync, live cursors, selections, avatars and follow, per-user undo and reconnect with offline edits landed), per [`collab-protocol.md`](collab-protocol.md): 45–90 h.
+5. **Multiplayer M9**: a standalone server with TLS and sharing on top of the live sessions (the WebSocket transport, hosting from the app, invite links that open the app, document sync, live cursors, selections, avatars and follow, per-user undo, reconnect with offline edits and joining from the browser landed), per [`collab-protocol.md`](collab-protocol.md): 45–90 h.
 
 ## Alpha gate
 
@@ -31,7 +31,7 @@ builders' side-by-side checks with synthetic files; nothing has been run on real
 | Build and use a design system: components, variants, properties, variables and modes, libraries | yes | `components_scale_tests.rs` (300 components, 2,000 instances), `library_tests.rs`, `library_variables_tests.rs`; libraries are local files, not shared | — |
 | Prototype and present: interactions, flows, overlays, smart animate, variables | yes | `proto_*_tests.rs`, `present_*_tests.rs` | — |
 | Hand off to developers: Dev Mode inspect, code, measurements, asset export, ready for dev | yes | `devinspect_tests.rs`, `component_codegen_tests.rs`, `devcompare_tests.rs`, `annotations_tests.rs` | — |
-| Review with others: comments, versions, sharing the work | partial (not blocking) | comments with threads, mentions and resolve plus version history work inside a file (`comments_tests.rs`, `version_tests.rs`); the file is shared by passing it along; no real-time co-editing or share links yet; the sync core landed without networking ([collaboration-parity](collaboration-parity.md)) | beta gap: 45–90 |
+| Review with others: comments, versions, sharing the work | partial (not blocking) | comments with threads, mentions and resolve plus version history work inside a file (`comments_tests.rs`, `version_tests.rs`); the file is shared by passing it along; live sessions (preview: hosted from the desktop app, joined from the app or the browser) but no share links or per-person undo yet ([collaboration-parity](collaboration-parity.md)) | beta gap: 45–90 |
 | Continue existing Figma work (open `.fig`) | no (beta gap) | no `.fig` reader; REST JSON import works for files fetched through Figma's API ([file-format-parity](file-format-parity.md)) | beta gap: 30–60 |
 
 **Passes, so FigCraft stays alpha:** every daily design workflow works end to end on FigCraft's
@@ -55,7 +55,7 @@ blockers.
 | M6 Interop & Dev Mode | ~55% | `.fig` import, video/HEIC/TIFF, CMYK intent, Code Connect | 40–80 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
 | M8 Hardening & performance (bench, retained canvas, accessibility, idle) | ~60% | real-file corpus, platform QA, GPU canvas, screen readers | 60–110 |
-| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, document sync between apps, cursors, selections, avatars, follow, `collab.*` commands); per-user undo, rejection handling, offline queue and resuming after a reconnect | `figcraft://` link handler, browser client, standalone server, sharing | 45–90 |
+| M9 Real-time collaboration | core done (#103: ids, change sets, server ordering, convergence); live sessions (WebSocket transport with limits and reconnect, hosting from the app, invite links, document sync between apps, cursors, selections, avatars, follow, `collab.*` commands); per-user undo, rejection handling, offline queue and resuming after a reconnect; the browser client (joins desktop-hosted sessions); `figcraft://` links open the app and join (Windows registers per user; macOS and Linux packages declare the scheme) | standalone server with TLS, sharing | 45–90 |
 | M10 Localization (new) | not started | layer + 11 languages | 60–100 |
 | M11 Plugins | runtime, API, menu, manager and SDK done (#101) | run-time plugin UI, settings storage, distribution, widgets; Figma plugin compatibility is an owner decision | 25–55 |
 | M12 AI features (new, owner decision) | not started | local models | 30–60 |
@@ -71,6 +71,7 @@ blockers.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | minor | Added the alpha gate (core-workflow table): passes, stage stays alpha |
 | 2026-10-10 | major | Created: milestone table moved from ROADMAP.md with statuses re-checked; added M10–M12; current focus re-planned |

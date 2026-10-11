@@ -18,6 +18,14 @@ The editor runs entirely on the visitor's device. The web build starts with one 
 there is no desktop TCP control server, and native file dialogs aren't wired up yet. A browser
 with WebGPU or WebGL2 is required.
 
+## Live sessions
+
+The web build can join a live session hosted by the desktop app (File ▸ Join live session…, then
+paste the invite link); it can't host one. Desktop-hosted sessions use plain `ws://`, which
+browsers block from a page served over `https://` except to the same computer. To join sessions on
+other machines, serve the site over `http://` on a trusted network (or use the desktop app);
+`wss://` comes with the standalone server.
+
 ## Sizes
 
 Measured on the 0.1.0 build (`trunk build --release`; gzip `-9`, Brotli quality 11):

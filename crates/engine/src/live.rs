@@ -180,6 +180,10 @@ pub struct HostOptions {
 /// The networking behind live sessions, installed by the app ([`Live::install`]). Calls return
 /// at once; what happens later arrives through [`poll`](Self::poll).
 pub trait LiveLink: Send {
+    /// Sessions can be hosted here (the browser build can only join).
+    fn can_host(&self) -> bool {
+        true
+    }
     /// Start hosting a session for `opts.doc` (ending any current one).
     fn host(&mut self, opts: HostOptions) -> std::result::Result<SessionInfo, String>;
     /// Start joining the session behind an invite link (ending any current one). Errors are for
@@ -231,6 +235,9 @@ pub struct Live {
     deferred: Vec<ServerMsg>,
     /// Nesting of [`Session::grouped`] on the session document: its edits sync once, at the end.
     hold: u32,
+    /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
+    /// installs one; see [`crate::invite_links`]).
+    pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
 }
 
 impl Live {
@@ -239,9 +246,14 @@ impl Live {
         self.link = Some(link);
     }
 
-    /// A link is installed: sessions can be hosted and joined.
+    /// A link is installed: sessions can be joined (and hosted, when [`can_host`](Self::can_host)).
     pub fn available(&self) -> bool {
         self.link.is_some()
+    }
+
+    /// Sessions can be hosted from here (a link is installed and it isn't the browser's).
+    pub fn can_host(&self) -> bool {
+        self.link.as_ref().is_some_and(|l| l.can_host())
     }
 
     pub fn role(&self) -> Option<Role> {
@@ -723,6 +735,7 @@ impl Session {
             .collect();
         json!({
             "available": l.available(),
+            "canHost": l.can_host(),
             "status": l.status.id(),
             "reason": match &l.status { Status::Failed { reason } => Some(reason.as_str()), _ => None },
             "attempt": match l.status { Status::Reconnecting { attempt } => Some(attempt), _ => None },
@@ -745,7 +758,10 @@ impl Session {
 }
 
 fn unavailable(cmd: &str) -> EngineError {
-    EngineError::Disabled(cmd.to_string(), "live sessions aren't available here (the desktop app and the MCP server host and join them)".into())
+    EngineError::Disabled(
+        cmd.to_string(),
+        "live sessions aren't available here (the desktop app and the MCP server host and join them; the web build joins)".into(),
+    )
 }
 
 fn host(s: &mut Session, p: &Value) -> Result<Value> {
@@ -834,7 +850,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → {status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
+            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), peers: [{id, name, color, presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
             false,
             |s, _| Ok(s.live_summary())
         ),
