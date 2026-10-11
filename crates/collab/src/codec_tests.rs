@@ -4,8 +4,8 @@ use figcraft_doc::{Document, NodeId, NodeKind};
 
 use crate::change::{Change, Json, Prop};
 use crate::message::{
-    Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, Hello, LinkInfo, Manage, NewLink, PROTOCOL, Peer, Presence,
-    Processed, Resume, ServerMsg, WIRE_VERSION, decode, decode_json, encode, encode_json,
+    Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, FileUsage, Hello, LibraryReply, LibraryReq, LinkInfo, Manage,
+    NewLink, OpenLibrary, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, Usage, WIRE_VERSION, decode, decode_json, encode, encode_json,
 };
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
@@ -56,6 +56,10 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ClientMsg::Admin(Admin::CreateLink { file: "f".into(), access: Access::View, label: "Review".into() }),
         ClientMsg::Admin(Admin::Revoke { file: "f".into(), link: "l".into() }),
         ClientMsg::Admin(Admin::Remove { file: "f".into() }),
+        ClientMsg::OpenLibrary(OpenLibrary { protocol: PROTOCOL, file: "f".into(), token: "t".into(), client_version: "0.3.1".into() }),
+        ClientMsg::Library(LibraryReq::Fetch { have: Some(3), usage: Some(Usage { file: "Checkout".into(), components: vec![(NodeId(7), 12)] }) }),
+        ClientMsg::Library(LibraryReq::Publish { archive: vec![0x50, 0x4B, 3, 4] }),
+        ClientMsg::Library(LibraryReq::Usage),
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
     let file = FileInfo { id: "f".into(), name: "Café".into(), created: 1, updated: 2, seq: 3, bytes: 4, people: 5 };
@@ -94,6 +98,16 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ServerMsg::Admin(Box::new(AdminReply::Link(new_link))),
         ServerMsg::Admin(Box::new(AdminReply::Done)),
         ServerMsg::Admin(Box::new(AdminReply::Failed { reason: "no".into() })),
+        ServerMsg::Library(Box::new(LibraryReply::Ready { access: Access::View })),
+        ServerMsg::Library(Box::new(LibraryReply::Library { version: 2, archive: vec![1, 2, 3] })),
+        ServerMsg::Library(Box::new(LibraryReply::Unchanged { version: 2 })),
+        ServerMsg::Library(Box::new(LibraryReply::Empty)),
+        ServerMsg::Library(Box::new(LibraryReply::Published { version: 3 })),
+        ServerMsg::Library(Box::new(LibraryReply::Usage(vec![FileUsage {
+            usage: Usage { file: "Checkout".into(), components: vec![(NodeId(7), 12)] },
+            updated: 9,
+        }]))),
+        ServerMsg::Library(Box::new(LibraryReply::Failed { reason: "no".into() })),
     ];
     (client, server)
 }

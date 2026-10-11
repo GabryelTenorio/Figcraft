@@ -2,7 +2,8 @@
 //! drop an instance into the frame or auto layout slot under the pointer, or with Alt held onto an
 //! instance to swap it) and styles (click to apply to the selection), for this file and for every
 //! enabled library, with a "Library updates available" banner. The libraries view publishes this
-//! file as a library and enables library files.
+//! file as a library (to the file, or to its server for the team, with how other files use it),
+//! enables library files and team libraries (by a share link), and swaps one library for another.
 //!
 //! Thousands of assets stay smooth: only the tiles in view are laid out, and thumbnails render
 //! when their tile first shows (a few per frame), are cached, and re-render only when their
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId, NodeKind, Style, StyleKind};
 use figcraft_engine::library;
+use figcraft_engine::library_server::{is_server_link, shown_path};
 use serde_json::{Value, json};
 
 use crate::FigApp;
@@ -34,6 +36,12 @@ const THUMBS_PER_FRAME: usize = 8;
 const MAX_COMPARED: usize = 20_000;
 /// Look for changed library files this often (seconds) while the panel shows.
 const LIBRARY_REFRESH: f64 = 2.0;
+/// Ask team libraries' servers for newer versions this often (seconds) while the panel shows.
+// shortcut: polled (a few bytes when nothing changed); a server push needs a connection per
+// library, worth it once libraries are used beyond the Assets panel.
+const SERVER_REFRESH: f64 = 30.0;
+/// Components listed in a team library's usage.
+const USAGE_ROWS: usize = 8;
 const PAD: f32 = 16.0;
 
 /// Where an asset comes from: this file or an enabled library (its id).
@@ -223,6 +231,14 @@ fn refresh_libraries(app: &mut FigApp, ui: &Ui) {
             let _ = app.session.libraries.load(p);
         }
         ui.data_mut(|d| d.insert_temp(id, now));
+        // Team libraries: in the background, at once for one not fetched yet.
+        let sid = Id::new("asset_server_libraries_checked");
+        let fetched: Option<f64> = ui.data(|d| d.get_temp(sid));
+        let unread = paths.iter().any(|p| is_server_link(p) && app.session.libraries.cached(p).is_none());
+        if paths.iter().any(|p| is_server_link(p)) && (unread || fetched.is_none_or(|l| now - l >= SERVER_REFRESH)) {
+            app.session.refresh_server_libraries();
+            ui.data_mut(|d| d.insert_temp(sid, now));
+        }
     }
     ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(LIBRARY_REFRESH));
 }
@@ -705,9 +721,17 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let mut form: PublishForm = ui.data(|d| d.get_temp(form_id)).unwrap_or_default();
     title(ui, w, "This file");
     let m = doc.published.as_ref().map(|p| &p.manifest);
-    let status = match m {
-        Some(m) => format!("{} · published version {}", doc.name, m.version),
-        None => format!("{} · not published", doc.name),
+    // A file on a server publishes its library there (a live file doesn't keep a local one).
+    let server = app.session.server_link();
+    let on_server = server.as_deref().and_then(|l| match app.session.libraries.cached(l) {
+        Some(Ok(lib)) => Some(lib.manifest.version),
+        _ => None,
+    });
+    let status = match (&server, on_server, m) {
+        (Some(_), Some(v), _) => format!("{} · version {v} on the server", doc.name),
+        (Some(_), None, _) => format!("{} · on a server", doc.name),
+        (None, _, Some(m)) => format!("{} · published version {}", doc.name, m.version),
+        (None, _, None) => format!("{} · not published", doc.name),
     };
     hint(ui, &status);
     let all = library::publishable(doc);
@@ -715,7 +739,7 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         hint(ui, "Create components, styles or variables to publish them as a library.");
         return;
     }
-    let def = library::default_selection(doc);
+    let def = library::default_selection(doc, m);
     let mut include: Vec<Value> = Vec::new();
     let mut check = |ui: &mut Ui, key: String, default: bool, label: &str| -> bool {
         let on = form.picked.get(&key).copied().unwrap_or(default);
@@ -767,12 +791,33 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     });
     ui.add_space(8.0);
     let any = !include.is_empty();
-    let mut publish = false;
+    let (mut publish, mut to_server) = (false, false);
     ui.horizontal(|ui| {
         ui.add_space(PAD);
-        publish = crate::widgets::button(ui, if m.is_some() { "Publish changes" } else { "Publish" }, true, any).clicked();
+        if server.is_some() {
+            to_server = crate::widgets::button(ui, "Publish to server", true, any).clicked();
+        } else {
+            publish = crate::widgets::button(ui, if m.is_some() { "Publish changes" } else { "Publish" }, true, any).clicked();
+        }
     });
     ui.add_space(12.0);
+    match &server {
+        Some(link) => usage(app, ui, w, link),
+        None if app.session.live.can_host() => {
+            hint(
+                ui,
+                "To share this library with your team, publish the file to a server (Share ▸ Publish to server…), then publish the library there.",
+            );
+        }
+        None => {}
+    }
+    if to_server {
+        let description = form.description.clone().unwrap_or_else(|| description.clone());
+        if let Some(r) = app.run("library.publishToServer", json!({"description": description, "include": include})) {
+            form = PublishForm::default();
+            app.toast(format!("Published version {} to the server", r["version"].as_u64().unwrap_or(0)));
+        }
+    }
     if publish {
         let description = form.description.clone().unwrap_or(description);
         if let Some(r) = app.run("library.publish", json!({"description": description, "include": include})) {
@@ -791,13 +836,47 @@ fn publish_form(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     ui.data_mut(|d| d.insert_temp(form_id, form));
 }
 
+/// How other files use this file's library on its server (asked for with a button: it is a
+/// request to the server).
+fn usage(app: &mut FigApp, ui: &mut Ui, w: f32, link: &str) {
+    let usage_id = Id::new(("asset_library_usage", link));
+    let mut ask = false;
+    ui.horizontal(|ui| {
+        ui.add_space(PAD);
+        ask = crate::widgets::button(ui, "Show usage", false, true).clicked();
+    });
+    if ask && let Some(v) = app.run("library.usage", json!({})) {
+        ui.data_mut(|d| d.insert_temp(usage_id, Arc::new(v)));
+    }
+    let Some(v) = ui.data(|d| d.get_temp::<Arc<Value>>(usage_id)) else {
+        ui.add_space(8.0);
+        return;
+    };
+    let files = v["files"].as_array().map_or(0, Vec::len);
+    let instances = v["instances"].as_u64().unwrap_or(0);
+    let plural = |n: u64, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    hint(ui, &format!("Used in {} · {}", plural(files as u64, "file", "files"), plural(instances, "instance", "instances")));
+    let t = Tokens::get(ui.ctx());
+    for c in v["components"].as_array().into_iter().flatten().take(USAGE_ROWS) {
+        let name = c["name"].as_str().unwrap_or("(no longer published)");
+        let (n, f) = (c["instances"].as_u64().unwrap_or(0), c["files"].as_u64().unwrap_or(0));
+        let (r, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
+        let right = format!("{} in {}", plural(n, "instance", "instances"), plural(f, "file", "files"));
+        let rg = ui.painter().layout_no_wrap(right, regular(10.0), t.text_secondary);
+        ui.painter().galley(pos2(r.max.x - PAD - rg.size().x, r.center().y - rg.size().y / 2.0), rg.clone(), t.text_secondary);
+        crate::bidi::paint_name(ui.painter(), pos2(r.min.x + PAD, r.center().y), name, regular(11.0), t.text, w - PAD * 3.0 - rg.size().x);
+    }
+    ui.add_space(8.0);
+}
+
 fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
     let t = Tokens::get(ui.ctx());
     title(ui, w, "Libraries in this file");
     if doc.libraries.enabled.is_empty() {
-        hint(ui, "No libraries yet. Add a .figcraft file that was published as a library.");
+        hint(ui, "No libraries yet. Add a .figcraft file that was published as a library, or paste a team library's link.");
     }
-    let mut remove = None;
+    let (mut remove, mut swap) = (None, None);
+    let swappable = doc.libraries.enabled.len() > 1;
     for l in &doc.libraries.enabled {
         let (r, _) = ui.allocate_exact_size(vec2(w, 44.0), Sense::hover());
         let status = match app.session.libraries.cached(&l.path) {
@@ -810,15 +889,16 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
             }
             Some(Ok(_)) => ("The file now holds another library".into(), t.danger),
             Some(Err(e)) => (e.to_string(), t.danger),
+            None if is_server_link(&l.path) => ("Fetching from the server…".into(), t.text_secondary),
             None => ("Not read yet".into(), t.text_secondary),
         };
-        let text_w = w - PAD - 44.0;
+        let text_w = w - PAD - if swappable { 72.0 } else { 44.0 };
         let name = ui.painter().layout_no_wrap(l.name.clone(), semibold(11.0), t.text);
         let line = ui.painter().layout(status.0, regular(10.0), status.1, text_w);
         let clip = Rect::from_min_size(pos2(r.min.x + PAD, r.min.y), vec2(text_w, r.height()));
         ui.painter().with_clip_rect(clip).galley(pos2(r.min.x + PAD, r.min.y + 6.0), name, t.text);
         ui.painter().with_clip_rect(clip).galley(pos2(r.min.x + PAD, r.min.y + 23.0), line, t.text_secondary);
-        ui.interact(clip, Id::new(("asset_lib_row", &l.id)), Sense::hover()).on_hover_text(&l.path);
+        ui.interact(clip, Id::new(("asset_lib_row", &l.id)), Sense::hover()).on_hover_text(shown_path(&l.path));
         let x = Rect::from_center_size(pos2(r.max.x - 24.0, r.center().y), vec2(24.0, 24.0));
         let xr = ui.interact(x, Id::new(("asset_lib_remove", &l.id)), Sense::click()).tip("Remove library from this file");
         if xr.hovered() {
@@ -828,6 +908,24 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         if xr.clicked() {
             remove = Some(l.id.clone());
         }
+        if swappable {
+            let sw = Rect::from_center_size(pos2(r.max.x - 52.0, r.center().y), vec2(24.0, 24.0));
+            let sr = ui
+                .interact(sw, Id::new(("asset_lib_swap", &l.id)), Sense::click())
+                .tip("Swap library: use another library's assets of the same names");
+            if sr.hovered() {
+                ui.painter().rect_filled(sw, CornerRadius::same(5), t.hover);
+            }
+            icons::paint(ui.painter(), sw.shrink(6.0), Icon::Swap, t.icon);
+            crate::right::menu_popup(&sr).show(|ui| {
+                for other in doc.libraries.enabled.iter().filter(|o| o.id != l.id) {
+                    if crate::right::menu_item(ui, &format!("Swap to {}", other.name), "") {
+                        swap = Some((l.id.clone(), other.id.clone()));
+                        ui.close();
+                    }
+                }
+            });
+        }
     }
     ui.add_space(4.0);
     let mut add = false;
@@ -835,8 +933,29 @@ fn enabled_libraries(app: &mut FigApp, ui: &mut Ui, w: f32, doc: &Document) {
         ui.add_space(PAD);
         add = crate::widgets::button(ui, "Add library file…", false, true).clicked();
     });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_space(PAD);
+        let pasted = crate::widgets::text_field(ui, Id::new("asset_add_link"), "", w - PAD * 2.0, "Paste a team library link (a view link)");
+        if let Some(link) = pasted.map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
+            && let Some(r) = app.run("library.add", json!({"path": link}))
+        {
+            app.toast(format!("Added the library \"{}\"", r["name"].as_str().unwrap_or_default()));
+        }
+    });
     if let Some(id) = remove {
         app.run("library.remove", json!({"id": id}));
+    }
+    if let Some((from, to)) = swap
+        && let Some(r) = app.run("library.swap", json!({"from": from, "to": to}))
+    {
+        let moved = ["components", "styles", "variables"].iter().map(|k| r[*k].as_u64().unwrap_or(0)).sum::<u64>();
+        let missed = r["unmatched"].as_array().map_or(0, Vec::len);
+        app.toast(if missed == 0 {
+            format!("Swapped {moved} asset{}", if moved == 1 { "" } else { "s" })
+        } else {
+            format!("Swapped {moved} asset{}; {missed} had no match and still use the old library", if moved == 1 { "" } else { "s" })
+        });
     }
     if add && let Some(p) = app.services.pick_open("Add library", &["figcraft"]) {
         let path = p.to_string_lossy().to_string();

@@ -22,6 +22,8 @@ pub const SNAPSHOT: &str = "snapshot.bin";
 pub const LOG: &str = "log.bin";
 pub const META: &str = "meta.json";
 pub const LINKS: &str = "links.json";
+pub const LIBRARY: &str = "library.bin";
+pub const USAGE: &str = "usage.json";
 
 const SNAP_MAGIC: &[u8; 4] = b"FCSN";
 const LOG_MAGIC: &[u8; 4] = b"FCLG";

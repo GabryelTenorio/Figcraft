@@ -1,20 +1,26 @@
 //! [`NetLink`]: the engine's [`LiveLink`] over the network.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use figcraft_collab::message::{Access, ClientMsg};
-use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, PublishOptions, Role, SessionInfo};
+use figcraft_collab::message::{Access, ClientMsg, LibraryReply, LibraryReq};
+use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo};
 
-use crate::guest::{Guest, GuestConfig, Publish};
+use crate::guest::{Guest, GuestConfig, Publish, upload_file};
 use crate::host::{Host, HostConfig};
 use crate::inbox::{Inbox, Waker};
 use crate::invite::{Endpoint, Invite};
-use crate::manage::NO_TLS;
+use crate::manage::{self, NO_TLS};
 use crate::net::NetLimits;
 use crate::token;
 
 /// The port a hosted session tries first.
 pub const DEFAULT_PORT: u16 = 47900;
+
+/// How long a request to a server (outside a session) waits for its connection.
+const CONNECT: Duration = Duration::from_secs(5);
 
 enum Active {
     Host(Host),
@@ -29,12 +35,17 @@ pub struct NetLink {
     inbox: Option<Inbox>,
     /// Tweaks for joining (tests shorten the reconnect pauses).
     guest: fn(GuestConfig) -> GuestConfig,
+    /// Answers to library requests sent in the background (outlives sessions).
+    libraries: Inbox,
+    /// Background library requests are out.
+    fetching: Arc<AtomicBool>,
 }
 
 impl NetLink {
     /// `wake` is called (from network threads) whenever something arrives for the UI.
     pub fn new(wake: Waker) -> Self {
-        Self { wake, limits: NetLimits::default(), active: None, inbox: None, guest: |c| c }
+        let libraries = Inbox::new(wake.clone());
+        Self { wake, limits: NetLimits::default(), active: None, inbox: None, guest: |c| c, libraries, fetching: Arc::default() }
     }
 
     /// With other transport limits.
@@ -157,6 +168,35 @@ impl LiveLink for NetLink {
         Ok(())
     }
 
+    fn upload(&mut self, o: PublishOptions) -> Result<Published, String> {
+        let (server, query) = Endpoint::parse(&o.server)?;
+        let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
+        let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
+        upload_file(&server, &key, &o.name, &o.doc, &self.limits, CONNECT).map(|(_, published)| published)
+    }
+
+    fn library(&mut self, link: &str, req: LibraryReq) -> Result<LibraryReply, String> {
+        manage::library(link, req, &self.limits, CONNECT)
+    }
+
+    fn library_background(&mut self, jobs: Vec<(String, LibraryReq)>) {
+        if jobs.is_empty() || self.fetching.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let (inbox, fetching, limits) = (self.libraries.clone(), self.fetching.clone(), self.limits);
+        let spawned = std::thread::Builder::new().name("library-fetch".into()).spawn(move || {
+            for (link, req) in jobs {
+                let reply = manage::library(&link, req, &limits, CONNECT);
+                inbox.push(Event::Library { link, reply });
+            }
+            fetching.store(false, Ordering::SeqCst);
+        });
+        if let Err(e) = spawned {
+            log::warn!("team libraries: can't start a thread: {e}");
+            self.fetching.store(false, Ordering::SeqCst);
+        }
+    }
+
     fn leave(&mut self) {
         match self.active.take() {
             Some(Active::Host(mut h)) => h.stop(),
@@ -183,7 +223,9 @@ impl LiveLink for NetLink {
     }
 
     fn poll(&mut self) -> Vec<Event> {
-        self.inbox.as_ref().map(Inbox::drain).unwrap_or_default()
+        let mut out = self.libraries.drain();
+        out.extend(self.inbox.as_ref().map(Inbox::drain).unwrap_or_default());
+        out
     }
 }
 

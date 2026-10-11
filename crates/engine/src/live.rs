@@ -27,7 +27,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use figcraft_collab::Client;
-use figcraft_collab::message::{ClientMsg, EditingText, ServerMsg};
+use figcraft_collab::message::{ClientMsg, EditingText, LibraryReply, LibraryReq, ServerMsg};
 
 pub use figcraft_collab::message::Access;
 use figcraft_doc::{Document, NodeId};
@@ -180,6 +180,12 @@ pub enum Event {
     },
     /// The document is on the server (`collab.publish`); joining it follows.
     Published(Published),
+    /// The answer to a team library request sent in the background
+    /// ([`LiveLink::library_background`]) about the file behind share link `link`.
+    Library {
+        link: String,
+        reply: std::result::Result<LibraryReply, String>,
+    },
 }
 
 /// Which network interface a hosted session listens on.
@@ -238,6 +244,21 @@ pub trait LiveLink: Send {
     fn publish(&mut self, _opts: PublishOptions) -> std::result::Result<(), String> {
         Err("publishing to a server needs the desktop app or the MCP server".into())
     }
+    /// Keep `opts.doc` on a server as a new file without joining it: where, and its links
+    /// (`library.publishToServer` with the server's key). Waits for the server. Errors never echo
+    /// the key.
+    fn upload(&mut self, _opts: PublishOptions) -> std::result::Result<Published, String> {
+        Err(NO_TEAM_LIBRARIES.into())
+    }
+    /// One request about the team library of the file behind share link `link`; waits for the
+    /// server's answer (a few seconds at most when it can't be reached). Errors never echo the
+    /// link.
+    fn library(&mut self, _link: &str, _req: LibraryReq) -> std::result::Result<LibraryReply, String> {
+        Err(NO_TEAM_LIBRARIES.into())
+    }
+    /// Send library requests `(link, request)` in the background, in order; each answer arrives as
+    /// [`Event::Library`]. Ignored while an earlier call's requests are still out.
+    fn library_background(&mut self, _jobs: Vec<(String, LibraryReq)>) {}
     /// End the current session (stop hosting or leave).
     fn leave(&mut self);
     /// Your latest presence (the link throttles and coalesces).
@@ -295,6 +316,11 @@ impl Live {
     /// Install the networking (the app does this once at startup).
     pub fn install(&mut self, link: Box<dyn LiveLink>) {
         self.link = Some(link);
+    }
+
+    /// The installed networking, if any.
+    pub(crate) fn link(&mut self) -> Option<&mut (dyn LiveLink + 'static)> {
+        self.link.as_deref_mut()
     }
 
     /// A link is installed: sessions can be joined (and hosted, when [`can_host`](Self::can_host)).
@@ -400,6 +426,9 @@ pub fn editing_hint(names: &[&str]) -> Option<String> {
         [first, rest @ ..] => format!("{first} and {} others are {verb}", rest.len()),
     })
 }
+
+/// Why team libraries aren't available (no network link, or the browser build).
+pub const NO_TEAM_LIBRARIES: &str = "team libraries on a server need the desktop app or the MCP server";
 
 /// Why an edit of a server file you joined with a view link is refused.
 pub const VIEW_ONLY: &str = "View only: the link you joined with lets you see this file, not change it";
@@ -565,6 +594,7 @@ impl Session {
                 self.message = Some(format!("Published {} to the server", p.name));
                 live.published = Some(p);
             }
+            Event::Library { link, reply } => self.library_answer(&link, reply),
         }
     }
 

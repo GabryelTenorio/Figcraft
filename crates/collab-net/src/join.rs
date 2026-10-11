@@ -207,8 +207,8 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
             inbox.push(Event::Sync(m));
         }
         ServerMsg::Reject { .. } => inbox.push(Event::Sync(m)),
-        // Answers for managing connections: not this one's.
-        ServerMsg::Pong | ServerMsg::Admin(_) => {}
+        // Answers for managing and library connections: not this one's.
+        ServerMsg::Pong | ServerMsg::Admin(_) | ServerMsg::Library(_) => {}
     }
     Taken::Continue
 }
