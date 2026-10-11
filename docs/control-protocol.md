@@ -161,12 +161,14 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginForm?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
 `home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool, or a top-level menu such
 as `"Plugins"` to open the main menu with it open), `pluginsWindow` (bool: Plugins ▸ Manage
-plugins…), `pluginForm` (`{id, command?}`: start that plugin command like its menu item, opening
+plugins…), `pluginsTab` (`installed|browse`: that window's tab), `pluginConfirm` (a plugin id of the
+directory listed last: its install confirmation shows, as its Install button would; `null` closes
+it), `pluginForm` (`{id, command?}`: start that plugin command like its menu item, opening
 its parameters form when it has parameters; `null` closes the form), `focusRegion`
 (`toolbar|layers|canvas|properties`: give that region the keyboard as F6 would, on the next frame),
 `iconGallery` (bool:

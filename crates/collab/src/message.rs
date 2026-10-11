@@ -373,6 +373,82 @@ pub enum LibraryReply {
     },
 }
 
+/// Opens a connection to a server's plugin directory (instead of [`Hello`]). Anyone who can reach
+/// the server may list and fetch plugins; with the server's key (`key` not empty) the connection
+/// may also publish and unpublish them. Answered with [`PluginReply::Ready`] or `Refused`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpenPlugins {
+    pub protocol: u32,
+    /// The server's key, or empty to only browse.
+    pub key: String,
+    pub client_version: String,
+}
+
+/// A plugin a directory keeps: what its manifest says (the author as they typed it) and the bundle
+/// that holds it (its size and SHA-256, which a download must match).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PluginEntry {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub author: String,
+    /// The plugin API it was written for.
+    pub api: u32,
+    /// The permissions it asks for: `read` or `write` access to the document, and the commands
+    /// it may call (empty: any its access allows).
+    pub access: String,
+    pub commands: Vec<String>,
+    /// It draws a widget.
+    pub widget: bool,
+    /// The bundle's size in bytes and its SHA-256 (hex).
+    pub bytes: u64,
+    pub sha256: String,
+    /// When it was published (seconds since 1970, UTC).
+    pub published: u64,
+    /// In listings: every version the directory keeps of it, newest first.
+    pub versions: Vec<String>,
+}
+
+/// A request on a plugin directory connection; each gets one [`PluginReply`], in order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PluginReq {
+    /// The latest version of each plugin whose id, name, description or author contains `query`
+    /// (any case; empty: all).
+    List { query: String },
+    /// A plugin's bundle: version `version`, or its latest.
+    Fetch { id: String, version: Option<String> },
+    /// Keep a bundle (`figcraft_plugin::bundle`) as a new version of its plugin. Needs the key.
+    Publish { bundle: Vec<u8> },
+    /// Remove version `version` of a plugin, or all of them. Needs the key.
+    Unpublish { id: String, version: Option<String> },
+}
+
+/// The answer to a [`PluginReq`] (the first one on a connection answers [`OpenPlugins`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PluginReply {
+    /// Requests may follow; `publisher`: the key was given, so publishing is allowed.
+    Ready {
+        publisher: bool,
+    },
+    List(Vec<PluginEntry>),
+    /// A plugin's entry and its bundle's bytes (their SHA-256 is the entry's).
+    Bundle {
+        entry: PluginEntry,
+        bundle: Vec<u8>,
+    },
+    Published(PluginEntry),
+    /// Unpublished: the versions removed.
+    Removed(Vec<String>),
+    /// The request couldn't be done (the connection stays open).
+    Failed {
+        reason: String,
+    },
+}
+
 /// Client → server.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -401,6 +477,10 @@ pub enum ClientMsg {
     Library(LibraryReq),
     /// Your cursor chat or spotlight (only to a server that sent [`Signal::READY`]).
     Signal(Signal),
+    /// Use the server's plugin directory (the first message on a connection, instead of `Hello`).
+    OpenPlugins(OpenPlugins),
+    /// A request on a plugin directory connection.
+    Plugins(PluginReq),
 }
 
 /// Server → client.
@@ -454,6 +534,8 @@ pub enum ServerMsg {
         client_id: u32,
         signal: Signal,
     },
+    /// The answer to a plugin directory connection's request.
+    Plugins(Box<PluginReply>),
 }
 
 /// The binary form of `msg`: [`WIRE_VERSION`], then postcard.

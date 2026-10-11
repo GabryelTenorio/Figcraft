@@ -194,6 +194,8 @@ Client → server:
 | `OpenLibrary {protocol, file, token, client_version}` | Instead of `Hello`: use a file's team library with one of the file's share links. |
 | `Library {fetch {have?, usage?} \| publish {archive} \| usage}` | A request on a library connection; each gets one `Library` reply, in order. `usage` is `{file, components: [(id, instances)]}`. |
 | `Signal {kind, text}` | Ephemeral presence, only after the server's `ready`: `chat` (the cursor chat message; empty: closed) or `spotlight` (`"on"`, or empty: stopped). |
+| `OpenPlugins {protocol, key, client_version}` | Instead of `Hello`: use the server's plugin directory; `key` empty to browse, the server key to publish too. |
+| `Plugins {list {query} \| fetch {id, version?} \| publish {bundle} \| unpublish {id, version?}}` | A request on a plugin directory connection; each gets one `Plugins` reply, in order. `bundle` is a plugin bundle's bytes (`figcraft_plugin::bundle`). |
 
 Server → client:
 
@@ -208,6 +210,7 @@ Server → client:
 | `Admin {ready \| published {file, edit, view} \| files \| links \| link \| done \| failed {reason}}` | A managing connection's answer: the key is right, a published file with its first two links (tokens shown once), listings, a new link, done, or why not. |
 | `Library {ready {access} \| library {version, archive} \| unchanged {version} \| empty \| published {version} \| usage [{usage, updated}] \| failed {reason}}` | A library connection's answer: the link is right (with its access), the library (a `.figcraft` archive holding it), no newer version, no library yet, kept, the usage reports, or why not. |
 | `Signal {client_id, signal: {kind, text}}` | Someone's cursor chat or spotlight, cleaned by the server; `ready` (about the client itself, after its welcome): signals may be sent. Only to clients whose hello announced `signals`. |
+| `Plugins {ready {publisher} \| list [entry] \| bundle {entry, bundle} \| published entry \| removed [version] \| failed {reason}}` | A plugin directory connection's answer: opened (with the key or not), the latest version of each plugin with the versions kept, a bundle and its entry (its SHA-256 among them), kept, unpublished, or why not. |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -550,6 +553,24 @@ resuming with its offline edits, and leaving the session going back to snapshot 
 - **Usage.** Each fetch carries the asking file's name and its instances of each library component;
   the server keeps the latest report per file name (`usage.json`, rewritten only when it changes,
   capped) and answers `usage` with them. `library.usage` adds them up with the components' names.
+
+*Built* (the plugin directory; operating it: [`server.md`](server.md#plugin-directory), publishing and
+installing: [`plugins.md`](plugins.md#plugin-directories)):
+
+- **A plugin directory connection.** A connection that opens with `OpenPlugins {key}` lists and
+  fetches plugins with no credential at all, and publishes or unpublishes them when `key` is the
+  server's (a wrong key is refused like a managing connection's). Requests are one-shot, like a
+  library connection's. A server older than the directory can't read `OpenPlugins` and refuses the
+  connection; the app says the server has no plugin directory.
+- **What travels.** A plugin bundle: a magic number, then length-prefixed parts (the manifest's
+  JSON, the module, up to 32 named assets), uncompressed, so nothing expands beyond the bytes sent.
+  Its SHA-256 names it on the server (`plugins/<sha256>.bin`) and in every entry; the app checks a
+  download against it before decoding anything.
+- **Checks.** The server decodes a published bundle within its size cap, parses the manifest
+  (refusing a plugin API it doesn't run), requires a version of 1 to 4 numbers that is newer than
+  the one kept, compiles the module without running it (only the sandbox's imports allowed) and
+  checks the asset names; the app checks the same again after the hash. Fetches share a budget of
+  bytes per second on the server, so many downloads at once are turned away instead of queued.
 
 *Built* (opening invite links):
 

@@ -3,7 +3,8 @@
 //! commands a plugin may call (its manifest's permissions, and never files, other documents, the
 //! undo history, dialogs or plugins), one undo step per run or panel callback, the panels plugins
 //! keep open, their settings and the installed-plugin list kept in the preferences. Widgets (plugin
-//! layers on the canvas) are in [`crate::widgets`]. See `docs/plugins.md`.
+//! layers on the canvas) are in [`crate::widgets`], installing from a server's plugin directory in
+//! [`crate::plugin_directory`]. See `docs/plugins.md`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +31,9 @@ pub struct InstalledPlugin {
     /// session only and isn't saved with the preferences).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// The plugin directory it was installed from (`ws://host:port/`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Saves only the plugins imported from a manifest file (the others can't be loaded again).
@@ -46,6 +50,11 @@ pub struct Runtime {
     pub last: Option<(String, String, Value)>,
     /// The open plugin panels, one per plugin, in the order they opened.
     pub panels: Vec<OpenPanel>,
+    /// Where plugins installed from a directory are kept (the app sets a folder of the user's;
+    /// without one, such plugins last for the session only).
+    pub install_dir: Option<std::path::PathBuf>,
+    /// The plugin directory listed last (Plugins ▸ Manage plugins ▸ Browse shows it).
+    pub directory: Option<crate::plugin_directory::Listing>,
 }
 
 impl Runtime {
@@ -219,7 +228,7 @@ pub(crate) fn installed<'a>(s: &'a Session, cmd: &str, id: &str) -> Result<&'a I
 
 /// Read a file of at most `max` bytes.
 #[cfg(not(target_arch = "wasm32"))]
-fn read_file(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
+pub(crate) fn read_file(path: &std::path::Path, max: usize) -> Result<Vec<u8>> {
     let shown = path.display();
     let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{shown}: {e}")))?;
     if !meta.is_file() || meta.len() > max as u64 {
@@ -250,7 +259,7 @@ fn load_from_disk(cmd: &str, _path: &str) -> Result<(Manifest, String, Vec<u8>)>
 
 /// The module a manifest at `manifest_file` names.
 #[cfg(not(target_arch = "wasm32"))]
-fn module_file(manifest_file: &std::path::Path, m: &Manifest) -> Result<Vec<u8>> {
+pub(crate) fn module_file(manifest_file: &std::path::Path, m: &Manifest) -> Result<Vec<u8>> {
     let dir = manifest_file.parent().unwrap_or(std::path::Path::new("."));
     read_file(&dir.join(&m.main), Limits::default().module_bytes)
 }
@@ -287,6 +296,7 @@ pub(crate) fn plugin_error(name: &str, e: PluginError) -> EngineError {
 fn describe(s: &Session, p: &InstalledPlugin) -> Value {
     let mut v = serde_json::to_value(&p.manifest).unwrap_or_else(|_| json!({"id": p.manifest.id}));
     v["path"] = json!(p.path);
+    v["source"] = json!(p.source);
     v["loaded"] = json!(p.path.is_some() || s.plugins.modules.contains_key(&p.manifest.id));
     v
 }
@@ -321,16 +331,24 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
         (None, None) => return Err(bad(cmd, "pass `path` (a figcraft-plugin.json or its folder), or `manifest` and `wasm`")),
     };
     figcraft_plugin::check_module(&wasm, &Limits::default()).map_err(|e| plugin_error(&manifest.name, e))?;
-    let id = manifest.id.clone();
-    if path.is_none() {
+    let mut out = describe(s, &InstalledPlugin { manifest: manifest.clone(), path: path.clone(), source: None });
+    out["replaced"] = json!(register(s, InstalledPlugin { manifest, path, source: None }, wasm));
+    out["loaded"] = json!(true);
+    Ok(out)
+}
+
+/// Install `entry` (its module `wasm` is kept in the session when it has no manifest file),
+/// replacing a plugin with the same id (whose panel closes); whether one was replaced.
+pub(crate) fn register(s: &mut Session, entry: InstalledPlugin, wasm: Vec<u8>) -> bool {
+    let id = entry.manifest.id.clone();
+    if entry.path.is_none() {
         s.plugins.modules.insert(id.clone(), Arc::new(wasm));
     } else {
         s.plugins.modules.remove(&id);
     }
-    let entry = InstalledPlugin { manifest, path };
-    let mut out = describe(s, &entry);
+    close_panel(s, &id);
     let list = &mut s.prefs.plugins;
-    let replaced = match list.iter_mut().find(|x| x.manifest.id == id) {
+    match list.iter_mut().find(|x| x.manifest.id == id) {
         Some(slot) => {
             *slot = entry;
             true
@@ -339,15 +357,14 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
             list.push(entry);
             false
         }
-    };
-    out["replaced"] = json!(replaced);
-    Ok(out)
+    }
 }
 
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "plugin.remove";
     let id = string(p, "id").ok_or_else(|| bad(cmd, "`id` required"))?;
-    installed(s, cmd, &id)?;
+    let p = installed(s, cmd, &id)?.clone();
+    crate::plugin_directory::delete_installed(s, &p);
     s.prefs.plugins.retain(|x| x.manifest.id != id);
     s.prefs.plugin_settings.remove(&id);
     s.plugins.modules.remove(&id);

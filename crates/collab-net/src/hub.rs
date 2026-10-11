@@ -4,8 +4,8 @@
 //!
 //! What differs between the two lives behind a [`Backend`]: which hellos it admits and with what
 //! access, where a file that isn't open comes from, what is kept of the changes (a server appends
-//! them to its log; the app keeps nothing), and the managing and team library connections a
-//! server answers. The person hosting an app session takes part through the hub directly (no
+//! them to its log; the app keeps nothing), and the managing, team library and plugin directory
+//! connections a server answers. The person hosting an app session takes part through the hub directly (no
 //! socket): their presence and edits go in with [`Hosting::presence`] and [`Hosting::send`], what
 //! others do comes out through their [`Inbox`].
 //!
@@ -26,7 +26,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use figcraft_collab::message::{
-    self, Access, Admin, AdminReply, ClientMsg, Hello, LibraryReply, LibraryReq, Manage, OpenLibrary, PROTOCOL, Presence, ServerMsg,
+    self, Access, Admin, AdminReply, ClientMsg, Hello, LibraryReply, LibraryReq, Manage, OpenLibrary, OpenPlugins, PROTOCOL, PluginReply, PluginReq,
+    Presence, ServerMsg,
 };
 use figcraft_collab::{Outgoing, Server};
 use figcraft_engine::live::{Event, MAX_NAME, PEOPLE, sanitize};
@@ -135,6 +136,12 @@ pub trait Backend: Send + 'static {
         LibraryReply::Failed { reason: "this session is hosted by an app: team libraries live on a figcraft-server".into() }
     }
 
+    /// A request on a plugin directory connection; `publisher`: it was opened with the right key
+    /// (checked by [`manage`](Self::manage)).
+    fn plugins(&mut self, _publisher: bool, _req: PluginReq) -> PluginReply {
+        PluginReply::Failed { reason: "this session is hosted by an app: plugin directories live on a figcraft-server".into() }
+    }
+
     /// What everyone is told when the hub stops.
     fn closing(&self) -> Closing;
 }
@@ -146,7 +153,7 @@ enum Out {
 }
 
 enum HubIn {
-    /// A connection's first message (`Hello`, `Manage` or `OpenLibrary`).
+    /// A connection's first message (`Hello`, `Manage`, `OpenLibrary` or `OpenPlugins`).
     Open {
         conn: u64,
         first: ClientMsg,
@@ -409,7 +416,7 @@ fn serve(stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimits, _
         }
     };
     match next_message(&mut ws, limits.max_hello) {
-        Ok(Some(first @ (ClientMsg::Hello(_) | ClientMsg::Manage(_) | ClientMsg::OpenLibrary(_)))) => {
+        Ok(Some(first @ (ClientMsg::Hello(_) | ClientMsg::Manage(_) | ClientMsg::OpenLibrary(_) | ClientMsg::OpenPlugins(_)))) => {
             ws.set_config(|c| *c = cfg);
             let opened = sock.try_clone().is_ok_and(|s| hub.send(HubIn::Open { conn, first, out: out.clone(), sock: s }).is_ok());
             if opened && ws.get_ref().set_read_timeout(Some(limits.idle_timeout)).is_ok() {
@@ -508,6 +515,8 @@ enum Kind {
     Managing,
     /// Using `file`'s team library through a link of `access`.
     Library { file: String, access: Access },
+    /// Using the plugin directory; `publisher`: with the server's key.
+    Plugins { publisher: bool },
 }
 
 /// A joined or managing connection.
@@ -599,6 +608,7 @@ impl<B: Backend> Hub<B> {
             HubIn::Open { conn, first: ClientMsg::Hello(hello), out, sock } => self.join(conn, hello, out, sock),
             HubIn::Open { conn, first: ClientMsg::Manage(m), out, sock } => self.manage(conn, &m, out, sock),
             HubIn::Open { conn, first: ClientMsg::OpenLibrary(o), out, sock } => self.open_library(conn, o, out, sock),
+            HubIn::Open { conn, first: ClientMsg::OpenPlugins(o), out, sock } => self.open_plugins(conn, &o, out, sock),
             HubIn::Open { out, .. } => refuse(&out, "say hello first"),
             HubIn::Msg { conn, msg } => match self.conns.get(&conn).map(|c| &c.kind) {
                 Some(Kind::Joined { file, id, .. }) => {
@@ -618,6 +628,14 @@ impl<B: Backend> Hub<B> {
                     }
                     ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
                     _ => self.kick(&[conn], "only library requests are spoken on this connection"),
+                },
+                Some(Kind::Plugins { publisher }) => match msg {
+                    ClientMsg::Plugins(req) => {
+                        let reply = self.backend.plugins(*publisher, req);
+                        self.answer(conn, &ServerMsg::Plugins(Box::new(reply)));
+                    }
+                    ClientMsg::Ping => self.answer(conn, &ServerMsg::Pong),
+                    _ => self.kick(&[conn], "only plugin directory requests are spoken on this connection"),
                 },
                 None => {}
             },
@@ -743,6 +761,19 @@ impl<B: Backend> Hub<B> {
         };
         self.conns.insert(conn, Conn { out, sock, kind: Kind::Library { file: o.file, access } });
         self.answer(conn, &ServerMsg::Library(Box::new(LibraryReply::Ready { access })));
+    }
+
+    /// A plugin directory connection: anyone may browse; a key, when given, must be the server's.
+    fn open_plugins(&mut self, conn: u64, o: &OpenPlugins, out: SyncSender<Out>, sock: TcpStream) {
+        if o.protocol != PROTOCOL {
+            return refuse(&out, &format!("protocol {} isn't supported (this server speaks {PROTOCOL})", o.protocol));
+        }
+        let publisher = !o.key.is_empty();
+        if publisher && let Err(why) = self.backend.manage(&o.key) {
+            return refuse(&out, &why);
+        }
+        self.conns.insert(conn, Conn { out, sock, kind: Kind::Plugins { publisher } });
+        self.answer(conn, &ServerMsg::Plugins(Box::new(PluginReply::Ready { publisher })));
     }
 
     fn admin(&mut self, conn: u64, req: Admin) {

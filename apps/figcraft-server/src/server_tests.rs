@@ -200,6 +200,12 @@ fn fuzzed_frames_dont_hurt_the_server() {
             have: None,
             usage: Some(message::Usage { file: "Fuzz".into(), components: vec![(NodeId(1), 2)] }),
         }),
+        ClientMsg::OpenPlugins(message::OpenPlugins { protocol: message::PROTOCOL, key: String::new(), client_version: String::new() }),
+        ClientMsg::Plugins(message::PluginReq::List { query: "tiny".into() }),
+        ClientMsg::Plugins(message::PluginReq::Fetch { id: "org.example.tiny".into(), version: None }),
+        ClientMsg::Plugins(message::PluginReq::Publish {
+            bundle: figcraft_plugin::bundle::Bundle { manifest: "{}".into(), wasm: b"\0asm".to_vec(), assets: Vec::new() }.encode(),
+        }),
         ClientMsg::Ping,
     ]
     .iter()

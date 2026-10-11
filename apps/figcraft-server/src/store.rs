@@ -11,6 +11,7 @@
 //! <data>/files/<id>/log.bin      what changed since (see `disk`)
 //! <data>/files/<id>/library.bin  its team library, when one was published (a `.figcraft` archive)
 //! <data>/files/<id>/usage.json   how other files use that library, as their apps report it
+//! <data>/plugins/                the plugin directory (see `directory`)
 //! ```
 //!
 //! An open file appends its server's journal to its log; the hub has the store make the appends
@@ -26,13 +27,16 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, FileUsage, LibraryReply, LibraryReq, LinkInfo, NewLink, Usage};
+use figcraft_collab::message::{
+    Access, Admin, AdminReply, FileInfo, FileUsage, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply, PluginReq, Usage,
+};
 use figcraft_collab::{Change, Replica, Server, same_secret};
 use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile};
 use figcraft_collab_net::token;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::directory::{Directory, DirectoryConfig};
 use crate::disk::{self, LIBRARY, LINKS, LOG, LOG_HEADER, META, SNAPSHOT, USAGE};
 
 pub const LOCK: &str = "LOCK";
@@ -55,6 +59,7 @@ pub struct StoreConfig {
     pub compact_after: usize,
     pub compact_bytes: u64,
     pub core: figcraft_collab::Limits,
+    pub directory: DirectoryConfig,
 }
 
 /// A file's description (`meta.json`).
@@ -123,6 +128,8 @@ pub struct Store {
     files: BTreeMap<String, Entry>,
     /// What was skipped at startup or found damaged since, for the operator.
     problems: Vec<String>,
+    /// The plugin directory.
+    directory: Directory,
     _lock: File,
 }
 
@@ -199,7 +206,8 @@ impl Store {
         let key = load_key(root)?;
         let dir = root.join(FILES);
         fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
-        let mut store = Store { root: root.to_path_buf(), cfg, key, files: BTreeMap::new(), problems: Vec::new(), _lock: lock };
+        let (directory, problems) = Directory::open(root, cfg.directory);
+        let mut store = Store { root: root.to_path_buf(), cfg, key, files: BTreeMap::new(), problems, directory, _lock: lock };
         store.scan(&dir);
         Ok(Some(store))
     }
@@ -264,6 +272,11 @@ impl Store {
     pub fn rotate_key(&mut self) -> Result<String, String> {
         self.key = write_key(&self.root)?;
         Ok(self.key.clone())
+    }
+
+    /// The plugin directory.
+    pub fn directory(&mut self) -> &mut Directory {
+        &mut self.directory
     }
 
     /// What was skipped or found damaged.
@@ -734,6 +747,10 @@ impl Backend for Store {
             }
             LibraryReq::Usage => self.library_usage(file).map_or_else(failed, LibraryReply::Usage),
         }
+    }
+
+    fn plugins(&mut self, publisher: bool, req: PluginReq) -> PluginReply {
+        self.directory.handle(publisher, req)
     }
 
     fn closing(&self) -> Closing {

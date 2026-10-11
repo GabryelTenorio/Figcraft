@@ -210,7 +210,7 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
         // Checked again by the engine (the host is as untrusted as any peer).
         ServerMsg::Signal { client_id, signal } => inbox.push(Event::Signal(client_id, signal)),
         // Answers for managing and library connections: not this one's.
-        ServerMsg::Pong | ServerMsg::Admin(_) | ServerMsg::Library(_) => {}
+        ServerMsg::Pong | ServerMsg::Admin(_) | ServerMsg::Library(_) | ServerMsg::Plugins(_) => {}
     }
     Taken::Continue
 }

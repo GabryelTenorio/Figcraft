@@ -263,6 +263,9 @@ fn every_command_survives_junk_params() {
         json!({"id": 2, "url": "https://\u{0}x", "index": -1, "name": ""}),
         // Widgets: plugins, targets and fuel as junk.
         json!({"id": 1, "plugin": {"x": 1}, "target": [1], "fuel": -1e308, "x": 1e308}),
+        // Plugin directories: ids, versions, servers and confirmations as junk.
+        json!({"id": "../../x", "version": {"x": 1}, "server": "ws://\u{0}/?key=", "confirm": "yes", "path": [5], "plugin": [1], "query": 7, "sha256": 3}),
+        json!({"id": "org.example.x", "version": "1.0.0", "server": "wss://[::1", "confirm": true, "plugin": "nope"}),
     ];
     for spec in all_commands() {
         if matches!(

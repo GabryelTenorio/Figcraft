@@ -1,5 +1,6 @@
 //! `figcraft-cli`: FigCraft without a window. Inspect, export, convert and render documents, run
-//! command scripts, list commands, serve MCP on stdio and measure performance.
+//! command scripts, list commands, serve MCP on stdio, publish plugins to a server's plugin
+//! directory and measure performance.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod args;
@@ -23,6 +24,7 @@ USAGE:
   figcraft-cli run <script.json|script.jsonl> [--in <file>] [--out <file>]
   figcraft-cli commands [--json] [--filter TEXT]
   figcraft-cli mcp [--attach PORT]
+  figcraft-cli plugin publish <folder> --server ws://host:port/[?key=KEY]
   figcraft-cli perf [--layers N[,N...]] [--instances N[,N...]]
   figcraft-cli help | --help | --version
 
@@ -32,6 +34,9 @@ per top-level frame into the <out> directory, or one file when <out> has an imag
 is given; PDFs take print options (a bleed like 3mm or 0.125in,
 crop and bleed marks, CMYK colour). `run` executes a JSON array (or JSON lines) of
 {\"command\": id, \"params\": {...}} in a headless session and prints one JSON result line per step.
+`plugin publish` sends a plugin folder (figcraft-plugin.json, its module, an optional assets/ folder)
+to a figcraft-server's plugin directory as a new version; the server's key comes from the address or
+the FIGCRAFT_SERVER_KEY environment variable (which keeps it out of the shell history).
 See docs/cli.md and docs/mcp.md.";
 
 fn main() -> ExitCode {
@@ -122,6 +127,16 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             }
             mcp(a.value("attach").as_deref())
         }
+        "plugin" => {
+            let a = Args::parse(rest, &["server"], &[])?;
+            match a.positional.as_slice() {
+                [verb, folder] if verb == "publish" => {
+                    let server = a.value("server").ok_or_else(|| CliError::Usage("plugin publish needs --server ws://host:port/".into()))?;
+                    publish_plugin(folder, &server)
+                }
+                _ => Err(CliError::Usage("expected: plugin publish <folder> --server ws://host:port/".into())),
+            }
+        }
         "perf" => {
             let a = Args::parse(rest, &["layers", "instances"], &[])?;
             let sizes: Vec<usize> = a.usizes("layers", &[1000, 10_000])?.into_iter().map(|n| n.clamp(10, 2_000_000)).collect();
@@ -153,6 +168,29 @@ fn commands(as_json: bool, filter: Option<&str>) {
         let undo = if c.history { "*" } else { "" };
         let _ = writeln!(out, "{}{undo}  {}{sc}\n    {}", c.id, c.label, c.params);
     }
+}
+
+/// Publish the plugin folder `folder` to the plugin directory at `server` (the key from the address
+/// or `FIGCRAFT_SERVER_KEY`); never prints the key.
+fn publish_plugin(folder: &str, server: &str) -> CliResult<ExitCode> {
+    let address = server.split('?').next().unwrap_or_default().to_string();
+    let server = match std::env::var("FIGCRAFT_SERVER_KEY") {
+        Ok(key) if !server.contains("key=") && !key.trim().is_empty() => format!("{address}?key={}", key.trim()),
+        _ => server.to_string(),
+    };
+    let mut h = figcraft_mcp::Headless::new();
+    use figcraft_mcp::Backend as _;
+    let r = h.call("engine.execute", json!({"command": "plugin.directory.publish", "params": {"path": folder, "server": server}}))?;
+    let e = &r["published"];
+    println!(
+        "Published {} {} ({}) to {address}: {} bytes, SHA-256 {}",
+        e["name"].as_str().unwrap_or_default(),
+        e["version"].as_str().unwrap_or_default(),
+        e["id"].as_str().unwrap_or_default(),
+        e["bytes"],
+        e["sha256"].as_str().unwrap_or_default()
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn mcp(attach: Option<&str>) -> CliResult<ExitCode> {

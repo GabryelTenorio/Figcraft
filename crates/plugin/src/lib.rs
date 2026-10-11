@@ -4,6 +4,7 @@
 //! callback, where settings are kept); this crate only runs modules safely: a metered interpreter
 //! with a memory cap, no WASI and a handful of host functions. See `docs/plugins.md`.
 
+pub mod bundle;
 pub mod manifest;
 mod sandbox;
 pub mod widget;
@@ -12,6 +13,8 @@ pub use manifest::{API_VERSION, Access, MANIFEST_FILE, Manifest, Panel, Param, P
 pub use sandbox::{ENTRY, Host, IMPORT_MODULE, Instance, Limits, PluginError, RunOutput, UiChange, check_module, run};
 pub use widget::{WidgetKind, WidgetNode, WidgetRender};
 
+#[cfg(test)]
+mod bundle_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

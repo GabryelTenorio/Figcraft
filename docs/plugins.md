@@ -21,6 +21,10 @@ permissions its manifest asks for, and nothing more.
   parts calls the plugin back to redraw it from its state, which is kept in the document.
 - **Permissions.** The manifest says whether the plugin only reads the document or may edit it, and
   can narrow the commands it may call. FigCraft enforces both.
+- **Distribution.** A team's own `figcraft-server` can keep a plugin directory: plugins are
+  published to it with the server's key, browsed and installed from Plugins ▸ Manage plugins, and
+  updated when a newer version is published (see [Plugin directories](#plugin-directories)). No
+  third-party service is involved.
 
 ## Using plugins
 
@@ -32,8 +36,10 @@ permissions its manifest asks for, and nothing more.
   with a field per parameter, drawn with FigCraft's own widgets; **Run** runs it.
 - **Plugins ▸ Run last plugin** (⌥⌘P on macOS, Ctrl+Alt+Shift+P on Windows and Linux, where
   Ctrl+Alt+P is Pixel preview) runs the last plugin command again with the same parameters.
-- **Plugins ▸ Manage plugins…** lists the installed plugins (version, access, manifest path) with a
-  Remove button for each, and an Import button.
+- **Plugins ▸ Manage plugins…** has two tabs. **Installed** lists the installed plugins (version,
+  access, where each comes from: its manifest path or the server it was installed from) with a
+  Remove button for each, and an Import button. **Browse** shows a server's plugin directory, with
+  Install, Update and Remove (see [Plugin directories](#plugin-directories)).
 - **Plugins ▸ Widgets** lists the installed widget plugins; picking one puts its widget in the
   middle of the view.
 
@@ -99,6 +105,55 @@ plugins: import them in the script.
 | `widget.insert` | `{plugin, x?, y?, fuel?}` | Puts widget plugin `plugin`'s widget on the current page, its top-left at `x`, `y` (default: centred in the view), and selects it; the plugin draws it. One undo step. Returns `{id, plugin, state, targets, output, logs, calls, fuel}`: `targets` are the names of its clickable parts. |
 | `widget.click` | `{id, target, fuel?}` | Clicks part `target` of widget `id` (or of the widget a layer `id` is in), as a click on the canvas would: the plugin is called back and redraws it. One undo step; returns like `widget.insert`. |
 | `widget.list` | `{}` | `{widgets: [{id, plugin, name, page, state, targets}]}`: every widget in the file. |
+| `plugin.directory.list` | `{server?, query?}` | The plugin directory at `server` (`ws://host:port/`; default: the one browsed last): `{server, plugins: [{id, name, version, description, author, api, access, commands, widget, bytes, sha256, published, versions, installed, update}]}`, the latest version of each plugin whose id, name, description or author contains `query`. `installed` is the installed version (or null), `update` whether the listed one is newer. |
+| `plugin.directory.install` | `{id, version?, confirm, server?, sha256?}` | Downloads version `version` (default: the latest) and installs it, or updates the installed one. `confirm` must be `true` (installing runs the plugin's code: show its permissions first); without it nothing is downloaded. The download must match the SHA-256 the directory lists (and `sha256`, the one shown, when given). Returns `{installed, name, version, permissions, sha256, path, source, replaced}`. |
+| `plugin.directory.publish` | `{path \| plugin, server}` | Publishes a plugin folder (or its `figcraft-plugin.json`), or an installed plugin, as a new version. `server` carries the server's key: `ws://host:port/?key=…`. Returns `{published, server}`. |
+| `plugin.directory.unpublish` | `{id, version?, server}` | Removes one version (default: every version) from the directory; needs the key. Returns `{id, removed}`. |
+
+## Plugin directories
+
+A `figcraft-server` ([`server.md`](server.md#plugin-directory)) can keep a directory of plugins for a
+team. Anyone who can reach the server may browse it and install from it; only whoever has the
+server's key may publish to it or unpublish from it. There are no accounts: the server's operator
+decides who gets the key and moderates what's there.
+
+**Installing.** In **Plugins ▸ Manage plugins… ▸ Browse**, type the server's address
+(`ws://host:47900/`, or `wss://…` behind TLS) and press **Browse**: nothing is fetched before that.
+The list shows each plugin's latest version, author (as the publisher typed it), size and the
+access it asks for; the search filters it. **Install** opens a confirmation that lists what the
+plugin asks permission to do (read or edit the document, the commands it may call, whether it draws
+a widget), the server it comes from and its SHA-256; only its **Install** button downloads and
+installs it. The download must match the SHA-256 the directory lists, and the bundle is then
+checked like an imported plugin (manifest, plugin API version, the module compiled but not run,
+asset names) before anything is written. A plugin installed this way runs in the same sandbox,
+with the same limits and its manifest's permissions, as any other.
+
+The desktop app keeps such plugins per user, beside its settings (`Plugins/` in FigCraft's settings
+folder: `%APPDATA%\FigCraft` on Windows, `~/Library/Application Support/FigCraft` on macOS,
+`~/.config/FigCraft` elsewhere), each in a folder of its own named by a hash of its id, with its
+module and its assets. The CLI and the MCP server install for the session only.
+
+**Updating.** When the directory has a newer version than the one installed, the plugin's row
+offers **Update**, with the same confirmation (the permissions may have changed). Browsing again is
+the update check; nothing checks in the background. **Remove** uninstalls it and deletes its folder.
+
+**Publishing.** A plugin folder holds `figcraft-plugin.json`, the module its `main` names and, if
+you like, an `assets/` folder of up to 32 plain files (an icon, a licence) that are installed with
+it. Publish it with the server's key:
+
+```sh
+FIGCRAFT_SERVER_KEY=<key> figcraft-cli plugin publish target/plugins/dist/counter --server ws://host:47900/
+```
+
+(the key may also be in the address, `?key=…`, but the environment keeps it out of your shell
+history), or `plugin.directory.publish {path, server}` from a script or MCP. The server checks the
+whole bundle before keeping it, refuses a version that isn't newer than the one it has, and lists
+the new version at once. `plugin.directory.unpublish` (or the operator's `figcraft-server plugins
+remove`) takes a version, or the whole plugin, down; installed copies keep working.
+
+**In the browser** the directory isn't available yet: the browser build's network link has no
+plugin directory requests (`plugin.directory.*` says so). Import plugins with `plugin.import
+{manifest, wasm}` there.
 
 ## The manifest: `figcraft-plugin.json`
 
@@ -132,7 +187,8 @@ plugins: import them in the script.
 |---|---|
 | `id` | Required. 1–128 letters, digits, `.`, `-`, `_`; a reverse domain name is a good choice. |
 | `name` | Required. Shown in the Plugins menu (64 characters at most). |
-| `version`, `description` | Optional text. |
+| `version`, `description` | Optional text. A plugin published to a [directory](#plugin-directories) needs a `version` of one to four numbers (`1.2.0`), each version newer than the last. |
+| `author` | Optional: who made it, as you type it (64 characters at most); plugin directories show it. |
 | `main` | Required. The module, a `.wasm` path relative to the manifest, inside its folder. |
 | `api` | The plugin API version the plugin was written for: `1` (the default), `2` (panels and settings) or `3` (widgets). A manifest asking for a newer one than FigCraft runs is refused, so a plugin that needs panels or widgets fails clearly on an older FigCraft. |
 | `widget` | API 3: `true` when the plugin draws a widget (it's listed in Plugins ▸ Widgets). |
@@ -351,8 +407,10 @@ import what you need from `figcraft`.
 
 ## Not yet
 
-- Distribution: no plugin directory, signing or automatic updates; plugins are imported from a
-  manifest.
+- Distribution: directories live on your own `figcraft-server`; there is no public catalogue,
+  no publisher accounts or signatures (the server's key is the publisher), no ratings, reviews or
+  install counts, and updates are found when you browse, not in the background. The browser build
+  can't use a directory yet.
 - Plugins written for other apps (JavaScript plugins) don't run.
 - Widgets: clicks are their only events (no text input, hover, property menu or timers), they
   can't open a panel, and their layers are frames, text, rectangles, ellipses and images only (no

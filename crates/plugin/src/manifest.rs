@@ -37,6 +37,9 @@ pub struct Manifest {
     pub version: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// Who made it, as they typed it (plugin directories show it; nothing checks it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub author: String,
     /// The WebAssembly module, relative to the manifest (`plugin.wasm`).
     pub main: String,
     /// The plugin API version the plugin was written for (1 when not given; panels and settings
@@ -294,6 +297,7 @@ impl Manifest {
         }
         self.version = clean("version", &self.version, 32)?;
         self.description = clean("description", &self.description, MAX_TEXT)?;
+        self.author = clean("author", &self.author, MAX_NAME)?;
         check_main(&self.main)?;
         if self.api == 0 || self.api > API_VERSION {
             return Err(format!("plugin API {} isn't supported (this FigCraft runs API {API_VERSION})", self.api));

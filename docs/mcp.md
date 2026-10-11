@@ -946,6 +946,20 @@ state is layer data, so it is saved, undone and synced with the file.
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
 ```
 
+Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
+`plugin.directory.list {server?, query?}` lists the latest version of each plugin with the
+permissions it asks for (`access`, `commands`), its size and SHA-256, and `installed` / `update`;
+`plugin.directory.install {id, version?, confirm: true, sha256?}` downloads it, checks the SHA-256 and
+installs it for the session (an agent must pass `confirm: true`, after showing its user the
+permissions: without it nothing is downloaded); `plugin.directory.publish {path | plugin, server}` and
+`plugin.directory.unpublish {id, version?, server}` need the server's key in `server`
+(`ws://host:port/?key=…`).
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.directory.list","params":{"server":"ws://127.0.0.1:47900/"}}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"plugin.directory.install","params":{"id":"org.figcraft.examples.swatch-grid","confirm":true}}}}
+```
+
 ### Dev Mode
 
 - **Component code:** `inspect.code {id, language: react|swiftui|compose}` on a component, a

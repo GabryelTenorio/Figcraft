@@ -1606,6 +1606,7 @@ dependencies = [
  "figcraft-color",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "wasmi",
  "wat",
@@ -1641,12 +1642,14 @@ dependencies = [
  "figcraft-doc",
  "figcraft-engine",
  "figcraft-format",
+ "figcraft-plugin",
  "log",
  "serde",
  "serde_json",
  "sha2",
  "toml",
  "tungstenite",
+ "wat",
 ]
 
 [[package]]

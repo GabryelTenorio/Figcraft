@@ -1,5 +1,5 @@
-//! The command line: `figcraft-server` serves; `key`, `files` and `links` manage the data
-//! directory. When a server is running on the directory they ask it (so revoking a link
+//! The command line: `figcraft-server` serves; `key`, `files`, `links` and `plugins` manage the
+//! data directory. When a server is running on the directory they ask it (so revoking a link
 //! disconnects whoever joined with it at once); otherwise they change the directory themselves.
 
 use std::fmt::Write as _;
@@ -7,7 +7,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, LinkInfo, NewLink};
+use figcraft_collab::message::{Access, Admin, AdminReply, FileInfo, LinkInfo, NewLink, PluginEntry, PluginReply, PluginReq};
 use figcraft_collab_net::hub::Backend;
 use figcraft_collab_net::{Endpoint, Invite, manage};
 use serde::{Deserialize, Serialize};
@@ -30,13 +30,16 @@ Usage:
   figcraft-server links list FILE                a file's share links
   figcraft-server links create FILE --access edit|view [--label TEXT]
   figcraft-server links revoke FILE LINK         revoke a link (whoever joined with it is disconnected)
+  figcraft-server plugins [list]                 the plugin directory: every plugin and its versions
+  figcraft-server plugins remove ID [--version V]  unpublish a plugin (every version, or one)
 
 Options (also keys of the --config TOML file):
   --listen ADDR       where to listen (default 127.0.0.1:47900; 0.0.0.0:47900 for every network)
   --data DIR          the data directory (default ./figcraft-data)
   --public-url URL    how links name the server behind a reverse proxy (wss://host/path/)
   --config FILE       settings: listen, data, public_url, max_files, max_file_mb, max_links,
-                      max_connections, max_people, compact_after, compact_mb
+                      max_connections, max_people, compact_after, compact_mb, max_plugins,
+                      max_plugin_mb, max_plugins_mb
   -h, --help          this text
   -V, --version       the version
 
@@ -53,6 +56,8 @@ pub enum Command {
     Links { file: String },
     CreateLink { file: String, access: Access, label: String },
     Revoke { file: String, link: String },
+    Plugins,
+    RemovePlugin { id: String, version: Option<String> },
     Help,
     Version,
 }
@@ -75,11 +80,14 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut access = None;
     let mut label = String::new();
     let mut rotate = false;
+    let mut version = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| it.next().cloned().ok_or_else(|| format!("{name} needs a value"));
         match a.as_str() {
             "-h" | "--help" => return Ok(Cli { config, command: Command::Help }),
+            // After `plugins remove ID`: the version to unpublish.
+            "--version" if words.first().is_some_and(|w| w == "plugins") => version = Some(value("--version")?),
             "-V" | "--version" => return Ok(Cli { config, command: Command::Version }),
             "--config" => {
                 value("--config")?;
@@ -105,6 +113,8 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             Command::CreateLink { file: file.to_string(), access: access.ok_or("links create needs --access edit or --access view")?, label }
         }
         ["links", "revoke", file, link] => Command::Revoke { file: file.to_string(), link: link.to_string() },
+        ["plugins"] | ["plugins", "list"] => Command::Plugins,
+        ["plugins", "remove", id] => Command::RemovePlugin { id: id.to_string(), version },
         _ => return Err(format!("unknown command `{}`", words.join(" "))),
     };
     config.check()?;
@@ -173,7 +183,57 @@ pub fn run(cli: &Cli) -> Result<String, String> {
             AdminReply::Done => Ok(format!("Revoked link {link}: it no longer joins, and whoever was in the file with it was disconnected.\n")),
             other => unexpected(other),
         },
+        Command::Plugins => match directory(cfg, PluginReq::List { query: String::new() })? {
+            PluginReply::List(entries) => Ok(plugins_table(&entries)),
+            other => unexpected_plugins(other),
+        },
+        Command::RemovePlugin { id, version } => match directory(cfg, PluginReq::Unpublish { id: id.clone(), version: version.clone() })? {
+            PluginReply::Removed(versions) => Ok(format!("Unpublished {id} {}.\n", versions.join(", "))),
+            other => unexpected_plugins(other),
+        },
     }
+}
+
+fn unexpected_plugins(reply: PluginReply) -> Result<String, String> {
+    match reply {
+        PluginReply::Failed { reason } => Err(reason),
+        _ => Err("the server answered something else".into()),
+    }
+}
+
+/// Do one plugin directory request with the server key: through the running server, or on the
+/// data directory.
+fn directory(cfg: &Config, req: PluginReq) -> Result<PluginReply, String> {
+    match Store::try_open(&cfg.data, cfg.store())? {
+        Some(mut store) => Ok(store.directory().handle(true, req)),
+        None => {
+            let addr = running(&cfg.data)?;
+            let key = std::fs::read_to_string(cfg.data.join(KEY)).map_err(|e| format!("can't read the server key: {e}"))?;
+            manage::plugins(&Endpoint::plain(addr.to_string()), key.trim(), req, &cfg.net(), Duration::from_secs(5))
+        }
+    }
+}
+
+fn plugins_table(entries: &[PluginEntry]) -> String {
+    if entries.is_empty() {
+        return "No plugins yet (publish one with `figcraft-cli plugin publish FOLDER --server ws://host:port/?key=KEY`).\n".into();
+    }
+    let mut out =
+        String::from("ID                                VERSIONS            NAME                  AUTHOR            ACCESS  SIZE       SHA-256\n");
+    for e in entries {
+        let _ = writeln!(
+            out,
+            "{:<32}  {:<18}  {:<20}  {:<16}  {:<6}  {:<9}  {}",
+            elide(&e.id, 32),
+            elide(&e.versions.join(","), 18),
+            elide(&e.name, 20),
+            elide(&e.author, 16),
+            e.access,
+            size(e.bytes),
+            e.sha256.get(..16).unwrap_or_default()
+        );
+    }
+    out
 }
 
 fn unexpected(reply: AdminReply) -> Result<String, String> {

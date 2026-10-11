@@ -5,8 +5,8 @@ use figcraft_doc::{Document, NodeId, NodeKind};
 use crate::change::{Change, Json, Prop};
 use crate::message::{
     Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, FileUsage, Hello, LibraryReply, LibraryReq, LinkInfo, Manage,
-    NewLink, OpenLibrary, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, Signal, Usage, WIRE_VERSION, decode, decode_json, encode,
-    encode_json,
+    NewLink, OpenLibrary, OpenPlugins, PROTOCOL, Peer, PluginEntry, PluginReply, PluginReq, Presence, Processed, Resume, ServerMsg, Signal, Usage,
+    WIRE_VERSION, decode, decode_json, encode, encode_json,
 };
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
@@ -63,11 +63,27 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ClientMsg::Library(LibraryReq::Usage),
         ClientMsg::Signal(Signal::chat("Hi ☕")),
         ClientMsg::Signal(Signal::spotlight(true)),
+        ClientMsg::OpenPlugins(OpenPlugins { protocol: PROTOCOL, key: String::new(), client_version: "0.3.1".into() }),
+        ClientMsg::Plugins(PluginReq::List { query: "grid".into() }),
+        ClientMsg::Plugins(PluginReq::Fetch { id: "org.example.p".into(), version: Some("1.0.0".into()) }),
+        ClientMsg::Plugins(PluginReq::Publish { bundle: vec![b'F', b'C'] }),
+        ClientMsg::Plugins(PluginReq::Unpublish { id: "org.example.p".into(), version: None }),
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
     let file = FileInfo { id: "f".into(), name: "Café".into(), created: 1, updated: 2, seq: 3, bytes: 4, people: 5 };
     let link = LinkInfo { id: "l".into(), file: "f".into(), access: Access::Edit, label: String::new(), created: 6 };
     let new_link = NewLink { link: link.clone(), token: "t".into() };
+    let entry = PluginEntry {
+        id: "org.example.p".into(),
+        name: "Grille ☕".into(),
+        version: "1.2.0".into(),
+        access: "write".into(),
+        commands: vec!["node.*".into()],
+        bytes: 9,
+        sha256: "ab".into(),
+        versions: vec!["1.2.0".into(), "1.0.0".into()],
+        ..PluginEntry::default()
+    };
     let server = vec![
         ServerMsg::Welcome {
             session: 77,
@@ -113,6 +129,12 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ServerMsg::Library(Box::new(LibraryReply::Failed { reason: "no".into() })),
         ServerMsg::Signal { client_id: 4, signal: Signal::chat("Hi ☕") },
         ServerMsg::Signal { client_id: 4, signal: Signal::ready() },
+        ServerMsg::Plugins(Box::new(PluginReply::Ready { publisher: true })),
+        ServerMsg::Plugins(Box::new(PluginReply::List(vec![entry.clone()]))),
+        ServerMsg::Plugins(Box::new(PluginReply::Bundle { entry: entry.clone(), bundle: vec![1, 2] })),
+        ServerMsg::Plugins(Box::new(PluginReply::Published(entry))),
+        ServerMsg::Plugins(Box::new(PluginReply::Removed(vec!["1.0.0".into()]))),
+        ServerMsg::Plugins(Box::new(PluginReply::Failed { reason: "no".into() })),
     ];
     (client, server)
 }

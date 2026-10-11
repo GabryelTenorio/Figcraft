@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use figcraft_collab::message::{Access, ClientMsg, LibraryReply, LibraryReq};
+use figcraft_collab::message::{Access, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo};
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
@@ -171,6 +171,12 @@ impl LiveLink for NetLink {
 
     fn library(&mut self, link: &str, req: LibraryReq) -> Result<LibraryReply, String> {
         manage::library(link, req, &self.limits, CONNECT)
+    }
+
+    fn plugins(&mut self, server: &str, req: PluginReq) -> Result<PluginReply, String> {
+        let (server, query) = Endpoint::parse(server)?;
+        let key = query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v).unwrap_or_default();
+        manage::plugins(&server, key.trim(), req, &self.limits, CONNECT)
     }
 
     fn library_background(&mut self, jobs: Vec<(String, LibraryReq)>) {

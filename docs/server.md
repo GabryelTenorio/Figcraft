@@ -9,7 +9,8 @@ headless, native only (no web build), and runs on the same platforms as the desk
 There are no user accounts yet: a share link is the access to one file, and the **server key**
 manages files (publishing, links, removal). Accounts and per-person permissions come later. A file
 can also hold a **team library** that other files use through one of its links (see
-[Team libraries](#team-libraries)).
+[Team libraries](#team-libraries)), and the server can keep a **plugin directory** for the team (see
+[Plugin directory](#plugin-directory)).
 
 The protocol and the design behind it are in [`collab-protocol.md`](collab-protocol.md).
 
@@ -98,6 +99,37 @@ which other files use without anyone copying the library file around.
 
 The browser build can't use team libraries yet (it has no library support of its own).
 
+## Plugin directory
+
+The server keeps a directory of plugins ([`plugins.md`](plugins.md#plugin-directories)) on the same
+port as everything else; no other service is involved.
+
+- **Who can do what.** Anyone who can reach the server lists, searches and downloads its plugins
+  (no link or key needed: put the server behind your network or proxy if that's too open). Only
+  whoever has the **server key** publishes and unpublishes, the same key that publishes files: there
+  are no publisher accounts, so give it only to people you trust to put code on your team's
+  machines. A plugin's author is shown as the publisher typed it in the manifest; nothing verifies
+  it.
+- **Publishing.** `figcraft-cli plugin publish FOLDER --server ws://host:47900/` with the key in
+  `FIGCRAFT_SERVER_KEY` (or `?key=` in the address), or `plugin.directory.publish` from the app's
+  scripts and MCP. Each version must be newer than the last (`1.0.0` → `1.0.1`); the server keeps
+  every version until it is unpublished, and lists the latest.
+- **What the server checks** before keeping a bundle: its size (`max_plugin_mb`), that it decodes
+  (an uncompressed format: nothing expands), that its manifest parses and asks for a plugin API this
+  server's FigCraft runs, a version of one to four numbers newer than the one kept, that the module
+  is WebAssembly that compiles and imports only what FigCraft's sandbox provides (it is never run on
+  the server), and that asset names are plain file names. Then the caps: `max_plugins` versions in
+  all and `max_plugins_mb` of bundles.
+- **Downloads** carry the bundle's SHA-256, which the app checks before reading it, and which the
+  server checks again when it reads the bundle back from disk (a damaged one is never sent, and is
+  logged). Downloads share a budget of about 32 MiB a second, so many at once are turned away with
+  "busy" rather than queued in memory.
+- **Moderation** is the operator's: `figcraft-server plugins` lists every plugin and its versions,
+  `figcraft-server plugins remove ID [--version V]` takes a version, or the whole plugin, down (it
+  works on a running server too). Installed copies keep working; users can't tell the server to
+  remove anything without the key.
+- **Turning it off**: `max_plugins = 0`.
+
 ## Managing files and links
 
 | Command | What it does |
@@ -108,6 +140,8 @@ The browser build can't use team libraries yet (it has no library support of its
 | `figcraft-server links list FILE` | A file's links: id, access, created, label |
 | `figcraft-server links create FILE --access edit\|view [--label TEXT]` | A new link, printed once |
 | `figcraft-server links revoke FILE LINK` | Revoke a link: it no longer joins, and whoever joined with it is disconnected |
+| `figcraft-server plugins [list]` | The plugin directory: every plugin, its versions, author, access, size and SHA-256 |
+| `figcraft-server plugins remove ID [--version V]` | Unpublish a version of a plugin, or every version |
 
 Each takes `--data` (or `--config`). When a server is running on the directory, the command asks
 it over the same port with the server key (so a revoked link's users are disconnected at once);
@@ -132,6 +166,9 @@ are errors):
 | `max_people` | 256 | Most people in one file at once |
 | `compact_after` | 1000 | Compact a file's log into a new snapshot after this many entries… |
 | `compact_mb` | 16 | …or once its log is this large (MiB) |
+| `max_plugins` | 500 | Most plugin versions the plugin directory keeps (all plugins together); 0 turns the directory off |
+| `max_plugin_mb` | 16 | Largest plugin bundle, in MiB (at most 32) |
+| `max_plugins_mb` | 1024 | Most MiB of plugin bundles kept |
 
 With `listen` on every interface (`0.0.0.0`) and no `public_url`, links name this machine's
 network address.
@@ -148,6 +185,8 @@ network address.
 <data>/files/<id>/log.bin      what changed since, one checksummed record per change
 <data>/files/<id>/library.bin  its team library, when one was published (a .figcraft archive)
 <data>/files/<id>/usage.json   which files use that library's components, as their apps report it
+<data>/plugins/index.json      the plugin directory: every version kept (manifest fields, size, SHA-256)
+<data>/plugins/<sha256>.bin    a plugin bundle, named by the SHA-256 of its bytes
 ```
 
 - **Writes are atomic**: a snapshot, a description or a link list is written to a temporary file
@@ -162,11 +201,15 @@ network address.
   record loses only that end (logged when the file opens). Leftover temporary files are removed.
 - The server key is stored as plain text (on Unix readable by the owner only): whoever can read
   the data directory can read every file anyway. Link tokens are stored only as hashes.
+- An index entry whose bundle is missing or the wrong size is left out at startup and reported;
+  bundles are deleted only when their last version is unpublished. A `plugins/index.json` that
+  can't be read lists nothing and refuses publishing (nothing is written over it) until it is
+  restored or removed.
 
 ## Backups
 
-Copy the data directory while the server is stopped, or take an atomic snapshot of the
-filesystem it lives on (ZFS, Btrfs, LVM, a VSS shadow copy). A plain copy of a running server's
+Copy the data directory (the plugin directory, `plugins/`, included) while the server is stopped,
+or take an atomic snapshot of the filesystem it lives on (ZFS, Btrfs, LVM, a VSS shadow copy). A plain copy of a running server's
 directory can catch a file between its snapshot and its log; it restores, but may lose that
 file's changes since its last compaction. To restore, stop the server, put the directory back and
 start it: apps that were in a file catch up with a fresh copy (their unsent edits are kept when
@@ -352,4 +395,10 @@ sudo systemctl start figcraft-server
   components per file and 500 files per library.
 - **Team libraries**: any link of a file reads its library and its usage reports (file names and
   counts); only an edit link publishes it.
+- **Plugin directory**: anyone who reaches the server reads it; only the server key writes to it.
+  Everything published is checked in full and never run on the server; a bundle's name on disk is
+  its hash, so nothing a publisher chooses reaches the file system; downloads are hash-checked at
+  both ends and share a bandwidth budget. Installing still means trusting the publisher: a plugin
+  runs in FigCraft's sandbox with the permissions its manifest asks for, which the app shows before
+  it installs anything.
 - **Not there yet**: user accounts, per-person permissions, rate limits per address, audit logs.

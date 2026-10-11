@@ -21,6 +21,8 @@ figcraft-collab = { workspace = true }
 figcraft-collab-net = { workspace = true }
 # Checking a team library before keeping it (read as files using it read it).
 figcraft-format = { workspace = true }
+# Checking plugin bundles before the plugin directory keeps them (never run here).
+figcraft-plugin = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -32,6 +34,7 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
+wat = { workspace = true }
 figcraft-engine = { workspace = true }
 figcraft-doc = { workspace = true }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

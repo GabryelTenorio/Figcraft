@@ -1,15 +1,17 @@
 //! Plugins in the UI: the installed plugins in the Plugins menu (widgets in Plugins ▸ Widgets), the
 //! parameters form a command with parameters asks for before it runs, the panels running plugins
-//! show, and the Manage plugins window. Everything runs through the engine's `plugin.*` and
-//! `widget.*` commands.
+//! show, and the Manage plugins window (installed plugins, and a server's plugin directory to
+//! browse, install from and update from). Everything runs through the engine's `plugin.*`,
+//! `plugin.directory.*` and `widget.*` commands.
 
 use egui::{Align2, Context, Id, RichText, Ui};
+use figcraft_engine::plugin_directory::{PluginEntry, installed_version, newer_version};
 use figcraft_engine::plugins::{Access, InstalledPlugin, Param, ParamKind};
 use serde_json::{Map, Value, json};
 
 use crate::FigApp;
 use crate::colorpicker::PickerTarget;
-use crate::dialogs::{floating, window};
+use crate::dialogs::{floating, tab_strip, window};
 use crate::i18n::{tr, trf};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, FieldEdit, Lead};
@@ -20,6 +22,36 @@ pub struct PluginForm {
     pub id: String,
     pub command: String,
     pub values: Map<String, Value>,
+}
+
+/// The Manage plugins window's tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PluginsTab {
+    #[default]
+    Installed,
+    Browse,
+}
+
+impl PluginsTab {
+    pub const ALL: [PluginsTab; 2] = [PluginsTab::Installed, PluginsTab::Browse];
+
+    fn label(self) -> &'static str {
+        match self {
+            PluginsTab::Installed => tr("Installed"),
+            PluginsTab::Browse => tr("Browse"),
+        }
+    }
+}
+
+/// The Manage plugins window's state: its tab, the Browse tab's fields and the plugin waiting for
+/// the user to confirm its install (by id).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PluginsWindow {
+    pub tab: PluginsTab,
+    /// The server address typed (`None`: the one browsed last).
+    pub server: Option<String>,
+    pub query: String,
+    pub confirm: Option<String>,
 }
 
 /// Width of the plugin windows' fields.
@@ -194,43 +226,226 @@ fn panel_windows(app: &mut FigApp, ctx: &Context) {
     }
 }
 
+/// What the Manage plugins window asks for.
+enum Manage {
+    Remove(String),
+    Import,
+    Browse(String),
+    Confirm(String),
+}
+
+/// Width of the Manage plugins window, and of a plugin's text beside its button.
+const MANAGE_W: f32 = 400.0;
+const ROW_TEXT_W: f32 = 300.0;
+
 fn manage_window(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     let mut open = true;
-    let mut remove = None;
-    let mut import = false;
+    let mut asked = None;
+    let mut tab = app.ui.plugins_manage.tab;
     window(tr("Plugins"), ctx).id(Id::new("Plugins")).open(&mut open).show(ctx, |ui| {
-        ui.set_width(380.0);
-        let plugins = &app.session.prefs.plugins;
-        if plugins.is_empty() {
-            widgets::label(ui, tr("No plugins yet. Import a development plugin from its figcraft-plugin.json."), t.text_secondary);
+        ui.set_width(MANAGE_W);
+        tab_strip(ui, &t, &PluginsTab::ALL, PluginsTab::label, &mut tab);
+        ui.add_space(12.0);
+        asked = match tab {
+            PluginsTab::Installed => installed_tab(app, ui, &t),
+            PluginsTab::Browse => browse_tab(app, ui, &t),
+        };
+    });
+    app.ui.plugins_manage.tab = tab;
+    app.ui.plugins_window = open;
+    match asked {
+        Some(Manage::Remove(id)) => {
+            app.run("plugin.remove", json!({"id": id}));
         }
-        for (i, p) in plugins.iter().enumerate() {
+        Some(Manage::Import) => import_dialog(app),
+        Some(Manage::Browse(server)) => {
+            app.ui.plugins_manage.confirm = None;
+            app.run("plugin.directory.list", json!({"server": server}));
+        }
+        Some(Manage::Confirm(id)) => app.ui.plugins_manage.confirm = Some(id),
+        None => {}
+    }
+    if open && app.ui.plugins_manage.confirm.is_some() {
+        confirm_window(app, ctx, &t);
+    }
+}
+
+fn installed_tab(app: &FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
+    let mut asked = None;
+    let plugins = &app.session.prefs.plugins;
+    if plugins.is_empty() {
+        widgets::label(ui, tr("No plugins yet. Import a development plugin from its figcraft-plugin.json."), t.text_secondary);
+    }
+    for (i, p) in plugins.iter().enumerate() {
+        if i > 0 {
+            ui.add_space(8.0);
+        }
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(ROW_TEXT_W);
+                ui.label(RichText::new(&p.manifest.name).font(semibold(12.0)).color(t.text));
+                widgets::label(ui, &summary(p), t.text_secondary);
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if widgets::button(ui, tr("Remove"), false, true).clicked() {
+                    asked = Some(Manage::Remove(p.manifest.id.clone()));
+                }
+            });
+        });
+    }
+    ui.add_space(12.0);
+    if widgets::button(ui, tr("Import plugin from manifest…"), true, true).clicked() {
+        asked = Some(Manage::Import);
+    }
+    asked
+}
+
+/// A server's plugin directory: its address, a search, and its plugins with Install, Update or
+/// Remove. Nothing is fetched until Browse is pressed.
+fn browse_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) -> Option<Manage> {
+    let mut asked = None;
+    let mut server = app.ui.plugins_manage.server.clone().or_else(|| app.session.prefs.plugin_directory.clone()).unwrap_or_default();
+    ui.horizontal(|ui| {
+        // The field commits on Enter (which also browses) or when Browse takes the focus.
+        let mut enter = false;
+        if let Some(s) =
+            widgets::text_field(ui, Id::new("plugin_directory_server"), &server, MANAGE_W - 90.0, tr("Server address (ws://host:47900/)"))
+        {
+            enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            server = s.clone();
+            app.ui.plugins_manage.server = Some(s);
+        }
+        if (widgets::button(ui, tr("Browse"), true, true).clicked() || enter) && !server.trim().is_empty() {
+            asked = Some(Manage::Browse(server.trim().to_string()));
+        }
+    });
+    let Some(listing) = app.session.plugins.directory.as_ref() else {
+        ui.add_space(8.0);
+        widgets::label(ui, tr("Enter the address of a figcraft-server and press Browse to see the plugins it offers."), t.text_secondary);
+        return asked;
+    };
+    ui.add_space(8.0);
+    if let Some(q) = widgets::text_field(ui, Id::new("plugin_directory_query"), &app.ui.plugins_manage.query, MANAGE_W, tr("Search plugins")) {
+        app.ui.plugins_manage.query = q;
+    }
+    ui.add_space(8.0);
+    let q = app.ui.plugins_manage.query.trim().to_lowercase();
+    let shown: Vec<&PluginEntry> = listing
+        .entries
+        .iter()
+        .filter(|e| q.is_empty() || [&e.name, &e.description, &e.author, &e.id].iter().any(|f| f.to_lowercase().contains(&q)))
+        .collect();
+    if shown.is_empty() {
+        widgets::label(ui, &trf("No plugins on {server}.", &[("server", &listing.server)]), t.text_secondary);
+    }
+    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+        for (i, e) in shown.iter().enumerate() {
             if i > 0 {
-                ui.add_space(8.0);
+                ui.add_space(10.0);
             }
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(280.0);
-                    ui.label(RichText::new(&p.manifest.name).font(semibold(12.0)).color(t.text));
-                    widgets::label(ui, &summary(p), t.text_secondary);
+                    ui.set_width(ROW_TEXT_W);
+                    ui.label(RichText::new(&e.name).font(semibold(12.0)).color(t.text));
+                    widgets::label(ui, &entry_summary(e), t.text_secondary);
+                    if !e.description.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&e.description).font(regular(11.0)).color(t.text)).wrap());
+                    }
                 });
-                if widgets::button(ui, tr("Remove"), false, true).clicked() {
-                    remove = Some(p.manifest.id.clone());
-                }
+                let (label, primary, ask): (&str, bool, fn(String) -> Manage) = match installed_version(&app.session, &e.id) {
+                    None => (tr("Install"), true, Manage::Confirm),
+                    Some(have) if newer_version(&e.version, have) => (tr("Update"), true, Manage::Confirm),
+                    Some(_) => (tr("Remove"), false, Manage::Remove),
+                };
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if widgets::button(ui, label, primary, true).clicked() {
+                        asked = Some(ask(e.id.clone()));
+                    }
+                });
             });
         }
-        ui.add_space(12.0);
-        if widgets::button(ui, tr("Import plugin from manifest…"), true, true).clicked() {
-            import = true;
-        }
     });
-    app.ui.plugins_window = open;
-    if let Some(id) = remove {
-        app.run("plugin.remove", json!({"id": id}));
+    asked
+}
+
+/// "1.2.0 · by Ada · 54 KB · can edit the document" under a directory plugin's name.
+fn entry_summary(e: &PluginEntry) -> String {
+    let mut parts = vec![e.version.clone()];
+    if !e.author.is_empty() {
+        parts.push(trf("by {author}", &[("author", &e.author)]));
     }
-    if import {
-        import_dialog(app);
+    parts.push(size(e.bytes));
+    parts.push(access_text(&e.access).to_string());
+    parts.join(" · ")
+}
+
+fn access_text(access: &str) -> &'static str {
+    if access == "write" { tr("can edit the document") } else { tr("reads the document") }
+}
+
+fn size(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / f64::from(1 << 20)),
+        b if b >= 1 << 10 => format!("{} KB", b.div_ceil(1 << 10)),
+        b => format!("{b} B"),
+    }
+}
+
+/// Installing runs a plugin's code: this window shows what it asks permission for, where it comes
+/// from and its SHA-256, and installs only when Install is pressed.
+fn confirm_window(app: &mut FigApp, ctx: &Context, t: &Tokens) {
+    let id = app.ui.plugins_manage.confirm.clone().unwrap_or_default();
+    let found = app.session.plugins.directory.as_ref().and_then(|l| Some((l.server.clone(), l.entries.iter().find(|e| e.id == id)?.clone())));
+    let Some((server, e)) = found else {
+        app.ui.plugins_manage.confirm = None;
+        return;
+    };
+    let update = installed_version(&app.session, &e.id).is_some();
+    let title = if update { tr("Update plugin") } else { tr("Install plugin") };
+    let (mut open, mut install, mut cancel) = (true, false, false);
+    window(title, ctx).id(Id::new("plugin_install_confirm")).open(&mut open).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.label(RichText::new(format!("{} {}", e.name, e.version)).font(semibold(13.0)).color(t.text));
+        widgets::label(ui, &trf("From {server}", &[("server", &server)]), t.text_secondary);
+        ui.add_space(10.0);
+        ui.label(RichText::new(tr("It asks permission to:")).font(semibold(11.0)).color(t.text));
+        let mut asks = vec![if e.access == "write" { tr("read and edit the document") } else { tr("read the document") }.to_string()];
+        asks.push(if e.commands.is_empty() {
+            tr("call any command its access allows").to_string()
+        } else {
+            trf("call only: {commands}", &[("commands", &e.commands.join(", "))])
+        });
+        if e.widget {
+            asks.push(tr("put a widget on the canvas").to_string());
+        }
+        for a in asks {
+            ui.add(egui::Label::new(RichText::new(format!("•  {a}")).font(regular(11.0)).color(t.text)).wrap());
+        }
+        ui.add_space(8.0);
+        widgets::label(
+            ui,
+            tr("Plugins run in FigCraft's sandbox, without files, network or clock. Install only plugins you trust."),
+            t.text_secondary,
+        );
+        ui.add_space(4.0);
+        widgets::label(ui, &trf("SHA-256: {sha}…", &[("sha", &e.sha256.get(..16).unwrap_or_default())]), t.text_secondary);
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            install = widgets::button(ui, if update { tr("Update") } else { tr("Install") }, true, true).clicked();
+            cancel = widgets::button(ui, tr("Cancel"), false, true).clicked();
+        });
+    });
+    if !open || cancel || install {
+        app.ui.plugins_manage.confirm = None;
+    }
+    if install
+        && let Some(v) =
+            app.run("plugin.directory.install", json!({"id": e.id, "version": e.version, "sha256": e.sha256, "server": server, "confirm": true}))
+    {
+        let name = v["name"].as_str().unwrap_or(tr("the plugin")).to_string();
+        let args: &[(&str, &dyn std::fmt::Display)] = &[("name", &name)];
+        app.toast(if update { trf("Updated {name}", args) } else { trf("Installed {name}", args) });
     }
 }
 
@@ -246,9 +461,10 @@ fn summary(p: &InstalledPlugin) -> String {
         parts.push(m.version.clone());
     }
     parts.push(access.to_string());
-    parts.push(match &p.path {
-        Some(path) => trf("development: {path}", &[("path", path)]),
-        None => tr("this session only").into(),
+    parts.push(match (&p.source, &p.path) {
+        (Some(server), _) => trf("from {server}", &[("server", server)]),
+        (None, Some(path)) => trf("development: {path}", &[("path", path)]),
+        (None, None) => tr("this session only").into(),
     });
     parts.join(" · ")
 }

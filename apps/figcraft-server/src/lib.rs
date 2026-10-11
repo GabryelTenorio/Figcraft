@@ -10,6 +10,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod directory;
 pub mod disk;
 pub mod store;
 
@@ -72,6 +73,8 @@ pub fn start(cfg: &Config) -> Result<Running, String> {
 
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod directory_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]

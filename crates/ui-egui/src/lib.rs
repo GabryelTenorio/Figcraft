@@ -102,6 +102,8 @@ mod perf_tests;
 #[cfg(test)]
 mod plugin_panel_tests;
 #[cfg(test)]
+mod plugins_browse_tests;
+#[cfg(test)]
 mod popup_width_tests;
 #[cfg(test)]
 mod present_tests;
@@ -316,6 +318,8 @@ pub struct UiState {
     pub nav: a11y::Nav,
     /// The Manage plugins window is open.
     pub plugins_window: bool,
+    /// The Manage plugins window's tab, directory fields and pending install.
+    pub plugins_manage: plugins_ui::PluginsWindow,
     /// A plugin command's parameters form, when open.
     pub plugin_form: Option<plugins_ui::PluginForm>,
     /// Live sessions: remote cursors as drawn, the Join dialog.
@@ -392,6 +396,7 @@ impl Default for UiState {
             libraries: false,
             nav: a11y::Nav::default(),
             plugins_window: false,
+            plugins_manage: plugins_ui::PluginsWindow::default(),
             plugin_form: None,
             live: live::LiveUi::default(),
             confirm_close: false,

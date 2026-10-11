@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use figcraft_collab::Client;
 pub use figcraft_collab::message::Signal;
-use figcraft_collab::message::{ClientMsg, EditingText, LibraryReply, LibraryReq, ServerMsg};
+use figcraft_collab::message::{ClientMsg, EditingText, LibraryReply, LibraryReq, PluginReply, PluginReq, ServerMsg};
 
 pub use figcraft_collab::message::Access;
 use figcraft_doc::{Document, NodeId};
@@ -266,6 +266,12 @@ pub trait LiveLink: Send {
     /// Send library requests `(link, request)` in the background, in order; each answer arrives as
     /// [`Event::Library`]. Ignored while an earlier call's requests are still out.
     fn library_background(&mut self, _jobs: Vec<(String, LibraryReq)>) {}
+    /// One request to the plugin directory of the server at `server` (`ws://host:port/`, with
+    /// `?key=…` to publish); waits for the answer (a few seconds at most when it can't be
+    /// reached). Errors never echo the key.
+    fn plugins(&mut self, _server: &str, _req: PluginReq) -> std::result::Result<PluginReply, String> {
+        Err(crate::plugin_directory::NO_DIRECTORY.into())
+    }
     /// End the current session (stop hosting or leave).
     fn leave(&mut self);
     /// Your latest presence (the link throttles and coalesces).

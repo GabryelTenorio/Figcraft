@@ -35,6 +35,7 @@ pub mod library_swap;
 pub mod live;
 pub mod measure;
 pub mod params;
+pub mod plugin_directory;
 pub mod plugins;
 pub mod proto_run;
 pub mod rename;
@@ -544,6 +545,9 @@ pub struct Prefs {
     /// plugin.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub plugin_settings: BTreeMap<String, BTreeMap<String, Value>>,
+    /// The plugin directory browsed last (`ws://host:port/`, never with a key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_directory: Option<String>,
     /// Recently opened or saved files, newest first (File ▸ Open recent; at most
     /// [`cmd::file::MAX_RECENT`]).
     pub recent_files: Vec<String>,
@@ -566,6 +570,7 @@ impl Default for Prefs {
             invite_links: None,
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
+            plugin_directory: None,
             recent_files: Vec::new(),
         }
     }
@@ -1340,6 +1345,8 @@ mod panels_behaviour_tests;
 mod pdf_print_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod plugin_directory_tests;
 #[cfg(test)]
 mod plugin_panels_tests;
 #[cfg(test)]

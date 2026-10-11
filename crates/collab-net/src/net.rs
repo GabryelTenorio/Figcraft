@@ -120,13 +120,18 @@ impl Bucket {
 
     /// Spend one token at `now`; false when there are none left.
     pub fn take(&mut self, now: Instant) -> bool {
+        self.take_n(now, 1.0)
+    }
+
+    /// Spend `n` tokens at `now`; false (spending none) when there aren't that many.
+    pub fn take_n(&mut self, now: Instant, n: f64) -> bool {
         let dt = now.saturating_duration_since(self.at).as_secs_f64();
         self.at = now;
         self.tokens = (self.tokens + dt * self.rate).min(self.burst);
-        if self.tokens < 1.0 {
+        if self.tokens < n {
             return false;
         }
-        self.tokens -= 1.0;
+        self.tokens -= n;
         true
     }
 }

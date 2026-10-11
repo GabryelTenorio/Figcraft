@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use figcraft_collab_net::{Endpoint, NetLimits};
 use serde::Deserialize;
 
+use crate::directory::DirectoryConfig;
 use crate::store::StoreConfig;
 
 /// The port the server listens on unless told otherwise (the app's sessions try it first too).
@@ -37,6 +38,12 @@ pub struct Config {
     pub compact_after: usize,
     /// …or once the log is this large (MiB).
     pub compact_mb: u64,
+    /// Most plugin versions the plugin directory keeps (0 turns it off).
+    pub max_plugins: usize,
+    /// Largest plugin bundle, in MiB.
+    pub max_plugin_mb: u64,
+    /// Most MiB of plugin bundles kept.
+    pub max_plugins_mb: u64,
 }
 
 impl Default for Config {
@@ -52,6 +59,9 @@ impl Default for Config {
             max_people: 256,
             compact_after: 1000,
             compact_mb: 16,
+            max_plugins: 500,
+            max_plugin_mb: 16,
+            max_plugins_mb: 1024,
         }
     }
 }
@@ -90,6 +100,8 @@ impl Config {
             ("max_people", self.max_people as u64),
             ("compact_after", self.compact_after as u64),
             ("compact_mb", self.compact_mb),
+            ("max_plugin_mb", self.max_plugin_mb),
+            ("max_plugins_mb", self.max_plugins_mb),
         ] {
             if v == 0 {
                 return Err(format!("`{name}` must be at least 1"));
@@ -97,6 +109,13 @@ impl Config {
         }
         if self.max_file_mb > 4096 || self.compact_mb > 4096 {
             return Err("sizes are in MiB and at most 4096".into());
+        }
+        // A bundle travels in one message (at most 64 MiB) next to its entry.
+        if self.max_plugin_mb > 32 {
+            return Err("`max_plugin_mb` is at most 32".into());
+        }
+        if self.max_plugins > 10_000 || self.max_plugins_mb > 1 << 20 {
+            return Err("`max_plugins` is at most 10000 and `max_plugins_mb` at most 1048576".into());
         }
         Ok(())
     }
@@ -111,6 +130,11 @@ impl Config {
             compact_after: self.compact_after,
             compact_bytes: mib(self.compact_mb),
             core: figcraft_collab::Limits { max_peers: self.max_people, ..figcraft_collab::Limits::default() },
+            directory: DirectoryConfig {
+                max_plugins: self.max_plugins,
+                max_plugin_bytes: mib(self.max_plugin_mb),
+                max_total_bytes: mib(self.max_plugins_mb),
+            },
         }
     }
 

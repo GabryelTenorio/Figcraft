@@ -383,7 +383,12 @@ impl Server {
                 Vec::new()
             }
             ClientMsg::Ping => vec![Outgoing::To(from, ServerMsg::Pong)],
-            ClientMsg::Manage(_) | ClientMsg::Admin(_) | ClientMsg::OpenLibrary(_) | ClientMsg::Library(_) => {
+            ClientMsg::Manage(_)
+            | ClientMsg::Admin(_)
+            | ClientMsg::OpenLibrary(_)
+            | ClientMsg::Library(_)
+            | ClientMsg::OpenPlugins(_)
+            | ClientMsg::Plugins(_) => {
                 vec![Outgoing::To(from, ServerMsg::Refused { reason: "managing files and libraries needs a connection of its own".into() })]
             }
         }

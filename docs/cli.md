@@ -105,7 +105,17 @@ machines.
 
 Serve MCP on stdio: headless by default, or attached to a running app started with
 `figcraft --control PORT`. See [mcp.md](mcp.md). The headless session can host, join and publish
-live sessions (`collab.*`); the one-shot `run` can't (no network link).
+live sessions (`collab.*`) and use plugin directories (`plugin.directory.*`); the one-shot `run`
+can't (no network link).
+
+### `plugin publish <folder> --server ws://host:port/[?key=KEY]`
+
+Publishes a plugin folder (`figcraft-plugin.json`, the module its `main` names, an optional `assets/`
+folder) to a `figcraft-server`'s plugin directory as a new version, and prints its name, version,
+size and SHA-256. The server's key comes from the address or, better, from the
+`FIGCRAFT_SERVER_KEY` environment variable (it then stays out of the shell history and process
+lists); it is never printed. The bundle is checked before it is sent and again by the server. See
+[plugins.md](plugins.md#plugin-directories).
 
 ### `perf [--layers N[,N...]]`
 
