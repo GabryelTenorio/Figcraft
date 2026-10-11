@@ -51,7 +51,7 @@ blockers.
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
 | M3 Components & styles depth | ~78% (extended collections, variables import/export, gradient stop and variant bindings landed 2026-10-11) | real libraries, component playground | 7–14 |
 | M4 Vector & text depth | ~80% (live booleans, arc fields, shape builder on strokes, boolean hit testing on the result, one-sided widths, text on a path, pattern fills, brushes and pen pressure landed 2026-10-11) | spell check, Figma Draw multi-edit | 7–18 |
-| M5 Prototype & present | ~85% | media, gamepad, separate window | 5–9 |
+| M5 Prototype & present | ~85% | media, gamepad, separate window | 3–6 |
 | M6 Interop & Dev Mode | ~65% (code connect, Dev Mode plugins and best-effort `.fig` import landed 2026-10-11) | `.fig` import's tail, video/HEIC (animated GIFs and TIFF landed 2026-10-11), CMYK intent | 15–30 |
 | M7 Release & fidelity (signed builds, look & feel, shortcuts) | builds done; fidelity pass started | tool-by-tool pass | 40–60 |
 | M8 Hardening & performance (bench, retained canvas, accessibility, idle) | ~60% | real-file corpus, platform QA, GPU canvas, screen readers | 60–110 |

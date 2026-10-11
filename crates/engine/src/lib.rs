@@ -1288,6 +1288,8 @@ mod plugins_tests;
 #[cfg(test)]
 mod progressive_blur_tests;
 #[cfg(test)]
+mod proto_behaviour_tests;
+#[cfg(test)]
 mod proto_conditional_tests;
 #[cfg(test)]
 mod proto_multi_tests;

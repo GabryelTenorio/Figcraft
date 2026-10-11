@@ -4,7 +4,9 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_color::Paint;
-use figcraft_doc::proto::{Action, ConditionalBlock, Direction, Easing, Interaction, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger};
+use figcraft_doc::proto::{
+    Action, ConditionalBlock, Direction, Easing, Interaction, KeyMods, Overflow, OverlayPosition, ScrollPosition, Transition, Trigger,
+};
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
@@ -211,7 +213,7 @@ pub(crate) fn action_of(label: &str, doc: &Document, page: NodeId, node: NodeId,
         "Scroll to" => {
             let root = own?;
             let dest = doc.subtree(root).into_iter().skip(1).find(|i| *i != node)?;
-            Action::ScrollTo { dest }
+            Action::ScrollTo { dest, offset: [0.0, 0.0] }
         }
         "Open link" => Action::OpenUrl { url: String::new() },
         "Open overlay" => Action::OpenOverlay { dest: frame_dest?, position: OverlayPosition::Center, close_on_outside: true, background: None },
@@ -722,15 +724,17 @@ fn trigger_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &Inte
                     let _ = ui.interact(r, id, Sense::focusable_noninteractive());
                     let pressed = ui.input(|i| {
                         i.events.iter().find_map(|e| match e {
-                            egui::Event::Key { key, pressed: true, .. } => Some(*key),
+                            egui::Event::Key { key, pressed: true, modifiers, .. } => Some((*key, *modifiers)),
                             _ => None,
                         })
                     });
-                    if let Some(kk) = pressed {
+                    if let Some((kk, m)) = pressed {
                         ui.ctx().data_mut(|d| d.remove::<bool>(capture_id()));
                         ui.memory_mut(|m| m.surrender_focus(id));
                         if kk != egui::Key::Escape || key.is_empty() {
-                            patch(app, node, k, json!({"trigger": {"type": "keyPress", "key": kk.name()}}));
+                            // Held modifiers make it a combination (`Shift+K`).
+                            let combo = KeyMods { ctrl: m.ctrl, alt: m.alt, shift: m.shift, cmd: m.mac_cmd }.combo(kk.name());
+                            patch(app, node, k, json!({"trigger": {"type": "keyPress", "key": combo}}));
                         }
                     }
                 } else if resp.hovered() {
@@ -804,9 +808,28 @@ pub(crate) fn action_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, page:
             let vs = variants_for(doc, node);
             dest_dropdown(app, ui, doc, &vs, Some(*dest), tr("Variant"), |d| Action::ChangeTo { dest: d }, slot);
         }
-        Action::ScrollTo { dest } => {
+        Action::ScrollTo { dest, offset } => {
+            let (dest, offset) = (*dest, *offset);
             let layers: Vec<NodeId> = doc.top_level_frame(node).map(|f| doc.subtree(f).into_iter().skip(1).take(400).collect()).unwrap_or_default();
-            dest_dropdown(app, ui, doc, &layers, Some(*dest), tr("Scroll to layer"), |d| Action::ScrollTo { dest: d }, slot);
+            dest_dropdown(app, ui, doc, &layers, Some(dest), tr("Scroll to layer"), move |d| Action::ScrollTo { dest: d, offset }, slot);
+            // Where the layer ends up from the top-left of what scrolls (room for a fixed header).
+            widgets::sublabels(ui, tr("Offset"), None);
+            row(ui, 32.0, |ui| {
+                let w = ((ui.available_width() - 6.0) / 2.0).max(36.0);
+                for (i, (name, key)) in [("X", "proto_scroll_x"), ("Y", "proto_scroll_y")].into_iter().enumerate() {
+                    let Some(e) = widgets::number_field(ui, slot.id(key), Lead::Text(name), offset.get(i).copied(), "", w, 1.0) else { continue };
+                    let v = match e {
+                        FieldEdit::Set(v) | FieldEdit::Scrub(v, _) => v,
+                    };
+                    if v.is_finite() {
+                        let mut o = offset;
+                        if let Some(slot_v) = o.get_mut(i) {
+                            *slot_v = v.clamp(-100_000.0, 100_000.0).round();
+                        }
+                        set_action(app, slot, Action::ScrollTo { dest, offset: o });
+                    }
+                }
+            });
         }
         Action::OpenUrl { url } => {
             widgets::sublabels(ui, tr("Link"), None);
@@ -958,7 +981,13 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
                     }
                 }
             });
-            if let Some(e) = widgets::number_field(ui, Id::new(("proto_dur", node, k)), Lead::None, Some(f64::from(it.duration_ms)), "ms", 72.0, 10.0)
+            if it.easing.is_spring() {
+                // A spring plays until it settles: its duration follows from its settings.
+                let ms = format!("{:.0} ms", it.easing.seconds(it.duration_ms) * 1000.0);
+                ui.label(egui::RichText::new(ms).font(regular(11.0)).color(t.text_secondary))
+                    .tip(tr("A spring plays until it settles: its mass, stiffness and damping set how long"));
+            } else if let Some(e) =
+                widgets::number_field(ui, Id::new(("proto_dur", node, k)), Lead::None, Some(f64::from(it.duration_ms)), "ms", 72.0, 10.0)
             {
                 match e {
                     FieldEdit::Set(v) => {
@@ -987,7 +1016,7 @@ fn animation_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, k: usize, it: &In
         let (r, resp) = ui.allocate_exact_size(vec2(w, 72.0), Sense::hover());
         let box_r = Rect::from_min_max(pos2(r.min.x + PAD, r.min.y + 4.0), pos2(r.max.x - PAD, r.max.y - 4.0));
         ui.painter().rect_filled(box_r, CornerRadius::same(5), t.field);
-        let period = (f64::from(it.duration_ms) / 1000.0).max(0.05) + CURVE_HOLD;
+        let period = it.easing.seconds(it.duration_ms).max(0.05) + CURVE_HOLD;
         let elapsed = curve_play(ui, Id::new(("proto_curve", node, k)), Id::new((format!("{:?}", it.easing), it.duration_ms)), resp.hovered());
         let phase = if resp.hovered() || elapsed < period * CURVE_PLAYS {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~26 points and ~173–310 h away (one Opus 5.5 agent; ~35–70 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (prototyping behaviour suite and fixes; components behaviour suite and fixes; embedded image colour profiles; layers panel keyboard: F2 rename, Shift+F10 context menu, keyboard box selection, 10k-layer QA; per-side stroke weight variables; text behaviour suite: CJK line breaking, metrics, vertical trim; selection and transform behaviour suite and fixes; `.fig` import, best effort; Windows QA pass with eight fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -17,16 +17,16 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Feature breadth | **~80%** (core editor ~91%) | estimated, [`docs/target-app-parity.md`](docs/target-app-parity.md) |
 | Ready for real work | **~49%** | estimated, same doc (written dimension weights and scores) |
 | Essentials user | **~57%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.88 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
-| Mainstream practitioner | **~47%** | estimated: weekly areas 68.8% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
+| Mainstream practitioner | **~48%** | estimated: weekly areas 69.1% × 0.9 interaction × 0.9 stability × 0.85 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~173–310 h** one agent | estimated |
-| Remaining to full parity | **~315–607 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~313–604 h** one agent (~86–150 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~49% | ~300–576 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
-| Mainstream practitioner | ~47% | ~135–251 h | core editor depth incl. the `.fig` import's tail (53–104), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~49% | ~298–573 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
+| Mainstream practitioner | ~48% | ~133–248 h | core editor depth incl. the `.fig` import's tail (51–101), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~63–115 h | the `.fig` import's tail so the files people send open well (8–15), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -56,7 +56,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 69%) | 54–104 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 69%) | 52–101 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 55% (`.fig` read best effort, no write) | 8–15 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 13% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links and team libraries; preview) | 49–98 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -84,7 +84,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Text | 87% | 68% | 5–10 | [target-app-parity](docs/target-app-parity.md) |
 | Components & variants | 96% | 72% | 4–9 | [components-parity](docs/components-parity.md) |
 | Styles & variables | 92% | 72% | 1–2 | [components-parity](docs/components-parity.md) |
-| Prototyping | 88% | 70% | 5–9 | [prototyping-parity](docs/prototyping-parity.md) |
+| Prototyping | 90% | 74% | 3–6 | [prototyping-parity](docs/prototyping-parity.md) |
 | Import/export | 65% | 35% | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Dev Mode / inspect | 90% | 64% | 1–3 | [dev-mode-parity](docs/dev-mode-parity.md) |
 | Comments, versions, misc | 80% | 58% | 4–8 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -195,6 +195,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Prototyping behaviour suite written from the public documentation (7 model tests, 12 player tests with 21 gestures) and its fixes: on drag starts only for a drag its animation's way and the animation follows the pointer, key combinations (`Shift+K`) fire (and are recorded and imported), an overlay's after-delay timer starts when it opens, instances of interactive components play their variant's interactions and "Change to" changes the right instance, spring presets are physical springs that play until they settle, smart animate overshoots with spring and back easings, fixed layers draw above scrolling content; added scroll to offsets. Prototyping 88%/70% → 90%/74%, 5–9 h → 3–6 h; mainstream weekly areas 68.1% → 68.4%, mainstream ~46% → ~47%; other percentages unchanged at this rounding; full parity ~320–615 h → ~318–612 h |
 | 2026-10-11 | minor | Components behaviour suite written from the public documentation (10 tests, 45 table cases) and its fixes: instances now keep overrides of auto layout padding, gap and alignment, layout grids, export settings, prototype interactions and every text property (resizing, paragraph spacing, lists…; these were lost when the main changed); moving, rotating, resizing or re-constraining layers inside an instance, and its auto layout direction, are refused (the instance itself resizes); switching variants keeps an override only where both variants had the same value (text layers keep theirs); swapping from the Assets panel keeps only text overrides; the default variant is the top-left one (instances, Assets thumbnails, code); hidden exposed instances hide their properties; pushing changes from a nested layer goes to the outer main. Added: variant property reordering and duplicate combination warnings. Components 95%/68% → 96%/72%, 6–12 h → 4–9 h; with #133's selection and transform change, core editor ready ~68% → ~69% and mainstream ~46% → ~47% (weekly areas 68.1% → 68.8%); full parity ~320–615 h → ~315–607 h (the totals now also carry #133's area 2 hours) |
 | 2026-10-11 | minor | Embedded image colour profiles (ICC in PNG/JPG/WebP/TIFF, PNG sRGB/gAMA/cHRM) converted into the file's colour space when decoded. Paint 85%/66% → 90%/67% (the row had lagged the parity doc), 5–9 h → 3–6 h; totals unchanged at this rounding |
 | 2026-10-11 | minor | Layers panel keyboard and stroke variables: F2 renames the selected layer (also from a layer row with the keyboard, which gets it back; Escape there cancels), Shift+F10 (`view.contextMenu`) opens the context menu at the focused row or below the canvas selection and the menu takes the keyboard, F8 (`select.area`) draws a selection box for keyboard-only users (arrows move it, Shift+arrows size it, Enter selects like a marquee; agents pass a box), long lists checked at 10k layers (revealing a layer, expanding or collapsing everything and arrow keys take at most 1.3 ms a frame in the release UI bench; the revealed row takes the keyboard); colour styles on strokes were already complete, and each side's stroke weight now binds to a number variable (`strokeTopWeight`…, bindable fields in the Design panel and REST import). Layers panel 95%/78% → 98%/82%, 2–4 h → 1–2 h; Strokes 90%/72% → 95%/75%, 1–3 h → 1–2 h; mainstream depth 67.8% → 68.1%; feature breadth (~80%), ready for real work (~49%), essentials (~57%) and mainstream (~46%) unchanged at this rounding; full parity ~321–618 h → ~320–615 h |

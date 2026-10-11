@@ -1014,7 +1014,7 @@ impl Document {
 fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
     use proto::Action::*;
     match a {
-        Navigate { dest, .. } | ScrollTo { dest } | OpenOverlay { dest, .. } | SwapOverlay { dest } | ChangeTo { dest } => {
+        Navigate { dest, .. } | ScrollTo { dest, .. } | OpenOverlay { dest, .. } | SwapOverlay { dest } | ChangeTo { dest } => {
             if let Some(m) = map.get(dest) {
                 *dest = *m;
             }

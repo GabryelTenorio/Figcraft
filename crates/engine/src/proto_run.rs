@@ -1,10 +1,11 @@
 //! Prototype actions run by the prototype player on its own copy of the document: set variable (a
-//! value or an expression), set variable mode, choosing the branch of a conditional action, and
-//! where navigating to a section goes, and the hotspots a screen offers.
+//! value or an expression), set variable mode, choosing the branch of a conditional action, where
+//! navigating to a section goes, which instance "Change to" changes, the interactions instances
+//! play (interactive components), and the hotspots a screen offers.
 
 use std::collections::HashMap;
 
-use figcraft_doc::proto::{Action, ConditionalBlock, Expr};
+use figcraft_doc::proto::{Action, ConditionalBlock, Expr, Interaction};
 use figcraft_doc::{Document, NodeId, NodeKind, VariableType, VariableValue};
 use figcraft_geom::Rect;
 use serde_json::Value;
@@ -107,6 +108,47 @@ pub fn remember_sections(doc: &Document, frame: NodeId, visited: &mut HashMap<No
             visited.insert(a, frame);
         }
     }
+}
+
+/// Interactive components: every instance plays the interactions on its main component's root
+/// (the variant it shows), except those with a trigger the instance has interactions of its own
+/// for (the instance's win). Interactions an instance holds that equal one on a variant of its
+/// set are copies (instances used to copy them when placed) and give way to the variant shown.
+/// For the player's copy of the document.
+pub fn play_interactions(doc: &mut Document) {
+    let plays: Vec<(NodeId, Vec<Interaction>)> = doc
+        .nodes()
+        .filter_map(|n| {
+            let NodeKind::Instance { component, .. } = &n.kind else { return None };
+            let main = doc.node(*component)?;
+            let variants = crate::components::variant_set(doc, *component).and_then(|s| doc.node(s)).map_or(vec![*component], |s| s.children.clone());
+            let copied = |it: &Interaction| variants.iter().filter_map(|v| doc.node(*v)).any(|v| v.interactions.contains(it));
+            let own: Vec<&Interaction> = n.interactions.iter().filter(|it| !copied(it)).collect();
+            let plays: Vec<Interaction> = own
+                .iter()
+                .map(|it| (*it).clone())
+                .chain(main.interactions.iter().filter(|it| own.iter().all(|o| o.trigger != it.trigger)).cloned())
+                .collect();
+            (plays != n.interactions).then_some((n.id, plays))
+        })
+        .collect();
+    for (id, its) in plays {
+        if let Some(n) = doc.node_mut(id) {
+            n.interactions = its;
+        }
+    }
+}
+
+/// The instance "Change to" `dest` changes when it runs on `node`: the nearest of `node` and the
+/// instances around it that shows a variant of `dest`'s component set (a button's own icon
+/// instance doesn't change), else the innermost instance holding `node`.
+pub fn change_to_target(doc: &Document, node: NodeId, dest: NodeId) -> Option<NodeId> {
+    let set = crate::components::variant_set(doc, dest);
+    let in_set = |id: &NodeId| match doc.node(*id).map(|n| &n.kind) {
+        Some(NodeKind::Instance { component, .. }) => set.is_some() && crate::components::variant_set(doc, *component) == set,
+        _ => false,
+    };
+    std::iter::once(node).chain(doc.ancestors(node)).find(in_set).or_else(|| crate::components::owning_instance(doc, node))
 }
 
 /// The hotspots of the screen `root` (a presented frame or overlay): its visible layers with

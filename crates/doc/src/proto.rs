@@ -50,6 +50,73 @@ impl Trigger {
             Trigger::KeyPress { key } => format!("Key/Gamepad {key}"),
         }
     }
+
+    /// A key trigger fires for the key named `key` (`Space`, `K`, `ArrowLeft`) pressed with
+    /// exactly the modifiers `mods`: its key is a combination such as `Shift+K`.
+    pub fn fires_on_key(&self, key: &str, mods: KeyMods) -> bool {
+        let Trigger::KeyPress { key: want } = self else { return false };
+        let (m, k) = KeyMods::split(want);
+        m == mods && (k.eq_ignore_ascii_case(key) || key_alias(k) == Some(key))
+    }
+}
+
+/// The modifier keys of a key combination.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyMods {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    /// Command (macOS), the Windows key elsewhere.
+    pub cmd: bool,
+}
+
+impl KeyMods {
+    /// `key` with these modifiers, as a key trigger stores it: `Ctrl+Alt+Shift+Cmd+K`.
+    pub fn combo(self, key: &str) -> String {
+        let mut s = String::new();
+        for (on, name) in [(self.ctrl, "Ctrl"), (self.alt, "Alt"), (self.shift, "Shift"), (self.cmd, "Cmd")] {
+            if on {
+                s.push_str(name);
+                s.push('+');
+            }
+        }
+        s + key
+    }
+
+    /// A key combination's modifiers and key (`Shift+K`, `Ctrl++`, `K`; other spellings of the
+    /// modifiers too: Control, Option, Command, ⌘…).
+    pub fn split(combo: &str) -> (KeyMods, &str) {
+        let mut mods = KeyMods::default();
+        let mut rest = combo.trim();
+        while let Some((m, k)) = rest.split_once('+').filter(|(_, k)| !k.is_empty()) {
+            match m.trim().to_ascii_lowercase().as_str() {
+                "ctrl" | "control" | "⌃" => mods.ctrl = true,
+                "alt" | "option" | "opt" | "⌥" => mods.alt = true,
+                "shift" | "⇧" => mods.shift = true,
+                "cmd" | "command" | "meta" | "super" | "win" | "⌘" => mods.cmd = true,
+                _ => break,
+            }
+            rest = k.trim();
+        }
+        (mods, rest)
+    }
+}
+
+/// Alternative spellings people type for keys, as the keys' names.
+pub fn key_alias(k: &str) -> Option<&'static str> {
+    Some(match k.to_ascii_lowercase().as_str() {
+        "space" | " " => "Space",
+        "return" | "enter" => "Enter",
+        "esc" | "escape" => "Escape",
+        "left" | "arrowleft" | "←" => "ArrowLeft",
+        "right" | "arrowright" | "→" => "ArrowRight",
+        "up" | "arrowup" | "↑" => "ArrowUp",
+        "down" | "arrowdown" | "↓" => "ArrowDown",
+        "tab" => "Tab",
+        "backspace" => "Backspace",
+        "delete" => "Delete",
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -131,9 +198,30 @@ impl Easing {
         }
     }
 
-    /// Spring presets run longer than the chosen duration in the incumbent; we keep the duration.
+    /// A spring's mass, stiffness and damping (None for the curves). The presets are physical
+    /// springs too.
+    pub fn spring(self) -> Option<(f64, f64, f64)> {
+        match self {
+            Easing::Gentle => Some((1.0, 100.0, 15.0)),
+            Easing::Quick => Some((1.0, 300.0, 20.0)),
+            Easing::Bouncy => Some((1.0, 600.0, 15.0)),
+            Easing::Slow => Some((1.0, 80.0, 20.0)),
+            Easing::CustomSpring { mass, stiffness, damping } => Some((mass, stiffness, damping)),
+            _ => None,
+        }
+    }
+
     pub fn is_spring(self) -> bool {
-        matches!(self, Easing::Gentle | Easing::Quick | Easing::Bouncy | Easing::Slow | Easing::CustomSpring { .. })
+        self.spring().is_some()
+    }
+
+    /// How long an animation with this easing plays (seconds) when its duration is set to `ms`:
+    /// a spring runs until it settles, whatever the duration says.
+    pub fn seconds(self, ms: u32) -> f64 {
+        match self.spring() {
+            Some((m, k, c)) => Spring::new(m, k, c).settle,
+            None => f64::from(ms) / 1000.0,
+        }
     }
 
     /// Evaluate the curve at `t` (0..1).
@@ -161,13 +249,11 @@ impl Easing {
                     ((2.0 * t - 2.0).powi(2) * ((c2 + 1.0) * (t * 2.0 - 2.0) + c2) + 2.0) / 2.0
                 }
             }
-            // Spring presets approximated by damped oscillations.
-            Easing::Gentle => spring(t, 6.0, 0.7),
-            Easing::Quick => spring(t, 10.0, 0.8),
-            Easing::Bouncy => spring(t, 9.0, 0.35),
-            Easing::Slow => spring(t, 4.0, 0.9),
+            Easing::Gentle | Easing::Quick | Easing::Bouncy | Easing::Slow | Easing::CustomSpring { .. } => {
+                let (m, k, c) = self.spring().unwrap_or((1.0, 100.0, 15.0));
+                Spring::new(m, k, c).at(t)
+            }
             Easing::CustomBezier { x1, y1, x2, y2 } => cubic_bezier(t, x1, y1, x2, y2),
-            Easing::CustomSpring { mass, stiffness, damping } => physical_spring(t, mass, stiffness, damping),
         }
     }
 }
@@ -194,39 +280,48 @@ fn cubic_bezier(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
     b(y1, y2, (lo + hi) / 2.0)
 }
 
-/// A unit step response of a damped spring, with its settling time mapped onto 0..1.
-fn physical_spring(t: f64, mass: f64, stiffness: f64, damping: f64) -> f64 {
-    if t >= 1.0 {
-        return 1.0;
-    }
-    let ok = |v: f64, lo: f64, d: f64| if v.is_finite() && v >= lo { v } else { d };
-    let m = ok(mass, 0.01, 1.0).min(1e4);
-    let k = ok(stiffness, 0.01, 100.0).min(1e6);
-    let c = ok(damping, 0.0, 15.0).min(1e6);
-    let w0 = (k / m).sqrt();
-    let zeta = c / (2.0 * (k * m).sqrt());
-    // Time to settle within 0.1% (an undamped spring is cut at 10 s).
-    let settle = if zeta > 1e-6 { (6.9 / (zeta.min(1.0) * w0)).clamp(0.05, 10.0) } else { 10.0 };
-    let tau = t * settle;
-    let x = if zeta < 1.0 {
-        let wd = w0 * (1.0 - zeta * zeta).sqrt();
-        1.0 - (-zeta * w0 * tau).exp() * ((wd * tau).cos() + zeta * w0 / wd * (wd * tau).sin())
-    } else if (zeta - 1.0).abs() < 1e-9 {
-        1.0 - (-w0 * tau).exp() * (1.0 + w0 * tau)
-    } else {
-        let s = (zeta * zeta - 1.0).sqrt();
-        let (r1, r2) = (-w0 * (zeta - s), -w0 * (zeta + s));
-        1.0 - (r2 * (r1 * tau).exp() - r1 * (r2 * tau).exp()) / (r2 - r1)
-    };
-    if x.is_finite() { x } else { 1.0 }
+/// A damped spring (unit mass-spring-damper released from 0 towards 1).
+struct Spring {
+    w0: f64,
+    zeta: f64,
+    /// Seconds until it stays within ~0.1% of the end (an undamped spring is cut at 10 s).
+    settle: f64,
 }
 
-fn spring(t: f64, freq: f64, damping: f64) -> f64 {
-    if t >= 1.0 {
-        return 1.0;
+impl Spring {
+    fn new(mass: f64, stiffness: f64, damping: f64) -> Self {
+        let ok = |v: f64, lo: f64, d: f64| if v.is_finite() && v >= lo { v } else { d };
+        let m = ok(mass, 0.01, 1.0).min(1e4);
+        let k = ok(stiffness, 0.01, 100.0).min(1e6);
+        let c = ok(damping, 0.0, 15.0).min(1e6);
+        let w0 = (k / m).sqrt();
+        let zeta = c / (2.0 * (k * m).sqrt());
+        // The slowest mode's decay rate (overdamped: w0 (zeta - sqrt(zeta² - 1)), written stably);
+        // e^-6.9 is 0.1%, and a critically or over-damped spring's larger lead factor needs ~9.2.
+        let (rate, k_settle) = if zeta < 1.0 { (zeta * w0, 6.9) } else { (w0 / (zeta + (zeta * zeta - 1.0).sqrt()), 9.2) };
+        let settle = if rate > 1e-6 { (k_settle / rate).clamp(0.05, 10.0) } else { 10.0 };
+        Spring { w0, zeta, settle: if settle.is_finite() { settle } else { 10.0 } }
     }
-    let decay = (-damping * 8.0 * t).exp();
-    1.0 - decay * (freq * t * std::f64::consts::PI).cos() * (1.0 - t)
+
+    /// Its position at `t` (0..1) of its settling time.
+    fn at(&self, t: f64) -> f64 {
+        if t >= 1.0 {
+            return 1.0;
+        }
+        let (w0, zeta) = (self.w0, self.zeta);
+        let tau = t * self.settle;
+        let x = if zeta < 1.0 {
+            let wd = w0 * (1.0 - zeta * zeta).sqrt();
+            1.0 - (-zeta * w0 * tau).exp() * ((wd * tau).cos() + zeta * w0 / wd * (wd * tau).sin())
+        } else if (zeta - 1.0).abs() < 1e-9 {
+            1.0 - (-w0 * tau).exp() * (1.0 + w0 * tau)
+        } else {
+            let s = (zeta * zeta - 1.0).sqrt();
+            let (r1, r2) = (-w0 / (zeta + s), -w0 * (zeta + s));
+            1.0 - (r2 * (r1 * tau).exp() - r1 * (r2 * tau).exp()) / (r2 - r1)
+        };
+        if x.is_finite() { x } else { 1.0 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -281,6 +376,19 @@ impl Transition {
             Transition::SlideIn { .. } => Transition::SlideIn { direction: d },
             Transition::SlideOut { .. } => Transition::SlideOut { direction: d },
             other => other,
+        }
+    }
+
+    /// Whether a drag of `(dx, dy)` (screen space, y down) starts it on an "on drag" trigger: a
+    /// directional transition only for a drag mostly its way (a push left for a drag to the left),
+    /// the others for a drag any way.
+    pub fn accepts_drag(&self, dx: f32, dy: f32) -> bool {
+        match self.direction() {
+            None => true,
+            Some(Direction::Left) => dx < 0.0 && dx.abs() >= dy.abs(),
+            Some(Direction::Right) => dx > 0.0 && dx.abs() >= dy.abs(),
+            Some(Direction::Top) => dy < 0.0 && dy.abs() >= dx.abs(),
+            Some(Direction::Bottom) => dy > 0.0 && dy.abs() >= dx.abs(),
         }
     }
 
@@ -368,6 +476,10 @@ pub enum Action {
     Back,
     ScrollTo {
         dest: NodeId,
+        /// Where the layer ends up from the scrolling frame's top-left (x, y): room left above it,
+        /// e.g. for a fixed header.
+        #[serde(default, skip_serializing_if = "is_origin")]
+        offset: [f64; 2],
     },
     OpenOverlay {
         dest: NodeId,
@@ -534,7 +646,7 @@ impl Action {
     pub fn dest(&self) -> Option<NodeId> {
         match self {
             Action::Navigate { dest, .. }
-            | Action::ScrollTo { dest }
+            | Action::ScrollTo { dest, .. }
             | Action::OpenOverlay { dest, .. }
             | Action::SwapOverlay { dest }
             | Action::ChangeTo { dest } => Some(*dest),
@@ -562,6 +674,10 @@ fn default_duration() -> u32 {
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+fn is_origin(p: &[f64; 2]) -> bool {
+    *p == [0.0, 0.0]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]

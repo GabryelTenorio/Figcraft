@@ -226,7 +226,7 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!((*dest, *position, *close_on_outside), (id("Menu"), OverlayPosition::TopRight, false));
     assert!(background.is_some_and(|b| (b.a - 0.4).abs() < 1e-3));
 
-    assert_eq!(its[2].trigger, Trigger::KeyPress { key: "A".into() });
+    assert_eq!(its[2].trigger, Trigger::KeyPress { key: "Shift+A".into() }, "modifier keys make a combination");
     assert_eq!(its[2].actions, [Action::Back]);
     assert_eq!(its[3].trigger, Trigger::MouseEnter);
     assert_eq!(its[3].actions, [Action::OpenUrl { url: "https://example.com".into() }]);
@@ -237,7 +237,7 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!(its[6].trigger, Trigger::OnDrag);
     assert_eq!(its[6].actions, [Action::SetVariableMode { collection: THEME.into(), mode: "1:0".into() }]);
     assert_eq!(its[7].trigger, Trigger::MouseUp);
-    assert_eq!(its[7].actions, [Action::ScrollTo { dest: id("Home") }], "unresolved destinations are dropped");
+    assert_eq!(its[7].actions, [Action::ScrollTo { dest: id("Home"), offset: [0.0, 0.0] }], "unresolved destinations are dropped");
 
     // The legacy single transition.
     let details = named(&doc, "Details");
@@ -246,7 +246,8 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!((&legacy.trigger, &legacy.actions[..]), (&Trigger::OnClick, &[Action::Navigate { dest: id("Home"), preserve_scroll: false }][..]));
     assert_eq!((legacy.transition, legacy.duration_ms, legacy.easing), (Transition::Dissolve, 200, Easing::EaseIn));
 
-    for w in ["video triggers", "modifier keys", "without a destination"] {
+    assert!(!has(&warnings, "modifier keys"), "{warnings:?}");
+    for w in ["video triggers", "without a destination"] {
         assert!(has(&warnings, w), "{w}: {warnings:?}");
     }
     // Without variables, set-variable actions have nothing to set.

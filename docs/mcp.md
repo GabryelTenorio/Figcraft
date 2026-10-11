@@ -266,7 +266,15 @@ right, left) and `oneSided`.
 ### Prototypes
 
 Interactions are `proto.interaction.add` / `set` / `remove` / `clear` (a navigate action can keep
-the scroll position with `preserveScroll: true`). Variable actions: `{type: "setVariable",
+the scroll position with `preserveScroll: true`; `{type: "scrollTo", dest, offset?: [x, y]}` stops
+the layer that far from the top-left of the innermost frame scrolling it, e.g. below a fixed
+header). A key trigger takes a key or a combination (`{type: "keyPress", key: "Shift+K"}`; Ctrl,
+Alt, Shift and Cmd, all held and no others). In the player, an "on drag" trigger with a move, push
+or slide animation starts only for a drag that way, and the animation follows the pointer until it
+lets go; spring easings play until they settle (their duration follows from the spring, not
+`durationMs`); an overlay's after-delay timer starts when it opens; instances of a component play
+the interactions on the variant they show unless they have their own for that trigger; fixed
+layers draw above the content scrolling under them. Variable actions: `{type: "setVariable",
 variable, value}` sets a value, or with `expr` an expression computed when it runs;
 `{type: "setVariableMode", collection, mode}` switches a collection's mode for the prototype (ids or
 names; modes chosen on layers inside the screen still win); `{type: "conditional", blocks:

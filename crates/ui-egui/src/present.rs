@@ -25,7 +25,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2, pos2, vec2};
 use figcraft_color::{Color, Paint, PaintKind};
 use figcraft_doc::proto::{
-    Action, Device, DeviceColor, Direction, Easing, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
+    Action, Device, DeviceColor, Direction, Easing, KeyMods, Overflow, OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
 };
 use figcraft_doc::{Document, HConstraint, Node, NodeId, NodeKind, VConstraint};
 use figcraft_geom::{Affine, Point};
@@ -80,6 +80,9 @@ struct Anim {
     start: f64,
     dur: f64,
     easing: Easing,
+    /// Started by a drag: while the pointer stays down the transition follows it (where the drag
+    /// began, the unit vector it moves along and the distance that completes it, screen points).
+    follow: Option<(Pos2, Vec2, f32)>,
 }
 
 /// What a wheel or drag scrolls: a frame with overflow (offsets in page units), or the whole view
@@ -449,11 +452,16 @@ impl Presenter {
     }
 
     /// Lay the document out for the screen: `design` with the presented frame resized to `fit`
-    /// when the prototype is responsive (its constraints and auto layout respond).
+    /// when the prototype is responsive (its constraints and auto layout respond), instances
+    /// playing their variants' interactions and fixed layers on top.
     fn relayout(&mut self) {
         let mut d = self.design.clone();
-        if let (Some(d), Some(size)) = (d.as_mut(), self.fit) {
-            figcraft_engine::cmd::proto::respond(d, self.current, size);
+        if let Some(d) = d.as_mut() {
+            if let Some(size) = self.fit {
+                figcraft_engine::cmd::proto::respond(d, self.current, size);
+            }
+            figcraft_engine::proto_run::play_interactions(d);
+            raise_fixed(d);
         }
         self.doc = d;
         self.rev += 1;
@@ -493,11 +501,13 @@ impl Presenter {
     }
 
     /// What "Scroll to" `dest` moves: every scrolling frame around it, innermost first, brings the
-    /// layer (then the frame holding it) to its top-left as far as it can scroll. Each entry is
-    /// (frame, offset now, offset after).
-    fn scroll_to_layer(&self, doc: &Document, dest: NodeId) -> Vec<ScrollMove> {
+    /// layer (then the frame holding it) to its top-left as far as it can scroll, the innermost
+    /// `offset` short of it. Each entry is (frame, offset now, offset after).
+    fn scroll_to_layer(&self, doc: &Document, dest: NodeId, offset: [f64; 2]) -> Vec<ScrollMove> {
         let mut out = Vec::new();
         let mut target = dest;
+        // The innermost scrolling frame leaves `offset` before the layer.
+        let mut off = offset.map(|v| if v.is_finite() { v } else { 0.0 });
         for f in doc.ancestors(dest) {
             let (rx, ry) = self.range(doc, f);
             let Some(tn) = doc.node(target) else { break };
@@ -507,9 +517,10 @@ impl Presenter {
             let rel = doc.world_transform(f).inverse() * doc.world_transform(target);
             let b = figcraft_geom::transform_rect_bbox(rel, tn.local_rect());
             let from = self.scroll.get(&f).copied().unwrap_or((0.0, 0.0));
-            let to = clamp_scroll((if rx > 0.0 { b.x0 } else { from.0 }, if ry > 0.0 { b.y0 } else { from.1 }), (rx, ry));
+            let to = clamp_scroll((if rx > 0.0 { b.x0 - off[0] } else { from.0 }, if ry > 0.0 { b.y0 - off[1] } else { from.1 }), (rx, ry));
             out.push((f, from, to));
             target = f;
+            off = [0.0, 0.0];
         }
         out
     }
@@ -577,7 +588,7 @@ impl Presenter {
         self.anim = if matches!(transition, Transition::Instant) || dur <= 0.0 {
             None
         } else {
-            Some(Anim { from_doc, from_frame: self.current, from_tex, transition, start: now, dur, easing })
+            Some(Anim { from_doc, from_frame: self.current, from_tex, transition, start: now, dur, easing, follow: None })
         };
     }
 
@@ -651,7 +662,7 @@ impl Presenter {
     /// Run the actions of interaction `k` on `node`. `rect` is the layer's screen rect.
     fn fire(&mut self, node: NodeId, k: usize, rect: Option<Rect>, now: f64) -> bool {
         let Some(it) = self.doc.as_ref().and_then(|d| d.node(node)).and_then(|n| n.interactions.get(k)).cloned() else { return false };
-        let dur = f64::from(it.duration_ms) / 1000.0;
+        let dur = it.easing.seconds(it.duration_ms);
         let temp = match it.trigger {
             Trigger::OnHover => Some(false),
             Trigger::OnPress => Some(true),
@@ -697,8 +708,8 @@ impl Presenter {
                     None => false,
                 }
             }
-            Action::ScrollTo { dest } => {
-                let frames = self.scroll_to_layer(&doc, *dest);
+            Action::ScrollTo { dest, offset } => {
+                let frames = self.scroll_to_layer(&doc, *dest, *offset);
                 if frames.is_empty() {
                     return false;
                 }
@@ -714,6 +725,7 @@ impl Presenter {
                 if !doc.contains(*dest) {
                     return false;
                 }
+                self.delays_fired.retain(|(id, _)| !doc.is_ancestor(*dest, *id));
                 self.overlays.push(OverlayState {
                     id: *dest,
                     position: *position,
@@ -732,6 +744,7 @@ impl Presenter {
                 if !doc.contains(*dest) {
                     return false;
                 }
+                self.delays_fired.retain(|(id, _)| !doc.is_ancestor(*dest, *id));
                 match self.overlays.last_mut() {
                     Some(o) => {
                         o.id = *dest;
@@ -763,12 +776,7 @@ impl Presenter {
                 true
             }
             Action::ChangeTo { dest } => {
-                let inst = if matches!(doc.node(node).map(|n| &n.kind), Some(NodeKind::Instance { .. })) {
-                    Some(node)
-                } else {
-                    figcraft_engine::components::owning_instance(&doc, node)
-                };
-                let Some(inst) = inst else { return false };
+                let Some(inst) = figcraft_engine::proto_run::change_to_target(&doc, node, *dest) else { return false };
                 if !doc.contains(*dest) {
                     return false;
                 }
@@ -971,7 +979,8 @@ fn lerp_paints(from: &[Paint], to: &mut [Paint], t: f64) {
 /// layers only in the source are copied in and fade out. Render `to_root` of the result.
 pub fn smart_interpolate(from: &Document, from_root: NodeId, to: &Document, to_root: NodeId, t: f64) -> Document {
     let mut out = to.clone();
-    if !t.is_finite() || t >= 1.0 {
+    // Springs and back easings go past 1 before they settle: matched layers overshoot too.
+    if !t.is_finite() || t == 1.0 {
         return out;
     }
     let t = t.max(-1.0);
@@ -1240,6 +1249,26 @@ pub fn apply_scroll(doc: &Document, scroll: &HashMap<NodeId, (f64, f64)>) -> Doc
     out
 }
 
+/// Fixed layers draw (and take clicks) above the content that scrolls under them: each frame's
+/// fixed children move to the top of its children, keeping their order (for the player's copy).
+pub fn raise_fixed(doc: &mut Document) {
+    let fixed = |c: &NodeId| doc.node(*c).is_some_and(|c| c.scroll_position == ScrollPosition::Fixed);
+    let moves: Vec<(NodeId, Vec<NodeId>)> = doc
+        .nodes()
+        .filter(|n| !matches!(n.kind, NodeKind::Page { .. }) && n.children.iter().any(fixed))
+        .filter_map(|n| {
+            let (top, mut order): (Vec<NodeId>, Vec<NodeId>) = n.children.iter().partition(|c| fixed(c));
+            order.extend(top);
+            (order != n.children).then_some((n.id, order))
+        })
+        .collect();
+    for (id, order) in moves {
+        if let Some(n) = doc.node_mut(id) {
+            n.children = order;
+        }
+    }
+}
+
 /// Where the outgoing and incoming frames are drawn at eased progress `t`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FramePlacement {
@@ -1352,8 +1381,10 @@ impl Layout {
 }
 
 /// The soonest "after delay" interaction in `root`'s subtree that hasn't fired yet, and the seconds
-/// until it's due (zero or less: due now).
+/// until it's due (zero or less: due now). Timers start when the screen arrives, an overlay's when
+/// it opens.
 fn next_delay(p: &Presenter, doc: &Document, root: NodeId, now: f64) -> Option<((NodeId, usize), f64)> {
+    let since = p.overlays.last().filter(|o| o.id == root).map_or(p.arrived, |o| o.opened);
     let mut next: Option<((NodeId, usize), f64)> = None;
     for id in doc.subtree(root) {
         let Some(n) = doc.node(id) else { continue };
@@ -1361,7 +1392,7 @@ fn next_delay(p: &Presenter, doc: &Document, root: NodeId, now: f64) -> Option<(
             if let Trigger::AfterDelay { ms } = it.trigger
                 && !p.delays_fired.contains(&(id, k))
             {
-                let due = p.arrived + f64::from(ms) / 1000.0 - now;
+                let due = since + f64::from(ms) / 1000.0 - now;
                 if next.is_none_or(|(_, d)| due < d) {
                     next = Some(((id, k), due));
                 }
@@ -2094,6 +2125,15 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         )
     });
     let keys = if keys_on { keys } else { Vec::new() };
+    // A transition a drag started follows the pointer while it stays down, then plays on from there.
+    if let Some(a) = p.anim.as_mut()
+        && let Some((from, dir, len)) = a.follow
+    {
+        match pos.filter(|_| down) {
+            Some(q) => a.start = now - f64::from(((q - from).dot(dir) / len).clamp(0.0, 1.0)) * a.dur,
+            None => a.follow = None,
+        }
+    }
     let pos = pos.filter(|_| over_area || p.press.is_some());
     // A drag that scrolled lets go: it carries on at the pointer's speed (and springs back from
     // past the ends).
@@ -2222,10 +2262,24 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     {
         p.dragged = true;
         let at_start: Vec<(NodeId, Rect)> = hot.iter().rev().filter(|(_, r)| r.contains(start)).copied().collect();
-        if let Some((id, k, r)) = at_start.iter().find_map(|(id, r)| find_trigger(doc, *id, |t| *t == Trigger::OnDrag).map(|k| (*id, k, *r)))
+        // A directional transition starts only on a drag its way (else the drag may scroll).
+        let d = q - start;
+        let drags =
+            |id: NodeId| doc.node(id)?.interactions.iter().position(|it| it.trigger == Trigger::OnDrag && it.transition.accepts_drag(d.x, d.y));
+        if let Some((id, k, r)) = at_start.iter().find_map(|(id, r)| drags(*id).map(|k| (*id, k, *r)))
             && p.fire(id, k, Some(r), now)
         {
             p.press = None;
+            // The transition it started follows the pointer: along its direction, else the drag's
+            // main axis, completing over the screen's size that way.
+            if let Some(a) = p.anim.as_mut().filter(|a| a.start == now) {
+                let (x, y) = a
+                    .transition
+                    .direction()
+                    .map_or_else(|| if d.x.abs() >= d.y.abs() { (d.x.signum(), 0.0) } else { (0.0, d.y.signum()) }, direction_vec);
+                let len = if x != 0.0 { l.screen.width() } else { l.screen.height() };
+                a.follow = Some((start, vec2(x, y), len.max(1.0)));
+            }
             return;
         }
         // Otherwise the drag scrolls the innermost frame under it that scrolls, else pans a view
@@ -2279,11 +2333,8 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     }
     // Keys.
     for (key, mods) in &keys {
-        let name = key.name();
-        let found = doc.subtree(root).into_iter().find_map(|id| {
-            find_trigger(doc, id, |t| matches!(t, Trigger::KeyPress { key } if key.eq_ignore_ascii_case(name) || key_alias(key) == Some(name)))
-                .map(|k| (id, k))
-        });
+        let (name, held) = (key.name(), KeyMods { ctrl: mods.ctrl, alt: mods.alt, shift: mods.shift, cmd: mods.mac_cmd });
+        let found = doc.subtree(root).into_iter().find_map(|id| find_trigger(doc, id, |t| t.fires_on_key(name, held)).map(|k| (id, k)));
         if let Some((id, k)) = found {
             if p.fire(id, k, None, now) {
                 consume_key(ctx, *key);
@@ -2333,23 +2384,6 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         p.delays_fired.insert((id, k));
         p.fire(id, k, None, now);
     }
-}
-
-/// Alternative spellings people type for keys.
-fn key_alias(k: &str) -> Option<&'static str> {
-    Some(match k.to_ascii_lowercase().as_str() {
-        "space" | " " => "Space",
-        "return" | "enter" => "Enter",
-        "esc" | "escape" => "Escape",
-        "left" | "arrowleft" | "←" => "ArrowLeft",
-        "right" | "arrowright" | "→" => "ArrowRight",
-        "up" | "arrowup" | "↑" => "ArrowUp",
-        "down" | "arrowdown" | "↓" => "ArrowDown",
-        "tab" => "Tab",
-        "backspace" => "Backspace",
-        "delete" => "Delete",
-        _ => return None,
-    })
 }
 
 fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Layout, now: f64) {
@@ -2474,6 +2508,10 @@ fn draw(p: &mut Presenter, painter: &egui::Painter, ctx: &egui::Context, l: &Lay
 #[cfg(test)]
 #[path = "present_variables_tests.rs"]
 mod variables_tests;
+
+#[cfg(test)]
+#[path = "present_behaviour_tests.rs"]
+mod behaviour_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2688,13 +2726,13 @@ mod tests {
     fn scroll_to_moves_every_scrolling_frame_around_the_layer() {
         let (d, a, _, _, list, item) = device_doc();
         let mut p = player_on(d.clone(), a);
-        assert!(p.perform(&Action::ScrollTo { dest: item }, item, Transition::Instant, 0.0, Easing::Linear, None, 1.0));
+        assert!(p.perform(&Action::ScrollTo { dest: item, offset: [0.0, 0.0] }, item, Transition::Instant, 0.0, Easing::Linear, None, 1.0));
         // The list brings the item to its top (as far as it scrolls), the screen brings the list.
         assert_eq!(p.scroll[&list], (0.0, 500.0));
         assert_eq!(p.scroll[&a], (0.0, 1148.0));
         // Animated, it gets there over the duration.
         let mut p = player_on(d, a);
-        assert!(p.perform(&Action::ScrollTo { dest: list }, list, Transition::Dissolve, 0.3, Easing::Linear, None, 1.0));
+        assert!(p.perform(&Action::ScrollTo { dest: list, offset: [0.0, 0.0] }, list, Transition::Dissolve, 0.3, Easing::Linear, None, 1.0));
         let anim = p.scroll_anim.as_ref().unwrap();
         assert_eq!(anim.frames, vec![(a, (0.0, 0.0), (0.0, 1148.0))]);
     }

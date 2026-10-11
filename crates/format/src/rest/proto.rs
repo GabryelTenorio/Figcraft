@@ -3,7 +3,7 @@
 //! `prototypeDevice`, `prototypeBackgrounds` and `prototypeStartNodeID`.
 
 use figcraft_doc::proto::{
-    Action, ConditionalBlock, DeviceRotation, Direction, Easing, Expr, ExprOp, Interaction, MAX_ACTION_DEPTH, MAX_EXPR_DEPTH, Overflow,
+    Action, ConditionalBlock, DeviceRotation, Direction, Easing, Expr, ExprOp, Interaction, KeyMods, MAX_ACTION_DEPTH, MAX_EXPR_DEPTH, Overflow,
     OverlayPosition, PrototypeSettings, ScrollPosition, Transition, Trigger,
 };
 use figcraft_doc::{Node, NodeId, VariableType, VariableValue};
@@ -179,13 +179,21 @@ impl Ctx<'_> {
                     return None;
                 }
                 let codes: Vec<f64> = list(t, "keyCodes").iter().filter_map(Value::as_f64).collect();
-                let Some(key) = codes.iter().rev().find(|c| !is_modifier(**c)).and_then(|c| key_name(*c)) else {
+                let Some(key) = codes.iter().rev().find(|c| modifier(**c).is_none()).and_then(|c| key_name(*c)) else {
                     self.warn("key triggers without a supported key were skipped");
                     return None;
                 };
-                if codes.iter().any(|c| is_modifier(*c)) {
-                    self.warn("key triggers with modifier keys import as the key alone");
+                // Modifier keys make it a combination (`Shift+A`).
+                let mut mods = KeyMods::default();
+                for m in codes.iter().filter_map(|c| modifier(*c)) {
+                    *match m {
+                        16 => &mut mods.shift,
+                        17 => &mut mods.ctrl,
+                        18 => &mut mods.alt,
+                        _ => &mut mods.cmd,
+                    } = true;
                 }
+                let key = mods.combo(&key);
                 if ty == "ON_KEY_UP" {
                     self.warn("key up triggers import as key presses");
                 }
@@ -282,7 +290,7 @@ impl Ctx<'_> {
                 Action::Navigate { dest, preserve_scroll: a.get("preserveScrollPosition").and_then(Value::as_bool).unwrap_or(false) }
             }
             Some("SWAP") => Action::SwapOverlay { dest },
-            Some("SCROLL_TO") => Action::ScrollTo { dest },
+            Some("SCROLL_TO") => Action::ScrollTo { dest, offset: [0.0, 0.0] },
             Some("CHANGE_TO") => Action::ChangeTo { dest },
             Some("OVERLAY") => {
                 let meta = text(a, "destinationId").and_then(|d| self.overlay_meta.get(d)).copied();
@@ -514,8 +522,9 @@ fn overlay_position(s: &str) -> Option<OverlayPosition> {
 }
 
 /// Shift, Control, Alt and the platform keys.
-fn is_modifier(code: f64) -> bool {
-    matches!(code as i64, 16 | 17 | 18 | 91 | 92 | 93 | 224)
+/// A modifier key's code (Shift 16, Control 17, Alt 18, Meta 91/92/93/224).
+fn modifier(code: f64) -> Option<i64> {
+    Some(code as i64).filter(|c| matches!(c, 16 | 17 | 18 | 91 | 92 | 93 | 224))
 }
 
 /// Our key name for a keyboard key code.

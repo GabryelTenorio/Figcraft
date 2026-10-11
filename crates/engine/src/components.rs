@@ -280,6 +280,8 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.prop_refs.clear();
     root.annotations.clear();
     root.code_links.clear();
+    // The main's interactions play on its instances in prototypes; the instance's own start empty.
+    root.interactions.clear();
     doc.insert(root, parent, index)?;
     sync_instance(doc, id);
     Ok(id)
