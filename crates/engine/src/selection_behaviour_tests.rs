@@ -2,6 +2,9 @@
 //! is a table row with the selection it implies and a one-line derivation. Where the
 //! documentation is silent the row says so and pins today's behaviour.
 
+// The tables read best as tuples.
+#![allow(clippy::type_complexity)]
+
 use serde_json::{Value, json};
 
 use crate::Session;

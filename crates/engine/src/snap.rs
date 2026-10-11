@@ -52,6 +52,9 @@ pub struct Targets {
     pub moving: Option<Rect>,
 }
 
+/// A gap along a row: from, to, and where across it is drawn.
+type Gap = (f64, f64, f64);
+
 impl Targets {
     /// Gather snap lines from the siblings of `moving` (and the parent frame), page guides and
     /// layout grids, excluding the moving nodes and their descendants. Inside a rotated frame they
@@ -182,7 +185,7 @@ impl Targets {
     /// (a column's boxes are transposed): centred between its nearest neighbours, as far after the
     /// one before it as that one is from the next, or as far before the one after it. Each: how far
     /// `r` would move along the row, and the two gaps (from, to, across) that are equal then.
-    fn spacings(&self, r: Rect, horizontal: bool) -> Vec<(f64, [(f64, f64, f64); 2])> {
+    fn spacings(&self, r: Rect, horizontal: bool) -> Vec<(f64, [Gap; 2])> {
         let t = |b: Rect| if horizontal { b } else { Rect::new(b.y0, b.x0, b.y1, b.x1) };
         let r = t(r);
         let row = self.boxes.iter().map(|b| t(*b)).filter(|b| b.y0 < r.y1 && b.y1 > r.y0);

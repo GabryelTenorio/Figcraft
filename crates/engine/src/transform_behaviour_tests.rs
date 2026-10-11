@@ -5,6 +5,9 @@
 //! with a one-line derivation; where the documentation is silent the row says so and pins
 //! today's behaviour.
 
+// The tables read best as tuples.
+#![allow(clippy::type_complexity)]
+
 use serde_json::{Value, json};
 
 use crate::Session;
