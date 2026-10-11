@@ -56,15 +56,7 @@ pub fn closed(path: &BezPath) -> BezPath {
 }
 
 /// Every coordinate is finite and of a sane magnitude (the sweep needs bounded input).
-pub fn finite(path: &BezPath) -> bool {
-    let ok = |p: &Point| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9;
-    path.elements().iter().all(|el| match el {
-        PathEl::MoveTo(p) | PathEl::LineTo(p) => ok(p),
-        PathEl::QuadTo(a, b) => ok(a) && ok(b),
-        PathEl::CurveTo(a, b, c) => ok(a) && ok(b) && ok(c),
-        PathEl::ClosePath => true,
-    })
-}
+pub use figcraft_geom::measure::finite_path as finite;
 
 fn binary(a: &BezPath, b: &BezPath, op: linesweeper::BinaryOp) -> Result<BezPath, PathOpsError> {
     if a.elements().is_empty() && b.elements().is_empty() {

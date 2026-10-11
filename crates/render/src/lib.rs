@@ -15,6 +15,7 @@ pub mod grain;
 pub mod images;
 pub mod lod;
 pub mod paint;
+pub mod pattern;
 pub mod retained;
 pub mod shadow;
 

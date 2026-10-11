@@ -210,6 +210,13 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("fill.set", "Set fill", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, true)),
         spec!("stroke.set", "Set stroke", "{ids?, index?, paint | color, opacity?, visible?, blend?}", true, |s, p| paint_set(s, p, false)),
         spec!(
+            "fill.pattern",
+            "Pattern fill",
+            "{source (layer id), ids?, index? (default the top fill), tile? (grid|horizontalHex|verticalHex), scale? (1 = the source's size), spacing? [x, y], align? (start|center|end), opacity?}  the source layer tiled; it updates as the source changes",
+            true,
+            pattern_fill
+        ),
+        spec!(
             "stroke.widthProfile",
             "Width profile",
             "{ids?, preset? (uniform|wedge|taper|eye|rounded|pinch) | points? [[t (0-1 along each subpath), scale (× stroke weight)], ...]} — none = uniform",
@@ -1086,6 +1093,29 @@ fn paint_set(s: &mut Session, p: &Value, fills: bool) -> Result<Value> {
         }
     }
     ok()
+}
+
+fn pattern_fill(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "fill.pattern";
+    let src = req_id(CMD, p, "source")?;
+    let doc = s.doc()?;
+    if !doc.node(src).is_some_and(|n| !n.is_page()) {
+        return Err(bad(CMD, "`source` must be a layer"));
+    }
+    if req_targets(CMD, s, p)?.iter().any(|t| doc.is_ancestor(*t, src)) {
+        return Err(bad(CMD, "a layer can't be filled with itself or a layer inside it"));
+    }
+    let mut pt = figcraft_color::PatternPaint::new(src.0);
+    pt.tile = parse(CMD, p, "tile")?.unwrap_or_default();
+    pt.align = parse(CMD, p, "align")?.unwrap_or_default();
+    pt.spacing = parse(CMD, p, "spacing")?.unwrap_or_default();
+    let (lo, hi) = figcraft_color::PatternPaint::SCALE_RANGE;
+    pt.scale = num(p, "scale").filter(|v| v.is_finite()).unwrap_or(1.0).clamp(lo, hi);
+    let mut q = if p.is_object() { p.clone() } else { json!({}) };
+    q["paint"] =
+        serde_json::to_value(figcraft_color::Paint { kind: figcraft_color::PaintKind::Pattern(pt), ..figcraft_color::Paint::pattern(src.0) })
+            .map_err(|e| bad(CMD, e.to_string()))?;
+    paint_set(s, &q, true)
 }
 
 fn effect_add(s: &mut Session, p: &Value) -> Result<Value> {

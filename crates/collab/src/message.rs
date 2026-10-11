@@ -9,7 +9,7 @@ use crate::Error;
 use crate::change::Change;
 
 /// The protocol version a client announces in [`Hello`] (2: the welcome says what you may do, and
-/// connections can manage a server).
+/// connections can manage a server or use a file's team library).
 pub const PROTOCOL: u32 = 2;
 
 /// The first byte of every binary message.
@@ -232,6 +232,74 @@ pub enum AdminReply {
     },
 }
 
+/// Opens a connection that uses a file's team library (instead of [`Hello`]), with one of the
+/// file's share links. Answered with [`LibraryReply::Ready`] or `Refused`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OpenLibrary {
+    pub protocol: u32,
+    pub file: String,
+    pub token: String,
+    pub client_version: String,
+}
+
+/// How one file uses a library, as its app reports it: the file's name and its instances of each
+/// library component (by the component's id in the library).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Usage {
+    pub file: String,
+    pub components: Vec<(NodeId, u32)>,
+}
+
+/// A file's last usage report, with when it came (seconds since 1970, UTC).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileUsage {
+    pub usage: Usage,
+    pub updated: u64,
+}
+
+/// A request on a library connection; each gets one [`LibraryReply`], in order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryReq {
+    /// The file's library, unless the server's version is `have`; `usage` reports how the asking
+    /// file uses it.
+    Fetch { have: Option<u64>, usage: Option<Usage> },
+    /// Keep `archive` (a `.figcraft` archive holding the published library) as the file's library.
+    /// Needs an edit link; the library must be the one kept (same id) at a newer version.
+    Publish { archive: Vec<u8> },
+    /// The usage reports of the files that use the library.
+    Usage,
+}
+
+/// The answer to a [`LibraryReq`] (the first one on a connection answers [`OpenLibrary`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryReply {
+    /// The link is right: requests may follow, with this access.
+    Ready {
+        access: Access,
+    },
+    /// The library (a `.figcraft` archive holding it) at `version`.
+    Library {
+        version: u64,
+        archive: Vec<u8>,
+    },
+    /// The server's version is the one asked about.
+    Unchanged {
+        version: u64,
+    },
+    /// The file has no library on the server.
+    Empty,
+    Published {
+        version: u64,
+    },
+    Usage(Vec<FileUsage>),
+    /// The request couldn't be done (the connection stays open).
+    Failed {
+        reason: String,
+    },
+}
+
 /// Client → server.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -254,6 +322,10 @@ pub enum ClientMsg {
     Manage(Manage),
     /// A request on a managing connection.
     Admin(Admin),
+    /// Use a file's team library (the first message on a connection, instead of `Hello`).
+    OpenLibrary(OpenLibrary),
+    /// A request on a library connection.
+    Library(LibraryReq),
 }
 
 /// Server → client.
@@ -299,6 +371,8 @@ pub enum ServerMsg {
     Pong,
     /// The answer to a managing connection's request.
     Admin(Box<AdminReply>),
+    /// The answer to a library connection's request.
+    Library(Box<LibraryReply>),
 }
 
 /// The binary form of `msg`: [`WIRE_VERSION`], then postcard.

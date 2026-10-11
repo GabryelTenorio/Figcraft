@@ -1,5 +1,6 @@
-//! Library commands: publish this file as a library; enable, use and update other library files
-//! (their components, styles and variables).
+//! Library commands: publish this file as a library (to its file, or to a server for the team);
+//! enable, use and update other libraries (their components, styles and variables), swap one for
+//! another, and see how files use a team library.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -7,8 +8,12 @@ use std::sync::Arc;
 use figcraft_doc::*;
 use serde_json::{Value, json};
 
+use figcraft_collab::message::{LibraryReply, LibraryReq};
+
 use super::CommandSpec;
 use crate::library::*;
+use crate::library_server::{archive, is_server_link, read_archive, shown_path};
+use crate::live::PublishOptions;
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
@@ -35,7 +40,34 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             list
         ),
-        spec!("library.add", "Add library", "{path (.figcraft file published as a library)}", true, add),
+        spec!(
+            "library.publishToServer",
+            "Publish library to server",
+            "{server? (an edit link of this file on a figcraft-server; omit while this file is in a live session on a server, or give the server's address with its key to keep the file there first), key?, description?, include?, exclude? (as library.publish)}  publishes the library as the next version of the one kept on the server under this file (per-asset versions as library.publish); files that enabled it with a link of the file see the update → {id, version, components, styles, collections, variables, file?, edit?, view? (links when the file was kept there now)}",
+            false,
+            publish_to_server
+        ),
+        spec!(
+            "library.add",
+            "Add library",
+            "{path (.figcraft file published as a library, or a share link of a file on a server: a view link is enough)}",
+            true,
+            add
+        ),
+        spec!(
+            "library.usage",
+            "Library usage",
+            "{library? (an enabled team library: id, name or link; omit for this file's library on its server)}  → what files report: {id, name, instances, files: [{name, updated, instances}], components: [{id, name, instances, files}]}",
+            false,
+            usage_cmd
+        ),
+        spec!(
+            "library.swap",
+            "Swap library",
+            "{from (an enabled library: id, name or path), to (another enabled library)}  re-points every component instance, style and variable copied from `from` to the published one of the same name in `to` (instances keep their overrides) → {components, styles, variables, unmatched: [names still from `from`], removed (nothing of `from` is used any more: it was removed)}",
+            true,
+            swap_cmd
+        ),
         spec!(
             "library.remove",
             "Remove library",
@@ -157,11 +189,13 @@ fn library(s: &mut Session, cmd: &str, p: &Value) -> Result<(LibraryLink, Arc<Pu
     let link = find_link(s.doc()?, &key)
         .cloned()
         .ok_or_else(|| bad(cmd, format!("no enabled library `{key}` (library.list shows them; library.add enables one)")))?;
-    let lib = s.libraries.load(&link.path)?;
+    let lib = s.load_library(&link.path)?;
     if lib.manifest.id != link.id {
         return Err(EngineError::Other(format!(
             "{} now holds another library (\"{}\"): remove \"{}\" and add the file again",
-            link.path, lib.manifest.name, link.name
+            shown_path(&link.path),
+            lib.manifest.name,
+            link.name
         )));
     }
     Ok((link, lib))
@@ -248,9 +282,9 @@ fn extend(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id}))
 }
 
-fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "library.publish";
-    let doc = s.doc()?;
+/// What `p` asks `cmd` to publish of `doc` (`include`, else the default after `prev`; less
+/// `exclude`) and its description.
+fn publish_args(cmd: &str, doc: &Document, p: &Value, prev: Option<&LibraryManifest>) -> Result<(Selection, Option<String>)> {
     let all = publishable(doc);
     let coll_named = |c: &String, t: &str| doc.variables.collections.iter().any(|x| x.id == *c && x.name == t);
     let count = |s: &Selection| s.components.len() + s.styles.len() + s.collections.len();
@@ -280,24 +314,147 @@ fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(sel)
     };
-    let mut sel = if get(p, "include").is_some() { pick("include")? } else { default_selection(doc) };
+    let mut sel = if get(p, "include").is_some() { pick("include")? } else { default_selection(doc, prev) };
     let x = pick("exclude")?;
     sel.components.retain(|c| !x.components.contains(c));
     sel.styles.retain(|s| !x.styles.contains(s));
     sel.collections.retain(|c| !x.collections.contains(c));
     let description = string(p, "description").map(|d| d.trim().chars().take(MAX_DESCRIPTION).collect());
-    let lib = publish(doc, &sel, description, s.ds()?.uid)?;
+    Ok((sel, description))
+}
+
+/// What a publish answers.
+fn published_json(sel: &Selection, lib: &PublishedLibrary) -> Value {
     let m = &lib.manifest;
-    let out = json!({
+    json!({
         "id": m.id,
         "version": m.version,
         "components": sel.components.len(),
         "styles": sel.styles.len(),
         "collections": sel.collections.len(),
         "variables": m.variables.iter().filter(|v| v.published).count(),
-    });
+    })
+}
+
+fn publish_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let doc = s.doc()?;
+    let prev = doc.published.clone();
+    let (sel, description) = publish_args("library.publish", doc, p, prev.as_ref().map(|l| &l.manifest))?;
+    let lib = publish(doc, prev.as_deref(), &sel, description, s.ds()?.uid)?;
+    let out = published_json(&sel, &lib);
     s.doc_mut()?.published = Some(Arc::new(lib));
     Ok(out)
+}
+
+/// A library request's answer that isn't the one expected.
+fn unexpected(r: &LibraryReply) -> EngineError {
+    EngineError::Other(format!("the server answered {r:?}"))
+}
+
+fn publish_to_server(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.publishToServer";
+    let key = string(p, "key").map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    let server = string(p, "server").map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
+    let mut kept = None;
+    let link = match server {
+        // The server's address with its key: the file is kept there first.
+        Some(server) if key.is_some() || (server.contains("key=") && !server.contains("token=")) => {
+            let opts = PublishOptions { server, key, name: doc.name.clone(), me: String::new(), doc: doc.clone() };
+            let net = s.live.link().ok_or_else(|| EngineError::Other(crate::live::NO_TEAM_LIBRARIES.into()))?;
+            let file = net.upload(opts).map_err(|e| bad(cmd, e))?;
+            let edit = file.edit.clone();
+            kept = Some(file);
+            edit
+        }
+        Some(link) => link,
+        None => s.server_link().ok_or_else(|| {
+            bad(cmd, "give `server` (an edit link of this file on a server, or the server's address with its key), or publish this file to a server first (Share ▸ Publish to server…)")
+        })?,
+    };
+    // The server's version is the one to follow (others may have published since).
+    let current = match s.library_request(&link, LibraryReq::Fetch { have: None, usage: None })? {
+        LibraryReply::Library { archive, .. } => Some(read_archive(&archive).map_err(EngineError::Other)?),
+        LibraryReply::Empty => None,
+        other => return Err(unexpected(&other)),
+    };
+    let prev = current.as_ref().or(doc.published.as_deref());
+    let (sel, description) = publish_args(cmd, &doc, p, prev.map(|l| &l.manifest))?;
+    let lib = match (publish(&doc, prev, &sel, description, uid), &doc.published) {
+        (Ok(lib), _) => lib,
+        // This file's library as last published here, not on the server yet: as it is.
+        (Err(_), Some(own)) if current.is_none() && !sel.is_empty() => (**own).clone(),
+        (Err(e), _) => return Err(e),
+    };
+    match s.library_request(&link, LibraryReq::Publish { archive: archive(&lib)? })? {
+        LibraryReply::Published { .. } => {}
+        other => return Err(unexpected(&other)),
+    }
+    let mut out = published_json(&sel, &lib);
+    s.libraries.insert(&link, Ok(Arc::new(lib)));
+    if let Some(f) = kept {
+        out["file"] = json!(f.file);
+        out["edit"] = json!(f.edit);
+        out["view"] = json!(f.view);
+    }
+    Ok(out)
+}
+
+fn usage_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.usage";
+    let link = match string(p, "library") {
+        Some(key) => {
+            let l = find_link(s.doc()?, &key).ok_or_else(|| bad(cmd, format!("no enabled library `{key}`")))?;
+            if !is_server_link(&l.path) {
+                return Err(bad(cmd, format!("\"{}\" is a library file, not a team library: only a server knows which files use it", l.name)));
+            }
+            l.path.clone()
+        }
+        None => s.server_link().ok_or_else(|| bad(cmd, "name an enabled team library, or open this file from its server"))?,
+    };
+    let lib = s.load_library(&link)?;
+    let files = match s.library_request(&link, LibraryReq::Usage)? {
+        LibraryReply::Usage(f) => f,
+        other => return Err(unexpected(&other)),
+    };
+    let m = &lib.manifest;
+    // Component → (instances, files using it).
+    let mut per: std::collections::BTreeMap<NodeId, (u64, u64)> = std::collections::BTreeMap::new();
+    let mut rows = Vec::new();
+    for f in &files {
+        let mut n = 0u64;
+        for (c, k) in &f.usage.components {
+            let e = per.entry(*c).or_default();
+            e.0 += u64::from(*k);
+            e.1 += 1;
+            n += u64::from(*k);
+        }
+        rows.push(json!({"name": f.usage.file, "updated": f.updated, "instances": n}));
+    }
+    let mut comps: Vec<(NodeId, u64, u64)> = per.into_iter().map(|(c, (n, f))| (c, n, f)).collect();
+    comps.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let components: Vec<Value> =
+        comps.iter().map(|(c, n, f)| json!({"id": c, "name": m.component(*c).map(|a| a.name.clone()), "instances": n, "files": f})).collect();
+    Ok(json!({
+        "id": m.id,
+        "name": m.name,
+        "instances": comps.iter().map(|c| c.1).sum::<u64>(),
+        "files": rows,
+        "components": components,
+    }))
+}
+
+fn swap_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "library.swap";
+    let from = req_string(cmd, p, "from")?;
+    let from = find_link(s.doc()?, &from).map(|l| l.id.clone()).ok_or_else(|| bad(cmd, format!("no enabled library `{from}`")))?;
+    let to = req_string(cmd, p, "to")?;
+    let (link, lib) = library(s, cmd, &json!({"library": to}))?;
+    if link.id == from {
+        return Err(bad(cmd, "`from` and `to` are the same library"));
+    }
+    let r = crate::library_swap::swap_library(s.doc_mut()?, &from, &lib)?;
+    Ok(json!({"components": r.components, "styles": r.styles, "variables": r.variables, "unmatched": r.unmatched, "removed": r.removed}))
 }
 
 fn assets_json(lib: &PublishedLibrary) -> Value {
@@ -316,8 +473,8 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let links = s.doc()?.libraries.enabled.clone();
     let mut out = Vec::new();
     for l in links {
-        let mut e = json!({"id": l.id, "name": l.name, "path": l.path, "seenVersion": l.version});
-        match s.libraries.load(&l.path) {
+        let mut e = json!({"id": l.id, "name": l.name, "path": l.path, "server": is_server_link(&l.path), "seenVersion": l.version});
+        match s.fetch_library(&l.path, true) {
             Ok(lib) if lib.manifest.id == l.id => {
                 e["version"] = json!(lib.manifest.version);
                 e["description"] = json!(lib.manifest.description);
@@ -344,7 +501,7 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
     });
     let mut res = json!({"libraries": out, "published": published});
     if with_assets {
-        let (def, all) = (default_selection(doc), publishable(doc));
+        let (def, all) = (default_selection(doc, doc.published.as_ref().map(|l| &l.manifest)), publishable(doc));
         res["publishable"] = json!({
             "components": all.components.iter().filter_map(|c| doc.node(*c).map(|n| json!({"id": c, "name": n.name, "selected": def.components.contains(c)}))).collect::<Vec<_>>(),
             "styles": all.styles.iter().filter_map(|x| doc.style(x).map(|st| json!({"id": st.id, "name": st.name, "selected": def.styles.contains(x)}))).collect::<Vec<_>>(),
@@ -356,8 +513,9 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "library.add";
-    let path = absolute_path(req_string(cmd, p, "path")?.trim());
-    let lib = s.libraries.load(&path)?;
+    let raw = req_string(cmd, p, "path")?;
+    let path = if is_server_link(&raw) { raw.trim().to_string() } else { absolute_path(raw.trim()) };
+    let lib = s.load_library(&path)?;
     let m = &lib.manifest;
     let doc = s.doc()?;
     if doc.published.as_ref().is_some_and(|me| me.manifest.id == m.id) {
@@ -397,7 +555,7 @@ fn updates(s: &mut Session, _p: &Value) -> Result<Value> {
     let links = s.doc()?.libraries.enabled.clone();
     let (mut out, mut errors, mut count) = (Vec::new(), Vec::new(), 0);
     for l in links {
-        let lib = match s.libraries.load(&l.path) {
+        let lib = match s.fetch_library(&l.path, true) {
             Ok(lib) if lib.manifest.id == l.id => lib,
             Ok(_) => {
                 errors.push(json!({"id": l.id, "name": l.name, "error": "the file now holds another library"}));

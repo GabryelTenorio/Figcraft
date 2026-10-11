@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use figcraft_color::{BlendMode, Gradient, GradientKind, ImagePaint, ImageScaleMode, Paint, PaintKind};
+use figcraft_color::{BlendMode, Gradient, GradientKind, ImagePaint, ImageScaleMode, Paint, PaintKind, PatternPaint};
 use figcraft_doc::{Document, EffectKind, MaskType as DocMaskType, Node, NodeId, NodeKind, StrokeAlign};
 use figcraft_geom::{Affine, BezPath, Rect, Shape};
 
@@ -417,6 +417,11 @@ impl<'a> Exporter<'a> {
         s.push_transform(&to_xf(xf));
         match &p.kind {
             PaintKind::Image(img) => self.image_fill(s, &kp, r, img, p.opacity.clamp(0.0, 1.0), w, h),
+            PaintKind::Pattern(pt) => {
+                if !self.pattern_fill(s, &kp, r, pt, p.opacity.clamp(0.0, 1.0), w, h) {
+                    self.raster_paint(s, path, &kp, r, p, w, h, xf);
+                }
+            }
             PaintKind::Gradient(g) if !matches!(g.kind, GradientKind::Linear | GradientKind::Radial) => {
                 self.raster_paint(s, path, &kp, r, p, w, h, xf)
             }
@@ -498,8 +503,46 @@ impl<'a> Exporter<'a> {
         }
     }
 
-    /// Angular and diamond gradients: an image of the paint over the path's bounds, clipped to
-    /// it. The surface is in the node's local space; `xf` (local → page) sets the resolution.
+    /// A pattern fill as a PDF tiling pattern of the source's vectors; false (draw it as an image
+    /// instead) when the source has effects, which the PDF draws as page-placed images.
+    #[allow(clippy::too_many_arguments)]
+    fn pattern_fill(&mut self, s: &mut Surface, kp: &Path, r: FillRule, pt: &PatternPaint, op: f32, w: f64, h: f64) -> bool {
+        let doc = self.doc;
+        let Some(src) = doc.node(NodeId(pt.source)).filter(|n| !n.is_page()) else { return true };
+        if doc.subtree(src.id).iter().filter_map(|i| doc.node(*i)).any(|n| n.effects.iter().any(|e| e.visible)) {
+            return false;
+        }
+        let Some(cell) = pt.cell(src.width, src.height, w, h) else { return true };
+        let unrotated = src.transform.inverse();
+        let stream = {
+            let mut sb = s.stream_builder();
+            let mut ps = sb.surface();
+            // Links and backdrops belong to the page, not to a tile.
+            self.masking += 1;
+            let _ = figcraft_render::pattern::nested(|| {
+                for (tx, ty) in &cell.tiles {
+                    self.node(&mut ps, src.id, Affine::translate((*tx, *ty)) * Affine::scale(cell.scale) * unrotated, 0, false);
+                }
+                Some(())
+            });
+            self.masking -= 1;
+            ps.finish();
+            sb.finish()
+        };
+        if op < 1.0 {
+            s.push_opacity(norm(op));
+        }
+        let pattern = Pattern { stream, transform: to_xf(Affine::translate(cell.origin)), width: cell.size.0 as f32, height: cell.size.1 as f32 };
+        s.set_fill(Some(Fill { paint: pattern.into(), opacity: NormalizedF32::ONE, rule: r }));
+        s.draw_path(kp);
+        if op < 1.0 {
+            s.pop();
+        }
+        true
+    }
+
+    /// Angular and diamond gradients, and patterns of sources with effects: an image of the paint
+    /// over the path's bounds, clipped to it. The surface is in the node's local space; `xf` (local → page) sets the resolution.
     #[allow(clippy::too_many_arguments)]
     fn raster_paint(&mut self, s: &mut Surface, path: &BezPath, kp: &Path, r: FillRule, p: &Paint, w: f64, h: f64, xf: Affine) {
         let bb = path.bounding_box();
@@ -513,7 +556,7 @@ impl<'a> Exporter<'a> {
             k *= MAX_RASTER_SIDE / side;
         }
         let (pw, ph) = ((bb.width() * k).ceil().max(1.0) as u32, (bb.height() * k).ceil().max(1.0) as u32);
-        let Some(prep) = figcraft_render::paint::prepare(p, w, h, self.doc) else { return };
+        let Some(prep) = figcraft_render::paint::prepare(p, w, h, k, self.doc) else { return };
         let Some(mut pix) = tiny_skia::Pixmap::new(pw, ph) else { return };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: false, ..Default::default() };
         let Some(rect) = tiny_skia::Rect::from_xywh(bb.x0 as f32, bb.y0 as f32, bb.width() as f32, bb.height() as f32) else { return };
