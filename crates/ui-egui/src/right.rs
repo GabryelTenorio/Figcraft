@@ -2160,6 +2160,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     widgets::section_header(ui, &name, &[], false);
     crate::dev_mode::status(app, ui, &doc, &sel);
     crate::dev_mode::annotations_section(app, ui, &doc, first);
+    crate::dev_mode::dev_resources_section(app, ui, &doc, first);
     use figcraft_engine::devinspect::ColorFormat;
     let fmt_id = Id::new("inspect_color_format");
     let fmt = ui.data(|d| d.get_temp::<usize>(fmt_id)).and_then(|i| ColorFormat::ALL.get(i).copied()).unwrap_or_default();

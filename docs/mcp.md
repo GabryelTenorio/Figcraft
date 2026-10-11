@@ -921,6 +921,17 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
   Connect to code section edits them in the Code section's language, with a live preview and a
   Connected badge. An editor extension isn't needed: agents and editors read the same snippets
   through this server. Plugins whose manifest asks only for `read` also run from the Inspect tab.
+- **Dev resources:** links for developers (docs, code, tickets) on any layer, each a URL and a
+  name. `devResource.add {id?, url, name?}` → `{id, index}` (no name: the URL without its scheme,
+  `www.` and a trailing slash; no page title is looked up), `devResource.edit {id?, index, url?,
+  name?}`, `devResource.remove {id?, index?}` (no index: all of the layer's own), all undoable, and
+  `devResource.list {id?}` → `[{name, url, index? (its own), from? (the layer it comes from)}]`: an
+  instance lists its own, then its main component's and that component's set's (read-only); a
+  layer inside an instance shows its main layer's and takes none of its own. URLs must be `http://`
+  or `https://` with a host, without spaces or control characters, at most 2,048 characters; names
+  are clipped to 200 characters; a layer holds at most 32 links. Links are data: never fetched or
+  opened by the engine (the app opens one when it is clicked). `get_node` and `inspect_document`
+  list them as `devResources`; the Inspect tab lists, adds, edits and removes them.
 - **Annotations:** notes for developers on any layer, each with optional pinned properties that
   Dev Mode shows with their current values (and the style or variable behind them).
   `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,

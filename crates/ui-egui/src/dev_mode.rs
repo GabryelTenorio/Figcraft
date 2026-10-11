@@ -2,8 +2,8 @@
 //! drawn as callouts in their category's colour on the canvas and edited in the panel, the
 //! categories and the filter of the callouts, the handoff status of the selected frames (with the
 //! focus view and Compare changes), the list of frames and sections that are ready for dev, the
-//! focus view's bar, Connect to code (a component's link to its code component) and the plugins
-//! that only read the document.
+//! focus view's bar, Connect to code (a component's link to its code component), dev resources
+//! (links for developers) and the plugins that only read the document.
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::{Annotation, AnnotationCategory, CodeLink, DevStatus, Document, NodeId};
@@ -12,6 +12,7 @@ use figcraft_engine::code_connect;
 use figcraft_engine::codegen::{CodeLang, code_for};
 use figcraft_engine::devinspect::{self, DevItem, Prop};
 use figcraft_engine::plugins::Access;
+use figcraft_engine::{components, dev_resources};
 use serde_json::json;
 
 use crate::a11y::Tip;
@@ -464,6 +465,102 @@ pub fn annotations_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: No
     {
         app.run("annotation.add", json!({"id": id, "label": label}));
     }
+    ui.add_space(4.0);
+}
+
+/// The selected layer's dev resources: links for developers, opened in the browser when clicked.
+/// Its own can be renamed, changed and removed; a main component's (and its set's) show on its
+/// instances, read-only, with where they come from.
+pub fn dev_resources_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId) {
+    let t = Tokens::get(ui.ctx());
+    let Some(n) = doc.node(id).filter(|n| !n.is_page()) else { return };
+    let list = dev_resources::list(doc, id);
+    let can_add = !components::inside_instance(doc, id) && n.dev_resources.len() < dev_resources::MAX_PER_LAYER;
+    let (adding_id, editing_id) = (Id::new(("devres_adding", id)), Id::new(("devres_editing", id)));
+    let mut adding = can_add && ui.data(|d| d.get_temp::<bool>(adding_id)).unwrap_or(false);
+    let mut editing = ui.data(|d| d.get_temp::<usize>(editing_id)).filter(|i| *i < n.dev_resources.len());
+    widgets::separator(ui);
+    let buttons: &[(Icon, &str)] = if can_add { &[(Icon::Plus, tr("Add dev resource"))] } else { &[] };
+    if widgets::section_header(ui, tr("Dev resources"), buttons, list.is_empty() && !adding).is_some() {
+        adding = !adding;
+    }
+    for item in &list {
+        let (name, url) = (&item.resource.name, &item.resource.url);
+        if let Some(i) = item.index.filter(|i| editing == Some(*i)) {
+            widgets::sublabels(ui, tr("Name"), Some(tr("Link")));
+            let col = widgets::col_width(ui.available_width());
+            let mut edit = None;
+            row(ui, 32.0, |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if let Some(v) = widgets::text_field(ui, Id::new(("devres_name", id, i)), name, col, tr("Name")) {
+                    edit = Some(json!({"id": id, "index": i, "name": v}));
+                }
+                if let Some(v) = widgets::text_field(ui, Id::new(("devres_url", id, i)), url, col, "https://…") {
+                    edit = Some(json!({"id": id, "index": i, "url": v}));
+                }
+                if widgets::icon_button(ui, Icon::Check, tr("Done")) {
+                    editing = None;
+                }
+            });
+            if let Some(p) = edit {
+                app.run("devResource.edit", p);
+            }
+            continue;
+        }
+        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+        let buttons_w = if item.index.is_some() { 52.0 } else { 0.0 };
+        let text_w = r.width() - PAD * 2.0 - 22.0 - buttons_w;
+        let hovered = resp.hovered();
+        if hovered {
+            ui.painter().rect_filled(r.shrink2(vec2(PAD / 2.0, 1.0)), CornerRadius::same(4), t.hover);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + PAD + 7.0, r.center().y), vec2(14.0, 14.0)), Icon::Link, t.icon_secondary);
+        let x = r.min.x + PAD + 22.0;
+        ui.painter().text(pos2(x, r.center().y - 7.0), Align2::LEFT_CENTER, widgets::elide(ui, name, text_w), semibold(11.0), ACCENT);
+        let below = match item.from.and_then(|f| doc.node(f)) {
+            Some(m) => trf("From {name}", &[("name", &m.name)]),
+            None => url.clone(),
+        };
+        ui.painter().text(pos2(x, r.center().y + 7.0), Align2::LEFT_CENTER, widgets::elide(ui, &below, text_w), regular(10.0), t.text_secondary);
+        crate::a11y::link(&resp, name);
+        // Opened only on a click, never fetched.
+        if resp.on_hover_text(url.as_str()).clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+        }
+        if let Some(i) = item.index {
+            let del = Rect::from_center_size(pos2(r.max.x - PAD - 4.0, r.center().y), vec2(22.0, 22.0));
+            let pen = del.translate(vec2(-26.0, 0.0));
+            if widgets::icon_button_at(ui, Id::new(("devres_edit", id, i)), pen, Icon::Pencil, tr("Edit dev resource")) {
+                editing = Some(i);
+            }
+            if widgets::icon_button_at(ui, Id::new(("devres_del", id, i)), del, Icon::Minus, tr("Remove dev resource")) {
+                app.run("devResource.remove", json!({"id": id, "index": i}));
+                editing = None;
+            }
+        }
+    }
+    if adding {
+        let w = ui.available_width() - PAD * 2.0;
+        let mut added = None;
+        row(ui, 32.0, |ui| added = widgets::text_field(ui, Id::new(("devres_new", id)), "", w, tr("Paste a link (https://…)")));
+        if let Some(url) = added.filter(|u| !u.trim().is_empty())
+            && app.run("devResource.add", json!({"id": id, "url": url})).is_some()
+        {
+            adding = false;
+        }
+    } else if list.is_empty() && can_add {
+        widgets::note(ui, tr("Link docs, code or tickets for developers."), t.text_secondary);
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(adding_id, adding);
+        match editing {
+            Some(i) => {
+                d.insert_temp(editing_id, i);
+            }
+            None => d.remove::<usize>(editing_id),
+        }
+    });
     ui.add_space(4.0);
 }
 

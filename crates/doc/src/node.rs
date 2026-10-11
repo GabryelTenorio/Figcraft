@@ -229,6 +229,14 @@ pub struct CodeLink {
     pub template: String,
 }
 
+/// A dev resource: a link for developers attached to a layer. The URL is data only: it is shown
+/// and opened when someone clicks it, never fetched.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevResource {
+    pub url: String,
+    pub name: String,
+}
+
 /// A kind of annotation (Development, Accessibility…): its stable id, name and the colour its
 /// callouts are drawn in.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -507,6 +515,9 @@ pub struct Node {
     /// language.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_links: Vec<CodeLink>,
+    /// Dev resources: links for developers (docs, code, tickets…), in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dev_resources: Vec<DevResource>,
 }
 
 pub(crate) fn yes() -> bool {
@@ -616,6 +627,7 @@ impl Node {
             plugin_data: BTreeMap::new(),
             annotations: Vec::new(),
             code_links: Vec::new(),
+            dev_resources: Vec::new(),
         }
     }
 

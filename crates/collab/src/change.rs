@@ -179,6 +179,7 @@ node_props! {
     PluginData => plugin_data,
     Annotations => annotations,
     CodeLinks => code_links,
+    DevResources => dev_resources,
 }
 
 /// A document-level property. Lists of entries with ids (styles, comments, variable collections,

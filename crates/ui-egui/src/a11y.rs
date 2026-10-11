@@ -814,6 +814,11 @@ pub fn button(resp: &Response, tip: &str) {
     });
 }
 
+/// A link, named by its text.
+pub fn link(resp: &Response, label: &str) {
+    node(resp, label, |n| n.set_role(Role::Link));
+}
+
 /// A button opening a menu or flyout, `expanded` while it is open.
 pub fn menu_button(resp: &Response, label: &str, expanded: bool) {
     node(resp, label, |n| {

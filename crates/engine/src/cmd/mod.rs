@@ -95,6 +95,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::component_codegen::specs());
         list.extend(crate::code_connect::specs());
         list.extend(crate::annotations::specs());
+        list.extend(crate::dev_resources::specs());
         list.extend(crate::distance::specs());
         list.extend(crate::collab::specs());
         list.extend(crate::branches::specs());

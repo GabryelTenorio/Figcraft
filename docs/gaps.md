@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -29,7 +29,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 13 | Vector tail: none left (boolean hit testing on the result landed 2026-10-11) | Feature | — | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections checked on real libraries (the tail landed 2026-10-12) | Feature | 0–1 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions, gamepad | Feature | 3–6 | [prototyping-parity](prototyping-parity.md) |
-| 16 | Dev Mode: dev resources links, editor extension (code connect and Dev Mode plugins landed) | Feature | 1–3 | [dev-mode-parity](dev-mode-parity.md) |
+| 16 | Dev Mode: import lines inside generated layer trees; the editor extension is left to the MCP server (code connect, Dev Mode plugins and dev resources landed) | Feature | 0–1 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching: branches in live sessions, lists other than fills, strokes and effects merged whole (a branch's own version history and per-item list merges landed 2026-10-12) | Feature | 1–2 | [collaboration-parity](collaboration-parity.md) |
 | 18 | Display P3 on screen: blocked upstream (egui-wgpu picks an 8-bit sRGB surface); gamut warning and soft-proof sRGB landed, as did several windows | Hardware | 4–8 | [hardware-parity](hardware-parity.md) |
 | 19 | AI features | AI | 30–60 | [target-app-parity](target-app-parity.md) |
@@ -224,7 +224,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   The REST importer warns and skips them (`crates/format/src/rest/proto.rs`).
 - **Estimate:** 3–6 h after video fills (gap 12).
 
-### 16. Dev Mode: dev resources links, editor extension
+### 16. Dev Mode: the tail after dev resources
 - **Landed (2026-10-11):** code connect: a component or set links to its code component per
   language (React, SwiftUI, Compose): an import path, the name and a template whose `{property}`
   and `{property ? "a" : "b"}` placeholders take the instance's values, escaped per language and
@@ -234,11 +234,18 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   as `figcraft.connect.json` (`codeConnect.export` / `codeConnect.import`, validated and capped)
   so code owners can version them. Plugins whose manifest asks only to read run from the Inspect
   tab.
-- **Missing:** dev resources links on layers; import lines for connected instances inside a
+- **Landed (2026-10-12):** dev resources: links for developers (a URL and a name) on any layer
+  (`devResource.add` / `edit` / `remove` / `list`, undoable, saved and synced). An instance also
+  lists its main component's links (and its set's) read-only with where they come from; layers
+  inside an instance show their main layer's. URLs are checked as web links (http or https, a
+  host, no spaces, capped) and never fetched: a link added without a name is named after its URL,
+  and a link opens only when clicked. The Inspect tab lists, adds, edits and removes them;
+  `get_node` / `inspect_document` return them as `devResources`.
+- **Missing:** import lines for connected instances inside a
   generated layer tree (only the selected layer's own import is shown); publishing mappings from
   the code repository with a CLI. An editor extension is out of scope: the MCP server already
   serves design data, code and the connected snippets to agents and editors.
-- **Estimate:** 1–3 h.
+- **Estimate:** 0–1 h.
 
 ### 17. Branching and merging
 - **Landed (2026-10-11):** branches of a file (`branch.*`): File ▸ Create branch… (or the Branches
@@ -307,6 +314,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Dev resources (gap 16): links for developers (a URL and a name) on any layer: `devResource.add` / `edit` / `remove` / `list`, undoable, saved and synced; an instance also lists its main component's (and that component's set's) links read-only with where they come from, and layers inside an instance show their main layer's; URLs are checked as web links (http or https, a host, no spaces, at most 2,048 characters) and never fetched (a link added without a name is named after its URL), opened only when clicked; the Inspect tab lists, adds, edits and removes them; `get_node` and `inspect_document` return them as `devResources`. The editor extension stays out of scope (the MCP server serves agents and editors). Dev Mode breadth 93% → 96%, ready 70% → 72%, 1–3 h → 0–1 h; feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~304–593 h → ~303–591 h |
 | 2026-10-12 | minor | Extended collections' tail (gap 14): variables a library adds to a collection this file extends now count as a library update of their own (listed by name without a copy yet) and arrive inheriting when accepted, instead of waiting for the library's next other update; a library collection that is itself an extended collection can be extended again, values flowing down the chain as each file accepts updates with every level's overrides kept (checked end to end). Styles & variables breadth 94% → 95%, ready unchanged (76%), 3–5 h → 2–4 h; gap 14 1–2 h → 0–1 h (real-library checks left); feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~305–594 h → ~304–593 h |
 | 2026-10-12 | minor | A branch's own version history and finer list merges (gap 17): versions saved or autosaved on a branch tab go into the branch (viewed, restored, renamed, deleted and duplicated there, saved in the file with it); merging adds a version to the main file's history and the merged or archived branch keeps its own; fills, strokes and effects merge item by item, conflicting only when the same item changed both ways, an item was removed on one side or both sides added different items. Comments, versions, find, misc breadth 85% → 87%, ready 60% → 61%, 2–5 h → 1–4 h; gap 17 1–3 h → 1–2 h; feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~306–595 h → ~305–594 h |
 | 2026-10-12 | minor | Comments and version history behaviour suite and fixes added to gap 4's landed list (gap 17 unchanged: a branch's own version history is still left); ranking and hours unchanged |

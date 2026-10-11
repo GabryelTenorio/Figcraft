@@ -280,6 +280,8 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.prop_refs.clear();
     root.annotations.clear();
     root.code_links.clear();
+    // The main's dev resources show on its instances without being copied.
+    root.dev_resources.clear();
     // The main's interactions play on its instances in prototypes; the instance's own start empty.
     root.interactions.clear();
     doc.insert(root, parent, index)?;
@@ -728,6 +730,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     fresh.annotations = root.annotations.clone();
     // Code links belong to the main component; instances read them from it.
     fresh.code_links.clear();
+    // An instance's own dev resources (its main's are listed with them, not copied).
+    fresh.dev_resources = root.dev_resources.clone();
     fresh.locked = root.locked;
     fresh.visible = root.visible;
     fresh.var_modes = root.var_modes.clone();

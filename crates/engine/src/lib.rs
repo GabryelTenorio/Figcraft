@@ -19,6 +19,7 @@ pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
 pub mod components;
+pub mod dev_resources;
 pub mod devcompare;
 pub mod devinspect;
 pub mod distance;
@@ -1272,6 +1273,8 @@ mod component_codegen_tests;
 mod components_behaviour_tests;
 #[cfg(test)]
 mod components_scale_tests;
+#[cfg(test)]
+mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;
 #[cfg(test)]
