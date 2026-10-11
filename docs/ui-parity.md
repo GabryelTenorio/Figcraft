@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (layers and assets panels behaviour suite and fixes; vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -26,6 +26,20 @@ interaction feel not yet compared.
 | Several windows | partial | File ▸ New window, Open in new window on a tab, a tab dragged off the strip; screen-reader tree in the main window only; positions not restored |
 | Multiplayer avatars, Share button | missing | waits for multiplayer |
 | Blend mode menus: the layer's (Design panel) and each paint's (colour picker) | done | Pass through and Normal are distinct (Normal isolates a group's or frame's children); paints have no pass-through; plus darker drawn exactly on the canvas |
+
+## Layers and Assets panels
+
+| Item | Status | Notes |
+|---|---|---|
+| Rows: click, Shift-click range, Cmd/Ctrl-click toggle; the selection follows on the canvas and a canvas selection is revealed | done | `layers_behaviour_tests` |
+| Expand and collapse: Alt-click opens or closes everything inside; Collapse layers (Alt+L) keeps the way to the selection open | done | Alt-click pinned (the documentation is silent) |
+| Drag to reorder and into frames, groups and auto layout: insertion line, spring-loaded open, several layers together, Escape cancels | done | several layers dropped together land together (they split apart before); instances and a layer's own children refuse drops |
+| Eye and padlock: click, or drag across rows to set several in one step; layers in a locked frame show a faint padlock | done | the toggles no longer vanish under the pointer (clicks on them could miss) |
+| Rename: double click, F2 / Cmd+R, Tab to the next row; several layers open Rename layers (match, regular expressions, current name and number codes, start value, preview) | done | numbered in stacking order, pinned |
+| Find layers (filter by name) | done | not covered by the documentation |
+| Pages: add, rename, drag to reorder, duplicate ("Copy of"), delete, dividers (a blank page named with a hyphen) | done | |
+| Assets panel: folders from page, frames and slash names (fold away), search, thumbnails, drag onto the canvas or into frames and auto layout, Alt-drop swap, enabled libraries | done | |
+| Hide when publishing from the Assets panel's context menu | missing | a leading `.` or `_` in the name only |
 
 ## Selection and transform
 
@@ -104,6 +118,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Layers and Assets panels behaviour suite and fixes: several layers dropped together land together, Collapse layers keeps the selection's rows open, dragging across eyes or padlocks sets several layers in one step, the toggles stay under the pointer, Rename layers dialog for several layers, pages dragged to reorder, dividers, "Copy of" duplicates, Assets folders by page, frame and slash names |
 | 2026-10-12 | minor | Vector multi-edit and the vector edit tail, with a behaviour suite written from the public documentation (5 tests, about 30 table rows and steps, and a junk-parameter sweep of every vector command in multi-edit mode): several vector layers are edited at once (Enter, double-click or `vector.edit.begin {ids}`; a press on another layer's point, handle or segment makes it the active layer; Shift-click, marquee and lasso select across layers; dragging, the arrows, Delete, delete and heal, mirroring, smoothing, corner radius and point caps and joins reach every layer's selected points in one undo step; the pen, bend, paint bucket, cut and eraser work in the active layer); several Bezier handles are selected with Shift-click and dragged together (`vector.edit.moveHandles`); a sharp point next to a curved segment rounds (the curve is cut where the arc meets it and keeps its shape); a point can have its own stroke cap and join (`vector.edit.strokeCap`, `vector.edit.strokeJoin`, the Point section of the Design panel; canvas, PNG, SVG and PDF, outline stroke); the Pen outside edit mode connects to one of its own points and ends the path, and continues a selected open path from an end point. Left: corner smoothing beyond rectangles, the transform box around points of several layers, per-point caps and joins on dashed, variable-width and brush strokes |
 | 2026-10-11 | minor | Canvas navigation, rulers, guides, layout grids, outline mode and measuring behaviour suite and fixes: the pixel grid shows from 400% (it waited for 800%); guides belong to the page or a top-level frame; a guide can be selected, deleted, nudged and removed from the context menu, Alt-dragged into a copy, and measured from with Alt while dragging; Auto column and row counts; layout grids hidden on rotated frames; outline mode clicks reach layers behind. Outline mode back to partial (two documented options missing) |
 | 2026-10-11 | minor | Shapes and vector behaviour suite and fixes: corner radius and star ratio handles on the canvas, Count and Ratio fields, Alt draws lines from the centre, paint bucket and cut drags, delete and heal along the curve, rounded vector points drawn, Shift-click deselects a point at a box corner, the miter field shows degrees, individual corners only for rectangles and frames |

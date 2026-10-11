@@ -203,7 +203,8 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
         return;
     }
     let Ok(ds) = app.session.ds() else { return };
-    let pages: Vec<(NodeId, String)> = ds.doc.pages.iter().filter_map(|p| ds.doc.node(*p).map(|n| (*p, n.name.clone()))).collect();
+    let pages: Vec<(NodeId, String, bool)> =
+        ds.doc.pages.iter().filter_map(|p| ds.doc.node(*p).map(|n| (*p, n.name.clone(), ds.doc.is_divider(*p)))).collect();
     let cur = ds.page;
     let sel = ds.selection.clone();
     let mut select = None;
@@ -212,16 +213,24 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
     let dragging: Option<NodeId> = ui.data(|d| d.get_temp(layer_drag_id()));
     let pointer = ui.input(|i| i.pointer.hover_pos());
     let mut move_to: Option<(NodeId, String)> = None;
-    for (id, name) in pages {
-        let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
-        a11y::list_item(&resp, &name, id == cur);
+    // Pages are dragged up and down the list to reorder them.
+    let mut reorder = crate::list_drag::ListDrag::in_order(ui, "pages");
+    for (k, (id, name, divider)) in pages.iter().cloned().enumerate() {
+        let (r, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click_and_drag());
+        reorder.row_by(&resp, k, r, || if divider { tr("Divider").to_string() } else { name.clone() });
+        a11y::list_item(&resp, if divider { tr("Divider") } else { &name }, id == cur);
         let r = r.shrink2(vec2(8.0, 0.0));
         a11y::ring_around(ui, r, &resp);
-        if resp.hovered() || id == cur {
+        let renaming = app.ui.rename_page.as_ref().is_some_and(|(i, _)| *i == id);
+        if divider && !renaming {
+            // A divider is a line between pages: it opens nothing and takes no layers.
+            ui.painter().line_segment([pos2(r.min.x + 10.0, r.center().y), pos2(r.max.x - 10.0, r.center().y)], Stroke::new(1.0, t.border));
+        } else if resp.hovered() || id == cur {
             ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
         }
         if dragging.is_some()
             && id != cur
+            && !divider
             // The gap between rows counts too.
             && pointer.is_some_and(|p| resp.interact_rect.expand2(vec2(0.0, 3.0)).contains(p))
         {
@@ -230,18 +239,18 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                 move_to = Some((id, name.clone()));
             }
         }
-        if app.ui.rename_page.as_ref().is_some_and(|(i, _)| *i == id) {
+        if renaming {
             let tr = Rect::from_min_max(pos2(r.min.x + 8.0, r.min.y + 4.0), pos2(r.max.x - 4.0, r.max.y - 4.0));
             if let Some(new) =
                 crate::widgets::text_field_inline(ui, Id::new(("pagename", id)), &name, tr, if id == cur { semibold(11.0) } else { regular(11.0) })
             {
                 rename_done = Some((id, new));
             }
-        } else {
+        } else if !divider {
             let font = if id == cur { semibold(11.0) } else { regular(11.0) };
             crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 10.0, r.center().y), &name, font, t.text, r.width() - 14.0);
         }
-        if resp.clicked() {
+        if resp.clicked() && !divider {
             select = Some(id);
         }
         if resp.double_clicked() {
@@ -262,6 +271,11 @@ fn pages(app: &mut FigApp, ui: &mut Ui) {
                 ui.close();
             }
         });
+    }
+    if let Some((from, to)) = reorder.finish(ui)
+        && let Some((id, ..)) = pages.get(from)
+    {
+        app.run("page.move", json!({"id": id, "index": to}));
     }
     if let Some((id, new)) = rename_done {
         app.ui.rename_page = None;
@@ -286,6 +300,20 @@ fn layer_drag_id() -> Id {
     Id::new("layer_drag")
 }
 
+/// A press on a row's eye or padlock dragged across other rows: every row passed gets the state the
+/// first one switched to, in one step on release (temp data).
+#[derive(Clone)]
+struct Sweep {
+    lock: bool,
+    /// Hidden for the eye, locked for the padlock.
+    on: bool,
+    ids: Vec<NodeId>,
+}
+
+fn sweep_id() -> Id {
+    Id::new("layer_toggle_sweep")
+}
+
 /// What a drag of row `dragging` moves: the selection when the row is in it, else the row.
 fn dragged_layers(dragging: Option<NodeId>, sel: &[NodeId]) -> Vec<NodeId> {
     match dragging {
@@ -302,6 +330,8 @@ pub(crate) struct Row {
     has_kids: bool,
     /// Not shown on the canvas because of an ancestor (hidden, or a section hiding its contents).
     dimmed: bool,
+    /// Locked because an ancestor is.
+    locked_above: bool,
 }
 
 /// The layer rows of the last frame and what they were built from, so a frame where neither the
@@ -340,7 +370,7 @@ pub(crate) fn rows_for(ui: &Ui, doc: &Arc<Document>, page: NodeId, expanded: &BT
 fn listed_rows(doc: &Document, page: NodeId, expanded: &BTreeSet<NodeId>, filter: &str) -> Vec<Row> {
     let mut rows = Vec::new();
     if filter.is_empty() {
-        collect(doc, page, 0, false, expanded, &mut rows);
+        collect(doc, page, 0, false, false, expanded, &mut rows);
     } else {
         matching(doc, page, filter, &mut rows);
     }
@@ -352,16 +382,17 @@ fn hides_children(n: &figcraft_doc::Node, dimmed: bool) -> bool {
     dimmed || !n.visible || n.hides_contents()
 }
 
-fn collect(doc: &Document, id: NodeId, depth: usize, dimmed: bool, expanded: &BTreeSet<NodeId>, out: &mut Vec<Row>) {
+fn collect(doc: &Document, id: NodeId, depth: usize, dimmed: bool, locked: bool, expanded: &BTreeSet<NodeId>, out: &mut Vec<Row>) {
     let Some(n) = doc.node(id) else { return };
     let dim_kids = !n.is_page() && hides_children(n, dimmed);
+    let lock_kids = locked || n.locked;
     // Layers panel lists top of the stack first.
     for c in n.children.iter().rev() {
         let Some(cn) = doc.node(*c) else { continue };
         let has_kids = !cn.children.is_empty() || matches!(cn.kind, NodeKind::BooleanOp { .. });
-        out.push(Row { id: *c, depth, has_kids, dimmed: dim_kids });
+        out.push(Row { id: *c, depth, has_kids, dimmed: dim_kids, locked_above: lock_kids });
         if expanded.contains(c) && depth < 64 {
-            collect(doc, *c, depth + 1, dim_kids, expanded, out);
+            collect(doc, *c, depth + 1, dim_kids, lock_kids, expanded, out);
         }
     }
 }
@@ -373,8 +404,9 @@ fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
         let Some(cn) = doc.node(*c) else { continue };
         let name = if cn.name.is_empty() { cn.kind.label() } else { cn.name.as_str() };
         if name.to_lowercase().contains(q) {
-            let dimmed = doc.ancestors(*c).iter().filter_map(|a| doc.node(*a)).any(|a| !a.is_page() && hides_children(a, false));
-            out.push(Row { id: *c, depth: 0, has_kids: false, dimmed });
+            let above: Vec<&figcraft_doc::Node> = doc.ancestors(*c).iter().filter_map(|a| doc.node(*a)).filter(|a| !a.is_page()).collect();
+            let dimmed = above.iter().any(|a| hides_children(a, false));
+            out.push(Row { id: *c, depth: 0, has_kids: false, dimmed, locked_above: above.iter().any(|a| a.locked) });
         }
         if out.len() < 5000 {
             matching(doc, *c, q, out);
@@ -468,6 +500,13 @@ pub(crate) fn start_rename(app: &mut FigApp, ids: &[NodeId]) {
     app.ui.left_tab = LeftTab::File;
     app.ui.left_collapsed = false;
     rename_layer(app, id);
+}
+
+/// Collapse layers: every row closes except those leading to the selection.
+pub(crate) fn collapse_all(app: &mut FigApp) {
+    app.ui.expanded.clear();
+    let Ok(ds) = app.session.ds() else { return };
+    app.ui.expanded.extend(ds.selection.iter().flat_map(|s| ds.doc.ancestors(*s)).filter(|a| *a != ds.page));
 }
 
 /// Rename `id` in its row, selected (the selection follows a rename that moves with Tab).
@@ -617,6 +656,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         ui.data_mut(|d| d.remove::<NodeId>(drag_id));
     }
     let dragging: Option<NodeId> = ui.data(|d| d.get_temp(drag_id));
+    let mut sweep: Option<Sweep> = ui.data(|d| d.get_temp(sweep_id()));
     let moving = dragged_layers(dragging, &sel);
     // A layer can't go into itself or its own descendants.
     let blocked = |id: NodeId| moving.contains(&id) || doc.ancestors(id).iter().any(|a| moving.contains(a));
@@ -684,11 +724,13 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             let is_comp = matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. });
             let rr = r.shrink2(vec2(8.0, 0.0));
             a11y::ring_around(ui, rr, &resp);
+            // Over the row, its eye and padlock included (they sit on top of it).
+            let over = resp.contains_pointer();
             if selected {
                 ui.painter().rect_filled(rr, CornerRadius::same(5), if is_comp { t.component_row } else { t.selected_row });
             } else if in_selected {
                 ui.painter().rect_filled(rr, CornerRadius::ZERO, t.selected_row_child);
-            } else if resp.hovered() || hover == Some(row.id) {
+            } else if over || hover == Some(row.id) {
                 ui.painter().rect_stroke(
                     rr,
                     CornerRadius::same(5),
@@ -696,7 +738,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     egui::StrokeKind::Inside,
                 );
             }
-            if resp.hovered() {
+            if over {
                 hovered_row = Some(row.id);
             }
             let x0 = row_x0(rr, row.depth);
@@ -750,25 +792,42 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 let max_w = (rr.max.x - 56.0 - name_x).max(20.0);
                 crate::bidi::paint_name(ui.painter(), pos2(name_x, r.center().y), &name, font, col, max_w);
             }
-            // Lock / eye on hover (or when set).
-            let show_lock = resp.hovered() || n.locked;
-            let show_eye = resp.hovered() || !n.visible;
+            // A sweep across the eyes or padlocks takes in the rows the pointer passes.
+            if let Some(sw) = sweep.as_mut()
+                && !sw.ids.contains(&row.id)
+                && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.y_range().contains(p.y))
+            {
+                sw.ids.push(row.id);
+            }
+            let swept = |lock: bool| sweep.as_ref().filter(|sw| sw.lock == lock && sw.ids.contains(&row.id)).map(|sw| sw.on);
+            // Lock / eye on hover (or when set); a layer in a locked one shows a faint padlock.
+            let hidden = swept(false).unwrap_or(!n.visible);
+            let locked = swept(true).unwrap_or(n.locked);
+            let show_lock = over || locked || row.locked_above;
+            let show_eye = over || hidden;
             let er = Rect::from_center_size(pos2(rr.max.x - 14.0, r.center().y), vec2(20.0, 20.0));
             let lr = Rect::from_center_size(pos2(rr.max.x - 36.0, r.center().y), vec2(20.0, 20.0));
             if show_eye {
-                let eresp = ui.interact(er, ui.id().with(("eye", row.id)), Sense::click());
-                a11y::toggle(&eresp, tr("Hidden"), !n.visible);
-                icons::paint(ui.painter(), er.shrink(3.0), if n.visible { Icon::Eye } else { Icon::EyeOff }, t.icon_secondary);
+                let eresp = ui.interact(er, ui.id().with(("eye", row.id)), Sense::click_and_drag());
+                a11y::toggle(&eresp, tr("Hidden"), hidden);
+                icons::paint(ui.painter(), er.shrink(3.0), if hidden { Icon::EyeOff } else { Icon::Eye }, t.icon_secondary);
                 if eresp.clicked() {
                     vis = Some(row.id);
                 }
+                if eresp.drag_started() {
+                    sweep = Some(Sweep { lock: false, on: n.visible, ids: vec![row.id] });
+                }
             }
             if show_lock {
-                let lresp = ui.interact(lr, ui.id().with(("lock", row.id)), Sense::click());
-                a11y::toggle(&lresp, tr("Locked"), n.locked);
-                icons::paint(ui.painter(), lr.shrink(3.0), if n.locked { Icon::Lock } else { Icon::Unlock }, t.icon_secondary);
+                let lresp = ui.interact(lr, ui.id().with(("lock", row.id)), Sense::click_and_drag());
+                a11y::toggle(&lresp, tr("Locked"), locked || row.locked_above);
+                let col = if locked || !row.locked_above { t.icon_secondary } else { t.text_tertiary };
+                icons::paint(ui.painter(), lr.shrink(3.0), if locked || row.locked_above { Icon::Lock } else { Icon::Unlock }, col);
                 if lresp.clicked() {
                     lock = Some(row.id);
+                }
+                if lresp.drag_started() {
+                    sweep = Some(Sweep { lock: true, on: !n.locked, ids: vec![row.id] });
                 }
             }
             if resp.clicked() {
@@ -858,6 +917,19 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         };
         let galley = crate::bidi::name_galley(ui.painter(), &label, regular(11.0), t.text, 240.0);
         crate::widgets::drag_ghost(ui.ctx(), p, galley);
+    }
+    if let Some(sw) = sweep {
+        let (released, down) = ui.input(|i| (i.pointer.any_released(), i.pointer.primary_down()));
+        if released {
+            let (cmd, key) = if sw.lock { ("object.toggleLock", "locked") } else { ("object.toggleVisible", "visible") };
+            app.run(cmd, json!({"ids": sw.ids, key: if sw.lock { sw.on } else { !sw.on }}));
+        }
+        // A sweep whose release the panel never saw (it wasn't shown) is dropped.
+        if released || !down {
+            ui.data_mut(|d| d.remove::<Sweep>(sweep_id()));
+        } else {
+            ui.data_mut(|d| d.insert_temp(sweep_id(), sw));
+        }
     }
     if ui.input(|i| i.pointer.any_released()) {
         ui.data_mut(|d| {

@@ -7,12 +7,31 @@ use super::{CommandSpec, ok};
 use crate::params::*;
 use crate::{Session, bad, spec};
 
+/// After a page edit: the file keeps a page that isn't a divider, and the canvas shows one (the
+/// first) when its page was deleted or became a divider.
+fn settle(s: &mut Session, cmd: &str) -> crate::Result<()> {
+    let doc = s.doc()?;
+    let Some(open) = doc.first_open_page() else { return Err(bad(cmd, "a file needs a page that isn't a divider")) };
+    let page = s.page()?;
+    if !doc.pages.contains(&page) || doc.is_divider(page) {
+        let ds = s.ds_mut()?;
+        ds.page = open;
+        ds.selection.clear();
+        ds.text_edit = None;
+        ds.zoom_to_fit();
+    }
+    Ok(())
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        spec!("page.add", "Add page", "{name?}", true, |s, p| {
+        spec!("page.add", "Add page", "{name?} (a name starting with a hyphen adds a divider)", true, |s, p| {
             let doc = s.doc_mut()?;
             let name = string(p, "name").unwrap_or_else(|| format!("Page {}", doc.pages.len() + 1));
             let id = doc.add_page(&name);
+            if doc.is_divider(id) {
+                return Ok(json!({"id": id, "divider": true}));
+            }
             let ds = s.ds_mut()?;
             ds.page = id;
             ds.selection.clear();
@@ -31,6 +50,9 @@ pub fn specs() -> Vec<CommandSpec> {
             if !doc.pages.contains(&id) {
                 return Err(bad("page.select", format!("{id} is not a page")));
             }
+            if doc.is_divider(id) {
+                return Err(bad("page.select", "a divider isn't a page to open"));
+            }
             let ds = s.ds_mut()?;
             ds.page = id;
             ds.selection.clear();
@@ -38,30 +60,23 @@ pub fn specs() -> Vec<CommandSpec> {
             ds.zoom_to_fit();
             ok()
         }),
-        spec!("page.rename", "Rename page", "{id?, name}", true, |s, p| {
+        spec!("page.rename", "Rename page", "{id?, name} (an empty page named with a leading hyphen becomes a divider)", true, |s, p| {
             let name = req_string("page.rename", p, "name")?;
             let id = id(p, "id").unwrap_or(s.page()?);
             s.doc_mut()?.get_mut(id)?.name = name;
+            settle(s, "page.rename")?;
             ok()
         }),
         spec!("page.delete", "Delete page", "{id?}", true, |s, p| {
             let id = id(p, "id").unwrap_or(s.page()?);
-            let doc = s.doc_mut()?;
-            doc.remove(id)?;
-            let first = doc.first_page();
-            let ds = s.ds_mut()?;
-            if ds.page == id
-                && let Some(f) = first
-            {
-                ds.page = f;
-                ds.selection.clear();
-            }
+            s.doc_mut()?.remove(id)?;
+            settle(s, "page.delete")?;
             ok()
         }),
         spec!("page.duplicate", "Duplicate page", "{id?}", true, |s, p| {
             let src = id(p, "id").unwrap_or(s.page()?);
             let doc = s.doc_mut()?;
-            let name = format!("{} (Copy)", doc.get(src)?.name);
+            let name = format!("Copy of {}", doc.get(src)?.name);
             let np = doc.add_page(&name);
             if let NodeKind::Page { background, .. } = doc.get(src)?.kind.clone()
                 && let NodeKind::Page { background: b, .. } = &mut doc.get_mut(np)?.kind
@@ -103,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 doc.pages
                     .iter()
                     .filter_map(|p| doc.node(*p))
-                    .map(|n| json!({"id": n.id, "name": n.name, "current": n.id == cur, "children": n.children.len()}))
+                    .map(|n| json!({"id": n.id, "name": n.name, "current": n.id == cur, "children": n.children.len(), "divider": doc.is_divider(n.id)}))
                     .collect(),
             ))
         }),

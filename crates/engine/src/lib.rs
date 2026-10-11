@@ -37,6 +37,7 @@ pub mod measure;
 pub mod params;
 pub mod plugins;
 pub mod proto_run;
+pub mod rename;
 pub mod shape_handles;
 pub mod shapebuilder;
 pub mod snap;
@@ -1330,6 +1331,8 @@ mod nested_override_tests;
 mod paint_reorder_tests;
 #[cfg(test)]
 mod paint_tests;
+#[cfg(test)]
+mod panels_behaviour_tests;
 #[cfg(test)]
 mod pdf_print_tests;
 #[cfg(test)]

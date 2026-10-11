@@ -1,6 +1,6 @@
 # Components, variants, styles and variables parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (extended collections tail; styles and variables behaviour suite and fixes; components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (layers and assets panels behaviour suite and fixes; extended collections tail; styles and variables behaviour suite and fixes; components behaviour suite and fixes; team libraries on the server, library usage and swapping a library; extended collections, variables import/export, gradient stops and variant properties bound to variables) · **Target:** Figma Design (desktop app 126.10.7)
 
 Design systems are why teams adopt Figma. **Components: breadth ~96%, ready ~72%. Styles and
 variables: breadth ~95%, ready ~76% (estimated).** QA'd with a synthetic design system of ~300
@@ -25,7 +25,8 @@ accounts).
 | Exposed nested instances | done | hidden ones hide their properties |
 | Descriptions | done | |
 | Instance swap: panel, Alt-drop from Assets | done | the panel keeps overrides on same-named layers, an Alt-drop from Assets only text layers' |
-| Assets panel: thumbnails, search, drag into frames and auto layout slots | done | virtualized |
+| Assets panel: folders by page, frame and slash names (fold away), thumbnails, search, drag into frames and auto layout slots | done | virtualized; `component.list` gives each one's `folder` |
+| Hidden from publishing: a leading `.` or `_` in the name | done | the name decides both ways (adding the prefix takes a published component out, removing it brings it back); no Hide when publishing menu item yet |
 | Instances pasted into other files follow their mains | done | missing main restorable |
 | Component playground (try properties without placing) | missing | 1–2 h |
 | Real-world libraries QA | **not checked** | [gaps](gaps.md) #3 |
@@ -75,6 +76,7 @@ updates with overrides kept: `library_tests.rs`, `components_scale_tests.rs`.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Layers and Assets panels behaviour suite: Assets folders by page, frame and slash names; a leading `.` or `_` keeps a component out of the library even after it was published, and removing it brings the component back |
 | 2026-10-12 | minor | Extended collections' tail (gap 14): variables a library adds to a collection this file extends now count as a library update of their own (listed by name without a copy yet) and arrive inheriting when accepted, instead of waiting for the library's next other update; a library collection that is itself an extended collection can be extended again, values flowing down the chain as each file accepts updates with every level's overrides kept (checked end to end). Styles & variables breadth 94% → 95%, ready unchanged (76%), 3–5 h → 2–4 h; gap 14 1–2 h → 0–1 h (real-library checks left); feature breadth (~82%) and ready for real work (~51%) unchanged at this rounding; full parity ~305–594 h → ~304–593 h |
 | 2026-10-11 | minor | Styles and variables behaviour suite from the public documentation (18 tests) and its fixes (styled properties edited away unlink, deleted variables unbind with values kept, type-checked bindings, alias checks on create, text styles on text only); style folders, order and duplicates with a Local styles list; mode duplicate and default; code syntax. Found missing: variables inside styles. Styles and variables breadth ~92% → ~94%, ready ~72% → ~76%; remaining here 7–14 h → 9–17 h |
 | 2026-10-11 | minor | Behaviour suite from the public documentation and its fixes: overrides of padding, gap, alignment, layout grids, export settings, interactions and every text property kept (they were lost when the main changed); geometry, constraints and resizing of layers inside instances refused; variant switches keep only overrides both variants agreed on (text layers keep theirs); Alt-drops from Assets keep only text overrides; top-left default variant; hidden exposed instances hide their properties; push from nested layers goes to the outer main; variant property reordering and conflict warnings. Components ~95%/~68% → ~96%/~72%; remaining here 7–14 h → 5–11 h |

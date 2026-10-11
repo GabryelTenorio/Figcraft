@@ -426,6 +426,9 @@ fn move_to_page(s: &mut Session, p: &Value) -> Result<Value> {
     if !doc.node(page).is_some_and(Node::is_page) {
         return Err(bad("object.moveToPage", format!("{page} is not a page")));
     }
+    if doc.is_divider(page) {
+        return Err(bad("object.moveToPage", "a divider holds no layers"));
+    }
     for i in z_sorted(doc, &roots(doc, &ids)) {
         doc.reparent(i, page, None)?;
     }

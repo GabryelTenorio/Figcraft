@@ -161,7 +161,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "object.batchRename",
             "Batch rename",
-            "{ids?, find?, replace?, name? (pattern: $& = current name, $N or $n = number asc/desc)}",
+            "{ids?, find? (match; empty: none), regex? (find is a regular expression), replace? (for each match), name? (pattern for the whole name), start? (where $n starts and $N stops; default 1)} codes in replace and name: $& current name (or the match), $` and $' text before and after the match, $1…$9 groups, $n up, $N down, $nnn padded; layers are numbered in stacking order, bottom first",
             true,
             batch_rename
         ),
@@ -926,27 +926,20 @@ fn hide_others(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn batch_rename(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = req_targets("object.batchRename", s, p)?;
+    let cmd = "object.batchRename";
+    let ids = req_targets(cmd, s, p)?;
     let find = string(p, "find");
     let replace = string(p, "replace").unwrap_or_default();
     let pattern = string(p, "name");
+    let rename =
+        crate::rename::BatchRename::new(find.as_deref(), boolean(p, "regex").unwrap_or(false), &replace, pattern.as_deref(), num(p, "start"))
+            .map_err(|e| bad(cmd, e))?;
     let doc = s.doc_mut()?;
-    let ids = z_sorted(doc, &ids);
-    let n = ids.len();
-    for (k, i) in ids.iter().enumerate() {
-        let node = doc.get_mut(*i)?;
-        let mut name = node.name.clone();
-        if let Some(f) = &find
-            && !f.is_empty()
-        {
-            name = name.replace(f.as_str(), &replace);
-        }
-        if let Some(pat) = &pattern {
-            name = pat.replace("$&", &name).replace("$N", &(k + 1).to_string()).replace("$n", &(n - k).to_string());
-        }
-        node.name = name;
+    let names = rename.plan(doc, &ids);
+    for (i, name) in &names {
+        doc.get_mut(*i)?.name = name.clone();
     }
-    ok()
+    Ok(json!({"names": names.iter().map(|(i, n)| json!({"id": i, "name": n})).collect::<Vec<_>>()}))
 }
 
 fn find_replace(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1052,8 +1045,13 @@ fn reparent(s: &mut Session, p: &Value) -> Result<Value> {
     let index = num(p, "index").map(|i| i.max(0.0) as usize);
     let doc = s.doc_mut()?;
     let ids = z_sorted(doc, &roots(doc, &ids));
-    for (k, i) in ids.iter().enumerate() {
-        doc.reparent(*i, parent, index.map(|x| x + k))?;
+    // The layers land together under the first sibling at or above `index` that stays put (none: on
+    // top), wherever they came from.
+    let above = index.and_then(|at| doc.get(parent).ok()?.children.iter().skip(at).find(|c| !ids.contains(c)).copied());
+    for i in &ids {
+        // Counted with the layer still in place, as `reparent` expects.
+        let at = above.and_then(|a| doc.node(parent)?.children.iter().position(|c| *c == a));
+        doc.reparent(*i, parent, at)?;
     }
     ok()
 }

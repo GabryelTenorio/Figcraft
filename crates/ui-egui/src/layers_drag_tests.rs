@@ -30,7 +30,13 @@ impl Ui {
 
     /// [`Self::frame`], returning what egui output (the AccessKit tree when it's enabled).
     pub(crate) fn frame_output(&mut self, events: Vec<Event>) -> egui::FullOutput {
+        self.frame_with(events, Default::default())
+    }
+
+    /// [`Self::frame_output`] with `modifiers` held.
+    pub(crate) fn frame_with(&mut self, mut events: Vec<Event>, modifiers: egui::Modifiers) -> egui::FullOutput {
         self.time += 1.0 / 60.0;
+        events.insert(0, Event::ModifiersChanged(modifiers));
         let input =
             RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(self.time), events, ..Default::default() };
         let app = &mut self.app;
@@ -65,7 +71,7 @@ impl Ui {
     }
 
     /// Press on `from` and move to `to` in small steps (a drag, not yet released).
-    fn drag_to(&mut self, from: Pos2, to: Pos2) {
+    pub(crate) fn drag_to(&mut self, from: Pos2, to: Pos2) {
         self.button(from, true);
         for k in 1..=10 {
             self.frame(vec![Event::PointerMoved(from + (to - from) * (k as f32 / 10.0))]);

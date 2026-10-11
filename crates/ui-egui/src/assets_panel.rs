@@ -1,9 +1,11 @@
-//! The Assets tab: components as thumbnail tiles (search, click to place, drag onto the canvas to
-//! drop an instance into the frame or auto layout slot under the pointer, or with Alt held onto an
-//! instance to swap it) and styles (click to apply to the selection), for this file and for every
-//! enabled library, with a "Library updates available" banner. The libraries view publishes this
-//! file as a library (to the file, or to its server for the team, with how other files use it),
-//! enables library files and team libraries (by a share link), and swaps one library for another.
+//! The Assets tab: components as thumbnail tiles filed in folders (their page, the frames holding
+//! them, then the slashes in their names; a folder folds away), searched, clicked to place or
+//! dragged onto the canvas to drop an instance into the frame or auto layout slot under the pointer
+//! (with Alt held, onto an instance to swap it), and styles (click to apply to the selection), for
+//! this file and for every enabled library, with a "Library updates available" banner. The
+//! libraries view publishes this file as a library (to the file, or to its server for the team,
+//! with how other files use it), enables library files and team libraries (by a share link), and
+//! swaps one library for another.
 //!
 //! Thousands of assets stay smooth: only the tiles in view are laid out, and thumbnails render
 //! when their tile first shows (a few per frame), are cached, and re-render only when their
@@ -55,8 +57,44 @@ enum Source {
 #[derive(Clone)]
 struct Tile {
     id: NodeId,
+    /// The full name (the tooltip's).
     name: String,
+    /// The name on the tile: its last slash part.
+    label: String,
     set: bool,
+}
+
+impl Tile {
+    /// Asset `id` of `doc` with its folder (the folders joined).
+    fn new(doc: &Document, id: NodeId, name: &str, set: bool) -> (String, Self) {
+        let (folders, label) = library::asset_folder(doc, id);
+        let label = if label.is_empty() { name.to_string() } else { label };
+        (folders.join(" / "), Self { id, name: name.to_string(), label, set })
+    }
+}
+
+/// Tiles under one folder heading (an empty name: no heading).
+#[derive(Clone)]
+struct Folder {
+    /// Remembers whether the folder is folded away.
+    key: String,
+    name: String,
+    tiles: Vec<Tile>,
+}
+
+/// `tiles` (with their folders) sorted and gathered by folder, for the source keyed `src`.
+fn foldered(src: &str, mut tiles: Vec<(String, Tile)>) -> Vec<Folder> {
+    tiles.sort_by(|(fa, a), (fb, b)| {
+        fa.to_lowercase().cmp(&fb.to_lowercase()).then(a.label.to_lowercase().cmp(&b.label.to_lowercase())).then(a.id.cmp(&b.id))
+    });
+    let mut out: Vec<Folder> = Vec::new();
+    for (folder, t) in tiles {
+        match out.last_mut() {
+            Some(f) if f.name == folder => f.tiles.push(t),
+            _ => out.push(Folder { key: format!("{src}/{folder}"), name: folder, tiles: vec![t] }),
+        }
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -79,14 +117,14 @@ struct Section {
     name: String,
     doc: Option<Arc<Document>>,
     error: Option<String>,
-    tiles: Vec<Tile>,
+    tiles: Vec<Folder>,
     styles: Vec<StyleRow>,
 }
 
 /// What the panel lists; rebuilt only when the document, the search or a library changes.
 struct Listing {
     key: (u64, String, u64),
-    local: Vec<Tile>,
+    local: Vec<Folder>,
     local_styles: Vec<StyleRow>,
     libraries: Vec<Section>,
     /// Library components and styles in this file with a newer published version.
@@ -159,11 +197,6 @@ fn matches(name: &str, q: &str) -> bool {
     q.is_empty() || name.to_lowercase().contains(q)
 }
 
-fn sorted(mut tiles: Vec<Tile>) -> Vec<Tile> {
-    tiles.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.id.cmp(&b.id)));
-    tiles
-}
-
 /// A fingerprint of what the session read for the enabled libraries.
 fn libraries_key(app: &FigApp, doc: &Document) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -181,8 +214,9 @@ fn libraries_key(app: &FigApp, doc: &Document) -> u64 {
 fn build_listing(app: &FigApp, doc: &Document, q: &str, key: (u64, String, u64)) -> Listing {
     let local = library::local_components(doc)
         .into_iter()
-        .filter_map(|id| doc.node(id).map(|n| Tile { id, name: n.name.clone(), set: matches!(n.kind, NodeKind::ComponentSet { .. }) }))
-        .filter(|t| matches(&t.name, q))
+        .filter_map(|id| {
+            doc.node(id).filter(|n| matches(&n.name, q)).map(|n| Tile::new(doc, id, &n.name, matches!(n.kind, NodeKind::ComponentSet { .. })))
+        })
         .collect();
     let local_styles = library::local_styles(doc).filter(|s| matches(&s.name, q)).map(StyleRow::of).collect();
     let mut updates = 0;
@@ -194,12 +228,10 @@ fn build_listing(app: &FigApp, doc: &Document, q: &str, key: (u64, String, u64))
                 updates += library::pending(doc, lib).count();
                 let m = &lib.manifest;
                 sec.name = m.name.clone();
-                sec.tiles = m
-                    .components
-                    .iter()
-                    .filter(|a| a.published && matches(&a.name, q))
-                    .map(|a| Tile { id: a.id, name: a.name.clone(), set: a.set })
-                    .collect();
+                sec.tiles = foldered(
+                    &l.id,
+                    m.components.iter().filter(|a| a.published && matches(&a.name, q)).map(|a| Tile::new(&lib.doc, a.id, &a.name, a.set)).collect(),
+                );
                 sec.styles =
                     lib.doc.styles.iter().filter(|s| m.style(&s.id).is_some_and(|x| x.published) && matches(&s.name, q)).map(StyleRow::of).collect();
                 sec.doc = Some(lib.doc.clone());
@@ -210,11 +242,10 @@ fn build_listing(app: &FigApp, doc: &Document, q: &str, key: (u64, String, u64))
         }
         // While searching, libraries without a match stay out of the way.
         if q.is_empty() || !sec.tiles.is_empty() || !sec.styles.is_empty() {
-            sec.tiles = sorted(sec.tiles);
             libraries.push(sec);
         }
     }
-    Listing { key, local: sorted(local), local_styles, libraries, updates }
+    Listing { key, local: foldered("", local), local_styles, libraries, updates }
 }
 
 /// Re-read enabled library files that changed on disk (throttled).
@@ -309,21 +340,49 @@ fn title(ui: &mut Ui, w: f32, text: &str) {
     ui.painter().text(pos2(hr.min.x + PAD, hr.center().y), Align2::LEFT_CENTER, text, semibold(11.0), t.text);
 }
 
-/// A library's title row with its open/closed chevron; returns whether it was clicked.
-fn library_title(ui: &mut Ui, w: f32, name: &str, open: bool) -> bool {
+/// A library's (or, with `folder`, a folder's) title row with its open/closed chevron; returns
+/// whether it was clicked.
+fn fold_title(ui: &mut Ui, w: f32, name: &str, open: bool, folder: bool) -> bool {
     let t = Tokens::get(ui.ctx());
-    let (hr, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
+    let (hr, resp) = ui.allocate_exact_size(vec2(w, if folder { 26.0 } else { 32.0 }), Sense::click());
     let chevron = Rect::from_center_size(pos2(hr.min.x + PAD + 5.0, hr.center().y), vec2(12.0, 12.0));
     icons::paint(ui.painter(), chevron, if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
-    crate::bidi::paint_name(
-        ui.painter(),
-        pos2(chevron.max.x + 6.0, hr.center().y),
-        name,
-        semibold(11.0),
-        t.text,
-        hr.max.x - chevron.max.x - 6.0 - PAD,
-    );
-    resp.on_hover_text(if open { tr("Library: click to collapse") } else { tr("Library: click to expand") }).clicked()
+    let (font, col) = if folder { (regular(11.0), t.text_secondary) } else { (semibold(11.0), t.text) };
+    crate::bidi::paint_name(ui.painter(), pos2(chevron.max.x + 6.0, hr.center().y), name, font, col, hr.max.x - chevron.max.x - 6.0 - PAD);
+    let tip = match (folder, open) {
+        (false, true) => tr("Library: click to collapse"),
+        (false, false) => tr("Library: click to expand"),
+        (true, true) => tr("Folder: click to collapse"),
+        (true, false) => tr("Folder: click to expand"),
+    };
+    resp.on_hover_text(tip).clicked()
+}
+
+/// Folders of tiles under their headings; a folded folder shows only its heading (all open while
+/// searching).
+fn folders(
+    ui: &mut Ui,
+    w: f32,
+    src: &Source,
+    list: &[Folder],
+    searching: bool,
+    collapsed: &HashSet<String>,
+    thumbs: &Thumbs,
+    wanted: &mut Vec<(Source, NodeId)>,
+    act: &mut Option<Act>,
+) {
+    for f in list {
+        if !f.name.is_empty() {
+            let open = searching || !collapsed.contains(&f.key);
+            if fold_title(ui, w, &f.name, open, true) {
+                *act = Some(Act::Toggle(f.key.clone()));
+            }
+            if !open {
+                continue;
+            }
+        }
+        tiles(ui, w, src, &f.tiles, thumbs, wanted, act);
+    }
 }
 
 /// Secondary text, wrapped to the panel.
@@ -380,7 +439,7 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, want
                 ),
             }
             let label = Rect::from_min_size(pos2(x, r.max.y + 2.0), vec2(tile, TILE_LABEL - 4.0));
-            crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.name, regular(11.0), t.text, tile);
+            crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.label, regular(11.0), t.text, tile);
             let resp = resp.on_hover_text(trf(
                 "{name}\nDrag onto the canvas, or click to place in the middle of the view.\nHold Alt (Option) while dropping onto an instance to swap it.",
                 &[("name", &item.name)],
@@ -526,7 +585,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 hint(ui, tr("No matching components"));
             }
         }
-        tiles(ui, w, &Source::Local, &listing.local, &thumbs, &mut wanted, &mut act);
+        folders(ui, w, &Source::Local, &listing.local, !q.is_empty(), &collapsed, &thumbs, &mut wanted, &mut act);
         crate::widgets::separator(ui);
         ui.add_space(4.0);
         title(ui, w, tr("Local styles"));
@@ -538,7 +597,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             crate::widgets::separator(ui);
             ui.add_space(4.0);
             let open = !q.is_empty() || !collapsed.contains(&sec.id);
-            if library_title(ui, w, &sec.name, open) {
+            if fold_title(ui, w, &sec.name, open, false) {
                 act = Some(Act::Toggle(sec.id.clone()));
             }
             if !open {
@@ -553,7 +612,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 continue;
             }
             let src = Source::Library(sec.id.clone());
-            tiles(ui, w, &src, &sec.tiles, &thumbs, &mut wanted, &mut act);
+            folders(ui, w, &src, &sec.tiles, !q.is_empty(), &collapsed, &thumbs, &mut wanted, &mut act);
             style_rows(ui, w, &src, &sec.styles, &mut act);
         }
     });

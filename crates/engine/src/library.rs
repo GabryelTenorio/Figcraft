@@ -46,6 +46,18 @@ pub fn hidden_name(name: &str) -> bool {
     name.starts_with('.') || name.starts_with('_')
 }
 
+/// Where the Assets panel files asset `id`: under its page, the frames, sections and groups
+/// holding it, then the folders its name makes with slashes (`Buttons/Primary` is `Primary` in
+/// `Buttons`). Returns the folders, outermost first, and the name shown on its tile.
+pub fn asset_folder(doc: &Document, id: NodeId) -> (Vec<String>, String) {
+    let Some(n) = doc.node(id) else { return (Vec::new(), String::new()) };
+    let mut folders: Vec<String> = doc.ancestors(id).iter().rev().filter_map(|a| doc.node(*a)).map(|a| a.name.trim().to_string()).collect();
+    let mut parts: Vec<String> = n.name.split('/').map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect();
+    let label = parts.pop().unwrap_or_else(|| n.name.clone());
+    folders.extend(parts);
+    (folders, label)
+}
+
 /// The asset a layer belongs to: its outermost component or component set (itself included).
 pub fn asset_root(doc: &Document, id: NodeId) -> Option<NodeId> {
     let mut chain = vec![id];
@@ -179,25 +191,36 @@ pub fn publishable(doc: &Document) -> Selection {
 }
 
 /// What a publish offers when nothing is chosen: the assets offered last time (by `prev`, the
-/// version published last) plus new ones, never assets named with a leading `.` or `_`.
+/// version published last) plus new ones, never assets named with a leading `.` or `_`. The name
+/// decides both ways: adding the prefix takes a published asset out, removing it brings the asset
+/// back.
 pub fn default_selection(doc: &Document, prev: Option<&LibraryManifest>) -> Selection {
     let all = publishable(doc);
-    let pick = |offered: Option<bool>, name: Option<&str>| offered.unwrap_or_else(|| name.is_some_and(|n| !hidden_name(n)));
+    // `last`: whether it was offered last time, and under which name.
+    let pick = |last: Option<(bool, &str)>, name: Option<&str>| {
+        name.is_some_and(|n| !hidden_name(n))
+            && match last {
+                Some((offered, was)) if !hidden_name(was) => offered,
+                _ => true,
+            }
+    };
     Selection {
         components: all
             .components
             .into_iter()
-            .filter(|c| pick(prev.and_then(|m| m.component(*c)).map(|a| a.published), doc.node(*c).map(|n| n.name.as_str())))
+            .filter(|c| pick(prev.and_then(|m| m.component(*c)).map(|a| (a.published, a.name.as_str())), doc.node(*c).map(|n| n.name.as_str())))
             .collect(),
         styles: all
             .styles
             .into_iter()
-            .filter(|s| pick(prev.and_then(|m| m.style(s)).map(|x| x.published), doc.style(s).map(|x| x.name.as_str())))
+            .filter(|s| pick(prev.and_then(|m| m.style(s)).map(|x| (x.published, x.name.as_str())), doc.style(s).map(|x| x.name.as_str())))
             .collect(),
         collections: all
             .collections
             .into_iter()
-            .filter(|c| pick(prev.and_then(|m| m.collection(c)).map(|x| x.published), doc.variables.collection(c).map(|x| x.name.as_str())))
+            .filter(|c| {
+                pick(prev.and_then(|m| m.collection(c)).map(|x| (x.published, x.name.as_str())), doc.variables.collection(c).map(|x| x.name.as_str()))
+            })
             .collect(),
     }
 }

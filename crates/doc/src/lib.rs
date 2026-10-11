@@ -396,6 +396,17 @@ impl Document {
         self.pages.first().copied()
     }
 
+    /// Whether page `id` is a divider in the pages list: an empty page whose name starts with a
+    /// hyphen. Dividers separate pages; they aren't opened.
+    pub fn is_divider(&self, id: NodeId) -> bool {
+        self.node(id).is_some_and(|n| n.is_page() && n.children.is_empty() && n.name.starts_with('-'))
+    }
+
+    /// The first page that isn't a divider.
+    pub fn first_open_page(&self) -> Option<NodeId> {
+        self.pages.iter().copied().find(|p| !self.is_divider(*p))
+    }
+
     /// Insert `node` (its id must come from [`alloc_id`](Self::alloc_id)) as a child of `parent` at
     /// `index` (None = on top).
     pub fn insert(&mut self, mut node: Node, parent: NodeId, index: Option<usize>) -> DocResult<NodeId> {

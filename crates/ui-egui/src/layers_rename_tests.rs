@@ -121,12 +121,17 @@ fn cmd_r_renames_the_selection_and_opens_its_parents() {
 }
 
 #[test]
-fn rename_without_a_name_picks_the_topmost_selected_row() {
+fn rename_without_a_name_renames_one_row_or_opens_the_dialog() {
     let (mut u, a, _, _, c) = setup();
     let before = name(&u, a);
-    u.app.run("object.rename", json!({"ids": [a, c]}));
-    assert_eq!(renaming(&u), Some(c), "the topmost listed of the layers");
+    u.app.run("object.rename", json!({"ids": [c]}));
+    assert_eq!(renaming(&u), Some(c), "one layer renames in its row");
     assert_eq!(u.app.session.selection(), vec![c]);
+    u.app.ui.rename = None;
+    // Several layers: the Rename layers dialog instead (layers_behaviour_tests).
+    u.app.run("object.rename", json!({"ids": [a, c]}));
+    assert_eq!(renaming(&u), None);
+    assert!(u.app.ui.batch_rename.is_some(), "several layers open the Rename layers dialog");
     assert_eq!(name(&u, a), before, "nothing renamed yet");
     // Headless, the command changes nothing and leaves no undo step.
     let mut s = Session::new();

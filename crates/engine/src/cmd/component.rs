@@ -201,13 +201,19 @@ pub fn specs() -> Vec<CommandSpec> {
             let i = targets(s, p).first().copied().ok_or_else(|| bad("component.properties", "select a component or instance"))?;
             Ok(describe_props(s.doc()?, i))
         }),
-        spec!("component.list", "List components", "{}", false, |s, _| {
-            let doc = s.doc()?;
-            Ok(Value::Array(
+        spec!(
+            "component.list",
+            "List components",
+            "{} → [{id, name, type, page, instances, folder (the Assets panel's folders: page, frames, slash names), label, library?}]",
+            false,
+            |s, _| {
+                let doc = s.doc()?;
+                Ok(Value::Array(
                 doc.nodes()
                     .filter(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }))
                     .map(|n| {
-                        let mut v = json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "page": doc.page_of(n.id), "instances": instances_of(doc, n.id).len()});
+                        let (folder, label) = crate::library::asset_folder(doc, n.id);
+                        let mut v = json!({"id": n.id, "name": n.name, "type": n.kind.type_name(), "page": doc.page_of(n.id), "instances": instances_of(doc, n.id).len(), "folder": folder, "label": label});
                         if let Some(lib) = crate::library::library_of(doc, n.id) {
                             v["library"] = json!(lib);
                             v["page"] = Value::Null;
@@ -216,7 +222,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     })
                     .collect(),
             ))
-        }),
+            }
+        ),
     ]
 }
 

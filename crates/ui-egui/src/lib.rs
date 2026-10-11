@@ -75,6 +75,8 @@ mod frame_label_tests;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
+mod layers_behaviour_tests;
+#[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
 mod layers_keyboard_tests;
@@ -290,6 +292,8 @@ pub struct UiState {
     pub export_thumb: bool,
     pub zoom_menu: bool,
     pub find: Option<(String, String)>,
+    /// The Rename layers dialog (several layers), while open.
+    pub batch_rename: Option<dialogs::BatchRenameUi>,
     pub left_collapsed: bool,
     pub comments: comments::CommentUi,
     pub versions: versions::VersionUi,
@@ -373,6 +377,7 @@ impl Default for UiState {
             export_thumb: false,
             zoom_menu: false,
             find: None,
+            batch_rename: None,
             left_collapsed: false,
             comments: comments::CommentUi::default(),
             versions: versions::VersionUi::default(),
@@ -572,13 +577,17 @@ impl FigApp {
                 }
                 "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
-                "layers.collapseAll" => self.ui.expanded.clear(),
+                "layers.collapseAll" => layers::collapse_all(self),
                 "contextMenu" => self.ui.key_menu = true,
                 "selectArea" => self.start_key_box(),
                 "layers.rename" => {
                     let ids: Vec<NodeId> =
                         r.data.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(figcraft_engine::params::id_of).collect();
-                    layers::start_rename(self, &ids);
+                    if ids.len() > 1 {
+                        dialogs::open_batch_rename(self, &ids);
+                    } else {
+                        layers::start_rename(self, &ids);
+                    }
                 }
                 "comment.open" => {
                     if let Some(id) = r.data.get("id").and_then(Value::as_u64) {

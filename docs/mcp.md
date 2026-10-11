@@ -245,7 +245,20 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   along the toolbar and through the layer rows, and Escape returns to the canvas (no-ops headless).
 - `object.rename {ids?}` without a `name` (`Cmd+R`, or `F2`): rename the layer inline in the app's
   layers panel, also from a layer row that has the keyboard; when the rename ends the row gets the
-  keyboard back (Escape cancels it there). Headless it changes nothing and leaves no undo step.
+  keyboard back (Escape cancels it there). With several layers it opens the Rename layers dialog.
+  Headless it changes nothing and leaves no undo step.
+- `object.batchRename {ids?, find?, regex?, replace?, name?, start?}`: rename several layers in one
+  step. `find` (plain text, or a regular expression with `regex: true`) has each match replaced by
+  `replace`; `name` renames the whole name. Both take codes: `$&` the current name (the match when
+  matching), `` $` `` and `$'` the text before and after the match, `$1`…`$9` groups, `$n` a number
+  counting up from `start` (default 1), `$N` one counting down to it, `$nnn` padded to three digits,
+  `$$` a dollar sign. Layers are numbered in stacking order, bottom first. Returns `{names}`.
+- Pages: `page.add {name?}` (a name starting with `-` adds a divider: an empty page shown as a line
+  in the pages list, never opened and holding no layers), `page.list` (each page's `divider`),
+  `page.rename`, `page.move {id, index}`, `page.duplicate` ("Copy of …", after its source),
+  `page.delete` (the last page that isn't a divider stays).
+- `component.list`: each component's `folder` (the Assets panel's folders: its page, the frames
+  holding it, then its name's slash parts) and `label` (the name on its tile).
 - `view.contextMenu` (`Shift+F10`): the selection's context menu, at its layer row when the layers
   panel has the keyboard (after F6 or a click on a row), else on the canvas below the selection; the
   menu takes the keyboard and gives it back when it closes (no-op headless).

@@ -1,9 +1,10 @@
-//! Drag to reorder the Design panel's lists (fills, strokes, effects, layout grids). A row is
-//! dragged by its grip, the empty strip left of its fields (a handle shows over the row); while
-//! dragging, a line shows where it will land and its label follows the pointer, as for layers
-//! dragged in the layers panel; dropping moves it with one command (one undo step). The Design
-//! panel shows the topmost item first while the model keeps lists bottom first; other lists (an
-//! interaction's actions) show their items in model order.
+//! Drag to reorder the Design panel's lists (fills, strokes, effects, layout grids) and the pages
+//! list. A row is dragged by its grip, the empty strip left of its fields (a handle shows over the
+//! row), a page by its whole row; while dragging, a line shows where it will land and its label
+//! follows the pointer, as for layers dragged in the layers panel; dropping moves it with one
+//! command (one undo step). The Design panel shows the topmost item first while the model keeps
+//! lists bottom first; other lists (an interaction's actions, pages) show their items in model
+//! order.
 
 use egui::{AsId, Id, Rect, Sense, Ui, pos2, vec2};
 
@@ -91,8 +92,14 @@ impl ListDrag {
         if resp.hovered() && self.dragging.is_none() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
+        self.row_by(&resp, index, extent, label);
+    }
+
+    /// Item `index` laid out over `extent`, dragged by the whole row (`resp` senses drags; the
+    /// pages list).
+    pub fn row_by(&mut self, resp: &egui::Response, index: usize, extent: Rect, label: impl FnOnce() -> String) {
         if resp.drag_started() {
-            ui.data_mut(|d| d.insert_temp(drag_id(self.list), index));
+            resp.ctx.data_mut(|d| d.insert_temp(drag_id(self.list), index));
             self.dragging = Some(index);
         }
         if self.dragging == Some(index) {
