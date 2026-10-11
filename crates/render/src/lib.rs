@@ -154,7 +154,16 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
         pix.fill(paint::ts_color(bg));
     }
     let lod = opts.lod && !opts.outline_mode && view.scale <= lod::MAX_SCALE;
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: opts.outline_mode, outlined: &opts.outlined, skip: &opts.skip, lod, under: None };
+    let ctx = draw::Ctx {
+        doc,
+        scale: view.scale,
+        outline_mode: opts.outline_mode,
+        outlined: &opts.outlined,
+        skip: &opts.skip,
+        lod,
+        under: None,
+        time: 0.0,
+    };
     let xf = view.transform();
     let Some(p) = doc.node(page) else { return Some(pix) };
     match opts.solo.filter(|id| *id != page && doc.page_of(*id) == Some(page)) {
@@ -170,7 +179,12 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
 
 /// Render several nodes (in z-order) into an existing pixmap through `view`.
 pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap) {
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None };
+    nodes_into(doc, ids, view, pix, 0.0);
+}
+
+/// [`render_nodes_into`] `time` seconds into animated GIFs.
+fn nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap, time: f64) {
+    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None, time };
     for id in ids {
         draw::draw_node(&ctx, pix, *id, view.transform() * parent_transform(doc, *id), 0);
     }
@@ -236,6 +250,11 @@ pub fn export_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
 
 /// Rasterise one node at `scale` (export). Transparent background.
 pub fn render_node(doc: &Document, id: NodeId, scale: f64) -> Option<Pixmap> {
+    render_node_at(doc, id, scale, 0.0)
+}
+
+/// [`render_node`] `time` seconds into animated GIFs (the presenter plays them).
+pub fn render_node_at(doc: &Document, id: NodeId, scale: f64, time: f64) -> Option<Pixmap> {
     let b = export_bounds(doc, id)?;
     let scale = if scale.is_finite() && scale > 0.0 { scale.min(64.0) } else { 1.0 };
     let w = (b.width() * scale - 1e-6).ceil().max(1.0);
@@ -245,7 +264,7 @@ pub fn render_node(doc: &Document, id: NodeId, scale: f64) -> Option<Pixmap> {
     }
     let view = View { origin: (b.x0, b.y0), scale, width: w as u32, height: h as u32 };
     let mut pix = new_pixmap(view.width, view.height)?;
-    render_nodes_into(doc, &[id], &view, &mut pix);
+    nodes_into(doc, &[id], &view, &mut pix, time);
     Some(pix)
 }
 
@@ -383,6 +402,8 @@ mod band_tests;
 mod boolean_cache_tests;
 #[cfg(test)]
 mod effect_order_tests;
+#[cfg(test)]
+mod gif_tests;
 #[cfg(test)]
 mod grain_tests;
 #[cfg(test)]

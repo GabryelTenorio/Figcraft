@@ -1502,6 +1502,7 @@ dependencies = [
  "figcraft-render",
  "figcraft-svg",
  "figcraft-text",
+ "image",
  "log",
  "serde",
  "serde_json",

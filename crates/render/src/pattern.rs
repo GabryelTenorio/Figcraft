@@ -34,10 +34,11 @@ pub fn nested<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
     out
 }
 
-/// Pattern `pt` on a `w`×`h` box drawn into one cell at about `scale` device pixels per unit:
+/// Pattern `pt` on a `w`×`h` box drawn into one cell at about `scale` device pixels per unit and
+/// `time` seconds into animated GIFs:
 /// the pixmap, the cell and the pixmap's pixels per unit on each axis (whole pixels per cell, so
 /// the repeat lines up exactly).
-pub fn cell_pixmap(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64) -> Option<(Pixmap, PatternCell, (f64, f64))> {
+pub fn cell_pixmap(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64, time: f64) -> Option<(Pixmap, PatternCell, (f64, f64))> {
     let src = doc.node(NodeId(pt.source)).filter(|n| !n.is_page())?;
     let cell = pt.cell(src.width, src.height, w, h)?;
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
@@ -45,7 +46,7 @@ pub fn cell_pixmap(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64
     let (pw, ph) = ((cell.size.0 * k).ceil().clamp(1.0, MAX_CELL_PX), (cell.size.1 * k).ceil().clamp(1.0, MAX_CELL_PX));
     let (kx, ky) = (pw / cell.size.0, ph / cell.size.1);
     let mut pix = Pixmap::new(pw as u32, ph as u32)?;
-    let ctx = Ctx { doc, scale: kx.max(ky) * cell.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None };
+    let ctx = Ctx { doc, scale: kx.max(ky) * cell.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None, time };
     let unrotated = src.transform.inverse();
     nested(|| {
         for (tx, ty) in &cell.tiles {
@@ -58,8 +59,8 @@ pub fn cell_pixmap(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64
 }
 
 /// The shader for pattern `pt` on a `w`×`h` box shown at `scale` device pixels per unit.
-pub fn prepare(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64, opacity: f32) -> Option<Prepared> {
-    let (pix, cell, (kx, ky)) = cell_pixmap(doc, pt, w, h, scale)?;
+pub fn prepare(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64, time: f64, opacity: f32) -> Option<Prepared> {
+    let (pix, cell, (kx, ky)) = cell_pixmap(doc, pt, w, h, scale, time)?;
     let transform = Transform::from_row((1.0 / kx) as f32, 0.0, 0.0, (1.0 / ky) as f32, cell.origin.0 as f32, cell.origin.1 as f32);
     Some(Prepared::Pattern { pixmap: Arc::new(pix), mode: SpreadMode::Repeat, quality: FilterQuality::Bilinear, opacity, transform })
 }

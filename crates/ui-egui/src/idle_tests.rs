@@ -237,3 +237,39 @@ fn control_requests_and_screenshots_wake_an_idle_ui() {
     let _ = std::fs::remove_file(&path);
     h.assert_idle("after a screenshot");
 }
+
+/// A synthetic animated GIF: red, then green, 100 ms each.
+fn animated_gif() -> String {
+    use base64::Engine as _;
+    use image::codecs::gif::{GifEncoder, Repeat};
+    let mut out = Vec::new();
+    {
+        let mut enc = GifEncoder::new(&mut out);
+        enc.set_repeat(Repeat::Infinite).unwrap();
+        let frame = |c: [u8; 4]| {
+            image::Frame::from_parts(image::RgbaImage::from_pixel(8, 8, image::Rgba(c)), 0, 0, image::Delay::from_numer_denom_ms(100, 1))
+        };
+        enc.encode_frames([frame([255, 0, 0, 255]), frame([0, 255, 0, 255])]).unwrap();
+    }
+    base64::engine::general_purpose::STANDARD.encode(out)
+}
+
+#[test]
+fn an_animated_gif_wakes_only_the_presenter_and_only_at_its_frames() {
+    let mut s = Session::new();
+    let a = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 200, "height": 200})).unwrap());
+    s.execute("image.place", &json!({"data": animated_gif(), "parent": a, "x": 10, "y": 10, "width": 100, "height": 100})).unwrap();
+    s.execute("select.set", &json!({"ids": []})).unwrap();
+    let mut h = Harness::new(s);
+    h.assert_idle("an animated GIF on the canvas (it shows its first frame)");
+    h.run("proto.present", json!({"start": a}));
+    let delays: Vec<Duration> = (0..30).map(|_| h.frame(vec![])).collect();
+    // Past the first frames (the presenter opening), it wakes for the GIF's next frame: no sooner
+    // than needed, never later than one GIF frame (plus the display frame egui wakes early by).
+    for d in &delays[5..] {
+        assert!(*d <= Duration::from_millis(100 + 17), "{delays:?}");
+    }
+    assert!(delays[5..].iter().any(|d| *d > Duration::from_millis(20)), "it doesn't draw every frame: {delays:?}");
+    h.app.ui.present = None;
+    h.assert_idle("the presenter closed");
+}

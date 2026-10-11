@@ -11,7 +11,7 @@ use tiny_skia::{FillRule, IntRect, Mask, MaskType, Pixmap, PixmapPaint, Transfor
 
 use crate::backdrop::{self, Under};
 use crate::boolean::{PathCache, locked};
-use crate::paint::{prepare, ts_blend};
+use crate::paint::{prepare_at, ts_blend};
 use crate::{blur, grain, lod, shadow};
 
 /// Shared state for one render.
@@ -29,6 +29,8 @@ pub struct Ctx<'a> {
     pub lod: bool,
     /// The surfaces under the one being drawn into, when it is an isolated layer (for backdrops).
     pub under: Option<&'a Under<'a>>,
+    /// Seconds into animated GIFs (0: their first frame; only the presenter plays them).
+    pub time: f64,
 }
 
 pub fn ts_transform(a: Affine) -> Transform {
@@ -52,20 +54,10 @@ pub fn ts_path(p: &BezPath) -> Option<tiny_skia::Path> {
     b.finish()
 }
 
-fn fill_with(
-    pix: &mut Pixmap,
-    path: &tiny_skia::Path,
-    paints: &[Paint],
-    w: f64,
-    h: f64,
-    xf: Affine,
-    rule: FillRule,
-    doc: &Document,
-    mask: Option<&Mask>,
-) {
+fn fill_with(pix: &mut Pixmap, path: &tiny_skia::Path, paints: &[Paint], w: f64, h: f64, xf: Affine, rule: FillRule, ctx: &Ctx, mask: Option<&Mask>) {
     let scale = xf.determinant().abs().sqrt();
     for p in paints {
-        let Some(prep) = prepare(p, w, h, scale, doc) else { continue };
+        let Some(prep) = prepare_at(p, w, h, scale, ctx.doc, ctx.time) else { continue };
         let paint = tiny_skia::Paint { shader: prep.shader(), anti_alias: true, blend_mode: ts_blend(p.blend), ..Default::default() };
         pix.fill_path(path, &paint, rule, ts_transform(xf), mask);
     }
@@ -492,7 +484,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
             for k in &keys {
                 let Some(tp) = by_style.get(k).and_then(ts_path) else { continue };
                 let fills = layout.styles.get(*k).and_then(|s| s.fills.as_ref()).unwrap_or(&n.fills);
-                fill_with(pix, &tp, fills, w, h, gxf, FillRule::Winding, doc, None);
+                fill_with(pix, &tp, fills, w, h, gxf, FillRule::Winding, ctx, None);
             }
             if let Some(f) = over_fills {
                 f(pix);
@@ -502,7 +494,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 for path in keys.iter().filter_map(|k| by_style.get(k)) {
                     let s = figcraft_pathops::stroke_center(path, props.weight, &props);
                     if let Some(ts) = ts_path(&s) {
-                        fill_with(pix, &ts, &n.strokes, w, h, gxf, FillRule::Winding, doc, None);
+                        fill_with(pix, &ts, &n.strokes, w, h, gxf, FillRule::Winding, ctx, None);
                     }
                 }
             }
@@ -519,7 +511,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 && closed
                 && let Some(tp) = ts_path(path)
             {
-                fill_with(pix, &tp, &n.fills, w, h, xf, *rule, doc, None);
+                fill_with(pix, &tp, &n.fills, w, h, xf, *rule, ctx, None);
             }
             if let Some(f) = over_fills {
                 f(pix);
@@ -539,7 +531,7 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
                 if let Some(g) = geom {
                     let area = stroke_area(n, &g, closed);
                     if let Some(tp) = ts_path(&area) {
-                        fill_with(pix, &tp, &n.strokes, w, h, xf, stroke_rule(n, closed), doc, None);
+                        fill_with(pix, &tp, &n.strokes, w, h, xf, stroke_rule(n, closed), ctx, None);
                     }
                 }
             }

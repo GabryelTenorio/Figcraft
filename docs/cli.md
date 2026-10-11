@@ -60,7 +60,7 @@ figcraft-cli export app.figcraft -o poster.pdf --node "Poster" --bleed 3mm --cro
 ### `convert <in> <out>`
 
 By extension. Inputs: `.figcraft`, `.json` (FigCraft or REST API file JSON), `.svg` (an editable frame: groups,
-shapes, text, gradients, masks and effects; `info` lists what it left out as `note:` lines), `.png/.jpg/.webp/.gif/.bmp`
+shapes, text, gradients, masks and effects; `info` lists what it left out as `note:` lines), `.png/.jpg/.webp/.gif/.tif/.bmp`
 (an image layer). Outputs: `.figcraft`, `.json` (FigCraft JSON, pretty-printed), `.svg`,
 `.png/.jpg/.webp` (the current page rendered at 1x with its background), `.pdf` (the current page's
 frames, one page each).
