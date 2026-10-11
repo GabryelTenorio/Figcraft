@@ -1,9 +1,9 @@
 # Releasing FigCraft
 
 Every push to the `release` branch runs `.github/workflows/release.yml`. The workflow builds
-installers for macOS, Windows, Linux and the web, plus a FreeBSD tarball, then creates or updates
-a **draft** GitHub Release named `FigCraft v<version>`. Nobody sees a draft until a maintainer
-publishes it.
+installers for macOS, Windows, Linux and the web, plus a FreeBSD tarball and the collaboration
+server for Linux, then creates or updates a **draft** GitHub Release named `FigCraft v<version>`.
+Nobody sees a draft until a maintainer publishes it.
 
 This is FigCraft's copy of the shared [release playbook](release-playbook.md) (PhotoCraft is the
 reference implementation). User-facing names say **FigCraft**. Files, binaries and ids stay
@@ -47,9 +47,9 @@ Pushing to `release` again before publishing rebuilds the same draft and replace
 After the draft is published, the workflow refuses to touch that version again, so bump first.
 
 **Dry runs:** `gh workflow run release.yml --ref <branch> -f version=0.2.0-rc.1` builds every
-unsigned platform (Linux, Flatpak, FreeBSD, Web) on any branch. Only the macOS, Windows and
-draft-release jobs declare `environment: release`; off the `release` branch the environment
-refuses them (0 steps) and no release is created. The `version` input is applied with
+unsigned platform (Linux, Flatpak, FreeBSD, Web, the server) on any branch. Only the macOS,
+Windows and draft-release jobs declare `environment: release`; off the `release` branch the
+environment refuses them (0 steps) and no release is created. The `version` input is applied with
 `xtask version set` before building, so the binaries report it too.
 
 ## What gets built
@@ -62,6 +62,7 @@ refuses them (0 steps) and no release is created. The `version` input is applied
 | Linux riscv64 | `figcraft-<v>-linux-riscv64.tar.gz` (CLI smoke-tested under QEMU; needs glibc ≥ 2.39) | cross-compiled on `ubuntu-24.04` against ports.ubuntu.com riscv64 libraries |
 | FreeBSD 14 x86_64 | `figcraft-<v>-freebsd-x86_64.tar.gz` | FreeBSD 14.3 VM on `ubuntu-latest` |
 | Web | `figcraft-web-<v>.zip` (static site; [`packaging/web/README.md`](../packaging/web/README.md)) | `ubuntu-latest` |
+| Server, Linux x86_64 / aarch64 | `figcraft-server-<v>-linux-<arch>.tar.gz` (the collaboration server; [`server.md`](server.md)) | `ubuntu-22.04` / `ubuntu-22.04-arm` |
 
 `figcraft-cli` ships in every desktop package (and its own macOS zip) when `apps/figcraft-cli`
 is in the workspace: `packaging/env.sh` sets `BINS`/`HAS_CLI` from that, and `package.ps1`,
@@ -71,12 +72,12 @@ is in the workspace: `packaging/env.sh` sets `BINS`/`HAS_CLI` from that, and `pa
 read by `apps/figcraft/build.rs`).
 
 **The collaboration server** (`apps/figcraft-server`, binary `figcraft-server`, see
-[`server.md`](server.md)) is in the workspace but not packaged yet: releases don't ship it, and
-operators build it with `cargo build --release -p figcraft-server`. Shipping it means a
-`figcraft-server-<v>-<platform>-<arch>` archive per desktop platform (a headless binary: no
-bundle, installer entry or desktop file), signed like `figcraft-cli` on macOS and Windows; that
-is a change to `release.yml` and `packaging/` of its own, not part of `BINS` (which every
-desktop package installs).
+[`server.md`](server.md)) is built by the `server` job with `packaging/server/package.sh`: a
+headless binary, so not part of `BINS` (which every desktop package installs) and no installer,
+desktop file or fonts. Its archive holds the binary, the licences, `server.md` and the deployment
+examples from `packaging/server/` (systemd unit, Caddyfile, nginx; the Dockerfile builds from
+the sources). Linux only for now; elsewhere operators build it with
+`cargo build --release -p figcraft-server`.
 
 **Fonts.** Every build job checks out [craft-fonts](https://github.com/storytold/craft-fonts) at
 `CRAFT_FONTS_REF` (top of `release.yml`) and builds with `CRAFT_FONTS_DIR` and

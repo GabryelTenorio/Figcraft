@@ -12,7 +12,7 @@ use crate::guest::{Guest, GuestConfig, Publish, upload_file};
 use crate::host::{Host, HostConfig};
 use crate::inbox::{Inbox, Waker};
 use crate::invite::{Endpoint, Invite};
-use crate::manage::{self, NO_TLS};
+use crate::manage;
 use crate::net::NetLimits;
 use crate::token;
 
@@ -138,9 +138,6 @@ impl LiveLink for NetLink {
 
     fn join(&mut self, link: &str, name: &str) -> Result<(), String> {
         let invite = Invite::parse(link)?;
-        if invite.server.secure {
-            return Err(NO_TLS.into());
-        }
         let cfg = self.guest_config(invite, name);
         self.leave();
         let inbox = Inbox::new(self.wake.clone());
@@ -152,9 +149,6 @@ impl LiveLink for NetLink {
 
     fn publish(&mut self, o: PublishOptions) -> Result<(), String> {
         let (server, query) = Endpoint::parse(&o.server)?;
-        if server.secure {
-            return Err(NO_TLS.into());
-        }
         let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
         let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
         // Until the upload is done the invite names only the server.
