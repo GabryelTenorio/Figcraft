@@ -2,7 +2,7 @@
 //! component whose properties are its parameters (a variant property → a union or enum, boolean →
 //! a flag showing the layers bound to it, text → a string, instance swap → a view parameter, slot →
 //! optional content), and an instance becomes a call passing the values it sets. Variants of a set
-//! share one definition (the set's first variant); in React their differences become CSS rules on
+//! share one definition (the set's default variant); in React their differences become CSS rules on
 //! `data-*` attributes. Returned by `inspect.componentCode` and used by `inspect.code`. A component
 //! connected to code (see [`crate::code_connect`]) shows its real snippet instead.
 
@@ -53,7 +53,7 @@ pub struct Param {
     pub enum_name: String,
 }
 
-/// A component as code: the main whose layers are drawn (a set's first variant), its set, its
+/// A component as code: the main whose layers are drawn (a set's default variant), its set, its
 /// name in code and its parameters (variant properties first).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Component {
@@ -140,12 +140,12 @@ fn is_component(doc: &Document, id: NodeId) -> bool {
 }
 
 /// The main component a layer's code is defined by: a component itself, an instance's main, and
-/// for anything in a set the set's first variant.
+/// for anything in a set the set's default (top-left) variant.
 pub fn main_of(doc: &Document, id: NodeId) -> Option<NodeId> {
     let n = doc.node(id)?;
     let main = match &n.kind {
         NodeKind::Component { .. } => id,
-        NodeKind::ComponentSet { .. } => return n.children.iter().copied().find(|c| is_component(doc, *c)),
+        NodeKind::ComponentSet { .. } => return crate::components::default_variant(doc, id),
         NodeKind::Instance { component, .. } => *component,
         _ => return None,
     };
@@ -153,7 +153,7 @@ pub fn main_of(doc: &Document, id: NodeId) -> Option<NodeId> {
         return None;
     }
     match variant_set(doc, main) {
-        Some(set) => doc.node(set)?.children.iter().copied().find(|c| is_component(doc, *c)),
+        Some(set) => crate::components::default_variant(doc, set),
         None => Some(main),
     }
 }

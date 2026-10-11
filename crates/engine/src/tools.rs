@@ -1465,11 +1465,16 @@ impl Session {
                         }
                         crate::normalize(ds.doc_mut(), &before);
                     }
-                    // Reordering or dragging layers out of an instance (outside its slots) is a
-                    // structure edit only its main can make: the gesture is undone.
+                    // Reordering or dragging layers out of an instance (outside its slots), or
+                    // moving layers inside one, are edits only its main can make: the gesture is
+                    // undone.
                     let ds = self.ds()?;
-                    let allowed =
-                        ds.interaction.as_ref().is_none_or(|it| moving.iter().all(|m| crate::components::move_allowed(&it.doc, &ds.doc, *m)));
+                    let allowed = ds.interaction.as_ref().is_none_or(|it| {
+                        moving.iter().all(|m| {
+                            crate::components::move_allowed(&it.doc, &ds.doc, *m)
+                                && crate::components::refused_override(&it.doc, &ds.doc, *m).is_none()
+                        })
+                    });
                     if allowed {
                         self.commit_interaction()?;
                     } else {
@@ -1481,7 +1486,19 @@ impl Session {
                     let _ = ev;
                 }
             }
-            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } => self.commit_interaction()?,
+            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } => {
+                // Layers inside an instance keep their main's size and rotation.
+                let ds = self.ds()?;
+                let refused = ds
+                    .interaction
+                    .as_ref()
+                    .is_some_and(|it| ds.selection.iter().any(|m| crate::components::refused_override(&it.doc, &ds.doc, *m).is_some()));
+                if refused {
+                    self.cancel_interaction()?;
+                } else {
+                    self.commit_interaction()?;
+                }
+            }
             Gesture::Draw { start, id, parent, .. } => {
                 let tiny = (ev.p() - start).hypot() * ev.zoom < 3.0;
                 if tiny || id.is_none() {

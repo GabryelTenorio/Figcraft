@@ -685,7 +685,6 @@ fn alt_dropping_a_component_onto_an_instance_swaps_it() {
         })
         .unwrap();
     s.ds_mut().unwrap().page = doc.page_of(button).unwrap();
-    let fill = doc.node(glyph).unwrap().fills.clone();
     let label = chars(doc, find_path(doc, button, &["Label"]).unwrap());
     let other = doc.node(ds.button).unwrap().children.iter().copied().find(|v| *v != main_of(doc, button)).unwrap();
     let (x, y) = centre(doc, glyph);
@@ -696,8 +695,9 @@ fn alt_dropping_a_component_onto_an_instance_swaps_it() {
     healthy(doc);
     assert_eq!(main_of(doc, button), other);
     assert_eq!(s.selection(), vec![button]);
-    // ... keeping overrides on layers with matching names and the property values.
-    assert_eq!(doc.node(find_path(doc, button, &["Icon", "Glyph"]).unwrap()).unwrap().fills, fill);
+    // ... keeping only text layers' overrides (by matching names) and the property values.
+    let new_glyph = find_path(doc, button, &["Icon", "Glyph"]).unwrap();
+    assert!(doc.node(new_glyph).unwrap().overrides.is_empty());
     assert_eq!(chars(doc, find_path(doc, button, &["Label"]).unwrap()), label);
     // An icon dropped there swaps the button's icon (a nested swap, an override).
     let icon = find_path(doc, button, &["Icon"]).unwrap();
@@ -708,7 +708,9 @@ fn alt_dropping_a_component_onto_an_instance_swaps_it() {
     healthy(doc);
     assert_eq!(comp_of(doc, icon), Some(to));
     assert!(doc.node(icon).unwrap().overrides.contains("component"));
-    assert_eq!(doc.node(find_path(doc, icon, &["Glyph"]).unwrap()).unwrap().fills, fill);
+    let glyph = find_path(doc, icon, &["Glyph"]).unwrap();
+    assert!(doc.node(glyph).unwrap().overrides.is_empty());
+    assert_eq!(doc.node(glyph).unwrap().fills, doc.node(doc.node(glyph).unwrap().source.unwrap()).unwrap().fills);
     // Nothing there: refused, nothing changes.
     let before = s.doc().unwrap().clone();
     assert!(s.execute("instance.swapAt", &json!({"component": to, "x": -50_000, "y": -50_000})).is_err());
@@ -731,7 +733,6 @@ fn alt_dropping_a_library_component_swaps_to_it() {
     let doc = &s.doc().unwrap().clone();
     let (top, glyph) =
         inst.iter().copied().filter(|i| local.icons.contains(&main_of(doc, *i))).find_map(|i| find_path(doc, i, &["Glyph"]).map(|g| (i, g))).unwrap();
-    let fill = doc.node(glyph).unwrap().fills.clone();
     s.ds_mut().unwrap().page = doc.page_of(top).unwrap();
     let k = ds.icons.len() - 1;
     let (x, y) = centre(doc, glyph);
@@ -739,6 +740,8 @@ fn alt_dropping_a_library_component_swaps_to_it() {
     let doc = s.doc().unwrap();
     healthy(doc);
     assert_eq!(main_of(doc, top), local.icons[k]);
-    assert_eq!(doc.node(find_path(doc, top, &["Glyph"]).unwrap()).unwrap().fills, fill);
+    // Swapped from the Assets panel: only text layers keep their overrides.
+    let glyph = find_path(doc, top, &["Glyph"]).unwrap();
+    assert!(doc.node(glyph).unwrap().overrides.is_empty());
     let _ = std::fs::remove_dir_all(dir);
 }

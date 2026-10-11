@@ -413,6 +413,28 @@ most when it can't be reached).
   still from `from`, including this file's collections that extend one of its collections],
   removed (nothing of `from` was left, so it was removed)}`.
 
+### Overrides and variants
+
+- **What an instance overrides** (`node.set` / `text.set` on its layers; `get_node` lists
+  `overrides`): fills, strokes, effects, opacity, visibility, layer names, corner radius, text
+  content and text properties (font, size, spacing, resizing, lists…), auto layout padding, gap and
+  alignment, layout grids, export settings and prototype interactions; nested instances swap
+  (`component`) and take property values (`props`). Each stays when the main changes that property
+  and goes with `component.resetOverride {id, group}` or `component.resetInstance`.
+- **What it doesn't**: moving, rotating, resizing or re-constraining a layer inside an instance,
+  its resizing (hug / fill / min / max), the auto layout direction and other auto layout settings,
+  and adding, removing or reordering layers (outside slots) are refused (nothing changes); resize
+  the instance itself (its layers follow the main's constraints) or edit the main.
+- **Variants**: `instance.setProperties {ids?, properties}` switching variants keeps an override
+  where the layer's name path matches and both variants had the same value for that property;
+  text layers keep all theirs. The default variant (`instance.create` with a set, the Assets
+  thumbnail) is the one in the set's top-left corner; `component.editProperty {name, default}`
+  moves the chosen variant there, `{name, index}` reorders variant properties (the variants'
+  names follow). `component.properties` on a set reports `conflicts`: variants sharing one
+  combination of values.
+- `component.pushChanges {id?}` copies the instance's overrides into its main (from a layer of a
+  nested instance too: always into the outer instance's main).
+
 ### Swapping instances
 
 - `instance.swap {ids?, component}` shows another component in the instances (overrides on layers
@@ -420,8 +442,9 @@ most when it can't be reached).
   swapped on their own (an override of the instance they're in).
 - `instance.swapAt {component, x, y}` swaps the instance at a page point: of the instances under
   it (innermost first), the first showing a variant of the same component set, else the innermost
-  (never one inside the dropped component). The Assets panel does this when a component is dropped
-  onto an instance with Alt (Option) held, highlighting that instance while dragging.
+  (never one inside the dropped component); only text layers keep their overrides. The Assets
+  panel does this when a component is dropped onto an instance with Alt (Option) held,
+  highlighting that instance while dragging.
 - Instance swap properties offer **preferred values**: `component.addProperty {type:
   "instanceSwap", default, preferred? [component or set ids]}` and `component.editProperty {name,
   preferred}`; `component.properties` lists them, and the Design panel's swap menus show them first.

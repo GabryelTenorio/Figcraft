@@ -891,6 +891,12 @@ fn override_group(field: &str) -> Option<&'static str> {
         | "paragraphSpacing"
         | "paragraphIndent" => "textStyle",
         "width" | "height" | "size" => "size",
+        "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "horizontalPadding" | "verticalPadding" => "padding",
+        "itemSpacing" | "counterAxisSpacing" => "gap",
+        "primaryAxisAlignItems" | "counterAxisAlignItems" => "alignment",
+        "layoutGrids" | "gridStyleId" => "grids",
+        "exportSettings" => "exports",
+        "interactions" | "reactions" => "interactions",
         _ => return None,
     })
 }

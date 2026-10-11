@@ -12,7 +12,8 @@
 use egui::{Id, Sense, Ui, vec2};
 use figcraft_doc::*;
 use figcraft_engine::components::{
-    PROP_BINDING, inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_options, variant_props, variant_set,
+    PROP_BINDING, default_variant, inside_instance, owning_component, owning_instance, slot_def, slot_edited, slots_of, variant_conflicts,
+    variant_options, variant_props, variant_set,
 };
 use serde_json::{Value, json};
 
@@ -232,6 +233,14 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
     if defs.is_empty() && variants.is_empty() {
         widgets::note(ui, tr("Add properties to make instances configurable"), t.text_tertiary);
     }
+    if is_set && !variant_conflicts(doc, owner).is_empty() {
+        widgets::note(ui, tr("Some variants have the same property values: give each one a unique combination"), t.warning);
+    }
+    let defaults = if is_set {
+        default_variant(doc, owner).and_then(|d| doc.node(d)).map(|n| variant_props(&n.name)).unwrap_or_default()
+    } else {
+        Default::default()
+    };
     // Variant properties: name, values (the matrix), add value, delete.
     for (k, vals) in &variants {
         row(ui, 32.0, |ui| {
@@ -240,8 +249,8 @@ fn properties_ui(app: &mut FigApp, ui: &mut Ui, doc: &Document, owner: NodeId) {
             if let Some(nn) = widgets::text_field(ui, Id::new(("vprop_name", owner, k.as_str())), k, 110.0, tr("Name")) {
                 app.run("component.editProperty", json!({"id": owner, "name": k, "newName": nn}));
             }
-            let def = vals.first().cloned().unwrap_or_default();
-            let resp = widgets::dropdown(ui, &def, 70.0, None).on_hover_text(tr("Default value (the first variant)"));
+            let def = defaults.get(k).or(vals.first()).cloned().unwrap_or_default();
+            let resp = widgets::dropdown(ui, &def, 70.0, None).on_hover_text(tr("Default value (the top-left variant)"));
             menu_popup(&resp).show(|ui| {
                 for v in vals {
                     if menu_item(ui, v, "") {
@@ -478,6 +487,12 @@ fn group_label(g: &str) -> String {
         "corners" => tr("Corner radius"),
         "characters" => tr("Text content"),
         "textStyle" => tr("Text style"),
+        "padding" => tr("Padding"),
+        "gap" => tr("Gap"),
+        "alignment" => tr("Alignment"),
+        "grids" => tr("Layout grids"),
+        "exports" => tr("Export settings"),
+        "interactions" => tr("Interactions"),
         "size" => tr("Size"),
         "position" => tr("Position"),
         "component" => tr("Swapped instance"),

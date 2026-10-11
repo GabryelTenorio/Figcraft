@@ -414,7 +414,7 @@ fn components_file() -> Value {
             {"id": "5:1", "name": "Button", "type": "INSTANCE", "componentId": "1:2", "relativeTransform": at(0.0, 200.0), "size": {"x": 80, "y": 40},
              "componentProperties": {"Label#1:9": {"type": "TEXT", "value": "Go"}, "State": {"type": "VARIANT", "value": "Default"},
                                      "Icon#2:0": {"type": "INSTANCE_SWAP", "value": "3:1"}},
-             "overrides": [{"id": "I5:1;1:3", "overriddenFields": ["characters", "fills", "unknownField"]}],
+             "overrides": [{"id": "I5:1;1:3", "overriddenFields": ["characters", "fills", "exportSettings", "unknownField"]}],
              "children": [{"id": "I5:1;1:3", "name": "Label", "type": "TEXT", "relativeTransform": at(8.0, 8.0), "size": {"x": 30, "y": 20},
                            "characters": "Go", "style": {"fontSize": 14}, "componentPropertyReferences": {"characters": "Label#1:9"}}]},
             {"id": "6:1", "name": "Remote", "type": "INSTANCE", "componentId": "99:1", "relativeTransform": at(0.0, 300.0), "size": {"x": 10, "y": 10}}
@@ -454,7 +454,7 @@ fn components_sets_instances_and_properties() {
     assert_eq!(props.get("Icon"), Some(&json!(icon.id.0)));
     assert!(!props.contains_key("State"));
     let inst_label = doc.node(inst.children[0]).unwrap();
-    assert!(inst_label.overrides.contains("characters") && inst_label.overrides.contains("fills") && inst_label.overrides.len() == 2);
+    assert!(["characters", "fills", "exports"].iter().all(|g| inst_label.overrides.contains(*g)) && inst_label.overrides.len() == 3);
     assert!(matches!(named(&doc, "Remote").kind, NodeKind::Frame));
     assert!(warnings.iter().any(|w| w.contains("aren't in the file")), "{warnings:?}");
 }

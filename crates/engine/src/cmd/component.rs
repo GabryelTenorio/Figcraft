@@ -126,7 +126,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.resetOverride",
             "Reset override",
-            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|size|position|component|props|slot; all when omitted)}",
+            "{id?, group? (fills|strokes|effects|opacity|visible|name|corners|characters|textStyle|padding|gap|alignment|grids|exports|interactions|size|position|component|props|slot; all when omitted)}",
             true,
             reset_override
         ),
@@ -164,7 +164,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "instance.swapAt",
             "Swap instance at point",
-            "{component (component or set: its default variant), x, y (page point)}  swaps the instance there (preferring one showing the same component set; Alt-drop from the Assets panel); overrides on layers with matching names stay",
+            "{component (component or set: its default variant), x, y (page point)}  swaps the instance there (preferring one showing the same component set; Alt-drop from the Assets panel); only text layers keep their overrides (by matching names)",
             true,
             swap_at
         ),
@@ -185,7 +185,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "component.editProperty",
             "Edit component property",
-            "{id? (component or set), name, newName?, default?, value? + newValue? (rename a variant value), preferred? (instance swap and slot properties: component or set ids offered first)}",
+            "{id? (component or set), name, newName?, default? (variant properties: that variant takes the top-left place), value? + newValue? (rename a variant value), index? (variant properties: move to this place; the variants' names follow), preferred? (instance swap and slot properties: component or set ids offered first)}",
             true,
             edit_prop
         ),
@@ -241,14 +241,11 @@ pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": i, "parent": slot.parent}))
 }
 
-/// A component to instantiate: the component itself, or a set's default (first) variant.
+/// A component to instantiate: the component itself, or a set's default (top-left) variant.
 pub(crate) fn main_of(doc: &Document, id: NodeId) -> Option<NodeId> {
-    let n = doc.node(id)?;
-    match n.kind {
+    match doc.node(id)?.kind {
         NodeKind::Component { .. } => Some(id),
-        NodeKind::ComponentSet { .. } => {
-            n.children.iter().copied().find(|c| doc.node(*c).is_some_and(|x| matches!(x.kind, NodeKind::Component { .. })))
-        }
+        NodeKind::ComponentSet { .. } => default_variant(doc, id),
         _ => None,
     }
 }
@@ -635,12 +632,14 @@ fn push_changes(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.pushChanges";
     let i = targets(s, p).first().copied().ok_or_else(|| bad(cmd, "select an instance"))?;
     let doc = s.doc_mut()?;
-    let inst = owning_instance(doc, i).ok_or_else(|| bad(cmd, "not an instance"))?;
+    // Changes go to the outer instance's main (never into a nested instance's own main).
+    let inst = root_instance(doc, i).ok_or_else(|| bad(cmd, "not an instance"))?;
     let Some(NodeKind::Instance { component, .. }) = doc.node(inst).map(|n| n.kind.clone()) else { return ok() };
     if !doc.contains(component) {
         return Err(EngineError::Disabled(cmd.into(), "the main component was deleted (use component.restoreMain)".into()));
     }
-    // Copy every overridden layer's values to its source in the main.
+    // Copy every overridden layer's values to its source in the main (geometry, swaps, property
+    // values and slot content stay with the instance).
     let mut pushed = 0;
     for d in doc.subtree(inst) {
         let Some(n) = doc.node(d).cloned() else { continue };
@@ -649,53 +648,14 @@ fn push_changes(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         }
         let Some(mut target) = doc.node(src).cloned() else { continue };
-        let mut groups = BTreeSet::new();
-        for g in &n.overrides {
-            let done = match g.as_str() {
-                "fills" => {
-                    target.fills = n.fills.clone();
-                    target.styles.fill = n.styles.fill.clone();
-                    true
-                }
-                "strokes" => {
-                    target.strokes = n.strokes.clone();
-                    target.stroke = n.stroke.clone();
-                    target.styles.stroke = n.styles.stroke.clone();
-                    true
-                }
-                "effects" => {
-                    target.effects = n.effects.clone();
-                    target.styles.effect = n.styles.effect.clone();
-                    true
-                }
-                "opacity" => {
-                    target.opacity = n.opacity;
-                    target.blend = n.blend;
-                    true
-                }
-                "visible" => {
-                    target.visible = n.visible;
-                    true
-                }
-                "name" if d != inst => {
-                    target.name = n.name.clone();
-                    true
-                }
-                "corners" => {
-                    target.corners = n.corners;
-                    true
-                }
-                "characters" | "textStyle" => {
-                    if let (NodeKind::Text(a), NodeKind::Text(b)) = (&n.kind, &mut target.kind) {
-                        *b = a.clone();
-                    }
-                    true
-                }
-                _ => false,
-            };
-            if done {
-                groups.insert(g.clone());
-            }
+        let groups: BTreeSet<String> = n
+            .overrides
+            .iter()
+            .filter(|g| !matches!(g.as_str(), "size" | "position" | "component" | "props" | SLOT) && !(d == inst && g.as_str() == "name"))
+            .cloned()
+            .collect();
+        for g in &groups {
+            copy_group(&n, &mut target, g);
         }
         if groups.is_empty() {
             continue;
@@ -829,6 +789,7 @@ pub(crate) fn swap_at(s: &mut Session, p: &Value) -> Result<Value> {
     let family = crate::drop::swap_family(doc, c);
     let target = crate::drop::swap_target(doc, page, pt, family.as_deref(), Some(c))
         .ok_or_else(|| EngineError::Disabled(cmd.into(), "there is no instance at that point to swap".into()))?;
+    keep_text_overrides(s.doc_mut()?, target);
     swap(s, &json!({"ids": [target], "component": c}))?;
     s.set_selection(vec![target]);
     Ok(json!({"id": target, "component": c}))
@@ -1248,7 +1209,14 @@ fn edit_prop(s: &mut Session, p: &Value) -> Result<Value> {
             }
             _ => None,
         };
-        let order: Vec<String> = order.into_iter().map(|k| if k == name { new_name.clone().unwrap_or(k) } else { k }).collect();
+        let mut order: Vec<String> = order.into_iter().map(|k| if k == name { new_name.clone().unwrap_or(k) } else { k }).collect();
+        // Reordered: every variant's name lists the properties in the new order.
+        if let Some(to) = get(p, "index").filter(|v| !v.is_null()) {
+            let to = to.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| bad(cmd, "`index`: a property place (0 = first)"))?;
+            let key = new_name.clone().unwrap_or(name.clone());
+            order.retain(|k| *k != key);
+            order.insert(to.min(order.len()), key);
+        }
         for c in &comps {
             let mut pairs = variant_props(&doc.get(*c)?.name);
             if let Some((v, nv)) = &rename_value
@@ -1263,13 +1231,26 @@ fn edit_prop(s: &mut Session, p: &Value) -> Result<Value> {
             }
             doc.get_mut(*c)?.name = variant_name(&pairs, &order);
         }
-        // The default variant is the first one: move the first matching variant there.
+        // The default variant is the top-left one: the variant with that value (and the default's
+        // other values, when there is one) trades places with it.
         if let Some(dv) = string(p, "default") {
             let key = new_name.clone().unwrap_or(name.clone());
-            let first = comps.iter().copied().find(|c| doc.node(*c).is_some_and(|n| variant_props(&n.name).get(&key) == Some(&dv)));
-            match first {
-                Some(f) => doc.reorder(f, 0)?,
-                None => return Err(bad(cmd, format!("no variant has {key}={dv}"))),
+            let current = default_variant(doc, set);
+            let mut wanted = current.and_then(|d| doc.node(d)).map(|n| variant_props(&n.name)).unwrap_or_default();
+            wanted.insert(key.clone(), dv.clone());
+            let props_of = |c: &NodeId| doc.node(*c).map(|n| variant_props(&n.name)).unwrap_or_default();
+            let pick =
+                comps.iter().copied().find(|c| props_of(c) == wanted).or_else(|| comps.iter().copied().find(|c| props_of(c).get(&key) == Some(&dv)));
+            let (Some(f), Some(d)) = (pick, current) else { return Err(bad(cmd, format!("no variant has {key}={dv}"))) };
+            if f != d {
+                let place = |doc: &Document, c: NodeId| doc.node(c).map(|n| n.transform.as_coeffs()).map(|[.., x, y]| (x, y)).unwrap_or_default();
+                let (fp, dp) = (place(doc, f), place(doc, d));
+                for (c, (x, y)) in [(f, dp), (d, fp)] {
+                    let n = doc.get_mut(c)?;
+                    let [a, b, cc, dd, ..] = n.transform.as_coeffs();
+                    n.transform = figcraft_geom::Affine::new([a, b, cc, dd, x, y]);
+                }
+                fit_set(doc, set);
             }
         }
         return ok();
@@ -1372,8 +1353,9 @@ fn describe_props(doc: &Document, id: NodeId) -> Value {
     let mut list: Vec<Value> = Vec::new();
     if let Some(set) = variant_set(doc, comp) {
         let current = doc.node(comp).map(|c| variant_props(&c.name)).unwrap_or_default();
+        let defaults = default_variant(doc, set).and_then(|d| doc.node(d)).map(|n| variant_props(&n.name)).unwrap_or_default();
         for (k, vals) in variant_options(doc, set) {
-            let mut v = json!({"name": k, "type": "variant", "options": vals, "default": vals.first()});
+            let mut v = json!({"name": k, "type": "variant", "options": vals, "default": defaults.get(&k).or(vals.first())});
             if values.is_some() {
                 v["value"] = json!(current.get(&k));
             }
@@ -1399,5 +1381,7 @@ fn describe_props(doc: &Document, id: NodeId) -> Value {
         }
         list.push(v);
     }
-    json!({"component": comp, "set": variant_set(doc, comp), "properties": list})
+    let set = variant_set(doc, comp);
+    let conflicts = set.map(|s| variant_conflicts(doc, s)).unwrap_or_default();
+    json!({"component": comp, "set": set, "properties": list, "conflicts": conflicts})
 }
