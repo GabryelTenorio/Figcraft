@@ -712,7 +712,8 @@ fn draw(p: &P, icon: Icon) {
         }
         Play => p.fill(&[(4.5, 2.5), (13.5, 8.0), (4.5, 13.5)]),
         Home => {
-            p.poly(&[(3.5, 13.5), (3.5, 7.0), (8.0, 2.8), (12.5, 7.0), (12.5, 13.5)], true);
+            // Unhinted so the roof's peak stays centred; the floor stops at the door.
+            p.path(&[(6.5, 13.5), (3.5, 13.5), (3.5, 7.0), (8.0, 2.8), (12.5, 7.0), (12.5, 13.5), (9.5, 13.5)], false);
             p.poly(&[(6.5, 13.5), (6.5, 9.5), (9.5, 9.5), (9.5, 13.5)], false);
         }
         Bell => {
@@ -819,9 +820,10 @@ fn draw(p: &P, icon: Icon) {
         StrokeIcon => p.rect(2.5, 2.5, 13.5, 13.5, 2.0),
         Fill => p.fill_rect(2.0, 2.0, 14.0, 14.0, 2.0),
         Moon => {
-            // A crescent: the outer rim, then the shadowing circle's edge back.
-            let mut m: Vec<(f32, f32)> = arc_pts(8.0, 8.0, 5.5, 0.166, TAU - 1.737).collect();
-            m.extend(arc_pts(11.0, 5.0, 4.6, -2.586, 1.016 - TAU));
+            // A crescent: the outer rim, then the shadowing circle's edge back. Both arcs stop short
+            // of where the circles meet, so each tip is two blunt joins (a single cusp join folds).
+            let mut m: Vec<(f32, f32)> = arc_pts(8.0, 8.0, 5.5, 0.166 + 0.12, TAU - 1.737 - 0.12).collect();
+            m.extend(arc_pts(11.0, 5.0, 4.6, -2.586 - 0.18, 1.016 - TAU + 0.18));
             p.path(&m, true);
         }
         Undo | Redo => {
