@@ -522,7 +522,7 @@ fn variant_combinations_order_default_and_conflicts() {
     assert_eq!(undo_len(&s), steps + 1);
     let j = idv(&ex(&mut s, "instance.create", json!({"component": set, "x": 0, "y": 400})));
     assert_eq!(component_of(&s, j), v[0], "the new default is the top-left variant");
-    // Reordering properties rewrites every variant's name ("Figma will adjust the name").
+    // Reordering properties rewrites every variant's name to the new order.
     ex(&mut s, "component.editProperty", json!({"id": set, "name": "State", "index": 0}));
     assert_eq!(node(&s, v[2]).name, "State=Hover, Size=Small");
     let props = ex(&mut s, "component.properties", json!({"id": i}));
@@ -534,7 +534,7 @@ fn variant_combinations_order_default_and_conflicts() {
     assert_eq!(ex(&mut s, "component.properties", json!({"id": set}))["conflicts"], json!([]));
     ex(&mut s, "component.editProperty", json!({"id": set, "name": "State", "value": "Hover", "newValue": "Default"}));
     let conflicts = ex(&mut s, "component.properties", json!({"id": set}))["conflicts"].clone();
-    assert_eq!(conflicts, json!([[v[1].0, v[2].0]]), "\"Figma will let you know that there is a conflict\"");
+    assert_eq!(conflicts, json!([[v[1].0, v[2].0]]), "duplicate variant combinations are reported as a conflict");
     healthy(&s);
 }
 
@@ -564,7 +564,7 @@ fn swaps_keep_overrides_by_layer_name() {
     // (how, command, kept on Bg, derivation)
     let rows: [(&str, &str, bool, &str); 2] = [
         ("the instance menu", "instance.swap", true, "the layer names of the current instance and the instance you're selecting must match"),
-        ("the Assets panel", "instance.swapAt", false, "\"Figma only preserves text overrides\""),
+        ("the Assets panel", "instance.swapAt", false, "an Assets-panel swap keeps only text overrides"),
     ];
     for (how, cmd, bg_kept, why) in rows {
         let mut s = Session::new();
