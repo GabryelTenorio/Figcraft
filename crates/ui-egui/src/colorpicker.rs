@@ -595,6 +595,18 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                         write(app, &target, &paint, false);
                     }
                 });
+                // The image's own colour profile (decoding converts it into the file's).
+                let source = app.session.doc().ok().and_then(|d| figcraft_render::images::profile_name(&img.image, d.images.get(&img.image)));
+                let source = match source.as_deref() {
+                    None => tr("Unknown — treated as sRGB"),
+                    Some("") => tr("Embedded profile"),
+                    Some(name) => name,
+                };
+                ui.horizontal(|ui| {
+                    ui.add_space(16.0);
+                    let text = trf("Color profile: {name}", &[("name", &source)]);
+                    ui.add(egui::Label::new(egui::RichText::new(text).font(regular(11.0)).color(t.text_secondary)).truncate());
+                });
                 image_presets(app, ui, &target, &mut paint, img.filters);
                 for (label, val) in [
                     (tr_noop("Exposure"), img.filters.exposure),

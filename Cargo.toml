@@ -45,6 +45,9 @@ postcard = { version = "1", default-features = false, features = ["alloc"] }
 # rendering / formats
 tiny-skia = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
+# Already built for `image`: embedded ICC profiles (moxcms) and PNG colour chunks (png).
+moxcms = "0.8"
+png = "0.18"
 usvg = "0.48"
 krilla = "0.8"
 skrifa = "0.47"

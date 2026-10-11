@@ -16,6 +16,8 @@ figcraft-text = { workspace = true }
 figcraft-pathops = { workspace = true }
 tiny-skia = { workspace = true }
 image = { workspace = true }
+moxcms = { workspace = true }
+png = { workspace = true }
 crc32fast = { workspace = true }
 log = { workspace = true }
 

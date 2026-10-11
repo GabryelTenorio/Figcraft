@@ -12,6 +12,7 @@ pub mod draw;
 pub mod fx;
 pub mod glass;
 pub mod grain;
+pub mod image_profile;
 pub mod images;
 pub mod lod;
 pub mod paint;
@@ -406,6 +407,8 @@ mod effect_order_tests;
 mod gif_tests;
 #[cfg(test)]
 mod grain_tests;
+#[cfg(test)]
+mod image_profile_tests;
 #[cfg(test)]
 mod lod_tests;
 #[cfg(test)]

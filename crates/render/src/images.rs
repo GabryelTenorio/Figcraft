@@ -1,5 +1,6 @@
 //! Decoded image cache (content hash + filters + colour profile → premultiplied pixmap). Images
-//! are taken to be sRGB; a Display P3 document gets them converted into its space.
+//! are converted from their own colour profile (see [`crate::image_profile`]; sRGB when they have
+//! none) into the document's space, once per image and profile.
 //!
 //! Animated GIFs keep their original bytes like any image; their first frame is the image
 //! everywhere (canvas, exports). The presenter plays them: [`frame_at`] decodes every frame on
@@ -24,9 +25,42 @@ fn fkey(f: &ImageFilters) -> [i32; 7] {
     [q(f.exposure), q(f.contrast), q(f.saturation), q(f.temperature), q(f.tint), q(f.highlights), q(f.shadows)]
 }
 
-/// Decode encoded image bytes into a premultiplied pixmap (max 16k per side).
+/// Decode encoded image bytes into a premultiplied sRGB pixmap (max 16k per side).
 pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
-    premultiplied(&image::load_from_memory(bytes).ok()?.to_rgba8())
+    decode_in(bytes, ColorProfile::Srgb).map(|(p, _)| p)
+}
+
+/// Decode encoded image bytes into a premultiplied pixmap (max 16k per side): converted from the
+/// image's own profile into `target` (`false`), or as sRGB when it has none (`true`: the sRGB →
+/// `target` conversion is still to do).
+fn decode_in(bytes: &[u8], target: ColorProfile) -> Option<(Pixmap, bool)> {
+    let mut dec = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_decoder().ok()?;
+    let source = crate::image_profile::Source::read(bytes, &mut dec);
+    let img = image::DynamicImage::from_decoder(dec).ok()?;
+    match source.convert(&img, target) {
+        Some(rgba) => Some((premultiplied(&rgba)?, false)),
+        None => Some((premultiplied(&img.to_rgba8())?, true)),
+    }
+}
+
+fn profile_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static C: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The name of image `hash`'s own colour profile (empty for an unnamed one); `None` when unknown,
+/// and it's taken as sRGB. Cached.
+pub fn profile_name(hash: &str, data: Option<&ImageData>) -> Option<String> {
+    if let Some(n) = profile_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(hash) {
+        return n.clone();
+    }
+    let name = crate::image_profile::Source::of(&data?.bytes).name;
+    let mut c = profile_cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if c.len() > 256 {
+        c.clear();
+    }
+    c.insert(hash.to_string(), name.clone());
+    name
 }
 
 /// Straight RGBA → a premultiplied pixmap (max 16k per side).
@@ -55,9 +89,9 @@ pub fn get(hash: &str, data: Option<&ImageData>, filters: &ImageFilters, profile
     if let Some(p) = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Some(p.clone());
     }
-    let data = data?;
-    let mut p = decode(&data.bytes)?;
-    finish(&mut p, filters, profile);
+    let (mut p, srgb) = decode_in(&data?.bytes, profile)?;
+    // Images with their own profile are in `profile` already (sRGB → sRGB is the identity).
+    finish(&mut p, filters, if srgb { profile } else { ColorProfile::Srgb });
     let p = Arc::new(p);
     let mut c = cache().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if c.len() > 256 {

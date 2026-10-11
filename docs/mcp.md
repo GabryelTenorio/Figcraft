@@ -99,8 +99,10 @@ Or in a project's `.mcp.json`:
 - **Colour profile**: colour values are in the file's profile, sRGB (default) or Display P3
   (`inspect_document` reports `colorProfile`). `file.colorProfile {profile: srgb|displayP3,
   convert?}` changes it: `convert` (default true) converts every colour value so colours keep their
-  appearance; `false` keeps the values and reinterprets them. Images are treated as sRGB and managed
-  into the file's space. PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
+  appearance; `false` keeps the values and reinterprets them. Images are converted from their own colour
+  profile into the file's space: an embedded ICC profile (PNG, JPG, WebP, TIFF; RGB or grey), a PNG's
+  `sRGB` / `gAMA` / `cHRM` chunks, else sRGB (also for CMYK or damaged profiles); `image.place` reports
+  the profile's name as `imageProfile` (`null`: none usable, taken as sRGB). PNG exports are tagged (`sRGB` chunk, or a Display P3 ICC profile plus
   `cICP`), Display P3 JPG and WebP embed the ICC profile, and SVG and PDF export Display P3 files
   converted to sRGB (out-of-gamut colours clip). The app's canvas shows sRGB (P3 colours outside sRGB clip on screen):
   `view.proofSrgb {on?}` (View ▸ Soft-proof sRGB) stripes those pixels so `screenshot {window:

@@ -1622,6 +1622,8 @@ dependencies = [
  "figcraft-text",
  "image",
  "log",
+ "moxcms",
+ "png",
  "rayon",
  "tiny-skia",
 ]

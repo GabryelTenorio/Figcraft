@@ -79,7 +79,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "image.place",
             "Place image",
-            "{data (base64) | path, x?, y?, width?, height?, parent?, mode? (fill|fit|crop|tile)}",
+            "{data (base64) | path, x?, y?, width?, height?, parent?, mode? (fill|fit|crop|tile)} → {id, image, width, height, imageProfile (its embedded colour profile; null: taken as sRGB)}",
             true,
             place_image
         ),
@@ -332,6 +332,7 @@ pub fn place_image(s: &mut Session, p: &Value) -> Result<Value> {
     let ds = s.ds_mut()?;
     let doc = ds.doc_mut();
     let (hash, iw, ih) = figcraft_format::add_image(doc, bytes).map_err(|e| bad(cmd, e.to_string()))?;
+    let profile = figcraft_render::images::profile_name(&hash, doc.images.get(&hash));
     let (iw, ih) = (f64::from(iw), f64::from(ih));
     // Fit large images into 1000 px like Figma does when placing.
     let k = (1000.0 / iw.max(ih)).min(1.0);
@@ -345,5 +346,5 @@ pub fn place_image(s: &mut Session, p: &Value) -> Result<Value> {
     doc.insert(node, parent, None)?;
     ds.selection = vec![nid];
     let _ = ok;
-    Ok(json!({"id": nid, "image": hash, "width": w, "height": h}))
+    Ok(json!({"id": nid, "image": hash, "width": w, "height": h, "imageProfile": profile}))
 }
