@@ -157,7 +157,10 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
         let (fx, fy) = ((i * 7919 % 1000) as f64 / 1000.0, (i * 104_729 % 1000) as f64 / 1000.0);
         Point::new(bounds.x0 + bounds.width() * fx, bounds.y0 + bounds.height() * fy)
     };
-    table.put(col, "hit test (µs each)", mean(hits, |i| _ = doc.hit_test(page, pt(i), 1.0)) * 1000.0);
+    {
+        let result = figcraft_engine::booleans::result_outline(&doc, &[]);
+        table.put(col, "hit test (µs each)", mean(hits, |i| _ = doc.hit_test(page, pt(i), 1.0, Some(&result))) * 1000.0);
+    }
     measure_boolean_drag(table, col);
 
     let mut s = Session::with_document(doc);

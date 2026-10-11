@@ -137,7 +137,7 @@ Or in a project's `.mcp.json`:
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
-| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
+| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
@@ -427,7 +427,9 @@ on any operand, or `booleanOperation` on an operand that isn't itself a boolean 
 Operands stay editable layers: `select.children` (Enter) or a double-click selects them, `cmd: true`
 clicks reach them directly, and moving, resizing or editing an operand's points (`vector.edit.*`)
 updates the group's result on every pointer move, one undo step per gesture; a dragged operand
-stays in its group. `bool.flatten` bakes the result. Only the operands from the edited one up are
+stays in its group. Clicks and `select.layersAt` hit a boolean group where its result is (a click in
+a subtracted hole reaches what's behind it); while the group or one of its operands is selected, its
+operands are hit instead, so each can be picked. `bool.flatten` bakes the result. Only the operands from the edited one up are
 recombined during a drag (`figcraft_render::boolean`; timed by `cargo xtask bench`).
 
 ### Shape builder

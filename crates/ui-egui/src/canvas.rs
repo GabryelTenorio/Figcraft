@@ -785,10 +785,20 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     for id in operands.iter().filter(|o| !sel.contains(o)) {
         draw_outline(app, painter, &doc, *id, stroke(outline_colour(&doc, *id).gamma_multiply(0.6), 1.0));
     }
-    // Mask outlines: a mask doesn't draw itself.
-    if view.mask_outlines {
-        for id in doc.subtree(page).into_iter().filter(|i| doc.node(*i).is_some_and(|n| n.is_mask && n.visible)) {
-            draw_outline(app, painter, &doc, id, stroke(ACCENT, 1.0));
+    // Mask outlines (a mask doesn't draw itself), frame outlines and slices, as the View menu shows.
+    if view.mask_outlines || view.frame_outlines || view.show_slices {
+        for id in doc.subtree(page) {
+            let Some(n) = doc.node(id).filter(|n| n.visible) else { continue };
+            if view.mask_outlines && n.is_mask {
+                draw_outline(app, painter, &doc, id, stroke(ACCENT, 1.0));
+            } else if view.frame_outlines && n.kind.is_frame_like() {
+                draw_outline(app, painter, &doc, id, stroke(t.text_secondary, 1.0));
+            } else if view.show_slices
+                && matches!(n.kind, NodeKind::Slice)
+                && let Some(q) = node_quad(app, &doc, id)
+            {
+                painter.extend(Shape::dashed_line(&[q[0], q[1], q[2], q[3], q[0]], stroke(t.text_secondary, 1.0), 4.0, 3.0));
+            }
         }
     }
     // Drop target / insertion indicator.

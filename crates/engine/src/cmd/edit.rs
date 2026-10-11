@@ -658,7 +658,9 @@ fn layers_at(s: &mut Session, p: &Value) -> Result<Value> {
     let (x, y) = (req_num("select.layersAt", p, "x")?, req_num("select.layersAt", p, "y")?);
     let doc = s.doc()?;
     let zoom = s.ds()?.view.zoom.max(1e-6);
-    let layers: Vec<Value> = figcraft_doc::geometry::layers_at(doc, s.page()?, figcraft_geom::Point::new(x, y), 2.0 / zoom)
+    let sel = s.selection();
+    let result = crate::booleans::result_outline(doc, &sel);
+    let layers: Vec<Value> = figcraft_doc::geometry::layers_at(doc, s.page()?, figcraft_geom::Point::new(x, y), 2.0 / zoom, Some(&result))
         .into_iter()
         .filter_map(|(id, depth)| doc.node(id).map(|n| json!({"id": id, "name": n.name, "type": n.kind.type_name(), "depth": depth})))
         .collect();

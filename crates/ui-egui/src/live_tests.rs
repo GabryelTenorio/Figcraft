@@ -148,10 +148,7 @@ impl Harness {
     pub(crate) fn goes_quiet(&mut self) -> bool {
         let mut quiet = 0;
         for _ in 0..200 {
-            let rendering = self.app.worker.as_ref().is_some_and(|w| w.in_flight);
-            if rendering {
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            let rendering = crate::idle_tests::wait_for_render(&self.app);
             let (_, d) = self.frame(vec![]);
             quiet = if d >= Duration::from_secs(1) && !rendering { quiet + 1 } else { 0 };
             if quiet >= 3 {

@@ -980,9 +980,10 @@ impl Document {
 
     /// Hit test: the topmost visible, unlocked node under `pt` on `page` for a click.
     /// `deep` selects the innermost leaf (Cmd-click); otherwise top-level children of frames
-    /// resolve like Figma's click-through rules (see [`geometry::select_target`]).
-    pub fn hit_test(&self, page: NodeId, pt: Point, tolerance: f64) -> Option<NodeId> {
-        geometry::hit_leaf(self, page, pt, tolerance)
+    /// resolve like Figma's click-through rules (see [`geometry::select_target`]). Boolean groups
+    /// are hit where their `result` is (see [`geometry::BoolResult`]).
+    pub fn hit_test(&self, page: NodeId, pt: Point, tolerance: f64, result: geometry::BoolResult) -> Option<NodeId> {
+        geometry::hit_leaf(self, page, pt, tolerance, result)
     }
 }
 

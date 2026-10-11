@@ -44,20 +44,14 @@ impl Harness {
     /// row asking for no repaint sooner than [`IDLE`]. Returns the last frame's delay; fails with
     /// what kept asking for frames.
     fn settle(&mut self) -> Duration {
-        let start = Instant::now();
         let mut quiet = 0;
         for _ in 0..2000 {
             let delay = self.frame(vec![]);
-            let rendering = self.app.worker.as_ref().is_some_and(|w| w.in_flight);
-            if rendering {
-                // The render thread wakes the UI when it's done.
-                std::thread::sleep(Duration::from_millis(2));
-            }
+            let rendering = wait_for_render(&self.app);
             quiet = if delay >= IDLE && !rendering { quiet + 1 } else { 0 };
             if quiet >= 3 {
                 return delay;
             }
-            assert!(start.elapsed() < Duration::from_secs(20), "the UI never settled");
         }
         panic!("still asking for frames after 2000 with no input: {:?}", self.ctx.repaint_causes());
     }
@@ -76,6 +70,19 @@ impl Harness {
             assert!(delay >= IDLE, "{what}: asked for a repaint in {delay:?}: {:?}", self.ctx.repaint_causes());
         }
     }
+}
+
+/// Waits (without drawing frames, however slow the machine) until the render thread is done with
+/// every job and has woken the UI for it; returns whether one was in flight.
+pub(crate) fn wait_for_render(app: &FigApp) -> bool {
+    let start = Instant::now();
+    let mut waited = false;
+    while app.worker.as_ref().is_some_and(crate::render_worker::Worker::in_flight) {
+        assert!(start.elapsed() < Duration::from_secs(120), "the render thread never finished");
+        std::thread::sleep(Duration::from_millis(2));
+        waited = true;
+    }
+    waited
 }
 
 /// A page with a rectangle, an ellipse and a text layer; returns the text's id.
