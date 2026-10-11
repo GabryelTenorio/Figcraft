@@ -34,6 +34,14 @@ impl Invite {
         format!("ws://{}/", self.host)
     }
 
+    /// The host is this machine (a loopback address or `localhost`).
+    pub fn loopback(&self) -> bool {
+        match self.host.parse::<std::net::SocketAddr>() {
+            Ok(a) => a.ip().is_loopback(),
+            Err(_) => self.host.rsplit_once(':').is_some_and(|(name, _)| name.eq_ignore_ascii_case("localhost")),
+        }
+    }
+
     /// Read an invite link (either form; surrounding spaces, quotes or angle brackets are fine).
     pub fn parse(link: &str) -> Result<Invite, String> {
         const NOT: &str = "that's not a live session invite: expected figcraft://join?host=…&file=…&token=… or ws://host:port/?file=…&token=…";

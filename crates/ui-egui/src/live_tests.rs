@@ -88,7 +88,7 @@ impl Harness {
         last
     }
 
-    fn click(&mut self, p: Pos2) {
+    pub(crate) fn click(&mut self, p: Pos2) {
         for pressed in [true, false] {
             self.frame(vec![
                 Event::PointerMoved(p),
@@ -173,7 +173,7 @@ pub(crate) fn has_text(shapes: &[Shape], s: &str) -> bool {
 }
 
 /// The middle of the text `s` on screen.
-fn text_center(shapes: &[Shape], s: &str) -> Pos2 {
+pub(crate) fn text_center(shapes: &[Shape], s: &str) -> Pos2 {
     let (_, p, size) = texts(shapes).into_iter().find(|(t, _, _)| t == s).unwrap_or_else(|| panic!("no text {s:?}"));
     p + size / 2.0
 }

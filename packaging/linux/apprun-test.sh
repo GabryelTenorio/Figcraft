@@ -44,7 +44,7 @@ DESKTOP="$XDG_DATA_HOME/applications/$APP_ID.desktop"
 
 # 2. Exec rewritten to the AppImage (quoted, spaces intact), TryExec dropped,
 #    everything else preserved from the packaged entry.
-expected_exec="Exec=\"$(readlink -f "$APPIMAGE")\" %F"
+expected_exec="Exec=\"$(readlink -f "$APPIMAGE")\" %U"
 grep -Fxq "$expected_exec" "$DESKTOP" || fail "Exec not rewritten: $(grep '^Exec=' "$DESKTOP")"
 grep -q '^TryExec=' "$DESKTOP" && fail "TryExec kept, the entry would be hidden"
 grep -Fxq "Icon=$APP_ID" "$DESKTOP" || fail "Icon line lost"
@@ -69,7 +69,7 @@ after="$(stat -c %i "$DESKTOP")"
 mv "$APPIMAGE" "$TMP/moved.AppImage"
 export APPIMAGE="$TMP/moved.AppImage"
 "$APPDIR/AppRun" >/dev/null || fail "launch after move exited non-zero"
-grep -Fxq "Exec=\"$(readlink -f "$APPIMAGE")\" %F" "$DESKTOP" || fail "Exec not refreshed after move"
+grep -Fxq "Exec=\"$(readlink -f "$APPIMAGE")\" %U" "$DESKTOP" || fail "Exec not refreshed after move"
 
 # 6. Opt-out installs nothing.
 rm -rf "$XDG_DATA_HOME"

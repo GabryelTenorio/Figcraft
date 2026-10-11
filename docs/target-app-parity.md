@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged #101–#103: plugins and the multiplayer core; ready ~47%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (wording: live sessions, the browser joins them, invite links open the app; numbers unchanged; last major: the 2026-10-10 full re-measure) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -110,7 +110,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 14 | Import/export | 6 | 65% | 35% | **`.fig` import** (the blocking gap), `.fig` export, HEIC/TIFF/video import, CMYK output intent ([file-format-parity](file-format-parity.md)) | 30–60 |
 | 15 | Dev Mode / inspect | 2 | 80% | 62% | Code Connect, plugins in Dev Mode, editor integrations ([dev-mode-parity](dev-mode-parity.md)) | 4–8 |
 | 16 | Comments, versions, find, misc | 3 | 80% | 58% | Comments are local only; branching; Open recent | 4–8 |
-| 17 | Multiplayer & sharing | 8 | 15% | 5% | Core landed (`crates/collab`: ids, change sets, server ordering, convergence tested), no networking: WebSocket transport, hosting/joining, cursors, observation, cursor chat, share links and permissions ([collaboration-parity](collaboration-parity.md)) | 45–90 |
+| 17 | Multiplayer & sharing | 8 | 15% | 5% | Core landed (`crates/collab`: ids, change sets, server ordering, convergence tested); live sessions (preview): WebSocket transport, hosting from the desktop app, joining from the app or the browser, invite links that open the app, cursors, selections and follow. Left: per-person undo, offline resume, cursor chat, share links and permissions ([collaboration-parity](collaboration-parity.md)) | 45–90 |
 | 18 | Plugins & widgets | 4 | 35% | 20% | Own sandboxed WASM plugins landed (#101: manifest, permissions, menu, Run last, Manage, SDK, 2 examples). Left: plugin UI at run time, settings storage, distribution, widgets; Figma's plugins are JavaScript and don't run (a JS engine would be an owner decision) ([plugins.md](plugins.md)) | 25–55 |
 | 19 | Team libraries & organization | 2 | 40% | 25% | Local library files exist; no shared/cloud library, no library analytics | 10–20 |
 | 20 | Figma Draw extras | 2 | 45% | 30% | Have: variable width, lasso, shape builder, noise/texture. Missing: brushes (stretch/scatter), pressure, text on a path, pattern fills, multi-edit | 10–18 |
@@ -125,7 +125,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | Features (depth) | 35 | 57% | 78–146 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
 | UI/UX fidelity | 15 | 58% | 40–60 | Look & feel compared side by side with UI3 (~65% by the builders); tool-by-tool interaction (cursors, modifiers while dragging, hover states, popovers) not yet compared; accessibility names and keyboard navigation landed | [ui-parity](ui-parity.md) |
 | File formats | 12 | 40% | 30–60 | No `.fig` read or write; REST JSON import, SVG in/out, PNG/JPG/WebP/PDF export solid | [file-format-parity](file-format-parity.md) |
-| Collaboration | 10 | 12% | 55–110 | Local comments and version history; the multiplayer core (sync model, server ordering, client reconciliation, convergence tests) landed in #103 without networking, so nobody can co-edit yet (`docs/collab-protocol.md`) | [collaboration-parity](collaboration-parity.md) |
+| Collaboration | 10 | 12% | 55–110 | Local comments and version history; the multiplayer core (sync model, server ordering, client reconciliation, convergence tests) landed in #103, and live sessions (preview) co-edit a file hosted by a desktop app, joined from the app or the browser (`docs/collab-protocol.md`) | [collaboration-parity](collaboration-parity.md) |
 | Stability | 8 | 55% | 20–40 | Never-crash lints, command guard with rollback, recovery copies, 963 tests incl. junk-parameter sweeps and a seeded retained-render walk; but two days old, one release (v0.2.0), no field reports, QA mostly on macOS | [gaps](gaps.md) |
 | Performance | 6 | 60% | 30–60 | `cargo xtask bench`: 50k-layer page ~8 ms zoomed out, 10k-layer edits ~0.2 ms, 2,000-instance design system edits 4–64 ms; CPU (tiny-skia) canvas where Figma renders on the GPU; nothing timed against Figma on the same file | [hardware-parity](hardware-parity.md) |
 | Hardware | 3 | 50% | 15–30 | Trackpad pinch and HiDPI yes; no pen pressure, no GPU canvas, no P3 on screen, one window | [hardware-parity](hardware-parity.md) |
@@ -572,6 +572,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Wording only: live sessions (#104), then the browser joining them and `figcraft://` invite links opening the desktop app; percentages and hours unchanged until the next re-measure |
 | 2026-10-10 | minor | Merged main after #101–#103: WASM plugins (plugins area 0% → 35% breadth, 20% ready; ecosystem 5% → 20%) and the multiplayer core without networking (multiplayer 5% → 15% breadth, 5% ready; collaboration 8% → 12%); menu breadth 97.5% → 98.5% (200/203); ready for real work ~46% → ~47%; full parity 420–790 h → 390–745 h; beta 210–380 h → 200–365 h. Fixed the stated weight sums (areas 1–16 sum to 94, total 113; percentages were already computed with those) |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95% for full (~400–750 h), mainstream (~180–330 h) and essentials (~85–160 h). Full number confirmed as an additive weighted sum; unchanged |
 | 2026-10-10 | minor | Added the essentials user number (~53%: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send) |

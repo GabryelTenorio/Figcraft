@@ -96,6 +96,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::collab::specs());
         list.extend(crate::plugins::specs());
         list.extend(crate::live::specs());
+        list.extend(crate::invite_links::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {
             if index.insert(s.id, i).is_some() {
