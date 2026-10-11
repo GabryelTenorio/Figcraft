@@ -467,7 +467,12 @@ fn render_thumbs(ui: &Ui, w: f32, thumbs: &mut Thumbs, wanted: &[(Source, NodeId
             break;
         }
         let Some(doc) = thumbs.docs.get(&key.0).cloned() else { continue };
-        thumbs.map.insert(key.clone(), thumbnail(ui.ctx(), &doc, key.1, px));
+        // A component set shows its default (top-left) variant.
+        let shown = match doc.node(key.1).map(|n| &n.kind) {
+            Some(NodeKind::ComponentSet { .. }) => figcraft_engine::components::default_variant(&doc, key.1).unwrap_or(key.1),
+            _ => key.1,
+        };
+        thumbs.map.insert(key.clone(), thumbnail(ui.ctx(), &doc, shown, px));
         rendered += 1;
     }
     if thumbs.map.len() > MAX_THUMBS {

@@ -703,11 +703,13 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
     if !unknown.is_empty() {
         return Err(bad(cmd, format!("unknown properties: {} (known: {KEYS})", unknown.join(", "))));
     }
-    // Inside an instance, record which property groups were overridden.
+    // Inside an instance, record which property groups were overridden (an instance's own export
+    // settings and interactions are its own, not overrides).
+    let own_root = matches!(doc.get(id)?.kind, NodeKind::Instance { .. }) && !crate::components::inside_instance(doc, id);
     let n = doc.get_mut(id)?;
     if n.source.is_some() {
-        for k in props.keys() {
-            n.overrides.insert(override_group(k).to_string());
+        for g in props.keys().map(|k| override_group(k)).filter(|g| *g != "other" && !(own_root && matches!(*g, "exports" | "interactions"))) {
+            n.overrides.insert(g.to_string());
         }
     }
     Ok(())
@@ -727,6 +729,12 @@ pub fn override_group(k: &str) -> &'static str {
         "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "maxLines" | "variationSettings" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
         "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
+        "gap" | "itemSpacing" | "columnGap" | "crossGap" | "counterAxisSpacing" | "rowGap" => "gap",
+        "padding" | "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft" | "paddingHorizontal" | "paddingVertical" => "padding",
+        "mainAlign" | "primaryAxisAlignItems" | "crossAlign" | "counterAxisAlignItems" => "alignment",
+        "grids" | "layoutGrids" | "gridStyle" => "grids",
+        "exports" | "exportSettings" => "exports",
+        "interactions" => "interactions",
         k if k.starts_with("font") || k.starts_with("text") || k.starts_with("letter") || k.starts_with("line") || k.starts_with("paragraph") => {
             "textStyle"
         }

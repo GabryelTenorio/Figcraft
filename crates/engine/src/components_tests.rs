@@ -66,7 +66,9 @@ fn overrides_survive_main_edits() {
     ex(&mut s, "node.set", json!({"id": ibg, "props": {"fill": "#00ff00", "stroke": "#0000ff", "strokeWeight": 2, "name": "Background"}}));
     ex(&mut s, "node.set", json!({"id": ibg, "props": {"effects": [{"type": "dropShadow"}]}}));
     ex(&mut s, "text.set", json!({"id": ititle, "characters": "Overridden"}));
-    ex(&mut s, "node.set", json!({"id": idot, "props": {"visible": false, "width": 30}}));
+    ex(&mut s, "node.set", json!({"id": idot, "props": {"visible": false}}));
+    // A layer inside an instance keeps its main's size (the instance itself resizes).
+    assert!(s.execute("node.set", &json!({"id": idot, "props": {"width": 30}})).is_err());
     let ov = node(&s, ibg).overrides;
     for g in ["fills", "strokes", "effects", "name"] {
         assert!(ov.contains(g), "{g} in {ov:?}");
@@ -89,7 +91,7 @@ fn overrides_survive_main_edits() {
     assert_eq!(node(&s, ititle).kind.text().unwrap().style.font_size, 30.0, "text style follows the main");
     let d = node(&s, idot);
     assert!(!d.visible);
-    assert_eq!(d.width, 30.0, "size override kept");
+    assert_eq!(d.width, 10.0, "the main's size reaches the layer");
     assert_eq!(fill(&s, idot), "00FFFF");
     assert_eq!(fill(&s, i), "FAFAFA");
     // Per-group reset.

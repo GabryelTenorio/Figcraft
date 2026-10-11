@@ -29,7 +29,13 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     let al = common(doc, sel, |n| n.layout.clone());
     let has_al = matches!(al, Some(Some(_)));
     let title = if has_al { tr("Auto layout") } else { tr("Layout") };
-    let btns: Vec<(Icon, &str)> = if frames && !has_al {
+    // An instance's auto layout is its main's (only padding, gap and alignment are its own), and
+    // the layers inside it keep their main's size.
+    let in_instance = sel.iter().any(|i| figcraft_engine::components::owning_instance(doc, *i).is_some());
+    let nested = sel.iter().any(|i| figcraft_engine::components::inside_instance(doc, *i));
+    let btns: Vec<(Icon, &str)> = if in_instance {
+        vec![]
+    } else if frames && !has_al {
         vec![(Icon::Plus, crate::shortcuts::tip(tr("Add auto layout"), "layout.add"))]
     } else if has_al {
         vec![(Icon::Minus, crate::shortcuts::tip(tr("Remove auto layout"), "layout.remove"))]
@@ -39,21 +45,26 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     if widgets::section_header(ui, title, &btns, false).is_some() {
         app.run(if has_al { "layout.remove" } else { "layout.add" }, json!({"ids": ids}));
     }
+    let from_main = tr("In an instance, this comes from the main component");
     if let Some(Some(l)) = &al {
-        direction(app, ui, &ids, l);
+        ui.add_enabled_ui(!in_instance, |ui| direction(app, ui, &ids, l)).response.on_disabled_hover_text(from_main);
     }
-    dimensions(app, ui, doc, sel, has_al);
+    ui.add_enabled_ui(!nested, |ui| dimensions(app, ui, doc, sel, has_al)).response.on_disabled_hover_text(from_main);
     if let Some(Some(l)) = &al {
         alignment(app, ui, &ids, l);
         spacing(app, ui, &ids, l);
-        advanced(app, ui, &ids, l);
-        if l.mode == LayoutMode::Grid && sel.len() == 1 {
-            tracks(app, ui, doc, &ids);
-        }
+        ui.add_enabled_ui(!in_instance, |ui| {
+            advanced(app, ui, &ids, l);
+            if l.mode == LayoutMode::Grid && sel.len() == 1 {
+                tracks(app, ui, doc, &ids);
+            }
+        })
+        .response
+        .on_disabled_hover_text(from_main);
     }
     let grid_parent = sel.iter().all(|i| parent_of(doc, *i).and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Grid));
     if grid_parent && common(doc, sel, |n| n.child_layout.absolute) == Some(false) {
-        grid_cell(app, ui, doc, sel);
+        ui.add_enabled_ui(!nested, |ui| grid_cell(app, ui, doc, sel)).response.on_disabled_hover_text(from_main);
     }
     if frames {
         let clip = common(doc, sel, |n| n.clip);

@@ -534,6 +534,15 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
 
 fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     widgets::section_header(ui, tr("Position"), &[], false);
+    // Layers inside an instance take their place and constraints from the main component.
+    let nested = sel.iter().any(|i| figcraft_engine::components::inside_instance(doc, *i));
+    ui.add_enabled_ui(!nested, |ui| position_fields(app, ui, doc, sel))
+        .response
+        .on_disabled_hover_text(tr("Layers in an instance take their position from the main component"));
+    ui.add_space(8.0);
+}
+
+fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
     let ids = sel.to_vec();
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, tr("Alignment"), None);
@@ -655,7 +664,6 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             });
         });
     }
-    ui.add_space(8.0);
 }
 
 /// The selected ellipses' arc: Start (degrees), Sweep (a share of a full turn, negative running

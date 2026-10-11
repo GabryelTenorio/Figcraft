@@ -1,6 +1,6 @@
 # FigCraft parity with Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (`.fig` import, best effort; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (components behaviour suite and fixes; `.fig` import, best effort; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~80%; ready ~49%; last major: full re-measure against Figma desktop 126.10.7) · **Target:** Figma Design (desktop app 126.10.7, macOS)
 
 The authoritative assessment of how close FigCraft is to Figma Design. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu checklist is
@@ -21,7 +21,7 @@ summarizes it; [`gaps.md`](gaps.md) is the ranked work list; the measured menu c
 | Essentials user | **~57%** | estimated ([below](#essentials-user): core features 77.8% × discounts 0.92 × 0.92 × 0.88) |
 | Mainstream practitioner | **~46%** | estimated ([below](#mainstream-practitioner): weekly areas 67.8% × discounts 0.9 × 0.9 × 0.85) |
 | Remaining to beta | **~173–310 h** one Opus 5.5 agent (~35–70 h wall-clock with 5 parallel agents) | estimated |
-| Remaining to full parity | **~323–621 h** one agent (~86–150 h wall-clock with 5 parallel agents) | estimated |
+| Remaining to full parity | **~321–618 h** one agent (~86–150 h wall-clock with 5 parallel agents) | estimated |
 | Stage | **alpha**: the alpha gate passes ([roadmap](roadmap.md#alpha-gate)); multiplayer and checking the best-effort `.fig` import on real files are beta gaps (see [ROADMAP](../ROADMAP.md#stage)) | |
 
 The previous figures (ROADMAP of 2026-10-10, "feature depth ~79%", "full parity 115–195 h") were
@@ -35,8 +35,8 @@ tool; presence was being graded as behaviour in places.
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---|---|---|
-| Full target (ready for real work) | ~49% | ~305–584 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
-| Mainstream practitioner | ~46% | ~140–259 h | core editor depth incl. the `.fig` import's tail (58–112), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
+| Full target (ready for real work) | ~49% | ~303–581 h | multiplayer (45–90), localization (45–75), plugins (15–40), the interaction pass (40–60), GPU canvas (30–60), AI (30–60), the `.fig` import's tail (8–15) |
+| Mainstream practitioner | ~46% | ~138–256 h | core editor depth incl. the `.fig` import's tail (56–109), the interaction pass (40–60), real-file corpus and platform QA (25–50), `.fig` export for handing work back (15–30) |
 | Essentials user | ~57% | ~63–115 h | the `.fig` import's tail so the files people send open well (8–15), core tool polish (25–45), interaction pass on the core tools (15–25), stability QA (10–20), onboarding and starter templates (5–10) |
 
 Hours are one agent working sequentially, calibrated from this repo's history (about 1 agent-hour
@@ -104,7 +104,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 8 | Frames, groups, sections, masks | 5 | 95% | 75% | Visual QA with real files | 2–4 |
 | 9 | Auto layout & constraints | 9 | 98% | 74% | Behaviour against real Figma files; wrapped-line content alignment (behaviour suite from the documentation, `fr` tracks like CSS, vertical wrap, auto gaps evenly/around and cell alignment landed) ([auto-layout-parity](auto-layout-parity.md)) | 3–6 |
 | 10 | Text | 8 | 85% | 64% | Spell check, CJK text QA, real-file text metrics (text on a path landed) | 7–13 |
-| 11 | Components & variants | 9 | 95% | 68% | Real (not synthetic) libraries, `.fig` libraries, component playground ([components-parity](components-parity.md)) | 6–12 |
+| 11 | Components & variants | 9 | 96% | 72% | Real (not synthetic) libraries, `.fig` libraries, component playground (behaviour suite from the documentation, overrides of padding, gap, grids, exports and interactions, refused geometry overrides, variant-switch and Assets-swap override rules, top-left default variant landed) ([components-parity](components-parity.md)) | 4–9 |
 | 12 | Styles & variables | 5 | 92% | 72% | New library variables reaching extended collections on their own, extending an extended collection, real-library QA (extended collections, variables import/export, gradient stops and variant properties bound landed) | 1–2 |
 | 13 | Prototyping | 6 | 88% | 70% | Video triggers and media actions, gamepad triggers, real prototype QA ([prototyping-parity](prototyping-parity.md)) | 5–9 |
 | 14 | Import/export | 6 | 80% | 50% | `.fig` import's tail (best-effort import landed: vectors as outlines, non-design layers skipped, no real-file checks yet), `.fig` export, HEIC/video import, CMYK output intent ([file-format-parity](file-format-parity.md)) | 8–15 |
@@ -115,14 +115,14 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | 19 | Team libraries & organization | 2 | 70% | 40% | Libraries kept on `figcraft-server` under their file and enabled by a share link (per-asset versions, background update checks, overrides kept), usage counts per component and file, swapping a library by names. Left: team-wide library lists, accounts and permissions, analytics over time, pushed update notices | 4–8 |
 | 20 | Figma Draw extras | 2 | 80% | 55% | Have: variable width, lasso, shape builder, noise/texture, text on a path, pattern fills, stretch and scatter brushes, pen pressure (Windows pens, browser styluses). Missing: multi-edit, pressure from macOS/Linux tablets | 2–5 |
 | 21 | AI features | 3 | 0% | 0% | First draft, rename layers, image edit/remove background, visual search, Make: needs local models (owner decision) | 30–60 |
-| | **Weighted (÷113)** | 113 | **~80%** | **~58%** | | **165–335** |
-| | Core editor only (1–16, ÷94) | 94 | ~91% | ~68% | | 60–116 |
+| | **Weighted (÷113)** | 113 | **~80%** | **~58%** | | **163–332** |
+| | Core editor only (1–16, ÷94) | 94 | ~91% | ~68% | | 58–113 |
 
 ## By dimension (ready for real work)
 
 | Dimension | Weight | Ready | Hours | Evidence | Doc |
 |---|---|---|---|---|---|
-| Features (depth) | 35 | 57% | 60–115 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
+| Features (depth) | 35 | 57% | 58–112 (areas 1–13, 15, 16, 20) | The table above; core editor ~67% | this file |
 | UI/UX fidelity | 15 | 58% | 40–60 | Look & feel compared side by side with UI3 (~65% by the builders); tool-by-tool interaction (cursors, modifiers while dragging, hover states, popovers) not yet compared; accessibility names and keyboard navigation landed | [ui-parity](ui-parity.md) |
 | File formats | 12 | 55% | 8–15 | `.fig` read, best effort (tested on generated fixtures, not real files), no `.fig` write; REST JSON import, SVG in/out, PNG/JPG/WebP/PDF export solid | [file-format-parity](file-format-parity.md) |
 | Collaboration | 10 | 13% | 55–110 | Local comments, version history and branches with review and merge; the multiplayer core (sync model, server ordering, client reconciliation, convergence tests) landed in #103, and live sessions (preview) co-edit a file hosted by a desktop app or kept on a self-hosted `figcraft-server` with edit and view links, joined from the app or the browser (`docs/collab-protocol.md`) | [collaboration-parity](collaboration-parity.md) |
@@ -133,7 +133,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | Platforms | 3 | 75% | 10–20 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web all packaged (v0.2.0); Figma also has iOS/Android apps; non-macOS QA thin | [hardware-parity](hardware-parity.md) |
 | Ecosystem/plugins | 3 | 28% | 15–40 | Own WASM plugins with a Rust SDK and two examples (#101), plugin panels and settings (ABI v2); no Figma plugin compatibility, no widgets, no distribution or community files; the CLI, control channel and MCP server are ahead of Figma for agents | [gaps](gaps.md) |
 | AI features | 2 | 0% | 30–60 | None | [gaps](gaps.md) |
-| **Ready for real work** | 100 | **~49%** | **~323–621** | | |
+| **Ready for real work** | 100 | **~49%** | **~321–618** | | |
 
 Dimension hours add up to the full-parity total without double counting: the feature-area rows
 for import/export (14), multiplayer and team libraries (17, 19), plugins (18) and AI (21) are
@@ -345,7 +345,11 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    pasted into other files follow their mains (library copies shared, published components used
    from their library, other mains left behind as a restorable missing main). The Assets panel lays
    out only the tiles in view and renders thumbnails as they show (cached, re-rendered only for
-   changed components). *Left:* QA with real-world (not synthetic) libraries. 1 h.
+   changed components). A behaviour suite from the public documentation checks overrides (what an
+   instance takes, what it refuses: geometry, constraints and resizing of its layers, its auto
+   layout direction), variant switches (overrides stay where both variants agreed; text layers keep
+   theirs), swaps (by layer name; from the Assets panel only text overrides), the top-left default
+   variant, detach, reset and push. *Left:* QA with real-world (not synthetic) libraries. 1 h.
 5. **Prototyping depth**: *landed:* on-canvas connections with drag-to-connect, interaction editor,
    flows, smart animate, overlays, scroll/fixed/sticky, change-to and set-variable in the presenter.
    Custom bezier and custom spring easings with editor fields; device frames (phone, tablet,
@@ -580,6 +584,7 @@ Carried over from the ROADMAP's "Shipped so far" (2026-10-10). The test count th
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Components behaviour suite written from the public documentation (10 tests, 45 table cases) and its fixes: instances now keep overrides of auto layout padding, gap and alignment, layout grids, export settings, prototype interactions and every text property (resizing, paragraph spacing, lists…; these were lost when the main changed); moving, rotating, resizing or re-constraining layers inside an instance, and its auto layout direction, are refused (the instance itself resizes); switching variants keeps an override only where both variants had the same value (text layers keep theirs); swapping from the Assets panel keeps only text overrides; the default variant is the top-left one (instances, Assets thumbnails, code); hidden exposed instances hide their properties; pushing changes from a nested layer goes to the outer main. Added: variant property reordering and duplicate combination warnings. Components 95%/68% → 96%/72%, 6–12 h → 4–9 h; percentages unchanged at this rounding; full parity ~323–621 h → ~321–618 h |
 | 2026-10-11 | minor | `.fig` import, best effort (gap 1): `.fig` files open (best effort): the zip, its deflate/zstd chunks and the kiwi schema are decoded generically and mapped by field name onto the REST importer, so pages, the layer tree, geometry, paints (styles resolved), strokes, effects, text with styled runs, vectors (as outlines), auto layout (grid included), constraints, components, sets, instances (expanded from their main with overrides, derived layout and property values), styles, variables with modes and bindings, prototyping and image fills from the archive come across; anything else is a warning. Import/export breadth 65% → 80%, ready 35% → 50%, 30–60 h → 8–15 h; file formats 40% → 55%, 30–60 h → 8–15 h; feature breadth ~79% → ~80% (core ~90% → ~91%), areas ready ~57% → ~58% (core ~67% → ~68%); ready for real work ~47% → ~49%; essentials ~53% → ~57% (opening files people send ×0.80 → ×0.88); mainstream ~43% → ~46% (weekly areas 66.8% → 67.8%, file exchange ×0.80 → ×0.85); beta ~195–355 h → ~173–310 h; full parity ~345–666 h → ~323–621 h |
 | 2026-10-11 | minor | Auto layout behaviour suite written from the public documentation (64 layout cases, 8 command tests) and its fixes: a frame is never smaller than its padding, only the frame's inside stroke counts when strokes are included (and new auto layout includes them), auto gaps stop at 0, grid `fr` tracks behave like the CSS `fr` unit (a track never gets less than its content), canvas stacking is drawn, exported and hit (it was stored only). Added: auto gaps evenly and around, vertical wrap, grid cell alignment, strokes and canvas stacking controls. Auto layout 95%/68% → 98%/74%, 6–12 h → 3–6 h; percentages unchanged at this rounding; full parity ~348–672 h → ~345–666 h |
 | 2026-10-11 | minor | Display P3 honest minimum (gap 18): the colour picker of a Display P3 file warns when a colour is outside sRGB (Outside sRGB, with what the canvas and exports do), and View ▸ Soft-proof sRGB (`view.proofSrgb`) stripes the canvas pixels sRGB can't show. Why the canvas still shows sRGB: wgpu 30 can present Display P3 or extended-range sRGB surfaces (Metal, DX12, Vulkan, WebGPU canvases), but eframe/egui-wgpu 0.36 configure an 8-bit sRGB surface with no option for the format or colour space, and egui's renderer writes sRGB-encoded UI colours; showing P3 needs those two upstream (or a patched egui-wgpu). Hardware 13–27 h → 12–26 h; gap 18 6–12 h → 5–11 h; percentages, feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~362–696 h |

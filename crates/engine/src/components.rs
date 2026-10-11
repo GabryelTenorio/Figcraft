@@ -9,9 +9,18 @@
 //! `prop_refs` on the layers they control.
 //!
 //! Override groups: `fills`, `strokes`, `effects`, `opacity`, `visible`, `name`, `corners`,
-//! `characters`, `textStyle`, `size`, `position`, `component` (a swapped nested instance),
-//! `props` (property values of a nested instance) and `slot` (a slot holding the instance's own
-//! content).
+//! `characters`, `textStyle` (font, size, spacing, resizing, …), `padding`, `gap` and `alignment`
+//! (of auto layout: its direction and other settings are the main's), `grids`, `exports`,
+//! `interactions`, `component` (a swapped nested instance), `props` (property values of a nested
+//! instance) and `slot` (a slot holding the instance's own content). An instance's own export
+//! settings and interactions are its own, like its place. `size` and `position` overrides of
+//! layers inside an instance are still read and kept, but new ones are refused
+//! ([`check_override_edit`]): those layers take their geometry, constraints and resizing from the
+//! main; the instance itself resizes.
+//!
+//! Switching variants keeps an override where the layer's name path matches and the two variants
+//! agreed on that property (text layers keep all of theirs); swapping from the Assets panel keeps
+//! only text layers' overrides ([`keep_text_overrides`]).
 //!
 //! Instances never gain or lose layers of their own: commands that would add, remove or reorder
 //! layers inside an instance are refused ([`check_structure_edit`]), except inside **slots**. A
@@ -42,6 +51,12 @@ pub const OVERRIDE_GROUPS: &[&str] = &[
     "corners",
     "characters",
     "textStyle",
+    "padding",
+    "gap",
+    "alignment",
+    "grids",
+    "exports",
+    "interactions",
     "size",
     "position",
     "component",
@@ -299,7 +314,7 @@ fn carry_overrides(from: &Node, to: &mut Node, what: Carry) {
 }
 
 /// Copy the values of property group `g` of `from` onto `to`, with the variables bound to them.
-fn copy_group(from: &Node, to: &mut Node, g: &str) {
+pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
     if from.bound.iter().chain(to.bound.iter()).any(|(k, _)| binding_group(k) == Some(g)) {
         to.bound.retain(|k, _| binding_group(k) != Some(g));
         to.bound.extend(bindings_of(from, g).map(|(k, v)| (k.clone(), v.clone())));
@@ -335,11 +350,32 @@ fn copy_group(from: &Node, to: &mut Node, g: &str) {
             if let (NodeKind::Text(a), NodeKind::Text(b)) = (&from.kind, &mut to.kind) {
                 b.style = a.style.clone();
                 b.runs = a.runs.clone();
+                b.auto_resize = a.auto_resize;
                 b.align_h = a.align_h;
                 b.align_v = a.align_v;
+                b.paragraph_spacing = a.paragraph_spacing;
+                b.paragraph_indent = a.paragraph_indent;
+                b.list = a.list;
+                b.max_lines = a.max_lines;
+                b.features = a.features.clone();
             }
             to.styles.text = from.styles.text.clone();
         }
+        "padding" | "gap" | "alignment" => {
+            if let (Some(a), Some(b)) = (&from.layout, &mut to.layout) {
+                match g {
+                    "padding" => b.padding = a.padding,
+                    "gap" => (b.gap, b.cross_gap) = (a.gap, a.cross_gap),
+                    _ => (b.main_align, b.cross_align) = (a.main_align, a.cross_align),
+                }
+            }
+        }
+        "grids" => {
+            to.grids = from.grids.clone();
+            to.styles.grid = from.styles.grid.clone();
+        }
+        "exports" => to.exports = from.exports.clone(),
+        "interactions" => to.interactions = from.interactions.clone(),
         "size" => {
             to.width = from.width;
             to.height = from.height;
@@ -506,7 +542,7 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     if depth > MAX_DEPTH {
         return;
     }
-    let Some(root) = doc.node(inst).cloned() else { return };
+    let Some(mut root) = doc.node(inst).cloned() else { return };
     let NodeKind::Instance { component, props: root_props } = &root.kind else { return };
     let component = *component;
     let Some(comp) = doc.node(component).cloned() else { return };
@@ -572,6 +608,9 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
                 continue;
             }
         };
+        if let Some(m) = old.get(&nid).and_then(|o| variant_kept(doc, o, *s)) {
+            old.insert(nid, std::sync::Arc::new(m));
+        }
         if old.get(&nid).is_some_and(|o| holds_content(o)) && is_slot(doc, *s) {
             edited.insert(nid);
         }
@@ -701,6 +740,11 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
             _ => false,
         });
     fresh.name = if renamed { root.name.clone() } else { default_instance_name(doc, component) };
+    // Switched to another variant: its own overrides stay where both variants agreed.
+    if let Some(prev) = root.source.and_then(|p| doc.node(p)).filter(|p| sibling_variants(doc, p.id, component)) {
+        let differs = diff_groups(prev, &comp);
+        root.overrides.retain(|g| g == "name" || !differs.contains(&g.as_str()));
+    }
     carry_overrides(&root, &mut fresh, Carry::Root);
     if let Some(r) = doc.node_mut(inst) {
         *r = fresh;
@@ -760,6 +804,43 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
             .map(|(i, x)| (*i, x.clone()))
             .collect();
         sync_instance_depth(doc, n, depth + 1, below);
+    }
+}
+
+/// Whether main components `a` and `b` are two variants of one set.
+fn sibling_variants(doc: &Document, a: NodeId, b: NodeId) -> bool {
+    a != b && variant_set(doc, a).is_some_and(|s| variant_set(doc, b) == Some(s))
+}
+
+/// Old copy `o` matched by name to main layer `s` of another variant (the instance switched
+/// variants): `o` without the overrides of properties the two variants' layers differ in (`None`
+/// when it keeps them all). Text layers keep every override.
+fn variant_kept(doc: &Document, o: &Node, s: NodeId) -> Option<Node> {
+    let from = o.source.filter(|f| *f != s).and_then(|f| doc.node(f))?;
+    if o.overrides.is_empty() || matches!(o.kind, NodeKind::Text(_)) {
+        return None;
+    }
+    if !sibling_variants(doc, owning_component(doc, from.id)?, owning_component(doc, s)?) {
+        return None;
+    }
+    let differs = diff_groups(from, doc.node(s)?);
+    let mut m = o.clone();
+    m.overrides.retain(|g| !differs.contains(&g.as_str()));
+    (m.overrides.len() != o.overrides.len()).then_some(m)
+}
+
+/// Drop the overrides of instance `inst` but its text layers' (and its own size and the content of
+/// its slots): what swapping it from the Assets panel keeps.
+pub fn keep_text_overrides(doc: &mut Document, inst: NodeId) {
+    for d in old_layers(doc, inst).into_iter().chain([inst]) {
+        let Some(n) = doc.node(d) else { continue };
+        let text = matches!(n.kind, NodeKind::Text(_));
+        let keep = |g: &String| text || g == SLOT || (d == inst && g == "size");
+        if !n.overrides.iter().all(keep)
+            && let Some(m) = doc.node_mut(d)
+        {
+            m.overrides.retain(keep);
+        }
     }
 }
 
@@ -897,9 +978,29 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
         if x.characters != y.characters {
             out.push("characters");
         }
-        if x.style != y.style || x.runs != y.runs || x.align_h != y.align_h || x.align_v != y.align_v {
+        if text_style_differs(x, y) {
             out.push("textStyle");
         }
+    }
+    if let (Some(x), Some(y)) = (&a.layout, &b.layout) {
+        if x.padding != y.padding {
+            out.push("padding");
+        }
+        if x.gap != y.gap || x.cross_gap != y.cross_gap {
+            out.push("gap");
+        }
+        if x.main_align != y.main_align || x.cross_align != y.cross_align {
+            out.push("alignment");
+        }
+    }
+    if a.grids != b.grids || a.styles.grid != b.styles.grid {
+        out.push("grids");
+    }
+    if a.exports != b.exports {
+        out.push("exports");
+    }
+    if a.interactions != b.interactions {
+        out.push("interactions");
     }
     if let (NodeKind::Instance { component: x, props: px }, NodeKind::Instance { component: y, props: py }) = (&a.kind, &b.kind) {
         if x != y {
@@ -910,6 +1011,20 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
         }
     }
     out
+}
+
+/// Whether two texts differ in anything but their characters (the `textStyle` group).
+fn text_style_differs(x: &TextData, y: &TextData) -> bool {
+    x.style != y.style
+        || x.runs != y.runs
+        || x.auto_resize != y.auto_resize
+        || x.align_h != y.align_h
+        || x.align_v != y.align_v
+        || x.paragraph_spacing != y.paragraph_spacing
+        || x.paragraph_indent != y.paragraph_indent
+        || x.list != y.list
+        || x.max_lines != y.max_lines
+        || x.features != y.features
 }
 
 /// Whether a geometry change of `id` comes from layout rather than the user: an ancestor was
@@ -974,8 +1089,9 @@ pub fn sync_after_edit(doc: &mut Document, before: &Document, changed: &[NodeId]
         }
         let raw = diff_groups(b, n);
         let mut groups = raw.clone();
+        // An instance's own place, export settings and interactions are its own, not overrides.
         if top_root {
-            groups.retain(|g| !matches!(*g, "component" | "props" | "position"));
+            groups.retain(|g| !matches!(*g, "component" | "props" | "position" | "exports" | "interactions"));
         }
         if groups.iter().any(|g| matches!(*g, "size" | "position")) {
             groups.retain(|g| !matches!(*g, "size" | "position") || !geometry_derived(doc, before, id, g));
@@ -1119,8 +1235,25 @@ fn full_rebuild() -> bool {
 /// values only (paint, text, visibility, size, position, …) that copies take as they are: carried to them without
 /// rebuilding the instances ([`patch_copies`]). `None` when anything else changed.
 fn patchable(doc: &Document, b: &Node, n: &Node) -> Option<Vec<&'static str>> {
-    const VALUES: [&str; 11] =
-        ["fills", "strokes", "effects", "opacity", "visible", "name", "corners", "characters", "textStyle", "size", "position"];
+    const VALUES: [&str; 17] = [
+        "fills",
+        "strokes",
+        "effects",
+        "opacity",
+        "visible",
+        "name",
+        "corners",
+        "characters",
+        "textStyle",
+        "padding",
+        "gap",
+        "alignment",
+        "grids",
+        "exports",
+        "interactions",
+        "size",
+        "position",
+    ];
     if b.children != n.children || b.parent != n.parent || b.kind.type_name() != n.kind.type_name() {
         return None;
     }
@@ -1314,14 +1447,18 @@ fn patch_copies(doc: &mut Document, seeds: &[(NodeId, Vec<&'static str>)]) -> bo
             {
                 continue;
             }
-            // An instance keeps its own visibility and place; its name follows the main's unless
-            // renamed; a resized one lays its layers out against the main's size.
+            // An instance keeps its own visibility, place, export settings and interactions; its
+            // name follows the main's unless renamed; a resized one lays its layers out against
+            // the main's size.
             let root = matches!(pn.kind, NodeKind::Component { .. });
             if root && ((groups.contains(&"name") && !cn.overrides.contains("name")) || (groups.contains(&"size") && cn.overrides.contains("size"))) {
                 return false;
             }
-            let gs: Vec<&'static str> =
-                groups.iter().copied().filter(|g| !cn.overrides.contains(*g) && !(root && matches!(*g, "visible" | "name" | "position"))).collect();
+            let gs: Vec<&'static str> = groups
+                .iter()
+                .copied()
+                .filter(|g| !cn.overrides.contains(*g) && !(root && matches!(*g, "visible" | "name" | "position" | "exports" | "interactions")))
+                .collect();
             if gs.is_empty() {
                 continue;
             }
@@ -1499,6 +1636,61 @@ pub fn check_structure_edit(before: &Document, after: &Document) -> Result<(), S
     Ok(())
 }
 
+/// Refuse edits an instance doesn't take as overrides ([`refused_override`]); the edit is rolled
+/// back.
+pub fn check_override_edit(before: &Document, after: &Document) -> Result<(), String> {
+    match after.dirty().iter().find_map(|id| refused_override(before, after, *id)) {
+        Some(what) => Err(format!("{what} comes from the main component in an instance: edit the main component, or detach the instance")),
+        None => Ok(()),
+    }
+}
+
+/// What about layer `id` an edit from `before` to `after` changed that only its main can: the
+/// auto layout of an instance or a layer in one but its padding, gap and alignment, or the
+/// position (rotation too), size, constraints or resizing of a layer inside an instance (the
+/// instance itself resizes, and its layers follow; text whose box follows its content still
+/// does). `None` when the edit is fine, also when the main changed the same way in this edit (a
+/// library update).
+pub fn refused_override(before: &Document, after: &Document, id: NodeId) -> Option<&'static str> {
+    let (n, b) = (after.node(id)?, before.node(id)?);
+    if after.is_remote(id) || n.source != b.source || owning_instance(before, id).is_none() || owning_instance(after, id).is_none() {
+        return None;
+    }
+    let (mb, ma) = (before.node(n.source?)?, after.node(n.source?)?);
+    let mode = |x: &Node| x.layout.as_ref().map(|l| l.mode);
+    // Auto layout settings other than the overridable ones.
+    let settings = |x: &Node| {
+        x.layout.clone().map(|mut l| {
+            (l.gap, l.cross_gap, l.padding, l.main_align, l.cross_align) = (0.0, 0.0, [0.0; 4], MainAlign::Min, CrossAlign::Min);
+            l
+        })
+    };
+    let size = |x: &Node| (x.width, x.height);
+    let resized = |x: &Node, y: &Node| (x.width - y.width).abs() > 1e-6 || (x.height - y.height).abs() > 1e-6;
+    if mode(n) != mode(b) && mode(ma) == mode(mb) {
+        return Some("The auto layout direction");
+    }
+    if settings(n) != settings(b) && settings(ma) == settings(mb) {
+        return Some("This auto layout setting");
+    }
+    if !inside_instance(after, id) || !inside_instance(before, id) {
+        return None;
+    }
+    if n.transform != b.transform && ma.transform == mb.transform && !geometry_derived(after, before, id, "position") {
+        return Some("A layer's position");
+    }
+    if resized(n, b) && size(ma) == size(mb) && !geometry_derived(after, before, id, "size") {
+        return Some("A layer's size");
+    }
+    if n.constraints != b.constraints && ma.constraints == mb.constraints {
+        return Some("A layer's constraints");
+    }
+    if n.child_layout != b.child_layout && ma.child_layout == mb.child_layout {
+        return Some("A layer's resizing");
+    }
+    None
+}
+
 /// Re-derive `source` links and overrides of instance `inst` against its own main by comparing
 /// values (after detaching an outer instance, restoring a main, or copying a nested instance out):
 /// the look is kept exactly. Values a component property sets aren't overrides.
@@ -1545,7 +1737,10 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
     let root_groups = match (doc.node(component), doc.node(inst)) {
         (Some(m), Some(n)) => {
             let from_variables = variable_groups(n, m);
-            let mut groups: Vec<String> = value_groups(m, n).into_iter().filter(|g| g != "name" && !from_variables.contains(&g.as_str())).collect();
+            let mut groups: Vec<String> = value_groups(m, n)
+                .into_iter()
+                .filter(|g| !matches!(g.as_str(), "name" | "exports" | "interactions") && !from_variables.contains(&g.as_str()))
+                .collect();
             // A layer name of its own (a nested instance renamed in its old main) stays.
             if n.name != default_instance_name(doc, component) {
                 groups.push("name".into());
@@ -1559,6 +1754,32 @@ pub fn rebase_instance(doc: &mut Document, inst: NodeId) {
         n.overrides.retain(|g| !matches!(g.as_str(), "component" | "props" | "position"));
         n.overrides.extend(root_groups);
     }
+}
+
+/// A set's default variant: the one in its top-left corner (nearest to it, then the top-most, then
+/// the left-most).
+pub fn default_variant(doc: &Document, set: NodeId) -> Option<NodeId> {
+    let corner = |c: &NodeId| {
+        doc.node(*c).filter(|n| matches!(n.kind, NodeKind::Component { .. })).map(|n| n.transform.as_coeffs()).map(|[.., x, y]| (x + y, y, x))
+    };
+    let kids = &doc.node(set)?.children;
+    kids.iter()
+        .copied()
+        .filter_map(|c| corner(&c).map(|k| (k, c)))
+        .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, c)| c)
+}
+
+/// Variants of a set sharing one combination of property values (each group two or more, in
+/// layer order): a conflict to resolve by giving each a unique combination.
+pub fn variant_conflicts(doc: &Document, set: NodeId) -> Vec<Vec<NodeId>> {
+    let mut by: BTreeMap<BTreeMap<String, String>, Vec<NodeId>> = BTreeMap::new();
+    for c in doc.node(set).map(|s| s.children.clone()).unwrap_or_default() {
+        if let Some(n) = doc.node(c).filter(|n| matches!(n.kind, NodeKind::Component { .. })) {
+            by.entry(variant_props(&n.name)).or_default().push(c);
+        }
+    }
+    by.into_values().filter(|v| v.len() > 1).collect()
 }
 
 /// Parse a variant name "Size=Large, State=Hover" into pairs.
@@ -1671,7 +1892,9 @@ pub fn exposed_copies(doc: &Document, id: NodeId) -> Vec<NodeId> {
             break;
         }
         let Some(n) = doc.node(c) else { continue };
-        let exposed = matches!(n.kind, NodeKind::Instance { .. }) && n.source.and_then(|src| doc.node(src)).is_some_and(|src| src.exposed);
+        // A hidden exposed instance hides its properties too.
+        let exposed =
+            n.visible && matches!(n.kind, NodeKind::Instance { .. }) && n.source.and_then(|src| doc.node(src)).is_some_and(|src| src.exposed);
         if exposed {
             out.push(c);
         }
