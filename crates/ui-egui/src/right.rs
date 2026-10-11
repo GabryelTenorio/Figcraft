@@ -1108,23 +1108,20 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
                 ui.data_mut(|d| d.insert_temp(adv_id, !open));
             }
         });
-        // Per-side weights.
+        // Per-side weights, two to a row (like the corner radii) so a bound variable's name fits:
+        // each side binds to a number variable on its own.
         if let Some(sides) = common(doc, sel, |n| n.stroke.sides).flatten() {
-            let quarter = (ui.available_width() - PAD * 2.0 - 3.0 * 6.0) / 4.0;
-            row(ui, 32.0, |ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                for (k, label) in ["T", "R", "B", "L"].iter().enumerate() {
-                    let v = sides.get(k).copied();
-                    let e = widgets::number_field(ui, Id::new(("stroke_side", k)), Lead::Text(label), v, "", quarter, 1.0);
-                    app.field(&ids, "strokeSides", e, |x| {
-                        let mut n = sides;
-                        if let Some(slot) = n.get_mut(k) {
-                            *slot = x.max(0.0);
-                        }
-                        json!(n)
-                    });
-                }
-            });
+            let col = widgets::col_width(ui.available_width());
+            let fields = ["T", "R", "B", "L"].into_iter().zip(figcraft_engine::cmd::props::STROKE_SIDES);
+            for first in [0, 2] {
+                row(ui, 32.0, |ui| {
+                    for (k, (label, field)) in fields.clone().enumerate().skip(first).take(2) {
+                        let v = sides.get(k).copied();
+                        let e = crate::variable_ui::number_field(app, ui, &ids, field, Id::new(("stroke_side", k)), Lead::Text(label), v, "", col);
+                        app.field(&ids, field, e, |x| json!(x.max(0.0)));
+                    }
+                });
+            }
         }
         if ui.data(|d| d.get_temp::<bool>(Id::new("stroke_adv"))).unwrap_or(false) {
             stroke_settings(app, ui, doc, sel);

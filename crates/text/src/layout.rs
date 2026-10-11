@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use figcraft_doc::{LineHeight, ListStyle, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, valid_feature_tag};
+use figcraft_doc::{LeadingTrim, ListStyle, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, valid_feature_tag};
 use figcraft_geom::{Affine, BezPath, Rect};
 use harfrust::{Direction, Feature, ShapeOptions, ShaperInstance, Tag, UnicodeBuffer, Variation};
 
@@ -106,10 +106,7 @@ struct Item {
 
 impl Item {
     fn is_space(&self) -> bool {
-        matches!(self.ch, ' ' | '\t' | '\u{3000}' | '\u{2002}'..='\u{200B}')
-    }
-    fn break_after(&self) -> bool {
-        self.is_space() || matches!(self.ch, '-' | '\u{2010}' | '\u{2013}' | '\u{2014}' | '/') || is_cjk(self.ch)
+        crate::breaks::is_space(self.ch)
     }
 }
 
@@ -171,10 +168,6 @@ pub(crate) fn visual_order(levels: &[u8]) -> Vec<usize> {
     order
 }
 
-fn is_cjk(c: char) -> bool {
-    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
-}
-
 /// Lay out `text` for a box of `box_width` (used when the text wraps or aligns; for auto width
 /// pass `None`). `box_height` is used for truncation only.
 pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) -> TextLayout {
@@ -212,6 +205,8 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     let bidi = Bidi::of(&text.characters);
     let level_at = |i: usize| bidi.as_ref().and_then(|b| b.levels.get(i)).copied().unwrap_or(0);
     let rtl_para_at = |i: usize| bidi.as_ref().and_then(|b| b.rtl_para.get(i)).copied().unwrap_or(false);
+    // A grapheme cluster (emoji sequence, letter with marks) is shaped with one face.
+    let cluster_start = crate::breaks::grapheme_starts(&text.characters);
     let mut items: Vec<Item> = Vec::with_capacity(chars.len());
     for (si, (start, end, _)) in spans.iter().enumerate() {
         let st_idx = span_style.get(si).copied().unwrap_or(0);
@@ -233,7 +228,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             let level = level_at(seg_start);
             let mut seg_end = seg_start + 1;
             while seg_end < *end
-                && chars.get(seg_end).is_some_and(|c| *c != '\n' && first != '\n' && face_for(*c).id == face.id)
+                && chars.get(seg_end).is_some_and(|c| {
+                    *c != '\n' && first != '\n' && (!cluster_start.get(seg_end).copied().unwrap_or(true) || face_for(*c).id == face.id)
+                })
                 && level_at(seg_end) == level
             {
                 seg_end += 1;
@@ -265,7 +262,12 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     // applies to plain paragraphs only. Right-to-left paragraphs mirror both: the gutter and the
     // indent are on the right, the text ends where they start.
     let marker_width = list_gutter(text.list, &chars, styles.first(), faces.first().cloned().flatten().as_ref());
-    let indent = if text.list == ListStyle::None && text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
+    // Paragraph indent applies to start-aligned text only (left, or right for a right-to-left paragraph).
+    let indent_px = if text.list == ListStyle::None && text.paragraph_indent.is_finite() { text.paragraph_indent.clamp(0.0, 10_000.0) } else { 0.0 };
+    let indent_at = |char_idx: usize| {
+        let start_aligned = if rtl_para_at(char_idx) { text.align_h == TextAlignH::Right } else { text.align_h == TextAlignH::Left };
+        if start_aligned { indent_px } else { 0.0 }
+    };
 
     // Line breaking.
     let wrap = match text.auto_resize {
@@ -289,7 +291,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             para_first_line = true;
             continue;
         }
-        let line_indent = marker_width + if para_first_line { indent } else { 0.0 };
+        let line_indent = marker_width + if para_first_line { indent_at(it.char_start) } else { 0.0 };
         let w = it.adv;
         if let Some(maxw) = wrap
             && x + w > maxw - line_indent + 1e-6
@@ -306,7 +308,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             continue;
         }
         x += w;
-        if it.break_after() {
+        if items.get(i + 1).is_some_and(|next| crate::breaks::break_between(it.ch, next.ch)) {
             last_break = Some(i);
         }
         i += 1;
@@ -322,38 +324,40 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     let mut y = 0.0;
     let mut para_start_line = true;
     let max_lines = if text.max_lines > 0 && matches!(text.auto_resize, TextAutoResize::Truncate) { text.max_lines as usize } else { usize::MAX };
+    // A style's vertical metrics (ascent, descent, line height, cap height) come from its own
+    // font, never a fallback face, so lines mixing scripts keep the spacing of lines that don't.
+    let metrics = |st_idx: usize| -> [f64; 4] {
+        let st = styles.get(st_idx).unwrap_or(&default_style);
+        let size = sanitize_size(st.font_size);
+        match faces.get(st_idx).and_then(Option::as_ref).or(default_face.as_ref()) {
+            Some(f) => {
+                let k = size / f.upem;
+                [f.ascent * k, f.descent * k, st.line_height.resolve(size, natural_ratio(f)), f.cap_height * k]
+            }
+            None => [size * 0.8, size * 0.2, st.line_height.resolve(size, 1.2), size * 0.7],
+        }
+    };
+    let mut first_cap = 0.0;
     for (li, (s, e, para_end)) in lines.iter().enumerate() {
         if li >= max_lines {
             out.truncated = true;
             break;
         }
         // Metrics from the styles present on the line (or the style at the break for empty lines).
-        let mut asc: f64 = 0.0;
-        let mut desc: f64 = 0.0;
-        let mut lh: f64 = 0.0;
-        let mut any = false;
-        for it in items.get(*s..*e).unwrap_or(&[]) {
-            let Some(st) = styles.get(it.style) else { continue };
-            let size = sanitize_size(st.font_size);
-            let k = size / it.face.upem;
-            asc = asc.max(it.face.ascent * k);
-            desc = desc.max(it.face.descent * k);
-            lh = lh.max(st.line_height.resolve(size, natural_ratio(&it.face)));
-            any = true;
-        }
-        if !any {
-            let st = items.get(s.saturating_sub(1)).and_then(|it| styles.get(it.style)).unwrap_or(&default_style);
-            let size = sanitize_size(st.font_size);
-            if let Some(f) = items.get(s.saturating_sub(1)).map(|it| it.face.clone()).or_else(|| default_face.clone()) {
-                let k = size / f.upem;
-                asc = f.ascent * k;
-                desc = f.descent * k;
-                lh = st.line_height.resolve(size, natural_ratio(&f));
-            } else {
-                asc = size * 0.8;
-                desc = size * 0.2;
-                lh = size * 1.2;
+        let [mut asc, mut desc, mut lh, mut cap] = [0.0_f64; 4];
+        let mut seen = usize::MAX;
+        for st in items.get(*s..*e).unwrap_or(&[]).iter().map(|it| it.style) {
+            if st != seen {
+                seen = st;
+                let m = metrics(st);
+                (asc, desc, lh, cap) = (asc.max(m[0]), desc.max(m[1]), lh.max(m[2]), cap.max(m[3]));
             }
+        }
+        if seen == usize::MAX {
+            [asc, desc, lh, cap] = metrics(items.get(s.saturating_sub(1)).map_or(0, |it| it.style));
+        }
+        if li == 0 {
+            first_cap = cap;
         }
         if para_start_line && li > 0 {
             y += text.paragraph_spacing.max(0.0);
@@ -365,8 +369,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             vis_end -= 1;
         }
         let width: f64 = items.get(*s..vis_end).unwrap_or(&[]).iter().map(|it| it.adv).sum();
-        let line_indent = marker_width + if para_start_line { indent } else { 0.0 };
-        let rtl_line = rtl_para_at(items.get(*s).map(|it| it.char_start).unwrap_or(0));
+        let first_char = items.get(*s).map(|it| it.char_start).unwrap_or(0);
+        let rtl_line = rtl_para_at(first_char);
+        let line_indent = marker_width + if para_start_line { indent_at(first_char) } else { 0.0 };
         let gstart = out.glyphs.len();
         // Justify: extra space per gap.
         let gaps = items.get(*s..vis_end).unwrap_or(&[]).iter().filter(|it| it.is_space()).count();
@@ -494,21 +499,34 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         y += lh;
         para_start_line = *para_end;
     }
-    out.height = y;
     out.width = out.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+    // Vertical trim: the box starts at the first line's cap height and ends at the last baseline.
+    let trim = text.leading_trim == LeadingTrim::CapHeight && text.path.is_none();
+    if trim && let Some(first) = out.lines.first() {
+        let shift = first.baseline - first_cap;
+        for l in &mut out.lines {
+            l.top -= shift;
+            l.baseline -= shift;
+        }
+        for g in &mut out.glyphs {
+            g.y -= shift;
+        }
+    }
+    let bottom = |l: &Line| if trim { l.baseline } else { l.top + l.height };
+    out.height = out.lines.last().map_or(y, bottom).max(0.0);
 
     // Truncation by height.
     if matches!(text.auto_resize, TextAutoResize::Truncate)
         && let Some(h) = box_height
         && out.height > h + 0.5
     {
-        let keep = out.lines.iter().take_while(|l| l.top + l.height <= h + 0.5).count().max(1);
+        let keep = out.lines.iter().take_while(|l| bottom(l) <= h + 0.5).count().max(1);
         if keep < out.lines.len() {
             out.lines.truncate(keep);
             let gend = out.lines.last().map(|l| l.glyph_end).unwrap_or(0);
             out.glyphs.truncate(gend);
             out.truncated = true;
-            out.height = out.lines.last().map(|l| l.top + l.height).unwrap_or(0.0);
+            out.height = out.lines.last().map_or(0.0, bottom);
         }
     }
     if out.truncated {
@@ -560,8 +578,10 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
             {
                 let x0 = g0.x;
                 let x1 = last.x + last.advance;
-                let f = &g0.face;
-                let s = g0.size / f.upem;
+                // The style's own font and size (not a fallback face or a small-cap scale), so the
+                // line runs at one height and weight through mixed scripts.
+                let f = faces.get(g0.style).and_then(Option::as_ref).unwrap_or(&g0.face);
+                let s = sanitize_size(st.font_size) / f.upem;
                 let th = (f.underline_thickness * s).max(0.5);
                 let yy = match st.decoration {
                     TextDecoration::Underline => line.baseline - f.underline_pos * s,
@@ -576,7 +596,6 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
     if let Some(tp) = &text.path {
         crate::onpath::place(&mut out, tp, text.align_h);
     }
-    let _ = LineHeight::Auto;
     out
 }
 

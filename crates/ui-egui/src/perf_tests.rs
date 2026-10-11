@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use egui::{Event, Pos2, RawInput, Rect, vec2};
+use egui::{Event, Key, Modifiers, Pos2, RawInput, Rect, vec2};
 use figcraft_doc::{Document, NodeId};
 use figcraft_engine::Session;
 use serde_json::json;
@@ -104,10 +104,72 @@ fn report(layers: usize) {
     b.app.ui.layer_filter = "item".into();
     b.frame(vec![]);
     rows.push(("idle frame, layers filtered by name", b.mean(30, |_| vec![])));
+    b.app.ui.layer_search = false;
+    b.app.ui.layer_filter.clear();
+    // Long lists from the keyboard: every layer expanded, the arrows walking the rows, a layer at
+    // the bottom of the list revealed, everything collapsed.
+    let open: Vec<NodeId> = b.app.session.doc().unwrap().nodes().filter(|n| !n.children.is_empty()).map(|n| n.id).collect();
+    b.app.ui.expanded.extend(open);
+    rows.push(("first frame, every layer expanded", b.frame(vec![])));
+    b.app.ui.layers_focus = true;
+    let top = b.app.session.doc().ok().and_then(|d| d.node(page)?.children.last().copied());
+    b.app.session.set_selection(top.into_iter().collect());
+    b.frame(vec![]);
+    rows.push(("arrow key down the expanded layers", b.mean(30, |_| key(Key::ArrowDown, Modifiers::NONE))));
+    b.app.ui.expanded.clear();
+    b.frame(vec![]);
+    b.app.session.set_selection(bottom_layer(&b.app.session).into_iter().collect());
+    rows.push(("reveal a layer at the bottom of the list", b.frame(vec![])));
+    b.app.run("layers.collapseAll", json!({}));
+    rows.push(("collapse all layers", b.frame(vec![])));
     println!("UI frame ms — {layers} layers ({})", if cfg!(debug_assertions) { "debug" } else { "release" });
     for (name, v) in rows {
         println!("| {name:<44} | {v:>8.2} |");
     }
+}
+
+/// A key press and release.
+fn key(key: Key, modifiers: Modifiers) -> Vec<Event> {
+    vec![
+        Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers },
+        Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers },
+    ]
+}
+
+/// The first screen's header title: the layers panel lists the top of the stack first, so it is
+/// near the bottom of the list.
+fn bottom_layer(s: &Session) -> Option<NodeId> {
+    let doc = s.doc().ok()?;
+    let screen = *doc.node(s.page().ok()?)?.children.get(1)?;
+    let header = *doc.node(screen)?.children.first()?;
+    doc.node(header)?.children.first().copied()
+}
+
+#[test]
+fn a_layer_revealed_at_the_bottom_of_10k_layers_gets_the_keyboard_on_its_row() {
+    let mut b = Bench::new(10_000);
+    let title = bottom_layer(&b.app.session).unwrap();
+    b.app.ui.expanded.clear();
+    b.app.session.set_selection(vec![title]);
+    // The list scrolls there (animated over a few frames).
+    for _ in 0..40 {
+        b.frame(vec![]);
+    }
+    let doc = b.app.session.doc().unwrap();
+    assert!(doc.ancestors(title).iter().filter(|a| doc.node(**a).is_some_and(|n| !n.is_page())).all(|a| b.app.ui.expanded.contains(a)));
+    // F6 to the layers panel lands on the row, which is only drawn when it was scrolled into view.
+    b.frame(key(Key::F6, Modifiers::SHIFT));
+    b.frame(vec![]);
+    assert_eq!(crate::a11y::focused_name(&b.ctx), "Title");
+    // The arrows walk on from it and the keyboard follows.
+    b.frame(key(Key::ArrowUp, Modifiers::NONE));
+    for _ in 0..3 {
+        b.frame(vec![]);
+    }
+    let sel = b.app.session.selection();
+    assert!(sel.len() == 1 && sel != vec![title], "the row above is selected");
+    let above = b.app.session.doc().unwrap().node(sel[0]).unwrap().name.clone();
+    assert_eq!(crate::a11y::focused_name(&b.ctx), above);
 }
 
 /// The synthetic design system with `icons` icon components (plus its component sets) and

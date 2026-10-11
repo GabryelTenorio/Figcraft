@@ -99,26 +99,59 @@ pub fn insert(s: &mut Session, text: &str) -> Result<()> {
     })
 }
 
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-fn word_left(chars: &[char], mut i: usize) -> usize {
-    while i > 0 && chars.get(i - 1).is_some_and(|c| !is_word(*c)) {
+/// The kind of word char `i` belongs to: 0 for spaces and punctuation, else its script, so a word
+/// ends where the script changes (Han, hiragana, katakana and Hangul runs are words of their own in
+/// text without spaces). Combining marks and voicing marks belong to the char before them.
+fn word_class(chars: &[char], mut i: usize) -> u8 {
+    while i > 0
+        && chars.get(i).is_some_and(
+            |c| matches!(*c as u32, 0x0300..=0x036F | 0x1AB0..=0x1AFF | 0x1DC0..=0x1DFF | 0x20D0..=0x20FF | 0x3099..=0x309A | 0xFE20..=0xFE2F),
+        )
+    {
         i -= 1;
     }
-    while i > 0 && chars.get(i - 1).is_some_and(|c| is_word(*c)) {
+    match chars.get(i).copied() {
+        Some(
+            '\u{3005}'
+            | '\u{3006}'
+            | '\u{3007}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{3FFFF}',
+        ) => 2,
+        Some('\u{3041}'..='\u{309F}') => 3,
+        Some('\u{30A0}'..='\u{30FF}' | '\u{31F0}'..='\u{31FF}' | '\u{FF66}'..='\u{FF9F}') => 4,
+        Some('\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}') => 5,
+        Some(c) if c.is_alphanumeric() || c == '_' => 1,
+        _ => 0,
+    }
+}
+
+fn is_word(chars: &[char], i: usize) -> bool {
+    word_class(chars, i) != 0
+}
+
+/// The start of the word before `i` (skipping spaces and punctuation first).
+fn word_left(chars: &[char], mut i: usize) -> usize {
+    while i > 0 && !is_word(chars, i - 1) {
+        i -= 1;
+    }
+    let class = word_class(chars, i.saturating_sub(1));
+    while i > 0 && word_class(chars, i - 1) == class && class != 0 {
         i -= 1;
     }
     i
 }
 
+/// The end of the word after `i` (skipping spaces and punctuation first).
 fn word_right(chars: &[char], mut i: usize) -> usize {
     let n = chars.len();
-    while i < n && chars.get(i).is_some_and(|c| !is_word(*c)) {
+    while i < n && !is_word(chars, i) {
         i += 1;
     }
-    while i < n && chars.get(i).is_some_and(|c| is_word(*c)) {
+    let class = word_class(chars, i);
+    while i < n && word_class(chars, i) == class && class != 0 {
         i += 1;
     }
     i
@@ -148,7 +181,7 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
                     } else if word {
                         word_left(&chars, a)
                     } else {
-                        a.saturating_sub(1)
+                        figcraft_text::grapheme_step(&t.characters, a, false)
                     };
                     (from, a)
                 } else {
@@ -157,7 +190,7 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
                     } else if word {
                         word_right(&chars, a)
                     } else {
-                        (a + 1).min(n)
+                        figcraft_text::grapheme_step(&t.characters, a, true).min(n)
                     };
                     (a, to)
                 };
@@ -192,8 +225,7 @@ pub fn key(s: &mut Session, key: &str, shift: bool, word: bool, line: bool) -> R
         // Plain arrows move on screen through right-to-left runs, by char elsewhere.
         "Left" | "Right" => match layout.as_ref().and_then(|l| l.visual_step(cur, key == "Right")) {
             Some(i) => i.min(n),
-            None if key == "Left" => cur.saturating_sub(1),
-            None => (cur + 1).min(n),
+            None => figcraft_text::grapheme_step(&t.characters, cur, key == "Right").min(n),
         },
         "Home" if line => 0,
         "End" if line => n,
@@ -317,25 +349,22 @@ pub fn select_word(s: &mut Session, index: usize) -> Result<()> {
     let chars: Vec<char> = text_of(s, te.id)?.characters.chars().collect();
     let mut a = index.min(chars.len());
     // Double-clicking just after a word's last char (or at the end) selects that word.
-    if a > 0 && chars.get(a).is_none_or(|c| !is_word(*c)) && chars.get(a - 1).is_some_and(|c| is_word(*c)) {
+    if a > 0 && !is_word(&chars, a) && is_word(&chars, a - 1) {
         a -= 1;
     }
     let mut b = a;
-    let class = |c: char| {
-        if is_word(c) {
-            0
-        } else if c.is_whitespace() {
-            1
-        } else {
-            2
-        }
+    // Words by script (see `word_class`), then runs of spaces (10) and of punctuation (11).
+    let class = |i: usize| match word_class(&chars, i) {
+        0 if chars.get(i).is_some_and(|c| c.is_whitespace()) => 10,
+        0 => 11,
+        k => k,
     };
     // A word, a run of spaces or a run of punctuation, like the incumbent; newlines stay unselected.
-    if let Some(k) = chars.get(a).filter(|c| **c != '\n').map(|c| class(*c)) {
-        while a > 0 && chars.get(a - 1).is_some_and(|c| *c != '\n' && class(*c) == k) {
+    if let Some(k) = chars.get(a).filter(|c| **c != '\n').map(|_| class(a)) {
+        while a > 0 && chars.get(a - 1).is_some_and(|c| *c != '\n') && class(a - 1) == k {
             a -= 1;
         }
-        while b < chars.len() && chars.get(b).is_some_and(|c| *c != '\n' && class(*c) == k) {
+        while b < chars.len() && chars.get(b).is_some_and(|c| *c != '\n') && class(b) == k {
             b += 1;
         }
     }

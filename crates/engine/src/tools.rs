@@ -717,6 +717,41 @@ pub(crate) fn scale_factor(handle: Handle, q: Point, w0: f64, h0: f64, anchor: (
 }
 
 impl Session {
+    /// What a marquee starting at page point `p` selects inside: the top-level frame it starts in
+    /// (its children), or the focus view's frame.
+    pub(crate) fn marquee_within(&self, p: Point) -> Result<Option<NodeId>> {
+        let (doc, page) = (self.doc()?, self.page()?);
+        let within = frame_at(doc, page, p, &[]).filter(|f| doc.node(*f).is_some_and(|n| n.parent == Some(page)));
+        let within = within.filter(|f| doc.world_bounds(*f).is_some_and(|b| b.contains(p)));
+        Ok(self.ds()?.focused().or(within))
+    }
+
+    /// The selection a marquee over page rect `r` makes from `base` (what was selected before):
+    /// the layers it touches (`deep`: nested ones too); `additive` (Shift) toggles them.
+    pub(crate) fn marquee_selection(&self, r: Rect, within: Option<NodeId>, deep: bool, base: &[NodeId], additive: bool) -> Result<Vec<NodeId>> {
+        let (doc, page) = (self.doc()?, self.page()?);
+        let mut hits =
+            if deep { figcraft_doc::geometry::marquee_deep(doc, page, r) } else { figcraft_doc::geometry::marquee_select(doc, page, r, within) };
+        if let Some(f) = self.ds()?.focused() {
+            hits.retain(|h| *h != f && doc.is_ancestor(f, *h));
+        }
+        // A marquee over a frame from outside selects the frame only when it covers it fully.
+        if within.is_none() && !deep {
+            hits.retain(|h| {
+                let full = doc.world_bounds(*h).is_some_and(|b| r.contains(b.origin()) && r.contains(Point::new(b.x1, b.y1)));
+                full || !doc.node(*h).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }))
+            });
+        }
+        // Shift toggles: what was selected and is touched again comes out.
+        let mut sel: Vec<NodeId> = base.iter().copied().filter(|b| !(additive && hits.contains(b))).collect();
+        for h in hits {
+            if !base.contains(&h) && !sel.contains(&h) {
+                sel.push(h);
+            }
+        }
+        Ok(sel)
+    }
+
     pub fn set_tool(&mut self, t: ToolId) {
         if self.tool.tool == ToolId::Pen && t != ToolId::Pen {
             let _ = self.pen_finish();
@@ -939,11 +974,7 @@ impl Session {
                 self.tool.overlay.cursor = if ev.alt { Cursor::Copy } else { Cursor::Default };
             }
             None => {
-                // Marquee; starting inside a top-level frame selects its children.
-                let within = frame_at(&doc, page, ev.p(), &[]).filter(|f| doc.node(*f).is_some_and(|n| n.parent == Some(page)));
-                let within = within.filter(|f| doc.world_bounds(*f).is_some_and(|b| b.contains(ev.p())));
-                // The focus view selects only inside its frame.
-                let within = self.ds()?.focused().or(within);
+                let within = self.marquee_within(ev.p())?;
                 if !ev.shift {
                     self.set_selection(vec![]);
                 }
@@ -960,31 +991,8 @@ impl Session {
             Gesture::Marquee { start, additive, base, within } => {
                 let r = Rect::from_points(*start, ev.p());
                 self.tool.overlay.marquee = Some([r.x0, r.y0, r.x1, r.y1]);
-                let doc = self.doc()?.clone();
-                let page = self.page()?;
                 // Cmd/Ctrl: the nested layers it touches.
-                let mut hits = if ev.cmd {
-                    figcraft_doc::geometry::marquee_deep(&doc, page, r)
-                } else {
-                    figcraft_doc::geometry::marquee_select(&doc, page, r, *within)
-                };
-                if let Some(f) = self.ds()?.focused() {
-                    hits.retain(|h| *h != f && doc.is_ancestor(f, *h));
-                }
-                // A marquee over a frame from outside selects the frame only when it covers it fully.
-                if within.is_none() && !ev.cmd {
-                    hits.retain(|h| {
-                        let full = doc.world_bounds(*h).is_some_and(|b| r.contains(b.origin()) && r.contains(Point::new(b.x1, b.y1)));
-                        full || !doc.node(*h).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. }))
-                    });
-                }
-                // Shift toggles: what was selected and is touched again comes out.
-                let mut sel: Vec<NodeId> = base.iter().copied().filter(|b| !(*additive && hits.contains(b))).collect();
-                for h in hits {
-                    if !base.contains(&h) && !sel.contains(&h) {
-                        sel.push(h);
-                    }
-                }
+                let sel = self.marquee_selection(r, *within, ev.cmd, base, *additive)?;
                 self.set_selection(sel);
                 Ok(())
             }

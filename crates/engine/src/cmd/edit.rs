@@ -83,6 +83,13 @@ pub fn specs() -> Vec<CommandSpec> {
             ok()
         }),
         spec!("select.inverse", "Select inverse", "{}", false, select_inverse),
+        spec!(
+            "select.area",
+            "Select area",
+            "{x, y, width, height (page units; a marquee from x, y), add? (toggle like a Shift marquee), deep? (nested layers, like Cmd/Ctrl)} → {selection}; with no box: draw one from the keyboard in the app (arrows move it, Shift+arrows size it, Enter selects, Escape cancels)",
+            false,
+            select_area
+        ),
         spec!("select.children", "Select children", "{}", false, select_children),
         spec!("select.parent", "Select parent", "{}", false, select_parent),
         spec!("select.next", "Select next sibling", "{}", false, |s, _| select_sibling(s, 1)),
@@ -686,6 +693,29 @@ fn select_inverse(s: &mut Session, _p: &Value) -> Result<Value> {
         doc.get(parent)?.children.iter().copied().filter(|c| !sel.contains(c) && doc.node(*c).is_some_and(|n| n.visible && !n.locked)).collect();
     s.set_selection(ids.clone());
     Ok(json!({"selection": ids}))
+}
+
+/// `select.area`: what a marquee from (x, y) over the box selects; no box asks the app for one.
+fn select_area(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "select.area";
+    let keys = ["x", "y", "width", "height"];
+    if keys.iter().all(|k| p.get(*k).is_none()) {
+        s.request_ui("selectArea", json!({}));
+        return ok();
+    }
+    let [x, y, w, h] = keys.map(|k| num(p, k));
+    let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) else { return Err(bad(cmd, "pass x, y, width and height (numbers)")) };
+    if ![x, y, w, h].iter().all(|v| v.is_finite() && v.abs() < 1e9) {
+        return Err(bad(cmd, "the box is out of range"));
+    }
+    let start = figcraft_geom::Point::new(x, y);
+    let r = figcraft_geom::Rect::from_points(start, figcraft_geom::Point::new(x + w, y + h));
+    let add = boolean(p, "add") == Some(true);
+    let base = if add { s.selection() } else { Vec::new() };
+    let within = s.marquee_within(start)?;
+    let sel = s.marquee_selection(r, within, boolean(p, "deep") == Some(true), &base, add)?;
+    s.set_selection(sel.clone());
+    Ok(json!({"selection": sel}))
 }
 
 fn select_children(s: &mut Session, _p: &Value) -> Result<Value> {

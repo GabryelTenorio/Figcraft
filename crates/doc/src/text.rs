@@ -158,6 +158,17 @@ pub enum TextAutoResize {
     Truncate,
 }
 
+/// Vertical trim: what bounds a text box vertically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LeadingTrim {
+    /// The full line height of the first and last lines.
+    #[default]
+    None,
+    /// From the first line's cap height to the last line's baseline.
+    CapHeight,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ListStyle {
@@ -318,6 +329,10 @@ pub struct TextData {
     pub paragraph_indent: f64,
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub list: ListStyle,
+    /// Vertical trim (`capHeight`: the box runs from the first line's cap height to the last
+    /// line's baseline).
+    #[serde(skip_serializing_if = "crate::node::is_default")]
+    pub leading_trim: LeadingTrim,
     /// Max lines when truncating (0 = as many as fit).
     #[serde(skip_serializing_if = "crate::node::is_default")]
     pub max_lines: u32,
@@ -391,9 +406,19 @@ impl TextData {
         if self.path.is_none() {
             return 0.0;
         }
-        let size = self.spans().iter().map(|(_, _, s)| s.font_size).filter(|v| v.is_finite()).fold(0.0, f64::max).min(5000.0);
         let lines = self.characters.lines().count().clamp(1, 10_000) as f64;
-        size * 1.5 * lines
+        self.max_size() * 1.5 * lines
+    }
+
+    /// How far vertically trimmed text paints past its box (descenders below the last baseline,
+    /// accents above the first cap height): half the largest size; 0 untrimmed.
+    pub fn trim_reach(&self) -> f64 {
+        if self.leading_trim == LeadingTrim::None { 0.0 } else { self.max_size() * 0.5 }
+    }
+
+    /// The largest font size used (capped like layout caps it).
+    fn max_size(&self) -> f64 {
+        self.spans().iter().map(|(_, _, s)| s.font_size).filter(|v| v.is_finite()).fold(0.0, f64::max).min(5000.0)
     }
 
     pub fn char_count(&self) -> usize {

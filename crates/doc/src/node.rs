@@ -705,7 +705,7 @@ impl Node {
             0.0
         };
         let fx = self.effects.iter().map(Effect::reach).fold(0.0, f64::max);
-        let glyphs = if let NodeKind::Text(t) = &self.kind { t.path_reach() } else { 0.0 };
+        let glyphs = if let NodeKind::Text(t) = &self.kind { t.path_reach() + t.trim_reach() } else { 0.0 };
         stroke + fx + self.spread_miter_reach() + glyphs
     }
 

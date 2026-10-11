@@ -47,7 +47,7 @@ blockers.
 |---|---|---|---|
 | M0 Foundation: workspace, model, renderer, engine, UI shell, app, control channel | done (2026-10-09) | — | — |
 | M0.9 CLI + MCP, web build, release packaging, PDF export | done (v0.2.0 released 2026-10-10 for every platform) | — | — |
-| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~77% | keyboard box selection, interaction pass (Open recent and the outline mode variants landed 2026-10-11) | 6–12 + pass |
+| M1 Core editing completeness (tools, panels, menus, clipboard, files) | ~77% | interaction pass (Open recent, the outline mode variants and keyboard box selection landed 2026-10-11) | 6–12 + pass |
 | M2 Layout depth | ~80% | grid `fr` rows, real-file QA | 6–12 |
 | M3 Components & styles depth | ~78% (extended collections, variables import/export, gradient stop and variant bindings landed 2026-10-11) | real libraries, component playground | 7–14 |
 | M4 Vector & text depth | ~80% (live booleans, arc fields, shape builder on strokes, boolean hit testing on the result, one-sided widths, text on a path, pattern fills, brushes and pen pressure landed 2026-10-11) | spell check, Figma Draw multi-edit | 7–18 |

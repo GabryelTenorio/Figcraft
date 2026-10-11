@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -20,7 +20,7 @@ interaction feel not yet compared.
 | Minimize UI (Cmd+\\) | done | |
 | Resizable panels | partial | check widths and snap points against Figma |
 | Actions palette (Cmd+K, Cmd+/) | done | commands; no assets search parity |
-| Context menus | done | canvas and layers; keyboard access to the layers context menu missing |
+| Context menus | done | canvas and layers; Shift+F10 opens them from the keyboard (at the focused layer row or below the canvas selection) and the menu takes the keyboard; the Menu key isn't delivered by the windowing layer (egui 0.36 has no key for it) |
 | Main menu from the logo | done | generated from `catalog.rs`; popups sized to content |
 | Keyboard shortcuts panel | done | docked, tabbed by group, searchable, per-platform keycaps |
 | Several windows | partial | File ▸ New window, Open in new window on a tab, a tab dragged off the strip; screen-reader tree in the main window only; positions not restored |
@@ -47,7 +47,7 @@ interaction feel not yet compared.
 | Numeric fields: arithmetic, scrubbing by dragging the label, mixed values | partial | check scrub speed and Shift/Alt steps |
 | Transform box at small sizes | done | a press inside a layer smaller than its handles moves it, the nearest handle wins, handles answer just outside and are hidden under 16 px on screen; cursors follow each handle and the box's rotation |
 | Locked layers | done | selectable from the layers panel; no handles, not dragged with the rest of a selection |
-| Keyboard box selection | missing | |
+| Keyboard box selection | done | F8 (`select.area`): a box around the selection or in the middle of the view; arrows move it, Shift+arrows size it, Enter selects like a marquee (Shift+Enter toggles, Cmd/Ctrl+Enter nested); our addition for keyboard-only users |
 
 ## Tools
 
@@ -60,7 +60,7 @@ interaction feel not yet compared.
 | Vector edit mode: bend, paint bucket, lasso, cut, eraser, transform box, point snapping, mirroring | done | |
 | Shape builder (Shift+M) on fills, strokes and open paths; variable width (Shift+W), one side with Alt | done | |
 | Boolean groups: clicked where the result is, double-click or Cmd/Ctrl-click into operands, live results while dragging or editing points, per-operand operations | done | |
-| Text: point, auto height, fixed; caret, words, lines, IME | done | no spell check |
+| Text: point, auto height, fixed; caret, words, lines, IME | done | carets step over whole emoji and accented letters; CJK words by script run (no dictionary); vertical trim in Type settings; no spell check |
 | Eyedropper (I) | done | |
 | Comment (C), Shift+C to show/hide | done | local only |
 | Text on a path (Figma Draw) | done | put on from the Design panel or `text.onPath`, not by clicking a path with the Text tool; the path is edited by resizing only |
@@ -90,6 +90,7 @@ interaction feel not yet compared.
 |---|---|---|
 | Screen-reader names, roles, values, states (AccessKit) | done on desktop | browser: eframe doesn't send the tree yet |
 | Keyboard navigation: F6 regions, Tab within, focus ring | done | |
+| Layers panel from the keyboard: arrows, F2 / Cmd+R rename (the row gets the keyboard back), Shift+F10 context menu; 10k-layer lists | done | revealing a layer, expanding, collapsing and arrow keys timed in `cargo xtask bench` |
 | Reduced motion | done | system setting or preference |
 | WCAG AA contrast of secondary and accent text | done | |
 | Tested with VoiceOver, NVDA, Narrator, Orca | missing | human QA |
@@ -98,6 +99,7 @@ interaction feel not yet compared.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Layers panel keyboard: F2 renames (also from a row with the keyboard, which gets it back), Shift+F10 opens the context menu at the focused row or below the canvas selection, F8 draws a selection box the arrows move and size; stroke weights bind to variables side by side |
 | 2026-10-11 | minor | Selection and transform behaviour suite and fixes: Alt shrinks, groups and mixed rotations scale each layer along its own axes, several layers flip together, whole-pixel resizes, small layers move from inside, locked layers stay put, marquees from a top-level frame's background, equal spacing snapping, Cmd/Ctrl ignores constraints while resizing a frame |
 | 2026-10-11 | minor | Gamut warnings: the colour picker flags Display P3 colours outside sRGB; View ▸ Soft-proof sRGB stripes them on the canvas |
 | 2026-10-11 | minor | Several windows: File ▸ New window, Open in new window on a tab, a tab dragged off the strip; each window has its own tabs and panels and asks about unsaved changes when it closes |

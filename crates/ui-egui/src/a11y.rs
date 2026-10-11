@@ -327,24 +327,9 @@ fn keys(app: &mut FigApp, ctx: &Context) {
         return;
     }
     // F6 / Shift+F6 (and the commands they run).
-    let platform = crate::shortcuts::platform();
-    let region_key = ctx.input(|i| {
-        i.events.iter().find_map(|e| match e {
-            Event::Key { key, pressed: true, modifiers, .. } => {
-                keymap::lookup(platform, keymap::Context::Canvas, key.name(), crate::shortcuts::mods(*modifiers))
-                    .and_then(|b| match b.id {
-                        NEXT_REGION => Some(1),
-                        PREVIOUS_REGION => Some(-1),
-                        _ => None,
-                    })
-                    .map(|step| (step, *key, *modifiers))
-            }
-            _ => None,
-        })
-    });
-    if let Some((step, key, m)) = region_key {
+    if let Some((id, key, m)) = binding_pressed(ctx, &[NEXT_REGION, PREVIOUS_REGION]) {
         ctx.input_mut(|i| i.consume_key(m, key));
-        app.ui.nav.step(step);
+        app.ui.nav.step(if id == NEXT_REGION { 1 } else { -1 });
     }
     if let Some(mv) = app.ui.nav.pending.take() {
         let to = match mv {
@@ -418,6 +403,12 @@ fn keys(app: &mut FigApp, ctx: &Context) {
             }
         }
         Region::Layers if in_region && app.ui.nav.last.row_focused => {
+            // The canvas shortcuts are off while a row has the keyboard: rename (F2, Cmd/Ctrl+R)
+            // and the context menu (Shift+F10) work on its layer here.
+            if let Some((id, key, m)) = binding_pressed(ctx, &["object.rename", "view.contextMenu"]) {
+                ctx.input_mut(|i| i.consume_key(m, key));
+                crate::shortcuts::run_binding(app, id);
+            }
             for k in arrows {
                 let shift = matches!(k, Key::ArrowUp | Key::ArrowDown) && pressed(k, Modifiers::SHIFT);
                 if (pressed(k, Modifiers::NONE) || shift) && crate::layers::key_nav(app, k, shift) {
@@ -429,8 +420,10 @@ fn keys(app: &mut FigApp, ctx: &Context) {
         }
         _ => {}
     }
-    // Escape gives the keyboard back to the canvas (a popup it closes keeps it where it was).
+    // Escape gives the keyboard back to the canvas (a popup it closes keeps it where it was; a layer
+    // rename it cancels gives it back to the row).
     if region != Region::Canvas
+        && app.ui.rename.is_none()
         && pressed(Key::Escape, Modifiers::NONE)
         && !egui::Popup::is_any_open(ctx)
         && app.ui.nav.opener.is_none()
@@ -453,6 +446,63 @@ fn keys(app: &mut FigApp, ctx: &Context) {
     {
         ctx.memory_mut(|m| m.request_focus(c));
     }
+}
+
+/// The first of the commands `ids` a key pressed this frame is bound to (canvas keys), with the key.
+fn binding_pressed(ctx: &Context, ids: &[&str]) -> Option<(&'static str, Key, Modifiers)> {
+    let platform = crate::shortcuts::platform();
+    ctx.input(|i| {
+        i.events.iter().find_map(|e| match e {
+            Event::Key { key, pressed: true, modifiers, .. } => {
+                keymap::lookup(platform, keymap::Context::Canvas, key.name(), crate::shortcuts::mods(*modifiers))
+                    .filter(|b| ids.contains(&b.id))
+                    .map(|b| (b.id, *key, *modifiers))
+            }
+            _ => None,
+        })
+    })
+}
+
+/// A layer rename from the keyboard ended: the selected layer's row takes the keyboard again.
+pub fn refocus_row(nav: &mut Nav) {
+    if nav.keyboard {
+        nav.region = Region::Layers;
+        nav.refocus = 3;
+    }
+}
+
+/// Open the context menu from the keyboard (Shift+F10, `view.contextMenu`): for the selection, at
+/// its layer row when the layers panel has the keyboard, else on the canvas below the selection
+/// (the middle of the canvas with nothing selected). The menu takes the keyboard (keyboard mode),
+/// and gives it back to the row or the canvas when it closes. Call after the panels drew.
+pub fn context_menu(app: &mut FigApp, ctx: &Context) {
+    let nav = &app.ui.nav;
+    let rect_of = |id: Id| ctx.viewport(|v| v.this_pass.widgets.get(id).or_else(|| v.prev_pass.widgets.get(id)).map(|w| w.rect));
+    let row = (app.ui.layers_focus || nav.region == Region::Layers)
+        .then(|| Region::Layers.of(&nav.next.preferred).or(*Region::Layers.of(&nav.last.preferred)))
+        .flatten()
+        .and_then(|id| Some((id, rect_of(id)?)));
+    let (opener, pos, region) = match row {
+        Some((id, r)) => (Some(id), egui::pos2(r.min.x + 40.0, r.max.y), Region::Layers),
+        None => {
+            let canvas = app.canvas.rect;
+            let below = app.session.ds().ok().and_then(|ds| {
+                let b = ds.selection.iter().filter_map(|i| ds.doc.world_bounds(*i)).reduce(|a, b| a.union(b))?;
+                Some(egui::pos2(app.to_screen(b.x0, b.y1).x, app.to_screen(b.x0, b.y1).y + 8.0))
+            });
+            let pos = below.filter(|p| canvas.contains(*p)).unwrap_or(canvas.center());
+            (nav.next.canvas.or(nav.last.canvas), pos, Region::Canvas)
+        }
+    };
+    app.ui.context_menu = Some((pos, app.session.selection()));
+    let nav = &mut app.ui.nav;
+    nav.keyboard = true;
+    nav.region = region;
+    nav.opener = None;
+    if let Some(id) = opener {
+        ctx.memory_mut(|m| m.request_focus(id));
+    }
+    ctx.request_repaint();
 }
 
 /// After everything drew: the layer row the arrows moved to takes the keyboard, and the focus ring.

@@ -364,7 +364,7 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
         | "paddingBottom" | "paddingLeft" => "GAP",
         "cornerRadius" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "CORNER_RADIUS",
         "opacity" => "OPACITY",
-        "strokeWeight" => "STROKE_FLOAT",
+        "strokeWeight" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight" | "strokeLeftWeight" => "STROKE_FLOAT",
         "fontSize" => "FONT_SIZE",
         "lineHeight" => "LINE_HEIGHT",
         "letterSpacing" => "LETTER_SPACING",

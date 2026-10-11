@@ -57,6 +57,9 @@ fn paragraph(s: &Value, td: &mut TextData) {
     td.max_lines = num(s, "maxLines").filter(|n| *n >= 1.0).map_or(0, |n| n.min(10_000.0) as u32);
     td.paragraph_spacing = len(s, "paragraphSpacing").unwrap_or(0.0);
     td.paragraph_indent = len(s, "paragraphIndent").unwrap_or(0.0);
+    if text(s, "leadingTrim") == Some("CAP_HEIGHT") {
+        td.leading_trim = figcraft_doc::LeadingTrim::CapHeight;
+    }
     if let Some(flags) = s.get("openTypeFlags").and_then(Value::as_object) {
         for (tag, on) in flags.iter().take(64) {
             if figcraft_doc::valid_feature_tag(&tag.to_ascii_lowercase()) {

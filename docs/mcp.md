@@ -197,6 +197,19 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   the keyboard between the app's regions (toolbar, layers, canvas, properties). In the app, Tab and
   Shift+Tab then move between the region's controls, Enter or Space activate one, the arrows move
   along the toolbar and through the layer rows, and Escape returns to the canvas (no-ops headless).
+- `object.rename {ids?}` without a `name` (`Cmd+R`, or `F2`): rename the layer inline in the app's
+  layers panel, also from a layer row that has the keyboard; when the rename ends the row gets the
+  keyboard back (Escape cancels it there). Headless it changes nothing and leaves no undo step.
+- `view.contextMenu` (`Shift+F10`): the selection's context menu, at its layer row when the layers
+  panel has the keyboard (after F6 or a click on a row), else on the canvas below the selection; the
+  menu takes the keyboard and gives it back when it closes (no-op headless).
+- `select.area {x, y, width, height, add?, deep?}`: select what a marquee from `x, y` over that box
+  (page units) would: top-level layers, a frame only when the box covers it, the children of the
+  top-level frame the box starts in; `add` toggles like a Shift marquee, `deep` takes nested layers
+  like Cmd/Ctrl. Returns `{selection}`. Without a box (`F8` in the app) it draws one for the
+  keyboard around the selection (or in the middle of the view): the arrows move it, Shift+arrows
+  move its far corner (10 screen pixels a press), Enter selects (Shift+Enter adds, Cmd/Ctrl+Enter
+  nested layers), Escape or a click drops it.
 - `pref.reduceMotion {on?}`: reduced motion (the interface's own animations off; the system's
   accessibility setting turns it on too). Prototype transitions still play.
 - `pref.language {language: system|en|es|…}`: the app's interface language, applied live ("system":
@@ -580,8 +593,8 @@ Variables come from the local variables response (`GET /v1/files/:key/variables/
 collections with their modes (the default mode first), values per mode, aliases and scopes. Pass it
 as `variables` (a path, or the JSON object or text) to `open_file`, `file.open` or `file.import`,
 put it next to the file as `<name>.variables.json` or `variables.json`, or embed its `meta` in the
-file JSON. Layers' `boundVariables` (sizes, gaps and padding, corner radii, opacity, stroke weight,
-visibility, text, font properties, single solid fills and strokes) and `explicitVariableModes` then
+file JSON. Layers' `boundVariables` (sizes, gaps and padding, corner radii, opacity, stroke weight and
+per-side stroke weights, visibility, text, font properties, single solid fills and strokes) and `explicitVariableModes` then
 link to them, so switching a mode with `variable.setMode` restyles the layers (`mode: null` sets a
 frame back to Auto, inheriting its parent's mode).
 
@@ -595,6 +608,13 @@ JSON text or a path) reads one back: a collection joins this file's collection o
 skipped with a warning; library copies and extended collections are never targets), others are
 added; aliases are checked for loops; it returns `{collections, variables, updated, warnings}`. The
 Variables editor's Import… and Export… buttons do the same through file dialogs.
+
+Strokes take colour styles and variables like fills: `style.apply {style, target: "stroke"}` links
+a colour style to the strokes (`styles.stroke`; edits of the style follow, `style.detach {which:
+"stroke"}` keeps the colour), and `variable.bind` binds `strokeWeight` and each side's weight on its
+own (`strokeTopWeight`, `strokeRightWeight`, `strokeBottomWeight`, `strokeLeftWeight`; binding or
+setting one side with `node.set` turns on individual strokes, the other sides at the weight) to
+number variables scoped for stroke weights.
 
 `variable.bind` also binds gradient stops (`fills/<i>/stops/<j>/color`, `strokes/<i>/stops/<j>/color`;
 the binding follows its stop when an earlier stop is removed and its paint when the list is

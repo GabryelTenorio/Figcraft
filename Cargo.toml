@@ -50,6 +50,7 @@ krilla = "0.8"
 skrifa = "0.47"
 harfrust = "0.13"
 unicode-bidi = "0.3"
+unicode-segmentation = "1.13"
 linesweeper = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # `.fig` import: raw deflate chunks (already built for zip) and zstd chunks (pure Rust, MIT, wasm-safe).

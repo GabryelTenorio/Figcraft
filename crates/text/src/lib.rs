@@ -6,11 +6,13 @@
 //! fills [`Glyph::path`]s and the editor uses [`TextLayout::caret`] / [`TextLayout::hit`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod breaks;
 pub mod display;
 pub mod fontdb;
 mod layout;
 mod onpath;
 
+pub use breaks::grapheme_step;
 pub use fontdb::{
     Axis, CRAFT_FONTS, Coords, Face, FontDb, NamedInstance, axis_label, db, face_with_char, family_names, family_styles, find_face, no_coords,
     scan_system_fonts, system_fonts_scanned,
@@ -141,6 +143,8 @@ pub fn auto_size(n: &Node) -> Option<(f64, f64)> {
     }
 }
 
+#[cfg(test)]
+mod behaviour_tests;
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]

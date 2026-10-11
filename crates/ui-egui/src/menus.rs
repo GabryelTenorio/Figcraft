@@ -430,8 +430,15 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
             app.ui.main_menu = false;
         }
     }
-    // Context menu.
+    // Context menu (from the keyboard: at the focused layer row or the canvas selection, taking the
+    // keyboard from the control with it).
+    if std::mem::take(&mut app.ui.key_menu) {
+        a11y::context_menu(app, ctx);
+    }
     if let Some((pos, ids)) = app.ui.context_menu.clone() {
+        if let Some(f) = ctx.memory(|m| m.focused()) {
+            a11y::popup(&mut app.ui.nav, f, Id::new("ctx_menu"));
+        }
         let mut close = false;
         let area = egui::Area::new(Id::new("ctx_menu")).fixed_pos(pos).order(egui::Order::Foreground).constrain(true).show(ctx, |ui| {
             menu_frame(ui, &t, |ui| {

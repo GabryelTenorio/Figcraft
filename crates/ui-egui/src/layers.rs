@@ -589,6 +589,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     // go on to the next / previous row.
     let mut rename_row: Option<(usize, NodeId, usize)> = None;
     let mut rename_next: Option<NodeId> = None;
+    let renaming = app.ui.rename.is_some();
     if let Some(rn) = app.ui.rename {
         match rows.iter().position(|r| r.id == rn.id) {
             None => app.ui.rename = None,
@@ -905,6 +906,9 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     }
     if let Some(id) = rename_next {
         rename_layer(app, id);
+    }
+    if renaming && app.ui.rename.is_none() {
+        a11y::refocus_row(&mut app.ui.nav);
     }
     if let Some((id, m)) = clicked {
         app.ui.layers_focus = true;

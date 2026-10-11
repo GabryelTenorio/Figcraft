@@ -301,7 +301,7 @@ fn text_styles_and_runs() {
          "style": {"fontFamily": "Inter", "fontPostScriptName": "Inter-Regular", "fontStyle": "Regular", "fontWeight": 400, "fontSize": 24,
                    "lineHeightPx": 29, "lineHeightUnit": "INTRINSIC_%", "letterSpacing": 0, "textAlignHorizontal": "CENTER",
                    "textAlignVertical": "CENTER", "textAutoResize": "HEIGHT", "textCase": "UPPER", "textDecoration": "UNDERLINE",
-                   "paragraphSpacing": 8, "paragraphIndent": 4, "openTypeFlags": {"LIGA": 0, "ss01": 1}},
+                   "paragraphSpacing": 8, "paragraphIndent": 4, "leadingTrim": "CAP_HEIGHT", "openTypeFlags": {"LIGA": 0, "ss01": 1}},
          // UTF-16 code units: the emoji takes two.
          "characterStyleOverrides": [0, 1, 1, 2],
          "styleOverrideTable": {"1": {"fontWeight": 700}, "2": {"fills": [solid(1.0, 0.0, 0.0)], "hyperlink": {"type": "URL", "url": "https://example.com"}}},
@@ -322,6 +322,7 @@ fn text_styles_and_runs() {
     assert_eq!((td.style.case, td.style.decoration), (TextCase::Upper, TextDecoration::Underline));
     assert_eq!((td.align_h, td.align_v, td.auto_resize), (TextAlignH::Center, TextAlignV::Middle, TextAutoResize::Height));
     assert_eq!((td.paragraph_spacing, td.paragraph_indent), (8.0, 4.0));
+    assert_eq!(td.leading_trim, figcraft_doc::LeadingTrim::CapHeight);
     assert_eq!(td.features.get("liga"), Some(&false));
     assert_eq!(td.features.get("ss01"), Some(&true));
     assert_eq!(td.list, ListStyle::Bulleted);

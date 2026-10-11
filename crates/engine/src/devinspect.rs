@@ -444,6 +444,9 @@ fn typography(doc: &Document, n: &Node, t: &TextData) -> Section {
     if t.paragraph_spacing > 0.0 {
         rows.push(prop("Paragraph spacing", num(t.paragraph_spacing)));
     }
+    if t.leading_trim == figcraft_doc::LeadingTrim::CapHeight {
+        rows.push(prop("Vertical trim", "cap height to baseline"));
+    }
     let align = match t.align_h {
         TextAlignH::Left => "left",
         TextAlignH::Center => "center",

@@ -236,6 +236,13 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!("view.nextRegion", "Focus next region", "{}", false, |s, _| region(s, 1)),
         spec!("view.previousRegion", "Focus previous region", "{}", false, |s, _| region(s, -1)),
+        spec!(
+            "view.contextMenu",
+            "Show context menu",
+            "{}  the selection's context menu at its layer row (when the layers panel has the keyboard) or on the canvas; the menu takes the keyboard",
+            false,
+            |s, _| ui(s, "contextMenu")
+        ),
         spec!("view.themeLight", "Light theme", "{}", false, |s, _| {
             s.prefs.theme = "light".into();
             ok()

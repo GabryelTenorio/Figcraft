@@ -208,6 +208,7 @@ pub static KEYS: &[Binding] = &[
     k(View, "view.leftSidebar", &["Shift+Cmd+\\"]),
     k(View, "view.nextRegion", &["F6"]).label("Focus the next region (toolbar, layers, canvas, properties)").both(),
     k(View, "view.previousRegion", &["Shift+F6"]).label("Focus the previous region").both(),
+    k(View, "view.contextMenu", &["Shift+F10"]).label("Context menu of the selection (the focused layer row or the canvas)"),
     k(View, "layers.collapseAll", &["Alt+L"]),
     k(View, "doc.nextTab", &["Ctrl+Tab"]),
     k(View, "doc.previousTab", &["Ctrl+Shift+Tab"]),
@@ -268,7 +269,8 @@ pub static KEYS: &[Binding] = &[
     k(Selection, "object.frameSelection", &["Alt+Cmd+G"]),
     k(Selection, "object.toggleVisible", &["Shift+Cmd+H"]),
     k(Selection, "object.toggleLock", &["Shift+Cmd+L"]),
-    k(Selection, "object.rename", &["Cmd+R"]),
+    k(Selection, "object.rename", &["Cmd+R", "F2"]),
+    k(Selection, "select.area", &["F8"]).label("Select with a box from the keyboard (arrows move it, Shift+arrows size it, Enter selects)"),
     // Edit
     k(Edit, "edit.undo", &["Cmd+Z"]),
     k(Edit, "edit.redo", &["Shift+Cmd+Z"]),

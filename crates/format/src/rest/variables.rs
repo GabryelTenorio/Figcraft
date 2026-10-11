@@ -326,8 +326,9 @@ fn node_binding<'v>(k: &str, v: &'v Value, n: &Node, out: &mut Vec<(String, &'v 
         }
         "itemSpacing" => push("gap", alias(v)),
         "counterAxisSpacing" => push("crossGap", alias(v)),
-        "characters" | "visible" | "opacity" | "strokeWeight" | "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "topLeftRadius"
-        | "topRightRadius" | "bottomLeftRadius" | "bottomRightRadius" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight" => push(k, alias(v)),
+        "characters" | "visible" | "opacity" | "strokeWeight" | "strokeTopWeight" | "strokeRightWeight" | "strokeBottomWeight"
+        | "strokeLeftWeight" | "paddingLeft" | "paddingRight" | "paddingTop" | "paddingBottom" | "topLeftRadius" | "topRightRadius"
+        | "bottomLeftRadius" | "bottomRightRadius" | "minWidth" | "maxWidth" | "minHeight" | "maxHeight" => push(k, alias(v)),
         "rectangleCornerRadii" => {
             for (key, f) in [
                 ("RECTANGLE_TOP_LEFT_CORNER_RADIUS", "topLeftRadius"),

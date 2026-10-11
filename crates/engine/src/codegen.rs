@@ -370,6 +370,9 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
             LetterSpacing::Percent(p) if p != 0.0 => put("letter-spacing", format!("{}em", num(p / 100.0))),
             _ => {}
         }
+        if tx.leading_trim == figcraft_doc::LeadingTrim::CapHeight {
+            put("text-box", "trim-both cap alphabetic".into());
+        }
     }
     out
 }

@@ -77,6 +77,8 @@ mod idle_tests;
 #[cfg(test)]
 mod layers_drag_tests;
 #[cfg(test)]
+mod layers_keyboard_tests;
+#[cfg(test)]
 mod layers_keys_tests;
 #[cfg(test)]
 mod layers_rename_tests;
@@ -244,6 +246,12 @@ pub struct UiState {
     pub preview: Option<present::Pane>,
     pub picker: Option<colorpicker::PickerTarget>,
     pub context_menu: Option<(egui::Pos2, Vec<NodeId>)>,
+    /// The context menu was asked for from the keyboard (`view.contextMenu`): it opens at the
+    /// focused layer row or the canvas selection and takes the keyboard.
+    pub key_menu: bool,
+    /// A selection box drawn from the keyboard (`select.area`), page `[x0, y0, x1, y1]` with the
+    /// marquee's start at `x0, y0`.
+    pub key_box: Option<[f64; 4]>,
     /// Layers panel search: open, the filter text, the shift-click range anchor and the selection
     /// the tree last revealed (ancestors expand and the row scrolls into view when it changes).
     pub layer_search: bool,
@@ -339,6 +347,8 @@ impl Default for UiState {
             preview: None,
             picker: None,
             context_menu: None,
+            key_menu: false,
+            key_box: None,
             layer_search: false,
             layer_filter: String::new(),
             layer_anchor: None,
@@ -563,6 +573,8 @@ impl FigApp {
                 "preview.close" => self.ui.preview = None,
                 "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
                 "layers.collapseAll" => self.ui.expanded.clear(),
+                "contextMenu" => self.ui.key_menu = true,
+                "selectArea" => self.start_key_box(),
                 "layers.rename" => {
                     let ids: Vec<NodeId> =
                         r.data.get("ids").and_then(Value::as_array).into_iter().flatten().filter_map(figcraft_engine::params::id_of).collect();

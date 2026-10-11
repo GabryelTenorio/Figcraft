@@ -438,14 +438,26 @@ fn type_settings(
         }
         ui.add_space(6.0);
         let indent = common(doc, ids, |n| n.kind.text().map(|t| t.paragraph_indent.to_bits())).flatten().map(f64::from_bits);
+        // Indent applies to start-aligned text only; elsewhere the field stays visible but off.
+        let start_aligned =
+            common(doc, ids, |n| n.kind.text().map(|t| t.align_h != TextAlignH::Center && t.align_h != TextAlignH::Justified)).flatten();
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Paragraph indent")).font(regular(11.0)).color(t.text)));
-            if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
-                widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", w - 118.0, 1.0)
-            {
-                app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
-            }
+            ui.add_enabled_ui(start_aligned != Some(false), |ui| {
+                ui.add_sized(vec2(110.0, FIELD_H), egui::Label::new(egui::RichText::new(tr("Paragraph indent")).font(regular(11.0)).color(t.text)));
+                let field = widgets::number_field(ui, Id::new("ty_indent"), Lead::None, indent, "", w - 118.0, 1.0);
+                if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) = field {
+                    app.set_props(ids, json!({"paragraphIndent": v.clamp(0.0, 10_000.0)}));
+                }
+            })
+            .response
+            .on_disabled_hover_text(tr("Paragraph indent applies to left-aligned text"));
         });
+        caption(ui, tr("Vertical trim"));
+        let trim = common(doc, ids, |n| n.kind.text().map(|t| usize::from(t.leading_trim == LeadingTrim::CapHeight))).flatten();
+        let items = [(tr("Standard"), tr_noop("Standard")), ("Ag", tr_noop("Cap height to baseline"))];
+        if let Some(i) = text_seg(ui, "trim", &items, trim, w) {
+            app.set_props(ids, json!({"leadingTrim": if i == 1 { "capHeight" } else { "none" }}));
+        }
         let resize = common(doc, ids, |n| n.kind.text().map(|t| t.auto_resize)).flatten();
         caption(ui, tr("Truncate text"));
         let active = resize.map(|r| usize::from(r == TextAutoResize::Truncate));

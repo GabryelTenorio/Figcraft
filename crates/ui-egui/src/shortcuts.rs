@@ -121,6 +121,9 @@ pub fn run_binding(app: &mut FigApp, id: &str) {
 }
 
 fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, ctx: &Context) -> bool {
+    if key_box(app, key, m) {
+        return true;
+    }
     // A gradient open in the colour picker: Delete removes its selected stop.
     if matches!(key, Key::Backspace | Key::Delete) && m.is_none() && app.ui.picker.is_some() && crate::handles::remove_selected_stop(app, ctx) {
         return true;
@@ -177,6 +180,62 @@ fn key_event(app: &mut FigApp, key: Key, m: Modifiers, repeat: bool, now: f64, c
         return true;
     }
     false
+}
+
+/// Keys while a selection box drawn from the keyboard shows (`select.area`, F8): the arrows move
+/// it (with Shift they move its far corner, sizing it) by 10 screen pixels, Enter selects what it
+/// covers like a marquee (Shift toggles, Cmd/Ctrl takes nested layers), Escape drops it.
+fn key_box(app: &mut FigApp, key: Key, m: Modifiers) -> bool {
+    let Some(mut b) = app.ui.key_box else { return false };
+    let step = 10.0 / app.session.ds().map_or(1.0, |d| d.view.zoom.max(1e-6));
+    let (dx, dy) = match key {
+        Key::ArrowLeft => (-step, 0.0),
+        Key::ArrowRight => (step, 0.0),
+        Key::ArrowUp => (0.0, -step),
+        Key::ArrowDown => (0.0, step),
+        _ => (0.0, 0.0),
+    };
+    if (dx, dy) != (0.0, 0.0) {
+        if !m.shift {
+            b[0] += dx;
+            b[1] += dy;
+        }
+        b[2] += dx;
+        b[3] += dy;
+        app.ui.key_box = Some(b);
+        return true;
+    }
+    match key {
+        Key::Enter => {
+            app.ui.key_box = None;
+            let [x0, y0, x1, y1] = b;
+            app.run("select.area", json!({"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0, "add": m.shift, "deep": m.command}));
+            true
+        }
+        Key::Escape => {
+            app.ui.key_box = None;
+            true
+        }
+        _ => false,
+    }
+}
+
+impl FigApp {
+    /// Show a selection box for the keyboard: around the selection, else in the middle of the view.
+    pub(crate) fn start_key_box(&mut self) {
+        let Ok(ds) = self.session.ds() else { return };
+        let zoom = ds.view.zoom.max(1e-6);
+        let around = ds.selection.iter().filter_map(|i| ds.doc.world_bounds(*i)).reduce(|a, b| a.union(b));
+        let r = match around {
+            Some(r) => r.inflate(8.0 / zoom, 8.0 / zoom),
+            None => {
+                let c = self.to_page(self.canvas.rect.center());
+                figcraft_geom::Rect::new(c.x - 100.0 / zoom, c.y - 75.0 / zoom, c.x + 100.0 / zoom, c.y + 75.0 / zoom)
+            }
+        };
+        self.ui.key_box = Some([r.x0, r.y0, r.x1, r.y1]);
+        self.toast(crate::i18n::tr("Selection box: arrows move it, Shift+arrows size it, Enter selects, Escape cancels"));
+    }
 }
 
 /// The digit a number key types.

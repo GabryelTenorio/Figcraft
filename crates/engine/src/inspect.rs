@@ -175,6 +175,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             if t.style.decoration != TextDecoration::None {
                 o.insert("textDecoration".into(), json!(t.style.decoration));
             }
+            if t.leading_trim != figcraft_doc::LeadingTrim::None {
+                o.insert("leadingTrim".into(), json!(t.leading_trim));
+            }
             if !t.runs.is_empty() {
                 o.insert("styledRuns".into(), serde_json::to_value(&t.runs).unwrap_or(Value::Null));
             }

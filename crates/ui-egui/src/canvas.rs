@@ -145,7 +145,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let resp = ui.interact(rect, ui.id().with("canvas"), Sense::click_and_drag());
-    crate::a11y::canvas(&mut app.ui.nav, &resp, || describe(&app.session));
+    let key_box = app.ui.key_box;
+    crate::a11y::canvas(&mut app.ui.nav, &resp, || key_box.map_or_else(|| describe(&app.session), describe_box));
     if let Ok(ds) = app.session.ds_mut()
         && ((ds.view.vw - f64::from(rect.width())).abs() > 0.5 || (ds.view.vh - f64::from(rect.height())).abs() > 0.5)
     {
@@ -270,6 +271,16 @@ pub fn describe(s: &figcraft_engine::Session) -> String {
     }
 }
 
+/// What the canvas says while a keyboard selection box shows: its size and place, and the keys.
+fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
+    let n = crate::widgets::fmt_num;
+    let (w, h, x, y) = (n((x1 - x0).abs()), n((y1 - y0).abs()), n(x0.min(x1)), n(y0.min(y1)));
+    trf(
+        "Selection box, {w} by {h} at {x}, {y}: arrows move it, Shift+arrows size it, Enter selects, Escape cancels",
+        &[("w", &w), ("h", &h), ("x", &x), ("y", &y)],
+    )
+}
+
 /// Pixel preview's resolution (rendered pixels per page pixel) when it's on and zoomed in past it.
 fn pixel_preview(ds: &figcraft_engine::DocState) -> Option<f64> {
     let k = f64::from(ds.view.pixel_scale.clamp(1, 2));
@@ -378,6 +389,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     // A press on the canvas gives the keyboard back to it (arrows nudge again).
     if resp.hovered() && ctx.input(|i| i.pointer.any_pressed()) {
         app.ui.layers_focus = false;
+        app.ui.key_box = None;
     }
     // Zoom (pinch, Cmd/Ctrl+scroll) about the pointer; plain scroll pans.
     if resp.hovered() {
@@ -936,7 +948,7 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
     // Smart guides and measurements (their labels kept clear of the size label).
     crate::measure_overlay::draw(app, painter, t, size_label);
     // Marquee.
-    if let Some([x0, y0, x1, y1]) = ov.marquee {
+    if let Some([x0, y0, x1, y1]) = ov.marquee.or(app.ui.key_box) {
         let r = Rect::from_two_pos(app.to_screen(x0, y0), app.to_screen(x1, y1));
         painter.rect_filled(r, CornerRadius::ZERO, ACCENT.gamma_multiply(0.1));
         painter.rect_stroke(r, CornerRadius::ZERO, stroke(ACCENT, 1.0), StrokeKind::Inside);

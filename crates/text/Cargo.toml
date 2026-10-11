@@ -14,4 +14,5 @@ figcraft-doc = { workspace = true }
 skrifa = { workspace = true }
 harfrust = { workspace = true }
 unicode-bidi = { workspace = true }
+unicode-segmentation = { workspace = true }
 log = { workspace = true }
