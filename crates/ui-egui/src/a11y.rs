@@ -489,7 +489,7 @@ fn blocked(app: &FigApp) -> bool {
         || u.present.is_some()
         || u.home
         || u.find.is_some()
-        || app.session.docs.is_empty()
+        || !app.has_files()
 }
 
 /// Menus the app draws itself (Escape closes them, and the keyboard stays put).

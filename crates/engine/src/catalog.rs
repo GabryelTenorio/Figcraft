@@ -21,6 +21,7 @@ pub const SEP: &str = "-";
 pub static MENU: &[MenuItem] = &[
     // File
     m!("File", "New design file", "file.new"),
+    m!("File", "New window", "window.new"),
     m!("File", "Open…", "file.open"),
     m!("File", "Import from file…", "file.import"),
     m!("File", "Place image…", "file.placeImage"),
@@ -92,6 +93,8 @@ pub static MENU: &[MenuItem] = &[
     m!("View", "Pixel preview", "view.pixelPreview"),
     m!("View", "Mask outlines", "view.maskOutlines"),
     m!("View", "Frame outlines", "view.frameOutlines"),
+    // FigCraft's own: the canvas shows sRGB, so Display P3 files can mark what it can't show.
+    m!("View", "Soft-proof sRGB", "view.proofSrgb"),
     m!("View", SEP, ""),
     m!("View/Panels", "Show/Hide UI", "view.toggleUi"),
     m!("View/Panels", "Layers", "view.layers"),

@@ -163,3 +163,18 @@ fn paint_colors_visit_solids_and_stops() {
     let mut img = Paint::image("h", ImageScaleMode::Fill);
     img.for_each_color_mut(&mut |_| panic!("images have no colours"));
 }
+
+#[test]
+fn gamut_checks_find_p3_colours_outside_srgb() {
+    let to_srgb = ColorProfile::DisplayP3.conversion_to(ColorProfile::Srgb);
+    assert!(to_srgb.clips(Color::new(0.0, 1.0, 0.0, 1.0)), "P3 green is outside sRGB");
+    assert!(!to_srgb.clips(Color::new(0.5, 0.5, 0.5, 1.0)), "greys fit");
+    // sRGB red written as 8-bit P3 values still fits (rounding isn't clipping).
+    let red = ColorProfile::Srgb.conversion_to(ColorProfile::DisplayP3).apply(Color::new(1.0, 0.0, 0.0, 1.0));
+    let [r, g, b, _] = red.to_rgba8();
+    assert!(!to_srgb.clips(Color::from_rgba8(r, g, b, 255)));
+    assert!(!ColorProfile::Srgb.conversion_to(ColorProfile::Srgb).clips(Color::new(0.0, 1.0, 0.0, 1.0)));
+    // Pixels: premultiplied, transparent ones never clip.
+    let px = [0, 255, 0, 255, r, g, b, 255, 0, 128, 0, 128, 0, 255, 0, 0];
+    assert_eq!(to_srgb.clipped_pixels(&px), [true, false, true, false]);
+}

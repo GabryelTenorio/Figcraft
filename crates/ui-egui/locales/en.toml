@@ -202,6 +202,7 @@ name = "English"
 "Close tab" = "Close tab"
 "Close version history" = "Close version history"
 "Close when clicking outside" = "Close when clicking outside"
+"Close without saving" = "Close without saving"
 "Code" = "Code"
 "Collapse" = "Collapse"
 "Collapse panel" = "Collapse panel"
@@ -744,6 +745,7 @@ name = "English"
 "Open file" = "Open file"
 "Open files" = "Open files"
 "Open in focus view" = "Open in focus view"
+"Open in new window" = "Open in new window"
 "Open invite links in FigCraft" = "Open invite links in FigCraft"
 "Open link" = "Open link"
 "Open link {url}" = "Open link {url}"
@@ -1126,6 +1128,8 @@ name = "English"
 "Unions" = "Unions"
 "Unread" = "Unread"
 "Unresolve" = "Unresolve"
+"Unsaved changes" = "Unsaved changes"
+"Unsaved changes in {names}. Close the window and lose them?" = "Unsaved changes in {names}. Close the window and lose them?"
 "Unsaved changes: save first ({save}), or close the tab with {alt}-click to discard" = "Unsaved changes: save first ({save}), or close the tab with {alt}-click to discard"
 "Unsaved changes: save first, or close again with {key} to discard" = "Unsaved changes: save first, or close again with {key} to discard"
 "Up" = "Up"
@@ -1254,7 +1258,6 @@ name = "English"
 "{n} conflicts to resolve" = { one = "{n} conflict to resolve", other = "{n} conflicts to resolve" }
 "{n} days ago" = { one = "{n} day ago", other = "{n} days ago" }
 "{n} files" = { one = "{n} file", other = "{n} files" }
-"{n} files have unsaved changes: save them first, or close the window again to discard" = { one = "A file has unsaved changes: save it first, or close the window again to discard", other = "{n} files have unsaved changes: save them first, or close the window again to discard" }
 "{n} hours ago" = { one = "{n} hour ago", other = "{n} hours ago" }
 "{n} instances" = { one = "{n} instance", other = "{n} instances" }
 "{n} layers" = { one = "{n} layer", other = "{n} layers" }

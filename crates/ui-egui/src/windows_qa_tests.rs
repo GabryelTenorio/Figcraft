@@ -1,8 +1,8 @@
 //! Everyday-workflow bugs found in a Windows QA pass, driven through egui headless: a scrubbed
-//! field keeps its value when the pointer lets go, typing on a field Tab reached edits it, Escape
-//! closes a dialog without deselecting, and closing the window with unsaved changes asks first.
+//! field keeps its value when the pointer lets go, typing on a field Tab reached edits it, and
+//! Escape closes a dialog without deselecting.
 
-use egui::{Event, Key, Modifiers, Pos2, RawInput, Rect, ViewportCommand, ViewportEvent, ViewportId, ViewportInfo, vec2};
+use egui::{Event, Key, Modifiers, Pos2, Rect, vec2};
 use figcraft_doc::NodeId;
 use figcraft_engine::Session;
 use serde_json::json;
@@ -89,30 +89,4 @@ fn escape_closes_preferences_without_deselecting() {
     assert_eq!(u.app.session.selection(), vec![a], "and leaves the selection alone");
     press(&mut u, Key::Escape, Modifiers::NONE);
     assert!(u.app.session.selection().is_empty(), "the next Escape reaches the canvas");
-}
-
-/// A frame in which the window is asked to close; whether the app held the close back.
-fn close_window(u: &mut Ui, time: f64) -> bool {
-    let mut input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1440.0, 900.0))), time: Some(time), ..Default::default() };
-    input.viewports.insert(ViewportId::ROOT, ViewportInfo { events: vec![ViewportEvent::Close], ..Default::default() });
-    let app = &mut u.app;
-    let mut out = u.ctx.run_ui(input, |ui| app.ui(ui));
-    out.textures_delta.clear();
-    out.viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::CancelClose))
-}
-
-#[test]
-fn closing_the_window_with_unsaved_changes_asks_first() {
-    let (mut u, _) = setup();
-    assert!(u.app.session.ds().unwrap().is_dirty());
-    assert!(close_window(&mut u, 100.0), "the first close is held back");
-    assert!(u.app.ui.toast.is_some(), "with a message saying why");
-    assert!(!close_window(&mut u, 101.0), "closing again while it shows discards");
-    assert!(close_window(&mut u, 120.0), "much later it asks again");
-    // Nothing unsaved: closes at once; `app.quit` always does.
-    u.app.session.ds_mut().unwrap().mark_saved();
-    assert!(!close_window(&mut u, 140.0));
-    u.app.session.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 4, "height": 4})).unwrap();
-    u.app.ui.quit = true;
-    assert!(!close_window(&mut u, 160.0));
 }

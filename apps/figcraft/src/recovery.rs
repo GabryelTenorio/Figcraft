@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 
 use figcraft_engine::Session;
@@ -18,6 +19,13 @@ use serde_json::json;
 pub const INTERVAL: f64 = 10.0;
 
 const LOCK: &str = "lock";
+
+/// The app's recovery, shared by its frame loop and its services (the panic path).
+pub type Shared = Arc<Mutex<Option<Recovery>>>;
+
+pub fn lock(r: &Shared) -> MutexGuard<'_, Option<Recovery>> {
+    r.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 pub struct Recovery {
     dir: PathBuf,

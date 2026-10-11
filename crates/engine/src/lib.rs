@@ -134,6 +134,8 @@ pub struct ViewState {
     pub show_slices: bool,
     pub comments: bool,
     pub frame_outlines: bool,
+    /// Soft-proof sRGB: the canvas marks the colours of a Display P3 file that sRGB can't show.
+    pub proof_srgb: bool,
     pub snap_geometry: bool,
     pub snap_objects: bool,
     pub snap_pixel: bool,
@@ -159,6 +161,7 @@ impl Default for ViewState {
             show_slices: false,
             comments: true,
             frame_outlines: false,
+            proof_srgb: false,
             snap_geometry: true,
             snap_objects: true,
             snap_pixel: true,

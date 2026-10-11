@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use figcraft_engine::Prefs;
+use figcraft_engine::{Prefs, Session};
 use figcraft_ui_egui::{FigApp, Services};
 use serde_json::{Value, json};
 
@@ -15,6 +15,8 @@ pub struct Desktop {
     reduce_motion: Arc<AtomicBool>,
     /// The system's interface language (read at startup).
     language: Option<String>,
+    /// Recovery copies of unsaved files (written at once after a panic).
+    recovery: crate::recovery::Shared,
 }
 
 pub fn config_dir() -> Option<PathBuf> {
@@ -28,7 +30,7 @@ pub fn config_dir() -> Option<PathBuf> {
 }
 
 impl Desktop {
-    pub fn load() -> Self {
+    pub fn load(recovery: crate::recovery::Shared) -> Self {
         let state: Value = config_dir()
             .and_then(|d| std::fs::read_to_string(d.join("state.json")).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -46,7 +48,7 @@ impl Desktop {
         let reduce_motion = Arc::new(AtomicBool::new(false));
         let flag = reduce_motion.clone();
         std::thread::spawn(move || flag.store(system_reduce_motion(), Ordering::Relaxed));
-        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language() }
+        Self { clipboard: arboard::Clipboard::new().ok(), prefs, reduce_motion, language: system_language(), recovery }
     }
 }
 
@@ -159,6 +161,11 @@ impl Services for Desktop {
     }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
+    }
+    fn emergency_save(&mut self, session: &Session) {
+        if let Some(r) = crate::recovery::lock(&self.recovery).as_mut() {
+            r.write(session, true);
+        }
     }
     fn reduce_motion(&self) -> bool {
         self.reduce_motion.load(Ordering::Relaxed)

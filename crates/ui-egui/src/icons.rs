@@ -172,6 +172,8 @@ icons! {
     ArcSweep,
     /// Arc ratio: a ring.
     ArcRatio,
+    /// A colour outside the screen's gamut: a triangle with an exclamation mark.
+    GamutWarning,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -989,6 +991,11 @@ fn draw(p: &P, icon: Icon) {
         ArcRatio => {
             p.circle(8.0, 8.0, 5.5);
             p.circle(8.0, 8.0, 2.5);
+        }
+        GamutWarning => {
+            p.poly(&[(8.0, 2.0), (14.5, 13.5), (1.5, 13.5)], true);
+            p.line(8.0, 6.0, 8.0, 9.5);
+            p.dot(8.0, 11.5, 0.9);
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

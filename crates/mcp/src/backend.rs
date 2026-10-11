@@ -43,10 +43,20 @@ pub trait Backend {
     /// PNG bytes of what the user sees: the app window when attached, the current viewport when
     /// headless.
     fn screenshot_png(&mut self) -> Result<Vec<u8>, String> {
-        let path = temp_png("screenshot");
-        self.call("ui.screenshot", json!({"path": path}))?;
-        read_and_remove(&path)
+        capture(self, json!({}))
     }
+
+    /// PNG bytes of the attached app's window `window` (an id from `window.list`).
+    fn window_png(&mut self, window: u64) -> Result<Vec<u8>, String> {
+        capture(self, json!({"window": window}))
+    }
+}
+
+fn capture<B: Backend + ?Sized>(b: &mut B, mut params: Value) -> Result<Vec<u8>, String> {
+    let path = temp_png("screenshot");
+    params["path"] = json!(path);
+    b.call("ui.screenshot", params)?;
+    read_and_remove(&path)
 }
 
 /// The ids of the current page's top-level layers.
