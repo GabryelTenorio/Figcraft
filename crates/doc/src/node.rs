@@ -676,6 +676,14 @@ impl Node {
         }
     }
 
+    /// Children in paint order, bottom to top: the child list, reversed in an auto layout frame
+    /// whose first child paints on top (canvas stacking; the layer order stays as it is).
+    pub fn paint_order(&self) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
+        let rev = self.layout.as_ref().is_some_and(|l| l.reverse_z);
+        let n = self.children.len();
+        (0..n).filter_map(move |i| self.children.get(if rev { n - 1 - i } else { i }).copied())
+    }
+
     /// Whether painted strokes are present.
     pub fn has_visible_stroke(&self) -> bool {
         self.strokes.iter().any(|p| p.visible) && self.stroke.weight > 0.0

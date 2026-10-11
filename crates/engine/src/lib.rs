@@ -1185,6 +1185,8 @@ fn mark_dev_changes(doc: &mut Document, before: &Document, touched: &BTreeSet<No
 #[cfg(test)]
 mod a11y_keys_tests;
 #[cfg(test)]
+mod al_behaviour_tests;
+#[cfg(test)]
 mod al_drag_tests;
 #[cfg(test)]
 mod al_keys_tests;

@@ -4,9 +4,9 @@
 use figcraft_doc::color::{BlendMode, Color, ColorStop, Gradient, GradientKind, ImageFilters, ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::geom::Affine;
 use figcraft_doc::{
-    AutoLayout, Blur, BlurType, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass, GridAlign,
-    GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StrokeProps,
-    Texture, VConstraint,
+    AutoLayout, Blur, BlurType, CellAlign, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass,
+    GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin,
+    StrokeProps, Texture, VConstraint,
 };
 use serde_json::Value;
 
@@ -399,6 +399,8 @@ pub(super) fn auto_layout(v: &Value) -> Option<AutoLayout> {
             Some("CENTER") => MainAlign::Center,
             Some("MAX") => MainAlign::Max,
             Some("SPACE_BETWEEN") => MainAlign::SpaceBetween,
+            Some("SPACE_AROUND") => MainAlign::SpaceAround,
+            Some("SPACE_EVENLY") => MainAlign::SpaceEvenly,
             _ => MainAlign::Min,
         },
         cross_align: match text(v, "counterAxisAlignItems") {
@@ -460,6 +462,14 @@ pub(super) fn child_layout(v: &Value, own: Option<LayoutMode>, parent_mode: Opti
     cl.grid_row = index("gridRowAnchorIndex");
     cl.grid_column_span = index("gridColumnSpan").unwrap_or(0);
     cl.grid_row_span = index("gridRowSpan").unwrap_or(0);
+    let align = |k: &str| match text(v, k) {
+        Some("MIN") => Some(CellAlign::Min),
+        Some("CENTER") => Some(CellAlign::Center),
+        Some("MAX") => Some(CellAlign::Max),
+        _ => None,
+    };
+    cl.grid_align_h = align("gridChildHorizontalAlign");
+    cl.grid_align_v = align("gridChildVerticalAlign");
     cl
 }
 

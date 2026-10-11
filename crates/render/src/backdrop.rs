@@ -129,7 +129,7 @@ pub fn hide_above(doc: &mut Document, id: NodeId, roots: &[NodeId]) {
         }
         let Some(parent) = doc.node(cur).and_then(|n| n.parent) else { break };
         if let Some(p) = doc.node(parent) {
-            hide.extend(p.children.iter().skip_while(|c| **c != cur).skip(1));
+            hide.extend(p.paint_order().skip_while(|c| *c != cur).skip(1));
         }
         if let Some(pn) = doc.node_mut(parent) {
             pn.strokes.clear();

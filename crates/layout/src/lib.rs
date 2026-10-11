@@ -15,8 +15,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use figcraft_doc::{
-    AutoLayout, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind, Sizing, TextAutoResize,
-    VConstraint,
+    AutoLayout, CellAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind, Sizing,
+    StrokeAlign, TextAutoResize, VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -177,12 +177,39 @@ fn coherent_own_sizing(doc: &mut Document, id: NodeId) -> bool {
     true
 }
 
-/// Padding `(top, right, bottom, left)` of an auto layout frame, sanitised, plus the stroke weight
-/// when strokes are included in the layout.
+/// Padding `(top, right, bottom, left)` of an auto layout frame, sanitised, plus the frame's own
+/// inside stroke (per side) when strokes are included in the layout; center and outside strokes
+/// never take up space.
 fn insets(f: &figcraft_doc::Node, al: &AutoLayout) -> (f64, f64, f64, f64) {
-    let stroke_pad = if al.strokes_included && f.has_visible_stroke() { finite_or_zero(f.stroke.weight).max(0.0) } else { 0.0 };
-    let [pt, pr, pb, pl] = al.padding.map(|p| if p.is_finite() { p.max(0.0) } else { 0.0 });
-    (pt + stroke_pad, pr + stroke_pad, pb + stroke_pad, pl + stroke_pad)
+    let included = al.strokes_included && f.has_visible_stroke() && f.stroke.align == StrokeAlign::Inside;
+    let stroke = if included { f.stroke.sides.unwrap_or([f.stroke.weight; 4]) } else { [0.0; 4] };
+    let [pt, pr, pb, pl] = al.padding.map(|p| finite_or_zero(p).max(0.0));
+    let [st, sr, sb, sl] = stroke.map(|w| finite_or_zero(w).max(0.0));
+    (pt + st, pr + sr, pb + sb, pl + sl)
+}
+
+/// Where the first child starts and the step between children along the main axis, from the
+/// free space (`inner` minus the children's total size). Auto gaps share the free space and never
+/// go below 0; a single child of "space between" sits at the start.
+fn main_offsets(align: MainAlign, inner: f64, total: f64, n: usize, gap: f64) -> (f64, f64) {
+    let gaps = gap * n.saturating_sub(1) as f64;
+    let free = inner - total;
+    let k = n.max(1) as f64;
+    match align {
+        MainAlign::Min => (0.0, gap),
+        MainAlign::Center => ((free - gaps) / 2.0, gap),
+        MainAlign::Max => (free - gaps, gap),
+        MainAlign::SpaceBetween => (0.0, if n > 1 { (free / (n - 1) as f64).max(0.0) } else { 0.0 }),
+        // Gaps are twice the edge space: n gaps of 2e fill the free space.
+        MainAlign::SpaceAround => {
+            let g = (free / k).max(0.0);
+            (g / 2.0, g)
+        }
+        MainAlign::SpaceEvenly => {
+            let g = (free / (k + 1.0)).max(0.0);
+            (g, g)
+        }
+    }
 }
 
 /// Text that hugs its width: refresh its natural size, honouring min/max width by wrapping (a
@@ -276,10 +303,10 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     let horizontal = matches!(al.mode, LayoutMode::Horizontal);
     let (hug_w, hug_h) = (f.child_layout.sizing_h == Sizing::Hug, f.child_layout.sizing_v == Sizing::Hug);
     let (ow, oh) = (f.width, f.height);
-    // The frame's own min/max apply whatever its sizing.
+    // The frame's own min/max apply whatever its sizing; it is never smaller than its padding.
     let fcl = f.child_layout.clone();
-    let (fw, fh) = (clamp_size(ow, fcl.min_w, fcl.max_w), clamp_size(oh, fcl.min_h, fcl.max_h));
     let (pt, pr, pb, pl) = insets(f, &al);
+    let (fw, fh) = (clamp_size(ow, fcl.min_w, fcl.max_w).max(pl + pr), clamp_size(oh, fcl.min_h, fcl.max_h).max(pt + pb));
     let kids = flow_children(doc, frame);
 
     // Text children refresh their natural size, then every child honours its min/max.
@@ -324,7 +351,7 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     }
 
     let gap = finite_or_zero(al.gap);
-    let between = al.main_align == MainAlign::SpaceBetween;
+    let auto_gap = al.main_align.is_auto_gap();
     let wraps = al.wrap && !hug_main;
 
     // Fill across a single line: the size is the frame's inner cross size, known up front. Resize
@@ -339,7 +366,7 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         }
     }
 
-    // Split into lines (wrap only on the main axis of a horizontal layout, like Figma).
+    // Split into lines along the main axis (rows of a horizontal layout, columns of a vertical one).
     let mut lines: Vec<Vec<usize>> = Vec::new();
     if wraps {
         let mut cur: Vec<usize> = Vec::new();
@@ -368,7 +395,7 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
         let gaps = gap * line.len().saturating_sub(1) as f64;
         let fills: Vec<usize> = line.iter().copied().filter(|i| items.get(*i).is_some_and(|it| it.fill_main)).collect();
         if !fills.is_empty() {
-            distribute(&mut items, fills, inner_main_fixed - fixed - if between { 0.0 } else { gaps });
+            distribute(&mut items, fills, inner_main_fixed - fixed - if auto_gap { 0.0 } else { gaps });
         }
     }
     // Fill children take their main size now, so their cross size (wrapped text, a hugging frame)
@@ -426,7 +453,7 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
             nw = v;
         }
     }
-    let (nw, nh) = (clamp_size(nw, fcl.min_w, fcl.max_w), clamp_size(nh, fcl.min_h, fcl.max_h));
+    let (nw, nh) = (clamp_size(nw, fcl.min_w, fcl.max_w).max(pl + pr), clamp_size(nh, fcl.min_h, fcl.max_h).max(pt + pb));
     set_size(doc, frame, nw, nh);
     apply_constraints(doc, frame, ow, oh);
     let inner_main = if horizontal { nw - pl - pr } else { nh - pt - pb };
@@ -438,17 +465,8 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     for (li, line) in lines.iter().enumerate() {
         let (used, line_cross) = line_extents.get(li).copied().unwrap_or((0.0, 0.0));
         let line_cross = if single { inner_cross } else { line_cross };
-        let n_items = line.len();
-        let (mut pos, step_gap) = match al.main_align {
-            MainAlign::Min => (0.0, gap),
-            MainAlign::Center => ((inner_main - used) / 2.0, gap),
-            MainAlign::Max => (inner_main - used, gap),
-            // A single child sits at the start.
-            MainAlign::SpaceBetween => {
-                let total: f64 = line.iter().filter_map(|i| items.get(*i)).map(|it| it.main).sum();
-                (0.0, if n_items > 1 { (inner_main - total) / (n_items - 1) as f64 } else { 0.0 })
-            }
-        };
+        let total = used - gap * line.len().saturating_sub(1) as f64;
+        let (mut pos, step_gap) = main_offsets(al.main_align, inner_main, total, line.len(), gap);
         pos += if horizontal { pl } else { pt };
         for i in line {
             let Some(it) = items.get(*i) else { continue };
@@ -644,46 +662,46 @@ fn track_spec(specs: &[figcraft_doc::GridTrack], i: usize) -> (Sizing, f64) {
 }
 
 /// Resolve track sizes: fixed tracks keep their size, hug tracks fit their content, fill tracks
-/// share what is left by their fractional units. `avail` is None when the frame hugs that axis
-/// (fill tracks then hug their content too).
+/// share what is left by their fractional units like the CSS `fr` unit (a track never gets less
+/// than its content: one whose share is too small keeps its content size and the others share the
+/// rest). `avail` is None when the frame hugs that axis (fill tracks then hug their content too).
 fn resolve_tracks(specs: &[figcraft_doc::GridTrack], content: &[f64], avail: Option<f64>) -> Vec<f64> {
-    let mut out: Vec<f64> = Vec::with_capacity(content.len());
-    let mut total_fr = 0.0;
-    let mut used = 0.0;
-    for (i, c) in content.iter().enumerate() {
-        let size = match track_spec(specs, i) {
+    let mut out: Vec<f64> = (0..content.len())
+        .map(|i| match track_spec(specs, i) {
             (Sizing::Fixed, v) => v,
-            (Sizing::Fill, v) if avail.is_some() => {
-                total_fr += v;
-                0.0
+            _ => content.get(i).copied().unwrap_or(0.0),
+        })
+        .collect();
+    let Some(a) = avail else { return out };
+    let fr = |i: usize| track_spec(specs, i).1;
+    let base = |out: &[f64], i: usize| out.get(i).copied().unwrap_or(0.0);
+    let (mut flex, fixed): (Vec<usize>, Vec<usize>) = (0..out.len()).partition(|i| track_spec(specs, *i).0 == Sizing::Fill);
+    let mut used: f64 = fixed.iter().map(|i| base(&out, *i)).sum();
+    // Each round either sizes every flexible track or freezes at least one at its content size.
+    while !flex.is_empty() {
+        let total: f64 = flex.iter().map(|i| fr(*i)).sum();
+        let unit = if total > 1e-12 { (a - used).max(0.0) / total } else { 0.0 };
+        let (open, frozen): (Vec<usize>, Vec<usize>) = flex.iter().partition(|i| unit * fr(**i) >= base(&out, **i));
+        if frozen.is_empty() {
+            for i in open {
+                if let Some(s) = out.get_mut(i) {
+                    *s = unit * fr(i);
+                }
             }
-            _ => *c,
-        };
-        used += size;
-        out.push(size);
-    }
-    if let Some(a) = avail
-        && total_fr > 1e-12
-    {
-        let free = (a - used).max(0.0);
-        for (i, s) in out.iter_mut().enumerate() {
-            if let (Sizing::Fill, v) = track_spec(specs, i) {
-                *s = free * v / total_fr;
-            }
+            break;
         }
+        used += frozen.iter().map(|i| base(&out, *i)).sum::<f64>();
+        flex = open;
     }
     out
 }
 
-/// Content size per track (`hug`: the frame hugs this axis, so fill tracks size to content too):
-/// the largest single-span child; a spanning child that needs more than its tracks give it grows
-/// the content-sized tracks it spans (unless a flexible track can absorb it).
+/// Content size per track (`hug`: the frame hugs this axis, so fill tracks size to content): the
+/// largest single-span child (for a fill track, the least it can shrink to); a spanning child that
+/// needs more than its tracks give it grows the content-sized tracks it spans (unless a flexible
+/// track can absorb it).
 fn track_content(cells: &[GridCell], sizes: &[f64], specs: &[figcraft_doc::GridTrack], n: usize, gap: f64, columns: bool, hug: bool) -> Vec<f64> {
-    let by_content = |i: usize| match track_spec(specs, i).0 {
-        Sizing::Hug => true,
-        Sizing::Fill => hug,
-        Sizing::Fixed => false,
-    };
+    let by_content = |i: usize| track_spec(specs, i).0 != Sizing::Fixed;
     let mut content: Vec<f64> = (0..n).map(|i| if let (Sizing::Fixed, v) = track_spec(specs, i) { v } else { 0.0 }).collect();
     let span = |c: &GridCell| if columns { (c.column, c.column_span) } else { (c.row, c.row_span) };
     for (c, s) in cells.iter().zip(sizes) {
@@ -764,8 +782,8 @@ pub fn grid_geometry(doc: &Document, frame: NodeId) -> Option<GridGeometry> {
         columns: track_ranges(pl, &col_w, gx),
         rows: track_ranges(pt, &row_h, gy),
         cells,
-        width: clamp_size(width, cl.min_w, cl.max_w),
-        height: clamp_size(height, cl.min_h, cl.max_h),
+        width: clamp_size(width, cl.min_w, cl.max_w).max(pl + pr),
+        height: clamp_size(height, cl.min_h, cl.max_h).max(pt + pb),
     })
 }
 
@@ -774,9 +792,11 @@ fn layout_grid(doc: &mut Document, frame: NodeId, al: &AutoLayout, m: &dyn Measu
     let (fw, fh) = (f.width, f.height);
     let fcl = f.child_layout.clone();
     let (hug_w, hug_h) = (fcl.sizing_h == Sizing::Hug, fcl.sizing_v == Sizing::Hug);
-    // A fixed axis takes its own min/max first, so the tracks see the final size.
-    let w = if hug_w { fw } else { clamp_size(fw, fcl.min_w, fcl.max_w) };
-    let h = if hug_h { fh } else { clamp_size(fh, fcl.min_h, fcl.max_h) };
+    // A fixed axis takes its own min/max (and the padding floor) first, so the tracks see the
+    // final size.
+    let (pt, pr, pb, pl) = insets(f, al);
+    let w = if hug_w { fw } else { clamp_size(fw, fcl.min_w, fcl.max_w).max(pl + pr) };
+    let h = if hug_h { fh } else { clamp_size(fh, fcl.min_h, fcl.max_h).max(pt + pb) };
     set_size(doc, frame, w, h);
     let Some(g) = grid_geometry(doc, frame) else { return };
     // Fill-width children take their column width before the rows are sized, so text that wraps
@@ -795,6 +815,22 @@ fn layout_grid(doc: &mut Document, frame: NodeId, al: &AutoLayout, m: &dyn Measu
     let g = if widened { grid_geometry(doc, frame).unwrap_or(g) } else { g };
     set_size(doc, frame, g.width, g.height);
     apply_constraints(doc, frame, fw, fh);
+    // The frame's alignment in each cell; a child's own alignment wins.
+    let frame_h = match al.main_align {
+        MainAlign::Center => CellAlign::Center,
+        MainAlign::Max => CellAlign::Max,
+        _ => CellAlign::Min,
+    };
+    let frame_v = match al.cross_align {
+        CrossAlign::Center => CellAlign::Center,
+        CrossAlign::Max => CellAlign::Max,
+        _ => CellAlign::Min,
+    };
+    let offset = |a: CellAlign, free: f64| match a {
+        CellAlign::Min => 0.0,
+        CellAlign::Center => free / 2.0,
+        CellAlign::Max => free,
+    };
     for c in &g.cells {
         let cell = g.cell_rect(c);
         let Some(n) = doc.node(c.id) else { continue };
@@ -808,16 +844,8 @@ fn layout_grid(doc: &mut Document, frame: NodeId, al: &AutoLayout, m: &dyn Measu
             resize_child(doc, c.id, nw, nh, m);
         }
         let (nw, nh) = outer_size(doc, c.id);
-        let ox = match al.main_align {
-            MainAlign::Center => (cell.width() - nw) / 2.0,
-            MainAlign::Max => cell.width() - nw,
-            _ => 0.0,
-        };
-        let oy = match al.cross_align {
-            CrossAlign::Center => (cell.height() - nh) / 2.0,
-            CrossAlign::Max => cell.height() - nh,
-            _ => 0.0,
-        };
+        let ox = offset(cl.grid_align_h.unwrap_or(frame_h), cell.width() - nw);
+        let oy = offset(cl.grid_align_v.unwrap_or(frame_v), cell.height() - nh);
         place(doc, c.id, cell.x0 + ox, cell.y0 + oy);
     }
 }
@@ -1012,6 +1040,8 @@ pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64
     (xs, ys)
 }
 
+#[cfg(test)]
+mod behaviour_tests;
 #[cfg(test)]
 mod nested_tests;
 #[cfg(test)]

@@ -444,8 +444,8 @@ fn draw_outline(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize)
         pix.stroke_path(&tp, &paint, &stroke, ts_transform(xf), None);
     }
     if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.hides_contents() {
-        for c in &n.children {
-            draw_node(ctx, pix, *c, xf, depth + 1);
+        for c in n.paint_order() {
+            draw_node(ctx, pix, c, xf, depth + 1);
         }
     }
 }
@@ -544,22 +544,14 @@ fn draw_content(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize,
 
 fn draw_children(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize) {
     let kids = &n.children;
-    let mut i = 0;
-    while i < kids.len() {
-        let Some(&c) = kids.get(i) else { break };
-        let is_mask = ctx.doc.node(c).is_some_and(|cn| cn.is_mask && cn.visible);
-        if is_mask {
+    for run in ctx.doc.paint_runs(n) {
+        let Some(&c) = kids.get(run.start) else { continue };
+        if ctx.doc.node(c).is_some_and(|cn| cn.is_mask && cn.visible) {
             // Everything above the mask (until the next mask) is clipped by its alpha.
-            let mut j = i + 1;
-            while kids.get(j).is_some_and(|k| !ctx.doc.node(*k).is_some_and(|kn| kn.is_mask)) {
-                j += 1;
-            }
-            draw_masked(ctx, pix, c, kids.get(i + 1..j).unwrap_or(&[]), xf, depth);
-            i = j;
-            continue;
+            draw_masked(ctx, pix, c, kids.get(run.start + 1..run.end).unwrap_or(&[]), xf, depth);
+        } else {
+            draw_node(ctx, pix, c, xf, depth + 1);
         }
-        draw_node(ctx, pix, c, xf, depth + 1);
-        i += 1;
     }
 }
 
