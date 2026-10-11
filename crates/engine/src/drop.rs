@@ -159,6 +159,13 @@ pub fn drop_parent(doc: &Document, page: NodeId, p: Point, exclude: &[NodeId]) -
     doc.node(page)?.children.iter().rev().find_map(|c| rec(doc, *c, p, exclude, false, false, 0))
 }
 
+/// Whether layers dragged on the canvas inside `parent` stay in it (they only move): those of a
+/// group or a boolean group (which follow their layers) and of an instance outside its slots.
+pub fn keeps_layers(doc: &Document, parent: NodeId) -> bool {
+    matches!(doc.node(parent).map(|n| &n.kind), Some(NodeKind::Group | NodeKind::BooleanOp { .. }))
+        || crate::components::structure_locked(doc, parent)
+}
+
 /// Margin (page units) around the auto layout frame a dragged layer comes from that still keeps it.
 const HOME_MARGIN: f64 = 8.0;
 
@@ -201,7 +208,7 @@ pub fn swap_family(doc: &Document, component: NodeId) -> Option<String> {
 /// under the point (innermost first; never one inside the dropped component `exclude`), the first
 /// showing a variant of the same component set (`family`), else the innermost.
 pub fn swap_target(doc: &Document, page: NodeId, p: Point, family: Option<&str>, exclude: Option<NodeId>) -> Option<NodeId> {
-    let hit = doc.hit_test(page, p, 0.0)?;
+    let hit = doc.hit_test(page, p, 0.0, Some(&crate::booleans::result_outline(doc, &[])))?;
     let chain: Vec<NodeId> = std::iter::once(hit)
         .chain(doc.ancestors(hit))
         .filter(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Instance { .. })))

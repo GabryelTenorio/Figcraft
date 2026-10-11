@@ -14,6 +14,7 @@ pub mod booleans;
 pub mod branches;
 pub mod catalog;
 pub mod cmd;
+pub mod code_connect;
 pub mod codegen;
 pub mod collab;
 pub mod component_codegen;
@@ -1187,6 +1188,12 @@ mod binding_lists_tests;
 mod booleans_tests;
 #[cfg(test)]
 mod branch_tests;
+#[cfg(test)]
+mod brush_tests;
+#[cfg(test)]
+mod canvas_fixes_tests;
+#[cfg(test)]
+mod code_connect_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]

@@ -66,19 +66,33 @@ fn hits_node_itself(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64) -
         NodeKind::Frame | NodeKind::Component { .. } | NodeKind::ComponentSet { .. } | NodeKind::Instance { .. } | NodeKind::Section { .. } => {
             n.local_rect().inflate(tol_l, tol_l).contains(lp)
         }
-        _ => {
-            let Some(path) = shape_path(n) else { return false };
-            if is_closed(n) && (n.fills.iter().any(|f| f.visible) || !n.has_visible_stroke()) && path.winding(lp) != 0 {
-                return true;
-            }
-            // Near the outline.
-            let reach = (n.stroke.max_weight() / 2.0).max(tol_l);
-            if !path.bounding_box().inflate(reach, reach).contains(lp) {
-                return false;
-            }
-            near_path(&path, lp, reach)
-        }
+        _ => shape_path(n).is_some_and(|path| hits_path(n, &path, lp, tol_l, is_closed(n) && path.winding(lp) != 0)),
     }
+}
+
+/// Whether local point `lp` hits `n` drawn as `path`: `inside` it (counted when it's filled, or
+/// draws nothing at all), or within reach of its outline (its stroke, else the tolerance).
+fn hits_path(n: &Node, path: &BezPath, lp: Point, tol: f64, inside: bool) -> bool {
+    if inside && (n.fills.iter().any(|f| f.visible) || !n.has_visible_stroke()) {
+        return true;
+    }
+    let reach = (n.stroke.max_weight() / 2.0).max(tol);
+    if !path.bounding_box().inflate(reach, reach).contains(lp) {
+        return false;
+    }
+    near_path(path, lp, reach)
+}
+
+/// A boolean group's computed result outline in its local space (filled even-odd), or `None` to
+/// hit-test its operands instead. Boolean operations live above this crate: callers that can
+/// compute results pass them in; `None` for the whole argument hit-tests operands everywhere.
+pub type BoolResult<'a> = Option<&'a dyn Fn(NodeId, &Node) -> Option<BezPath>>;
+
+/// With a result for boolean group `id`, whether `pt` hits it (`None`: no result, test operands).
+fn hits_result(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64, result: BoolResult) -> Option<bool> {
+    let path = result.and_then(|f| f(id, n))?;
+    let lp = doc.world_transform(id).inverse() * pt;
+    Some(hits_path(n, &path, lp, tol, path.winding(lp) % 2 != 0))
 }
 
 fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
@@ -86,11 +100,12 @@ fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
     path.segments().any(|s| s.nearest(p, 0.01).distance_sq <= dist * dist)
 }
 
-/// The innermost visible, unlocked node under `pt` (page coordinates), honouring clip content.
-pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Option<NodeId> {
+/// The innermost visible, unlocked node under `pt` (page coordinates), honouring clip content;
+/// boolean groups are hit where their `result` is.
+pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
     let p = doc.node(page)?;
     for c in p.children.iter().rev() {
-        if let Some(h) = hit_rec(doc, *c, pt, tol, 0) {
+        if let Some(h) = hit_rec(doc, *c, pt, tol, 0, result) {
             return Some(h);
         }
     }
@@ -98,11 +113,11 @@ pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Option<Nod
 }
 
 /// Like [`hit_leaf`], but only within layer `root` (it included).
-pub fn hit_in(doc: &Document, root: NodeId, pt: Point, tol: f64) -> Option<NodeId> {
-    hit_rec(doc, root, pt, tol, 0)
+pub fn hit_in(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
+    hit_rec(doc, root, pt, tol, 0, result)
 }
 
-fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Option<NodeId> {
+fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult) -> Option<NodeId> {
     if depth > 512 {
         return None;
     }
@@ -117,15 +132,19 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Opt
     if clips && !hits_node_itself(doc, id, n, pt, 0.0) {
         return None;
     }
-    // A boolean group is hit where an operand is (an approximation of its result). The leaf is the
-    // operand, so a plain click still selects the group (see `select_target`) while a deep click,
-    // a double click or a selected sibling operand reaches the operand itself.
+    // A boolean group is hit where its result is (without one: where an operand is). The leaf is
+    // the operand under the point, so a plain click still selects the group (see `select_target`)
+    // while a deep click, a double click or a selected sibling operand reaches the operand itself.
+    let in_result = if matches!(n.kind, NodeKind::BooleanOp { .. }) { hits_result(doc, id, n, pt, tol, result) } else { None };
+    if in_result == Some(false) {
+        return None;
+    }
     for c in n.children.iter().rev() {
-        if let Some(h) = hit_rec(doc, *c, pt, tol, depth + 1) {
+        if let Some(h) = hit_rec(doc, *c, pt, tol, depth + 1, result) {
             return Some(h);
         }
     }
-    if hits_node_itself(doc, id, n, pt, tol) {
+    if in_result == Some(true) || hits_node_itself(doc, id, n, pt, tol) {
         return Some(id);
     }
     None
@@ -133,10 +152,10 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize) -> Opt
 
 /// Every visible, unlocked layer under `pt` (page coordinates) with its depth below the page, in
 /// layer-tree order (each layer before what it contains, the front-most first): what
-/// "Select layer" in the context menu lists. Clip content is honoured; boolean groups and
-/// sections with hidden contents count as one layer.
-pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Vec<(NodeId, usize)> {
-    fn rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, out: &mut Vec<(NodeId, usize)>) {
+/// "Select layer" in the context menu lists. Clip content is honoured; boolean groups (hit where
+/// their `result` is) and sections with hidden contents count as one layer.
+pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: BoolResult) -> Vec<(NodeId, usize)> {
+    fn rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult, out: &mut Vec<(NodeId, usize)>) {
         let Some(n) = doc.node(id) else { return };
         if !n.visible || n.locked || depth > 512 {
             return;
@@ -148,13 +167,13 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Vec<(Node
         let at = out.len();
         let whole = matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Section { contents_hidden: true });
         if whole {
-            if hit_rec(doc, id, pt, tol, depth).is_some() {
+            if hit_rec(doc, id, pt, tol, depth, result).is_some() {
                 out.push((id, depth));
             }
             return;
         }
         for c in n.children.iter().rev() {
-            rec(doc, *c, pt, tol, depth + 1, out);
+            rec(doc, *c, pt, tol, depth + 1, result, out);
         }
         if out.len() > at || hits_node_itself(doc, id, n, pt, tol) {
             out.insert(at, (id, depth));
@@ -163,7 +182,7 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64) -> Vec<(Node
     let mut out = Vec::new();
     if let Some(p) = doc.node(page) {
         for c in p.children.iter().rev() {
-            rec(doc, *c, pt, tol, 0, &mut out);
+            rec(doc, *c, pt, tol, 0, result, &mut out);
         }
     }
     out

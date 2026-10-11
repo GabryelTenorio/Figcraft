@@ -3,7 +3,8 @@
 //! a flag showing the layers bound to it, text → a string, instance swap → a view parameter, slot →
 //! optional content), and an instance becomes a call passing the values it sets. Variants of a set
 //! share one definition (the set's first variant); in React their differences become CSS rules on
-//! `data-*` attributes. Returned by `inspect.componentCode` and used by `inspect.code`.
+//! `data-*` attributes. Returned by `inspect.componentCode` and used by `inspect.code`. A component
+//! connected to code (see [`crate::code_connect`]) shows its real snippet instead.
 
 use figcraft_doc::*;
 use serde_json::{Value, json};
@@ -66,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "inspect.componentCode",
         "Component code",
-        "{id? (component, set or instance; default the selection), language?: react|swiftui|compose (default react)} → {component, name, set, properties: [{name, param, type, default, value? (instances)}], definition, usage? (instances)}",
+        "{id? (component, set or instance; default the selection), language?: react|swiftui|compose (default react)} → {component, name, set, properties: [{name, param, type, default, value? (instances)}], definition, usage? (instances; the connected snippet when the component is connected to code), connected: {importPath, name, template, import, code} | null}",
         false,
         |s, p| {
             let cmd = "inspect.componentCode";
@@ -97,6 +98,10 @@ pub fn specs() -> Vec<CommandSpec> {
             if values.is_some() {
                 out["usage"] = json!(usage(doc, id, lang, 0));
             }
+            out["connected"] = crate::code_connect::link(doc, id, lang).map_or(Value::Null, |l| {
+                json!({"importPath": l.import_path, "name": l.name, "template": l.template, "import": crate::code_connect::import_line(l, lang),
+                    "code": crate::code_connect::connected_code(doc, id, lang, l)})
+            });
             Ok(out)
         }
     )]
@@ -107,6 +112,9 @@ pub fn specs() -> Vec<CommandSpec> {
 /// function component).
 pub fn code(doc: &Document, id: NodeId, lang: CodeLang) -> String {
     let Some(n) = doc.node(id) else { return String::new() };
+    if let Some(code) = crate::code_connect::link(doc, id, lang).and_then(|l| crate::code_connect::connected_code(doc, id, lang, l)) {
+        return code;
+    }
     let comp = main_of(doc, id).and_then(|m| describe(doc, m));
     match (&n.kind, comp) {
         (NodeKind::Instance { .. }, Some(c)) => format!("{}\n{}", usage(doc, id, lang, 0).unwrap_or_default(), definition(doc, &c, lang)),
@@ -376,13 +384,13 @@ fn cases(values: &[String], swift: bool) -> Vec<String> {
 }
 
 /// A JavaScript string literal.
-fn js_string(s: &str) -> String {
+pub(crate) fn js_string(s: &str) -> String {
     let s: String = s.chars().take(10_000).collect();
     serde_json::to_string(&s).unwrap_or_else(|_| "\"\"".into())
 }
 
 /// The type name of a component (a variant's set) by id.
-fn component_type(doc: &Document, comp: NodeId) -> Option<String> {
+pub(crate) fn component_type(doc: &Document, comp: NodeId) -> Option<String> {
     let n = doc.node(comp).filter(|n| matches!(n.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }))?;
     Some(component_type_name(&variant_set(doc, comp).and_then(|s| doc.node(s)).unwrap_or(n).name))
 }
@@ -393,7 +401,7 @@ fn enum_name(c: &Component, p: &Param, swift: bool) -> String {
 }
 
 /// `value` of a parameter as an expression in `lang`.
-fn value_expr(doc: &Document, c: &Component, p: &Param, value: &Value, lang: CodeLang) -> String {
+pub(crate) fn value_expr(doc: &Document, c: &Component, p: &Param, value: &Value, lang: CodeLang) -> String {
     match (&p.kind, lang) {
         (ParamKind::Boolean, _) => value.as_bool().unwrap_or(false).to_string(),
         (ParamKind::Text, CodeLang::React) => js_string(value.as_str().unwrap_or("")),
@@ -427,7 +435,7 @@ fn value_expr(doc: &Document, c: &Component, p: &Param, value: &Value, lang: Cod
 
 /// The values an instance sets for `c`'s parameters, in order (`None` for other layers): variant
 /// values from the variant it shows, slots as whether they hold its own content.
-fn instance_values(doc: &Document, id: NodeId, c: &Component) -> Option<Vec<(String, Value)>> {
+pub(crate) fn instance_values(doc: &Document, id: NodeId, c: &Component) -> Option<Vec<(String, Value)>> {
     let NodeKind::Instance { component, props } = &doc.node(id)?.kind else { return None };
     let variant = doc.node(*component).map(|m| variant_props(&m.name)).unwrap_or_default();
     let slots = slots_of(doc, id);
@@ -451,8 +459,13 @@ fn instance_values(doc: &Document, id: NodeId, c: &Component) -> Option<Vec<(Str
 pub fn usage(doc: &Document, id: NodeId, lang: CodeLang, depth: usize) -> Option<String> {
     let c = main_of(doc, id).and_then(|m| describe(doc, m))?;
     let values = instance_values(doc, id, &c)?;
-    let slots = slots_of(doc, id);
     let pad = if lang == CodeLang::React { "  ".repeat(depth) } else { indent(depth) };
+    // A connected component: its real snippet. shortcut: inside a layer tree it brings no import
+    // line; collect them at the top of the tree's code when people ask for it.
+    if let Some(link) = crate::code_connect::link(doc, id, lang) {
+        return Some(crate::code_connect::render(doc, &c, &values, link, lang, &pad));
+    }
+    let slots = slots_of(doc, id);
     // (parameter, expression, whether it's a plain string literal)
     let mut args: Vec<(&str, String, bool)> = Vec::new();
     for (p, (_, v)) in c.params.iter().zip(&values) {

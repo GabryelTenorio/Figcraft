@@ -37,7 +37,7 @@ fn hidden_contents_skip_rendering_and_hit_testing() {
     let r = id(s.execute("shape.rectangle", &json!({"x": 50, "y": 50, "width": 40, "height": 40, "parent": sec})).unwrap());
     s.execute("node.set", &json!({"id": r, "props": {"fills": ["#FF0000"]}})).unwrap();
     let page = s.page().unwrap();
-    assert_eq!(s.doc().unwrap().hit_test(page, Point::new(60.0, 60.0), 0.0), Some(r));
+    assert_eq!(s.doc().unwrap().hit_test(page, Point::new(60.0, 60.0), 0.0, None), Some(r));
     assert_eq!(pixel(&s, sec, 60, 60), [255, 0, 0, 255]);
     // Hiding: the selected child gives way to the section.
     s.execute("select.set", &json!({"ids": [r]})).unwrap();
@@ -45,7 +45,7 @@ fn hidden_contents_skip_rendering_and_hit_testing() {
     assert_eq!(v["hidden"], json!(true));
     assert_eq!(s.selection(), vec![sec]);
     assert_eq!(get(&mut s, sec)["sectionContentsHidden"], json!(true));
-    assert_eq!(s.doc().unwrap().hit_test(page, Point::new(60.0, 60.0), 0.0), Some(sec));
+    assert_eq!(s.doc().unwrap().hit_test(page, Point::new(60.0, 60.0), 0.0, None), Some(sec));
     assert_eq!(pixel(&s, sec, 60, 60), [255, 255, 255, 255], "the child isn't drawn");
     // Toggling again shows them; explicit `hidden` sets.
     s.execute("section.toggleContents", &json!({"ids": [sec]})).unwrap();

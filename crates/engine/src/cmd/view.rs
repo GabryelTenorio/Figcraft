@@ -259,6 +259,20 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!(
+            "tool.pencilBrush",
+            "Pencil brush",
+            "{preset? (taper|ink|ribbon|bristle|dots|stars|confetti|leaves | null: plain), spacing?, sizeJitter?, rotationJitter?, scatter?, seed?} (the brush new Pencil strokes get; omit `preset` to read it)",
+            false,
+            |s, p| {
+                // `null` (unlike a missing preset) clears the brush.
+                if let Some(v) = p.get("preset") {
+                    let v = if v.is_null() { Value::Null } else { p.clone() };
+                    s.tool.pencil_brush = super::props::brush_of(&v).ok_or_else(|| bad("tool.pencilBrush", super::props::BRUSH_HELP))?;
+                }
+                Ok(json!({"brush": s.tool.pencil_brush}))
+            }
+        ),
+        spec!(
             "tool.scaleAnchor",
             "Scale anchor",
             "{anchor?: tl|t|tr|l|c|r|bl|b|br} (the point of the selection that stays put when the Scale tool scales; omit to read it)",

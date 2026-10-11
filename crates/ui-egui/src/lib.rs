@@ -63,6 +63,8 @@ mod branch_ui_tests;
 #[cfg(test)]
 mod canvas_drag_tests;
 #[cfg(test)]
+mod canvas_fixes_tests;
+#[cfg(test)]
 mod comments_tests;
 #[cfg(test)]
 mod dev_mode_tests;

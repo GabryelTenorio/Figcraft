@@ -56,6 +56,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
                 let points = crate::cmd::props::width_points_json(Some(p));
                 o.insert("widthProfile".into(), json!({"preset": p.preset().map(|x| x.id()), "points": points}));
             }
+            if let Some(b) = &n.stroke.brush {
+                o.insert("brush".into(), camel(serde_json::to_value(b).unwrap_or(Value::Null)));
+            }
         }
         if !n.effects.is_empty() {
             o.insert("effects".into(), camel(serde_json::to_value(&n.effects).unwrap_or(Value::Null)));
@@ -129,6 +132,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         }
         if !n.annotations.is_empty() {
             o.insert("annotations".into(), serde_json::to_value(&n.annotations).unwrap_or(Value::Null));
+        }
+        if !n.code_links.is_empty() {
+            o.insert("codeLinks".into(), camel(serde_json::to_value(&n.code_links).unwrap_or(Value::Null)));
         }
         if !n.interactions.is_empty() {
             o.insert("interactions".into(), serde_json::to_value(&n.interactions).unwrap_or(Value::Null));

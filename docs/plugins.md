@@ -86,7 +86,7 @@ plugins: import them in the script.
 | `version`, `description` | Optional text. |
 | `main` | Required. The module, a `.wasm` path relative to the manifest, inside its folder. |
 | `api` | The plugin API version, `1` (the default). A manifest asking for a newer one is refused. |
-| `permissions.access` | `read` (the default): commands that leave the document as it is. `write`: edits too. |
+| `permissions.access` | `read` (the default): commands that leave the document as it is; such plugins also run from Dev Mode's Inspect tab. `write`: edits too. |
 | `permissions.commands` | Optional allowlist: exact command ids or prefixes ending in `*` (`node.*`). Empty: any command the access allows. |
 | `commands` | The menu commands, each `{id, label, params?}`. Without any, the plugin has one, `run`. |
 | `params[]` | `{name, label?, type, default?, options?, min?, max?}`; `type` is `text`, `number` (clamped to `min`/`max`), `boolean` or `select` (one of `options`). |

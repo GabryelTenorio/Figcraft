@@ -224,6 +224,13 @@ pub fn specs() -> Vec<CommandSpec> {
             width_profile
         ),
         spec!(
+            "stroke.brush",
+            "Brush",
+            "{ids?, preset (taper|ink|ribbon|bristle: stretched along the path; dots|stars|confetti|leaves: scattered along it | null: plain), spacing? (× weight), sizeJitter? (0-1), rotationJitter? (0-1), scatter? (0-4 × weight), seed?}  layers without a stroke get a black one",
+            true,
+            stroke_brush
+        ),
+        spec!(
             "effect.add",
             "Add effect",
             "{ids?, type? (dropShadow|innerShadow|layerBlur|backgroundBlur|noise|texture|glass), effect? {..}}",
@@ -651,7 +658,9 @@ fn layers_at(s: &mut Session, p: &Value) -> Result<Value> {
     let (x, y) = (req_num("select.layersAt", p, "x")?, req_num("select.layersAt", p, "y")?);
     let doc = s.doc()?;
     let zoom = s.ds()?.view.zoom.max(1e-6);
-    let layers: Vec<Value> = figcraft_doc::geometry::layers_at(doc, s.page()?, figcraft_geom::Point::new(x, y), 2.0 / zoom)
+    let sel = s.selection();
+    let result = crate::booleans::result_outline(doc, &sel);
+    let layers: Vec<Value> = figcraft_doc::geometry::layers_at(doc, s.page()?, figcraft_geom::Point::new(x, y), 2.0 / zoom, Some(&result))
         .into_iter()
         .filter_map(|(id, depth)| doc.node(id).map(|n| json!({"id": id, "name": n.name, "type": n.kind.type_name(), "depth": depth})))
         .collect();
@@ -983,6 +992,22 @@ fn width_profile(s: &mut Session, p: &Value) -> Result<Value> {
     let doc = s.doc_mut()?;
     for i in ids {
         super::props::apply(cmd, doc, i, &props)?;
+    }
+    ok()
+}
+
+fn stroke_brush(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "stroke.brush";
+    let v = if get(p, "preset").is_none_or(Value::is_null) { Value::Null } else { p.clone() };
+    let brush = super::props::brush_of(&v).ok_or_else(|| bad(cmd, super::props::BRUSH_HELP))?;
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    for i in ids {
+        let n = doc.get_mut(i)?;
+        if brush.is_some() && n.strokes.is_empty() {
+            n.strokes.push(figcraft_color::Paint::solid(figcraft_color::Color::BLACK));
+        }
+        n.stroke.brush = brush.clone();
     }
     ok()
 }

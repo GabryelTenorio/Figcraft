@@ -213,6 +213,22 @@ pub struct Annotation {
     pub category: Option<String>,
 }
 
+/// A main component (or component set) linked to the code component it is built as, in one
+/// language: Dev Mode shows the snippet its template makes instead of generated code
+/// (`figcraft_engine::code_connect`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeLink {
+    /// `react`, `swiftui` or `compose`.
+    pub language: String,
+    /// What the snippet imports from (`@acme/ui`, a Swift module, a Kotlin name).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub import_path: String,
+    /// The code component's name.
+    pub name: String,
+    /// The snippet with `{property}` and `{property ? "a" : "b"}` placeholders.
+    pub template: String,
+}
+
 /// A kind of annotation (Development, Accessibility…): its stable id, name and the colour its
 /// callouts are drawn in.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -482,6 +498,10 @@ pub struct Node {
     /// Dev Mode annotations, in the order they were added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<Annotation>,
+    /// Main components and component sets: the code components they are linked to, one per
+    /// language.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_links: Vec<CodeLink>,
 }
 
 pub(crate) fn yes() -> bool {
@@ -590,6 +610,7 @@ impl Node {
             prop_refs: BTreeMap::new(),
             plugin_data: BTreeMap::new(),
             annotations: Vec::new(),
+            code_links: Vec::new(),
         }
     }
 

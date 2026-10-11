@@ -126,7 +126,7 @@ Or in a project's `.mcp.json`:
 | Tool | What it does |
 |---|---|
 | `list_commands {filter?}` | Every command: id, label, menu, shortcut, undoable, params doc. |
-| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`). |
+| `run_command {command, params}` | Run any command (e.g. `align.left`, `layout.add`, `component.create`, `instance.place` (drop an instance at a page point into the frame or auto layout slot under it), `component.exposeInstance` / `instance.exposed` (nested instance properties on instances), `component.makeSlot` / `instance.slotInsert` / `instance.resetSlot` (slots, below), `inspect.code` (CSS, HTML + CSS for a whole frame, React, SwiftUI or Jetpack Compose for a layer; components take their properties as parameters and instances are calls, see Dev Mode below), `inspect.properties` (layout, auto layout, typography, fills, strokes and effects with their style and variable names), `inspect.assets` (layers under the selection with export settings), `style.create`, `variable.bind`, `variable.update` (rename, describe, scope), `variable.set` with `{alias}`, `variable.renameMode` / `variable.removeMode`, `variable.deleteCollection`, `proto.interaction.add`, `codeConnect.set` (components linked to real code, see Dev Mode below)). |
 | `batch {commands: [{command, params}], label?}` | Several commands as one undo step (`command.batch`); all-or-nothing. |
 | `create_node {type, x, y, width, height, parent, index, name, text, path, props}` | Create a frame, rectangle, ellipse, polygon, star, line, arrow, text, vector, section, component or slice; returns `{id, node}`. |
 | `set_properties {ids, props}` | `node.set` on layers (geometry, fills, strokes, effects, corner radius, auto layout, sizing, constraints, masks (`isMask`, `maskType: alpha\|vector\|luminance`), handoff status (`devStatus: none\|readyForDev\|completed`; marking again clears "Changed"), a section's `sectionContentsHidden`, text…); returns the updated layers. |
@@ -137,7 +137,7 @@ Or in a project's `.mcp.json`:
 | `screenshot {ids?, scale?, maxSize?, window?}` | PNG of the page (with background) or of layers, scaled to fit `maxSize` (default 1600). `window: true` captures the app window when attached. |
 | `open_file {path, variables?}` / `save_file {path?}` | Open `.figcraft`, `.json` (FigCraft JSON or REST API file JSON with its variables, see below), `.svg` (see Importing SVG below) or an image; save as `.figcraft`. |
 | `undo` / `redo` | Step through history. |
-| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. |
+| `pointer {kind, x, y, to?, steps?, tool?, shift, alt, cmd, pressure?, pressureTo?}` | Mouse gestures in page coordinates with the current tool: `click`, `double`, `drag`, `down`, `move`, `up`, `hover`. A dragged layer drops into the frame or auto layout slot under the pointer, except one inside a group, a boolean group or an instance (outside its slots), which only moves. `pressure` (0–1) is pen pressure; a drag goes from `pressure` to `pressureTo` (see Brushes and pen pressure). |
 | `key {key, shift, alt, cmd}` | A shortcut or key as if typed on the canvas (every default shortcut, tool keys, Escape, Delete, arrows, number keys for opacity; while editing text, the text shortcuts and then text editing keys). Keys are names like `A`, `0`, `Enter`, `ArrowLeft`, `=`, `/`, or egui's (`Plus`, `Questionmark`); `cmd` is Cmd on macOS and Ctrl elsewhere. |
 | `type_text {text, id?}` | Type into the text being edited, or replace the contents of text layer `id`. |
 | `inspect_ui {}` | Tool, view and status (and panels/timings when attached). |
@@ -427,7 +427,9 @@ on any operand, or `booleanOperation` on an operand that isn't itself a boolean 
 Operands stay editable layers: `select.children` (Enter) or a double-click selects them, `cmd: true`
 clicks reach them directly, and moving, resizing or editing an operand's points (`vector.edit.*`)
 updates the group's result on every pointer move, one undo step per gesture; a dragged operand
-stays in its group. `bool.flatten` bakes the result. Only the operands from the edited one up are
+stays in its group. Clicks and `select.layersAt` hit a boolean group where its result is (a click in
+a subtracted hole reaches what's behind it); while the group or one of its operands is selected, its
+operands are hit instead, so each can be picked. `bool.flatten` bakes the result. Only the operands from the edited one up are
 recombined during a drag (`figcraft_render::boolean`; timed by `cargo xtask bench`).
 
 ### Shape builder
@@ -720,6 +722,30 @@ the last plugin command again.
   that would shadow framework types get one too, `Text` → `TextComponent`). `inspect.componentCode
   {id?, language?}` returns the parts: `{component, name, set, properties: [{name, param, type,
   default, value? (instances)}], definition, usage? (instances)}`.
+- **Code connect:** link a component (a variant links its set) to the code component it is built
+  as, per language (`react`, `swiftui`, `compose`): `codeConnect.set {id?, language?, importPath?,
+  name?, template?}` (undoable; fields left out keep their value; the defaults are the generated
+  name and a call passing every property) → `{component, language, code, unknown}`. Templates are
+  text, never executed: `{property}` (its name or parameter name) is the instance's value escaped
+  for the language (React keeps JSX's braces, so `size={size}` gives `size="Large"` and
+  `disabled={disabled}` gives `disabled={true}`), `{property ? "a" : "b"}` inserts one of two
+  strings, any other `{…}` stays as written (`unknown` lists placeholder names that aren't
+  properties). Then `inspect.code` on an instance or the component returns the import line and the
+  snippet instead of generated code (`connected: true`), connected instances inside a generated
+  layer tree are their snippet, and `inspect.componentCode` returns `connected: {importPath, name,
+  template, import, code}` with the snippet as `usage`. Example: template `<Button
+  variant="primary" icon="{Has icon ? "cart" : "none"}">{label}</Button>` with import path
+  `@acme/ui` gives `import { Button } from "@acme/ui";` then `<Button variant="primary" icon="none">{"Buy
+  now"}</Button>`. `codeConnect.remove {id?, language?}` (no language: all). `codeConnect.export
+  {path?}` → `{text, links}` (or writes the file): `{version: 1, links: [{component, language,
+  importPath, name, template}]}`, sorted, meant to live in the code repository as
+  `figcraft.connect.json`; `codeConnect.import {json | path}` → `{linked, warnings}` links each
+  entry to every component or set with that name (one undo step; at most 5,000 links and 4 MB;
+  templates up to 4,000 characters, names 100, import paths 300; invalid entries are skipped with a
+  warning). `get_node` lists a component's links as `codeLinks`. In the app, the Inspect tab's
+  Connect to code section edits them in the Code section's language, with a live preview and a
+  Connected badge. An editor extension isn't needed: agents and editors read the same snippets
+  through this server. Plugins whose manifest asks only for `read` also run from the Inspect tab.
 - **Annotations:** notes for developers on any layer, each with optional pinned properties that
   Dev Mode shows with their current values (and the style or variable behind them).
   `annotation.add {id?, label?, properties?}` (a note, pinned properties or both; returns `{id,
@@ -806,6 +832,25 @@ noise and texture over the result.
   DeviceCMYK without an output intent, because embedding one needs a CMYK ICC profile and none
   ships with FigCraft. Soft masks stay RGB (they aren't printed) and transparency groups blend in
   RGB, as the PDF writer declares them.
+
+### Brushes and pen pressure
+
+- `stroke.brush {ids?, preset, spacing?, sizeJitter?, rotationJitter?, scatter?, seed?}` draws a
+  layer's stroke with a brush (`preset: null` back to a plain stroke; a layer without a stroke gets
+  a black one); `node.set {brush}` takes the same (a preset id, an object or `null`) and `get_node`
+  shows `brush`. Stretch brushes bend one shape along each subpath: `taper`, `ink`, `ribbon`,
+  `bristle`. Scatter brushes drop copies along it every `spacing` stroke weights (default 1.5; at
+  most 5,000 copies a path): `dots`, `stars`, `confetti`, `leaves`, varied by `sizeJitter` (0–1),
+  `rotationJitter` (0–1, up to half a turn) and `scatter` (0–4 weights off the path), repeatably
+  from `seed`. The stroke weight sets the brush's size and a width profile scales it along the
+  path. Brushes draw on the canvas, in PNG, SVG and PDF (as filled outlines) and `vector.outlineStroke`
+  flattens them; dashes don't apply to brushes.
+- **Pen pressure**: the Pencil records pressure into the stroke's width profile (up to 32 points by
+  length; medium pressure, 0.5, draws the stroke weight, from a tenth of it to twice it); without
+  pressure (a mouse) the stroke stays uniform. `pointer` takes `pressure` and, for drags,
+  `pressureTo`. `tool.pencilBrush {preset?, …}` sets the brush new Pencil strokes get (`null`
+  clears it; no `preset` reads it). The desktop app reads pressure from pen input on Windows; in the
+  browser from stylus touch events that report a force; macOS and Linux tablets report none.
 
 ### Paint, effect and layout grid lists
 

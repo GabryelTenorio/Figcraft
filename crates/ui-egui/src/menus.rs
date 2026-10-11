@@ -515,13 +515,14 @@ fn select_layer_menu(app: &mut FigApp, ui: &mut Ui, pos: egui::Pos2, t: &Tokens)
     let p = app.to_page(pos);
     let Ok(ds) = app.session.ds() else { return false };
     let tol = 2.0 / ds.view.zoom.max(1e-6);
-    let layers: Vec<(figcraft_doc::NodeId, usize, String)> = figcraft_doc::geometry::layers_at(&ds.doc, ds.page, p, tol)
-        .into_iter()
-        .take(40)
-        .filter_map(|(id, depth)| {
-            ds.doc.node(id).map(|n| (id, depth, if n.name.is_empty() { n.kind.type_name().to_lowercase() } else { n.name.clone() }))
-        })
-        .collect();
+    let layers: Vec<(figcraft_doc::NodeId, usize, String)> =
+        figcraft_doc::geometry::layers_at(&ds.doc, ds.page, p, tol, Some(&figcraft_engine::booleans::result_outline(&ds.doc, &ds.selection)))
+            .into_iter()
+            .take(40)
+            .filter_map(|(id, depth)| {
+                ds.doc.node(id).map(|n| (id, depth, if n.name.is_empty() { n.kind.type_name().to_lowercase() } else { n.name.clone() }))
+            })
+            .collect();
     if layers.is_empty() {
         return false;
     }

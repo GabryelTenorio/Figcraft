@@ -66,22 +66,28 @@ fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Worker {
-    tx: std::sync::mpsc::Sender<Job>,
+    tx: std::sync::mpsc::Sender<(u64, Job)>,
     rx: std::sync::mpsc::Receiver<Done>,
-    pub in_flight: bool,
+    /// Jobs submitted so far.
+    submitted: u64,
+    /// The newest job the thread is done with: rendered (or skipped for a newer one) and the UI
+    /// woken for it.
+    finished: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Worker {
     pub fn new(ctx: egui::Context) -> Self {
-        let (tx, jobs) = std::sync::mpsc::channel::<Job>();
+        let (tx, jobs) = std::sync::mpsc::channel::<(u64, Job)>();
         let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
+        let finished = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let done_with = finished.clone();
         let spawned = std::thread::Builder::new().name("figcraft-render".into()).spawn(move || {
             let mut retained = Retained::default();
-            while let Ok(mut job) = jobs.recv() {
+            while let Ok((mut seq, mut job)) = jobs.recv() {
                 // Skip to the newest queued job.
                 while let Ok(newer) = jobs.try_recv() {
-                    job = newer;
+                    (seq, job) = newer;
                 }
                 let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&job, &mut retained)));
                 let done = match res {
@@ -98,27 +104,31 @@ impl Worker {
                     break;
                 }
                 ctx.request_repaint();
+                done_with.store(seq, std::sync::atomic::Ordering::Release);
             }
         });
         if let Err(e) = spawned {
             log::error!("render thread: {e}");
         }
-        Self { tx, rx, in_flight: false }
+        Self { tx, rx, submitted: 0, finished }
     }
 
     pub fn submit(&mut self, job: Job) {
-        if self.tx.send(job).is_ok() {
-            self.in_flight = true;
+        if self.tx.send((self.submitted + 1, job)).is_ok() {
+            self.submitted += 1;
         }
+    }
+
+    /// Whether a submitted job is still rendering or hasn't woken the UI yet (a finished image
+    /// may still wait for [`Self::poll`]).
+    pub fn in_flight(&self) -> bool {
+        self.finished.load(std::sync::atomic::Ordering::Acquire) < self.submitted
     }
 
     pub fn poll(&mut self) -> Option<Done> {
         let mut last = None;
         while let Ok(d) = self.rx.try_recv() {
             last = Some(d);
-        }
-        if last.is_some() {
-            self.in_flight = false;
         }
         last
     }
@@ -128,21 +138,21 @@ impl Worker {
 pub struct Worker {
     pending: Option<Job>,
     retained: Retained,
-    pub in_flight: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
 impl Worker {
     pub fn new(_ctx: egui::Context) -> Self {
-        Self { pending: None, retained: Retained::default(), in_flight: false }
+        Self { pending: None, retained: Retained::default() }
     }
     pub fn submit(&mut self, job: Job) {
         self.pending = Some(job);
-        self.in_flight = true;
+    }
+    pub fn in_flight(&self) -> bool {
+        self.pending.is_some()
     }
     pub fn poll(&mut self) -> Option<Done> {
         let job = self.pending.take()?;
-        self.in_flight = false;
         run(&job, &mut self.retained)
     }
 }

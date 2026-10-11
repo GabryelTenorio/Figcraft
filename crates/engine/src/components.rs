@@ -264,6 +264,7 @@ pub fn create_instance_at(doc: &mut Document, component: NodeId, parent: NodeId,
     root.transform = Affine::translate((x, y));
     root.prop_refs.clear();
     root.annotations.clear();
+    root.code_links.clear();
     doc.insert(root, parent, index)?;
     sync_instance(doc, id);
     Ok(id)
@@ -679,6 +680,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     fresh.prop_refs = root.prop_refs.clone();
     fresh.plugin_data = root.plugin_data.clone();
     fresh.annotations = root.annotations.clone();
+    // Code links belong to the main component; instances read them from it.
+    fresh.code_links.clear();
     fresh.locked = root.locked;
     fresh.visible = root.visible;
     fresh.var_modes = root.var_modes.clone();
