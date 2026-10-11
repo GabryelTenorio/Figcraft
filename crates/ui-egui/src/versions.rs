@@ -1,9 +1,11 @@
 //! The Version history panel, shown in the left sidebar in place of Pages and Layers: save a
 //! version (title and description), the history newest first under the current version, and per
 //! version Restore, Rename, Duplicate and Delete. Clicking a version shows it on the canvas
-//! (read-only, with a banner to restore it or go back); clicking Current version goes back.
+//! (read-only, with a banner to restore it or go back); clicking Current version goes back. Above
+//! the history, the file's branches: create one, open one, review and merge, archive.
 
 use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
+use figcraft_engine::branches::BranchState;
 use serde_json::json;
 
 use crate::FigApp;
@@ -25,16 +27,22 @@ pub struct VersionUi {
 }
 
 /// Title and description being written; `id` is the version being edited (`None` = a new one).
+/// A new branch's form has a name only.
 pub struct Form {
     pub id: Option<String>,
     pub name: String,
     pub description: String,
+    pub branch: bool,
     focus: bool,
 }
 
 impl Form {
     fn new(id: Option<String>, name: &str, description: &str) -> Self {
-        Self { id, name: name.to_string(), description: description.to_string(), focus: true }
+        Self { id, name: name.to_string(), description: description.to_string(), branch: false, focus: true }
+    }
+
+    fn branch() -> Self {
+        Self { branch: true, ..Self::new(None, "", "") }
     }
 }
 
@@ -50,6 +58,21 @@ pub fn start_save(app: &mut FigApp) {
     open(app);
     app.ui.versions.confirm_delete = None;
     app.ui.versions.form = Some(Form::new(None, "", ""));
+}
+
+/// Open the panel with the new branch form (File ▸ Create branch…).
+pub fn start_branch(app: &mut FigApp) {
+    open(app);
+    app.ui.versions.confirm_delete = None;
+    app.ui.versions.form = Some(Form::branch());
+}
+
+/// One branch as listed.
+struct BranchRow {
+    id: String,
+    name: String,
+    time: u64,
+    state: BranchState,
 }
 
 /// One version as listed.
@@ -75,6 +98,10 @@ enum Action {
     AskDelete(String),
     Delete(String),
     CancelDelete,
+    NewBranch,
+    OpenBranch(String),
+    ReviewBranch(String),
+    ArchiveBranch(String),
 }
 
 const DOT_X: f32 = 20.0;
@@ -93,14 +120,14 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
     if icons::button(&mut bar, Icon::Close, 24.0, false, "Close version history").clicked() {
         action = Some(Action::Close);
     }
-    let new_open = app.ui.versions.form.as_ref().is_some_and(|f| f.id.is_none());
+    let new_open = app.ui.versions.form.as_ref().is_some_and(|f| f.id.is_none() && !f.branch);
     let tip = format!("Save version  {}", crate::toolbar::pretty_shortcut("Alt+Cmd+S"));
     if icons::button(&mut bar, Icon::Plus, 24.0, new_open, &tip).clicked() {
         action = Some(Action::New);
     }
     ui.painter().line_segment([head.left_bottom(), head.right_bottom()], Stroke::new(1.0, t.border));
 
-    if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.is_none()) {
+    if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.id.is_none() && !f.branch) {
         ui.add_space(12.0);
         if let Some(a) = form(ui, f, "Save", 16.0) {
             action = Some(a);
@@ -121,9 +148,39 @@ pub fn panel(app: &mut FigApp, ui: &mut Ui) {
         })
         .unwrap_or_default();
     let previewing = app.session.ds().ok().and_then(|ds| ds.preview.as_ref().map(|p| p.id.clone()));
+    // The branches of the file shown, or of the file a branch tab belongs to.
+    let branches: Vec<BranchRow> = app
+        .session
+        .docs
+        .get(figcraft_engine::branches::file_tab(&app.session))
+        .map(|m| m.branches.iter().map(|b| BranchRow { id: b.id.clone(), name: b.name.clone(), time: b.time, state: b.state }).collect())
+        .unwrap_or_default();
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        // Rows touch so the timeline is continuous.
+        if widgets::section_header(ui, "Branches", &[(Icon::Plus, "Create branch")], false).is_some() {
+            action = Some(Action::NewBranch);
+        }
+        if let Some(f) = app.ui.versions.form.as_mut().filter(|f| f.branch) {
+            if let Some(a) = form(ui, f, "Create", 16.0) {
+                action = Some(a);
+            }
+            ui.add_space(8.0);
+        }
         ui.spacing_mut().item_spacing.y = 0.0;
+        for b in &branches {
+            if let Some(a) = branch_row(ui, b) {
+                action = Some(a);
+            }
+        }
+        if branches.is_empty() {
+            widgets::note(
+                ui,
+                "No branches. A branch is a copy of the file to try changes in, then review and merge.",
+                Tokens::get(ui.ctx()).text_secondary,
+            );
+        }
+        ui.add_space(8.0);
+        widgets::separator(ui);
+        // Rows touch so the timeline is continuous.
         ui.add_space(4.0);
         if current_row(ui, !rows.is_empty(), previewing.is_none()) {
             action = Some(Action::ExitPreview);
@@ -202,7 +259,20 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
         }
         Action::New => {
             st.confirm_delete = None;
-            st.form = if st.form.as_ref().is_some_and(|f| f.id.is_none()) { None } else { Some(Form::new(None, "", "")) };
+            st.form = if st.form.as_ref().is_some_and(|f| f.id.is_none() && !f.branch) { None } else { Some(Form::new(None, "", "")) };
+        }
+        Action::NewBranch => {
+            st.confirm_delete = None;
+            st.form = if st.form.as_ref().is_some_and(|f| f.branch) { None } else { Some(Form::branch()) };
+        }
+        Action::OpenBranch(id) => {
+            app.run("branch.open", json!({"id": id}));
+        }
+        Action::ReviewBranch(id) => crate::branch_ui::open(app, Some(&id)),
+        Action::ArchiveBranch(id) => {
+            if app.run("branch.archive", json!({"id": id})).is_some() {
+                app.toast("Branch archived");
+            }
         }
         Action::CancelForm => st.form = None,
         Action::CancelDelete => st.confirm_delete = None,
@@ -217,6 +287,7 @@ fn act(app: &mut FigApp, a: Action, rows: &[Row]) {
         Action::Submit => {
             let Some(f) = st.form.take() else { return };
             let (cmd, params) = match &f.id {
+                _ if f.branch => ("branch.create", json!({"name": f.name.trim()})),
                 Some(id) => ("version.rename", json!({"id": id, "name": f.name.trim(), "description": f.description.trim()})),
                 None => ("file.saveVersion", json!({"name": f.name.trim(), "description": f.description.trim()})),
             };
@@ -253,23 +324,29 @@ fn form(ui: &mut Ui, f: &mut Form, submit: &str, indent: f32) -> Option<Action> 
         ui.vertical(|ui| {
             ui.set_width(ui.available_width() - 16.0);
             let w = ui.available_width() - 16.0;
+            let hint = if f.branch { "Branch name" } else { "Title" };
             let title = field(ui, &mut |ui| {
-                ui.add(egui::TextEdit::singleline(&mut f.name).hint_text("Title").font(regular(11.0)).frame(egui::Frame::NONE).desired_width(w))
+                ui.add(egui::TextEdit::singleline(&mut f.name).hint_text(hint).font(regular(11.0)).frame(egui::Frame::NONE).desired_width(w))
             });
+            crate::a11y::text(&title, hint, &f.name);
             if std::mem::take(&mut f.focus) {
                 title.request_focus();
             }
             ui.add_space(8.0);
-            let desc = field(ui, &mut |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut f.description)
-                        .hint_text("Describe what changed")
-                        .font(regular(11.0))
-                        .frame(egui::Frame::NONE)
-                        .desired_rows(3)
-                        .desired_width(w),
-                )
-            });
+            let desc = if f.branch {
+                title.clone()
+            } else {
+                field(ui, &mut |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut f.description)
+                            .hint_text("Describe what changed")
+                            .font(regular(11.0))
+                            .frame(egui::Frame::NONE)
+                            .desired_rows(3)
+                            .desired_width(w),
+                    )
+                })
+            };
             let (enter, cmd_enter, esc) = ui.input(|i| {
                 (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Enter) && i.modifiers.command, i.key_pressed(egui::Key::Escape))
             });
@@ -382,6 +459,58 @@ fn version_row(ui: &mut Ui, row: &Row, last: bool, previewing: bool) -> Option<A
         out = Some(Action::Edit(row.id.clone()));
     } else if resp.clicked() && !previewing && out.is_none() {
         out = Some(Action::Preview(row.id.clone()));
+    }
+    out
+}
+
+/// A branch: its name and state; a click opens it, its More menu reviews or archives it.
+fn branch_row(ui: &mut Ui, b: &BranchRow) -> Option<Action> {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    let resp = resp.tip("Open branch");
+    crate::a11y::list_item(&resp, &format!("Branch {}", b.name), false);
+    let hovered = ui.rect_contains_pointer(r);
+    if hovered {
+        ui.painter().rect_filled(r, CornerRadius::ZERO, t.hover);
+    }
+    let active = b.state == BranchState::Active;
+    let state = match b.state {
+        BranchState::Active => "Active",
+        BranchState::Merged => "Merged",
+        BranchState::Archived => "Archived",
+    };
+    let clip = Rect::from_min_max(pos2(r.min.x + 16.0, r.min.y), pos2(r.max.x - 40.0, r.max.y));
+    let p = ui.painter().with_clip_rect(clip);
+    p.text(pos2(clip.min.x, r.min.y + 15.0), Align2::LEFT_CENTER, &b.name, semibold(11.0), if active { t.text } else { t.text_secondary });
+    let sub = format!("{state} · {}", crate::comments::ago_long(b.time));
+    p.text(pos2(clip.min.x, r.min.y + 31.0), Align2::LEFT_CENTER, sub, regular(11.0), t.text_secondary);
+    let mut out = None;
+    let br = Rect::from_center_size(pos2(r.max.x - 22.0, r.min.y + 15.0), vec2(24.0, 24.0));
+    let more = ui.interact(br, Id::new(("branch_more", &b.id)), Sense::click());
+    let menu_open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&more));
+    if hovered || menu_open {
+        if more.hovered() || menu_open {
+            ui.painter().rect_filled(br, CornerRadius::same(5), t.pressed);
+        }
+        icons::paint(ui.painter(), br.shrink(5.0), Icon::Dots, t.icon);
+    }
+    let more = more.tip("More");
+    let mut menu = |ui: &mut Ui| {
+        let mut items = vec![("Open", Action::OpenBranch(b.id.clone())), ("Review and merge", Action::ReviewBranch(b.id.clone()))];
+        if active {
+            items.push(("Archive", Action::ArchiveBranch(b.id.clone())));
+        }
+        for (label, a) in items {
+            if crate::right::menu_item(ui, label, "") {
+                out = Some(a);
+                ui.close();
+            }
+        }
+    };
+    crate::right::menu_popup(&more).show(&mut menu);
+    crate::right::context_popup(&resp).show(&mut menu);
+    if resp.clicked() && out.is_none() {
+        out = Some(Action::OpenBranch(b.id.clone()));
     }
     out
 }

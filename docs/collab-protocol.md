@@ -13,7 +13,7 @@ modes and comments created in a session take ids from their creator's id space, 
 carets show on the canvas. **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
-the app publishes to it. The rest is the plan the next implementation PRs follow and update;
+the app publishes to it, and a file's team library lives there for other files to use. The rest is the plan the next implementation PRs follow and update;
 sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
@@ -157,7 +157,9 @@ As built:
 
 *Built* (`figcraft_collab::message`): the types below and both encodings. Protocol version 2 (the
 `Hello`'s `protocol`): the welcome says what the client may do, and a connection can manage a
-server's files instead of joining one; a client of another version is refused with the reason.
+server's files or use a file's team library instead of joining one; a client of another version is
+refused with the reason. (The library messages came later within version 2: a server from before
+them can't read them and refuses the connection.)
 
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
@@ -180,6 +182,8 @@ Client → server:
 | `Ping` | Keep-alive. |
 | `Manage {protocol, key, client_version}` | Instead of `Hello`: manage a server's files with its key. |
 | `Admin {publish {name, snapshot} \| files \| links {file} \| createLink {file, access, label} \| revoke {file, link} \| remove {file}}` | A request on a managing connection; each gets one `Admin` reply, in order. |
+| `OpenLibrary {protocol, file, token, client_version}` | Instead of `Hello`: use a file's team library with one of the file's share links. |
+| `Library {fetch {have?, usage?} \| publish {archive} \| usage}` | A request on a library connection; each gets one `Library` reply, in order. `usage` is `{file, components: [(id, instances)]}`. |
 
 Server → client:
 
@@ -192,6 +196,7 @@ Server → client:
 | `Refused {reason}` | The connection is refused (protocol version, token, session full, a message out of place). |
 | `Pong` | Keep-alive. |
 | `Admin {ready \| published {file, edit, view} \| files \| links \| link \| done \| failed {reason}}` | A managing connection's answer: the key is right, a published file with its first two links (tokens shown once), listings, a new link, done, or why not. |
+| `Library {ready {access} \| library {version, archive} \| unchanged {version} \| empty \| published {version} \| usage [{usage, updated}] \| failed {reason}}` | A library connection's answer: the link is right (with its access), the library (a `.figcraft` archive holding it), no newer version, no library yet, kept, the usage reports, or why not. |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -484,6 +489,31 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   clients take as a dropped connection: they reconnect with their usual backoff and resume as the
   same clients (the session id, client ids and log come back with the file), sending what they
   made meanwhile. The app's session ending (code 1001) stays final.
+
+*Built* (team libraries on the server; using them: [`server.md`](server.md#team-libraries)):
+
+- **A library connection.** A connection that opens with `OpenLibrary {file, token}` (checked like a
+  hello's token, so any share link of the file opens it with that link's access) sends `Library`
+  requests: fetch the file's library unless the client has that version (`have`), publish a new
+  version (edit links only), or read the usage reports. Requests are one-shot: the app opens a
+  connection, asks and closes it.
+- **What is kept.** The published library a library file holds (manifest and snapshot with
+  per-asset versions) travels as a small `.figcraft` archive holding only it. The server reads it
+  in full with the limits a library file is read with, requires the file's library id once one is
+  kept and a newer version, then writes it beside the file (`library.bin`, atomically) and records
+  id, name and version in the file's description. Publishing from the app first fetches the
+  server's version and publishes the next one from it, so per-asset versions continue whoever
+  published last; a race is refused and the next publish follows.
+- **Using it.** A file enables the library with the link in place of a library file's path
+  (`LibraryLink::path`), so placing, styles, variables and updates work as for library files. The
+  engine never opens a socket: commands ask the app's network link and wait (a few seconds at most
+  when the server can't be reached); the Assets panel asks in the background (`have` set, so an
+  unchanged library costs a few bytes) when it opens and every 30 seconds, and the answers arrive
+  like other session events. The last library fetched stays in use while the server can't be
+  reached.
+- **Usage.** Each fetch carries the asking file's name and its instances of each library component;
+  the server keeps the latest report per file name (`usage.json`, rewritten only when it changes,
+  capped) and answers `usage` with them. `library.usage` adds them up with the components' names.
 
 *Built* (opening invite links):
 

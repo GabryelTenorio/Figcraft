@@ -294,9 +294,9 @@ flow with its description.
 
 ### Local libraries
 
-A `.figcraft` file can be published as a library and used from other files (local files only: no
-accounts, nothing on the network; the browser build has no file system, so there the commands that
-read library files return an error).
+A `.figcraft` file can be published as a library and used from other files (library files here;
+libraries kept on a `figcraft-server` for a team: [Team libraries](#team-libraries); the browser
+build has no file system, so there the commands that read library files return an error).
 
 - **Publish** (in the library file): `library.publish {description?, include?, exclude?}` publishes
   the file's components, component sets, styles and variable collections as a new version (by
@@ -349,6 +349,34 @@ name and sets them this way);
   same library, components the other file publishes as a library are used from it (and that
   library is enabled when the other file is saved), and other mains stay behind: the instance shows
   a missing main (`component.restoreMain` makes it a main here).
+
+### Team libraries
+
+A file kept on a `figcraft-server` ([`server.md`](server.md#team-libraries)) can hold a library that
+other files use through one of its share links. Each call waits for the server (a few seconds at
+most when it can't be reached).
+
+- `library.publishToServer {server?, key?, description?, include?, exclude?}` publishes the active
+  document's library as the next version of the one the server keeps under the file (selection and
+  per-asset versions as `library.publish`, following the server's version): `server` is an edit
+  link of the file, or omit it while the document is in a live session on a server with edit
+  access; with the server's address and key (`ws://host:47900/?key=…`, or `key`) the document is
+  kept there as a new file first and the result has its `file`, `edit` and `view` links. A view
+  link is refused. The document itself doesn't change (nothing to undo).
+- `library.add {path: <share link>}` enables it (a view link is enough); then `library.place`,
+  `library.applyStyle`, `library.bindVariable`… work as for library files. `library.list` and
+  `library.updates` ask the server for a newer version first (`"server": true` in the listing);
+  `library.acceptUpdates` takes it, overrides kept.
+- `library.usage {library?}` → `{id, name, instances, files: [{name, updated, instances}],
+  components: [{id, name, instances, files}]}`: what the files using it reported (each fetch
+  reports the asking document's name and its instances per component). `library` is an enabled
+  team library; omit it for the active document's own library on its server.
+- `library.swap {from, to}` (any two enabled libraries, files or team) re-points every instance,
+  style and variable copied from `from` to the published asset of the same name in `to` (variants
+  by name in their set, styles by name and type, variables by collection, name and type, modes by
+  name), keeping overrides; one undo step → `{components, styles, variables, unmatched: [names
+  still from `from`, including this file's collections that extend one of its collections],
+  removed (nothing of `from` was left, so it was removed)}`.
 
 ### Swapping instances
 
@@ -559,6 +587,40 @@ closing or saving a version ends the preview first, and `version.list` marks the
 `version.autosave` saves an automatic checkpoint (`auto: true`, named "Autosave") when the document
 has unsaved changes since its last version; the app runs it every 30 minutes for each open document,
 and a file keeps the newest 20 autosaves (user versions are never dropped for them). `file.versionHistory` returns the same list and opens the panel in the app.
+
+### Branches
+
+A branch is a copy of the file to try changes in, reviewed against the main file and merged back.
+Branches are kept in the main `.figcraft` file (saving either tab saves the main file with its
+branches). Driven with `run_command`:
+
+- `branch.create {name?}` copies the file into a new branch tab and returns `{id, name, index}`.
+  The branch remembers the file as it is now (its base) and makes new ids in its own id space, so
+  layers, styles and comments made on both sides never clash.
+- `branch.list` lists the branches of the file shown (or of the file a branch tab belongs to):
+  `[{id, name, time, state: active|merged|archived, index?}]` (`index`: its open tab).
+- `branch.open {id}` opens a branch in a tab (or switches to it). Edit it like any document.
+- `branch.review {id?}` (default: the branch tab shown) returns what changed on each side since the
+  base and the conflicts: `{branch: {layers, document, truncated}, main: {…}, conflicts: [{key, id?,
+  name, property, branch, main, deletedBy?}]}`. `layers` are the changed layers with their property
+  changes formatted like Inspect (`fill #2563EB → #DC2626`); `document` lists styles, variables,
+  comments and file settings. A conflict is the same property changed on both sides to different
+  values (key `<layer id>/<property>`, e.g. `4/fills`; a layer's parent and position are one
+  property, `parent`), a layer deleted on one side while the other edited it or what's inside it
+  (`<layer id>/layer`, with `deletedBy`), or a document-level entry or setting changed on both sides
+  (`style/<id>`, `variable/<id>`, `comment/<id>`, `doc/<property>`…).
+- `branch.merge {id?, resolutions?}` merges the branch into the main file as one undo step,
+  archives it (`state: merged`), closes its tab and shows the main file. `resolutions` maps every
+  conflict key to `"branch"` or `"main"`; the merge is refused while a conflict has none, so
+  neither side's work is dropped without a choice.
+- `branch.updateFromMain {id?, resolutions?}` brings the main file's changes since the base into the
+  branch the same way (the new base is the main file as it is now). It is not undoable: the branch
+  tab's undo history starts over.
+- `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
+  opened, but not merged).
+
+Versions are saved on the main file (`file.saveVersion` is refused on a branch tab), and branches
+aren't available in a live session.
 
 ### Collaboration changes
 

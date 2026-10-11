@@ -197,6 +197,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::live::draw(app, &painter, &ctx);
     crate::comments::popovers(app, &ctx);
     crate::versions::preview_banner(app, &ctx, rect);
+    crate::branch_ui::banner(app, &ctx, rect);
     crate::dev_mode::focus_bar(app, &ctx, rect);
     // Cursor.
     if resp.hovered() {

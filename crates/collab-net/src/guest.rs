@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use figcraft_collab::Replica;
 use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, Presence, ServerMsg};
@@ -28,7 +28,7 @@ use crate::invite::{Endpoint, Invite};
 pub use crate::join::GuestConfig;
 use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
 use crate::manage;
-use crate::net::{Duplex, config, dial, shutdown};
+use crate::net::{Duplex, NetLimits, config, dial, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
 /// What [`Guest::publish`] uploads, and where.
@@ -138,19 +138,31 @@ struct Conn {
     sock: TcpStream,
 }
 
-/// Upload the document; the join settings for the new file and its links.
-fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published), String> {
-    let snapshot = Replica::new((*job.doc).clone()).snapshot().map_err(|e| e.to_string())?;
-    let replies =
-        manage::request(&job.server, &job.key, vec![Admin::Publish { name: job.name.clone(), snapshot }], &cfg.limits, cfg.connect_timeout)?;
+/// Keep `doc` on `server` as a new file named `name`: its edit link, and where it is with its links.
+pub(crate) fn upload_file(
+    server: &Endpoint,
+    key: &str,
+    name: &str,
+    doc: &Document,
+    limits: &NetLimits,
+    timeout: Duration,
+) -> Result<(Invite, Published), String> {
+    let snapshot = Replica::new(doc.clone()).snapshot().map_err(|e| e.to_string())?;
+    let replies = manage::request(server, key, vec![Admin::Publish { name: name.to_string(), snapshot }], limits, timeout)?;
     let (file, edit, view) = match replies.into_iter().next() {
         Some(AdminReply::Published { file, edit, view }) => (file, edit, view),
         Some(AdminReply::Failed { reason }) => return Err(reason),
         _ => return Err("the server didn't say where the file is".into()),
     };
-    let link = |token: String| Invite { server: job.server.clone(), file: file.id.clone(), token };
+    let link = |token: String| Invite { server: server.clone(), file: file.id.clone(), token };
     let (edit, view) = (link(edit.token), link(view.token));
-    let published = Published { server: job.server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link() };
+    let published = Published { server: server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link() };
+    Ok((edit, published))
+}
+
+/// Upload the document; the join settings for the new file and its links.
+fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published), String> {
+    let (edit, published) = upload_file(&job.server, &job.key, &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
     Ok((cfg, published))
 }

@@ -11,6 +11,7 @@ pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
 pub mod booleans;
+pub mod branches;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -27,6 +28,8 @@ pub mod inspect;
 pub mod invite_links;
 pub mod keymap;
 pub mod library;
+pub mod library_server;
+pub mod library_swap;
 pub mod live;
 pub mod measure;
 pub mod params;
@@ -253,7 +256,12 @@ pub struct DocState {
     pub uid: u64,
     /// The file's version history, oldest first (saved in the `.figcraft` file; not undoable).
     pub versions: Vec<figcraft_format::Version>,
-    /// The version history changed since the last save.
+    /// The file's branches (saved in the `.figcraft` file; not undoable).
+    pub branches: Vec<figcraft_format::Branch>,
+    /// This tab shows a branch: the `uid` of its main file's tab and the branch id. Its edits go
+    /// into the main file's branch (and are saved with the main file).
+    pub branch_of: Option<(u64, String)>,
+    /// The version history or the branches changed since the last save.
     versions_changed: bool,
     /// A version shown in place of the document (read-only).
     pub preview: Option<VersionPreview>,
@@ -311,6 +319,8 @@ impl DocState {
             vector_edit: None,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             versions: Vec::new(),
+            branches: Vec::new(),
+            branch_of: None,
             versions_changed: false,
             preview: None,
             text_preview: None,
@@ -324,6 +334,23 @@ impl DocState {
     pub fn with_versions(mut self, versions: Vec<figcraft_format::Version>) -> Self {
         self.versions = versions;
         self
+    }
+
+    /// With the branches read from its file.
+    pub fn with_branches(mut self, branches: Vec<figcraft_format::Branch>) -> Self {
+        self.branches = branches;
+        self
+    }
+
+    /// The branches, for editing (the file then has unsaved changes).
+    pub fn branches_mut(&mut self) -> &mut Vec<figcraft_format::Branch> {
+        self.versions_changed = true;
+        &mut self.branches
+    }
+
+    /// The document itself, not a version or live text preview shown in its place.
+    pub fn document_itself(&self) -> &Arc<Document> {
+        self.preview.as_ref().map(|p| &p.doc).or(self.text_preview.as_ref()).unwrap_or(&self.doc)
     }
 
     /// The version history, for editing (the file then has unsaved changes).
@@ -352,8 +379,7 @@ impl DocState {
     }
 
     pub fn is_dirty(&self) -> bool {
-        let doc = self.preview.as_ref().map(|p| &p.doc).or(self.text_preview.as_ref()).unwrap_or(&self.doc);
-        !Arc::ptr_eq(doc, &self.saved_doc) || self.versions_changed
+        !Arc::ptr_eq(self.document_itself(), &self.saved_doc) || self.versions_changed
     }
 
     /// Show `version` in place of the document (or switch to it from another preview).
@@ -613,6 +639,7 @@ impl Session {
     /// as it was.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        branches::sync(self);
         if textpreview::COMMANDS.contains(&id) {
             // A live preview is no edit: no undo step, normalisation or rollback here.
             let r = guard::run(id, || (spec.run)(self, params));
@@ -1158,6 +1185,8 @@ mod autosave_tests;
 mod binding_lists_tests;
 #[cfg(test)]
 mod booleans_tests;
+#[cfg(test)]
+mod branch_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]
