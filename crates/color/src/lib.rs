@@ -1,8 +1,8 @@
 //! FigCraft colour and paint.
 //!
 //! [`Color`] is non-premultiplied sRGB in `0..=1` floats (what a design panel shows as hex + opacity).
-//! [`Paint`] is one entry of a node's fill or stroke list: solid, the four gradient kinds or an
-//! image, each with its own opacity, visibility and blend mode. [`ColorProfile`] says which RGB
+//! [`Paint`] is one entry of a node's fill or stroke list: solid, the four gradient kinds, an
+//! image or a pattern (a layer tiled), each with its own opacity, visibility and blend mode. [`ColorProfile`] says which RGB
 //! space (sRGB or Display P3) a document's values are in and converts between them.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -427,6 +427,92 @@ fn one64() -> f64 {
     1.0
 }
 
+/// How pattern tiles are laid out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PatternTile {
+    /// Rows and columns.
+    #[default]
+    Grid,
+    /// Every other row shifted by half a tile.
+    HorizontalHex,
+    /// Every other column shifted by half a tile.
+    VerticalHex,
+}
+
+/// Where the tile grid starts in the filled box: a tile in its top-left corner, centre or
+/// bottom-right corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum PatternAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
+/// A pattern paint: a layer of the document (`source`, a node id) drawn as a tile, repeated.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PatternPaint {
+    pub source: u64,
+    #[serde(default)]
+    pub tile: PatternTile,
+    /// Tile scale, 1 = the source's own size.
+    #[serde(default = "one64")]
+    pub scale: f64,
+    /// Gap between tiles (horizontal, vertical), in document units.
+    #[serde(default)]
+    pub spacing: (f64, f64),
+    #[serde(default)]
+    pub align: PatternAlign,
+}
+
+/// One repeating cell of a pattern in the filled box's space: `size` repeats from `origin`, and
+/// the source is drawn at each of `tiles` (its top-left), scaled by `scale`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PatternCell {
+    pub size: (f64, f64),
+    pub origin: (f64, f64),
+    pub tiles: Vec<(f64, f64)>,
+    pub scale: f64,
+}
+
+impl PatternPaint {
+    /// The smallest and largest tile scale.
+    pub const SCALE_RANGE: (f64, f64) = (0.01, 100.0);
+    /// The largest gap between tiles.
+    pub const MAX_SPACING: f64 = 10_000.0;
+
+    pub fn new(source: u64) -> Self {
+        Self { source, tile: PatternTile::Grid, scale: 1.0, spacing: (0.0, 0.0), align: PatternAlign::Start }
+    }
+
+    /// The cell for a `tw`×`th` source filling a `w`×`h` box; `None` when the source has no size.
+    pub fn cell(&self, tw: f64, th: f64, w: f64, h: f64) -> Option<PatternCell> {
+        let (lo, hi) = Self::SCALE_RANGE;
+        let scale = if self.scale.is_finite() { self.scale.clamp(lo, hi) } else { 1.0 };
+        let gap = |v: f64| if v.is_finite() { v.clamp(0.0, Self::MAX_SPACING) } else { 0.0 };
+        let (tw, th) = (tw * scale, th * scale);
+        if !(tw.is_finite() && th.is_finite() && tw > 1e-6 && th > 1e-6) {
+            return None;
+        }
+        let (px, py) = (tw + gap(self.spacing.0), th + gap(self.spacing.1));
+        let (size, tiles) = match self.tile {
+            PatternTile::Grid => ((px, py), vec![(0.0, 0.0)]),
+            // The shifted row (column) is drawn on both sides so it wraps across the cell's edge.
+            PatternTile::HorizontalHex => ((px, py * 2.0), vec![(0.0, 0.0), (px / 2.0, py), (-px / 2.0, py)]),
+            PatternTile::VerticalHex => ((px * 2.0, py), vec![(0.0, 0.0), (px, py / 2.0), (px, -py / 2.0)]),
+        };
+        let k = match self.align {
+            PatternAlign::Start => 0.0,
+            PatternAlign::Center => 0.5,
+            PatternAlign::End => 1.0,
+        };
+        let fin = |v: f64| if v.is_finite() { v } else { 0.0 };
+        Some(PatternCell { size, origin: (fin((w - tw) * k), fin((h - th) * k)), tiles, scale })
+    }
+}
+
 /// What a paint paints with.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -434,6 +520,7 @@ pub enum PaintKind {
     Solid { color: Color },
     Gradient(Gradient),
     Image(ImagePaint),
+    Pattern(PatternPaint),
 }
 
 /// One fill or stroke paint.
@@ -478,6 +565,11 @@ impl Paint {
         }
     }
 
+    /// Layer `source` (a node id) tiled at its own size.
+    pub fn pattern(source: u64) -> Self {
+        Self { kind: PaintKind::Pattern(PatternPaint::new(source)), opacity: 1.0, visible: true, blend: BlendMode::Normal }
+    }
+
     /// The solid colour (with the paint opacity folded into alpha), if solid.
     pub fn solid_color(&self) -> Option<Color> {
         match &self.kind {
@@ -497,6 +589,7 @@ impl Paint {
                 GradientKind::Diamond => "Diamond".into(),
             },
             PaintKind::Image(_) => "Image".into(),
+            PaintKind::Pattern(_) => "Pattern".into(),
         }
     }
 
@@ -505,7 +598,7 @@ impl Paint {
         match &mut self.kind {
             PaintKind::Solid { color } => f(color),
             PaintKind::Gradient(g) => g.stops.iter_mut().for_each(|s| f(&mut s.color)),
-            PaintKind::Image(_) => {}
+            PaintKind::Image(_) | PaintKind::Pattern(_) => {}
         }
     }
 
@@ -514,11 +607,13 @@ impl Paint {
         match &self.kind {
             PaintKind::Solid { color } => color.with_alpha(color.a * self.opacity),
             PaintKind::Gradient(g) => g.sample(0.0),
-            PaintKind::Image(_) => Color::from_rgb8_const(0xB3, 0xB3, 0xB3),
+            PaintKind::Image(_) | PaintKind::Pattern(_) => Color::from_rgb8_const(0xB3, 0xB3, 0xB3),
         }
     }
 }
 
+#[cfg(test)]
+mod pattern_tests;
 #[cfg(test)]
 mod profile_tests;
 #[cfg(test)]

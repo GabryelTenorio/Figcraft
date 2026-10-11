@@ -28,6 +28,9 @@ pub struct CanvasState {
     zoom_drag: Option<Pos2>,
     pub last_pointer: Option<Point>,
     preedit: Option<PreeditView>,
+    /// The pen pressure last reported during the current press (pen and stylus touches; the
+    /// winit backends and browsers that report it).
+    pressure: Option<f32>,
 }
 
 impl Default for CanvasState {
@@ -45,6 +48,7 @@ impl Default for CanvasState {
             zoom_drag: None,
             last_pointer: None,
             preedit: None,
+            pressure: None,
         }
     }
 }
@@ -118,7 +122,19 @@ impl FigApp {
 fn pointer_event(app: &FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) -> PointerEvent {
     let p = app.to_page(pos);
     let zoom = app.session.ds().map(|d| d.view.zoom).unwrap_or(1.0);
-    PointerEvent { kind, x: p.x, y: p.y, sx: f64::from(pos.x), sy: f64::from(pos.y), shift: m.shift, alt: m.alt, cmd: m.command, ctrl: m.ctrl, zoom }
+    PointerEvent {
+        kind,
+        x: p.x,
+        y: p.y,
+        sx: f64::from(pos.x),
+        sy: f64::from(pos.y),
+        shift: m.shift,
+        alt: m.alt,
+        cmd: m.command,
+        ctrl: m.ctrl,
+        zoom,
+        pressure: app.canvas.pressure,
+    }
 }
 
 pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
@@ -444,8 +460,22 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
     } else {
         None
     };
+    // Pen pressure comes with touch events (a pen on Windows, a stylus in a browser); a mouse,
+    // macOS and Linux tablets report none and draw at the stroke weight.
+    let force = ctx.input(|i| {
+        i.events.iter().rev().find_map(|e| match e {
+            egui::Event::Touch { force: Some(f), .. } if f.is_finite() && *f > 0.0 => Some(f.clamp(0.0, 1.0)),
+            _ => None,
+        })
+    });
+    if force.is_some() {
+        app.canvas.pressure = force;
+    }
     if let Some(k) = kind {
         let ev = pointer_event(app, k, pos, &mods);
+        if k == PointerKind::Up {
+            app.canvas.pressure = None;
+        }
         app.canvas.last_pointer = Some(Point::new(ev.x, ev.y));
         if let Err(e) = app.session.pointer(&ev) {
             app.toast(e.to_string());
@@ -505,9 +535,10 @@ impl TextOnScreen {
         Some(Self { layout, chars: t.char_count(), dy, world: doc.world_transform(id) })
     }
 
-    /// Layout point `(x, y)` on screen.
+    /// Layout point `(x, y)` on screen (on the path, for text on a path).
     pub(crate) fn at(&self, app: &FigApp, x: f64, y: f64) -> Pos2 {
-        let p = self.world * Point::new(x, y + self.dy);
+        let q = self.layout.warp_point(x, y);
+        let p = self.world * Point::new(q.x, q.y + self.dy);
         app.to_screen(p.x, p.y)
     }
 

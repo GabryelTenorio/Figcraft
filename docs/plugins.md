@@ -111,7 +111,7 @@ plugins: import them in the script.
 | `version`, `description` | Optional text. |
 | `main` | Required. The module, a `.wasm` path relative to the manifest, inside its folder. |
 | `api` | The plugin API version the plugin was written for: `1` (the default) or `2` (panels and settings). A manifest asking for a newer one than FigCraft runs is refused, so a plugin that needs panels fails clearly on an older FigCraft. |
-| `permissions.access` | `read` (the default): commands that leave the document as it is. `write`: edits too. |
+| `permissions.access` | `read` (the default): commands that leave the document as it is; such plugins also run from Dev Mode's Inspect tab. `write`: edits too. |
 | `permissions.commands` | Optional allowlist: exact command ids or prefixes ending in `*` (`node.*`). Empty: any command the access allows. |
 | `commands` | The menu commands, each `{id, label, params?}`. Without any, the plugin has one, `run`. |
 | `params[]` | `{name, label?, type, default?, options?, min?, max?}`; `type` is `text`, `number` (clamped to `min`/`max`), `boolean`, `select` (one of `options`, a menu), `list` (one of `options`, shown as a list) or `color` (hex, `#RRGGBB` or `#RRGGBBAA`). A default that doesn't fit is dropped. |
