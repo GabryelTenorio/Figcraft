@@ -677,12 +677,13 @@ fn select_all(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({"selection": ids}))
 }
 
+/// What Select all would select, less the selection (hidden and locked layers neither).
 fn select_inverse(s: &mut Session, _p: &Value) -> Result<Value> {
     let doc = s.doc()?;
     let sel = s.selection();
     let parent = sel.first().and_then(|i| doc.node(*i)).and_then(|n| n.parent).unwrap_or(s.page()?);
     let ids: Vec<NodeId> =
-        doc.get(parent)?.children.iter().copied().filter(|c| !sel.contains(c) && doc.node(*c).is_some_and(|n| !n.locked)).collect();
+        doc.get(parent)?.children.iter().copied().filter(|c| !sel.contains(c) && doc.node(*c).is_some_and(|n| n.visible && !n.locked)).collect();
     s.set_selection(ids.clone());
     Ok(json!({"selection": ids}))
 }

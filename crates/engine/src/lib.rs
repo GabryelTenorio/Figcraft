@@ -1301,6 +1301,8 @@ mod section_contents_tests;
 #[cfg(test)]
 mod section_tests;
 #[cfg(test)]
+mod selection_behaviour_tests;
+#[cfg(test)]
 mod selection_depth_tests;
 #[cfg(test)]
 mod shapebuilder_strokes_tests;
@@ -1320,6 +1322,8 @@ mod text_fill_tests;
 mod text_style_picker_tests;
 #[cfg(test)]
 mod tiff_tests;
+#[cfg(test)]
+mod transform_behaviour_tests;
 #[cfg(test)]
 mod variable_tests;
 #[cfg(test)]

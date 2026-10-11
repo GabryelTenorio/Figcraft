@@ -99,4 +99,12 @@ fn set_rotation_keeps_center() {
     let c1 = r * Point::new(50.0, 25.0);
     assert!((c0 - c1).hypot() < 1e-9);
     assert!((rotation_degrees(r) - 90.0).abs() < 1e-9);
+    // A flipped box stays flipped and reads back the rotation set, whichever way it was flipped.
+    for flip in [Affine::FLIP_X, Affine::FLIP_Y] {
+        for deg in [0.0, 30.0, -120.0] {
+            let r = set_rotation_about_center(xf * flip, 100.0, 50.0, deg);
+            assert!(is_flipped(r) && (rotation_degrees(r) - deg).abs() < 1e-9, "{deg}");
+            assert!((xf * flip * Point::new(50.0, 25.0) - r * Point::new(50.0, 25.0)).hypot() < 1e-9);
+        }
+    }
 }

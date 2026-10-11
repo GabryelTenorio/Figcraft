@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~28 points and ~195–355 h away (one Opus 5.5 agent; ~40–80 h wall-clock with 5 agents)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-11 · **Change:** minor (selection and transform behaviour suite and fixes; auto layout behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings; feature breadth ~79%; ready ~47%) · **Target:** Figma Design (desktop app 126.10.7)
 
 FigCraft is a clean-room, open-source, pure-Rust reimplementation of the Figma design workflow,
 native on macOS, Windows, Linux and FreeBSD and in the browser, fully drivable by agents through
@@ -19,7 +19,7 @@ start with [`docs/gaps.md`](docs/gaps.md).
 | Essentials user | **~53%** | estimated: core features 77.8% × 0.92 launch/stability × 0.92 discoverability × 0.8 opening files people send ([method](docs/target-app-parity.md#essentials-user)) |
 | Mainstream practitioner | **~43%** | estimated: weekly areas 66.8% × 0.9 interaction × 0.9 stability × 0.8 file exchange with Figma users ([method](docs/target-app-parity.md#mainstream-practitioner)) |
 | Remaining to beta | **~195–355 h** one agent | estimated |
-| Remaining to full parity | **~345–666 h** one agent (~92–160 h wall-clock with 5 agents) | estimated |
+| Remaining to full parity | **~342–661 h** one agent (~92–160 h wall-clock with 5 agents) | estimated |
 
 ### Readiness by audience
 
@@ -56,7 +56,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 
 | Dimension | Ready | Hours | Doc |
 |---|---|---|---|
-| Features (depth) | 57% (core editor 67%) | 60–115 | [target-app-parity](docs/target-app-parity.md) |
+| Features (depth) | 57% (core editor 68%) | 60–115 | [target-app-parity](docs/target-app-parity.md) |
 | UI/UX fidelity | 58% | 40–60 | [ui-parity](docs/ui-parity.md) |
 | File formats | 40% (no `.fig`) | 30–60 | [file-format-parity](docs/file-format-parity.md) |
 | Collaboration | 13% (core in; live sessions with document sync, cursors and text carets, the browser joins, invite links open the app; a self-hosted server with edit and view links and team libraries; preview) | 49–98 | [collaboration-parity](docs/collaboration-parity.md) |
@@ -73,7 +73,7 @@ Figma's own languages on the landed localization layer (15–25 h).
 | Area | Breadth | Ready | Hours | Doc |
 |---|---|---|---|---|
 | Canvas & navigation | 95% | 72% | 3–6 | [ui-parity](docs/ui-parity.md) |
-| Selection & transform | 95% | 68% | 6–10 | [ui-parity](docs/ui-parity.md) |
+| Selection & transform | 97% | 72% | 3–5 | [ui-parity](docs/ui-parity.md) |
 | Layers panel | 95% | 78% | 2–4 | [ui-parity](docs/ui-parity.md) |
 | Shapes & vector | 97% | 68% | 1–3 | [target-app-parity](docs/target-app-parity.md) |
 | Paint | 85% | 66% | 5–9 | [target-app-parity](docs/target-app-parity.md) |
@@ -190,6 +190,7 @@ Ranked; detail and milestones in [`docs/roadmap.md`](docs/roadmap.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-11 | minor | Selection and transform behaviour suite written from the public documentation (5 selection tests with 38 table rows, 11 transform tests) and its fixes: Alt-resizing shrinks about the centre too (it could only grow); groups, frames with Scale or stretch constraints and several layers with different rotations scale each layer along its own axes, keeping its rotation and flip (children turned 90° grew along the wrong axis, nested turned groups too); several layers dragged past an edge mirror and flip; a flipped layer reads back the rotation typed; resizes land on whole pixels with the pixel grid on; a press inside a layer smaller than its handles moves it and the nearest handle wins (the first in reach did), with its handles hidden under 16 px; locked layers selected in the layers panel get no handles and aren't dragged with the rest; the background of a top-level frame with layers starts a marquee inside it (it moved the frame); Select inverse skips hidden layers like Select all. Added: equal spacing snapping with labelled gaps, Cmd/Ctrl while resizing a frame ignores its constraints. Selection & transform 95%/68% → 97%/72%, 6–10 h → 3–5 h; core editor ready ~67% → ~68%; feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~345–666 h → ~342–661 h |
 | 2026-10-11 | minor | Auto layout behaviour suite written from the public documentation (64 layout cases, 8 command tests) and its fixes: a frame is never smaller than its padding, only the frame's inside stroke counts when strokes are included (and new auto layout includes them), auto gaps stop at 0, grid `fr` tracks behave like the CSS `fr` unit (a track never gets less than its content), canvas stacking is drawn, exported and hit (it was stored only). Added: auto gaps evenly and around, vertical wrap, grid cell alignment, strokes and canvas stacking controls. Auto layout 95%/68% → 98%/74%, 6–12 h → 3–6 h; percentages unchanged at this rounding; full parity ~348–672 h → ~345–666 h |
 | 2026-10-11 | minor | Display P3 honest minimum (gap 18): the colour picker of a Display P3 file warns when a colour is outside sRGB (Outside sRGB, with what the canvas and exports do), and View ▸ Soft-proof sRGB (`view.proofSrgb`) stripes the canvas pixels sRGB can't show. Why the canvas still shows sRGB: wgpu 30 can present Display P3 or extended-range sRGB surfaces (Metal, DX12, Vulkan, WebGPU canvases), but eframe/egui-wgpu 0.36 configure an 8-bit sRGB surface with no option for the format or colour space, and egui's renderer writes sRGB-encoded UI colours; showing P3 needs those two upstream (or a patched egui-wgpu). Hardware 13–27 h → 12–26 h; gap 18 6–12 h → 5–11 h; percentages, feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~362–696 h |
 | 2026-10-11 | minor | Several windows (gap 18): File ▸ New window, a tab's Open in new window or a tab dragged off the tab strip opens files in another window with its own tabs, panels and canvas, sharing the files, preferences, libraries and clipboard; each window draws only when it needs to (idle: ~0% CPU), closing one closes its files after asking about unsaved changes (the main window too, which takes over another window instead of quitting; the last window quits), and the control channel and MCP open, list, focus and capture windows (`window.new`, `window.list`, `window.focus`, `window` on any request); the screen-reader tree covers the main window only (eframe 0.36), so with a screen reader running files stay tabs; one window in the browser. Hardware 55% → 60%, 13–27 h → 10–21 h; gap 18 6–12 h → 4–8 h (P3 on screen left); feature breadth (~79%) and ready for real work (~47%) unchanged at this rounding; full parity ~363–697 h → ~360–691 h |
