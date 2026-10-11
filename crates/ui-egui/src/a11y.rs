@@ -784,6 +784,14 @@ pub fn toggle(resp: &Response, tip: &str, on: bool) {
     });
 }
 
+/// A status shown in place (a badge), with what it means.
+pub fn status(resp: &Response, label: &str, description: &str) {
+    node(resp, label, |n| {
+        n.set_role(Role::Status);
+        n.set_description(description);
+    });
+}
+
 /// A tab, selected when it's the one shown.
 pub fn tab(resp: &Response, label: &str, selected: bool) {
     node(resp, label, |n| {

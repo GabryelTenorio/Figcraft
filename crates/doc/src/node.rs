@@ -443,6 +443,10 @@ pub struct Node {
     /// Explicit variable modes (collection → mode) set on this container.
     #[serde(default, skip_serializing_if = "is_default")]
     pub var_modes: BTreeMap<CollectionId, ModeId>,
+    /// In a boolean group: how this operand combines with the operands below it (`None`: the
+    /// group's operation). Ignored for the bottom operand and outside boolean groups.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bool_op: Option<BoolOp>,
     /// Lock aspect ratio when resizing from the panel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub constrain_proportions: bool,
@@ -574,6 +578,7 @@ impl Node {
             styles: StyleRefs::default(),
             bound: BTreeMap::new(),
             var_modes: BTreeMap::new(),
+            bool_op: None,
             constrain_proportions: false,
             source: None,
             exposed: false,

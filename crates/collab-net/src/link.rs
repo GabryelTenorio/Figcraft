@@ -2,13 +2,14 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 
-use figcraft_collab::message::ClientMsg;
-use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, Role, SessionInfo};
+use figcraft_collab::message::{Access, ClientMsg};
+use figcraft_engine::live::{Bind, Event, HostOptions, LiveLink, PageInfo, Presence, PublishOptions, Role, SessionInfo};
 
-use crate::guest::{Guest, GuestConfig};
+use crate::guest::{Guest, GuestConfig, Publish};
 use crate::host::{Host, HostConfig};
 use crate::inbox::{Inbox, Waker};
-use crate::invite::Invite;
+use crate::invite::{Endpoint, Invite};
+use crate::manage::NO_TLS;
 use crate::net::NetLimits;
 use crate::token;
 
@@ -46,6 +47,13 @@ impl NetLink {
     pub fn with_guest_config(mut self, f: fn(GuestConfig) -> GuestConfig) -> Self {
         self.guest = f;
         self
+    }
+
+    /// How this link joins `invite`.
+    fn guest_config(&self, invite: Invite, name: &str) -> GuestConfig {
+        let mut cfg = (self.guest)(GuestConfig::new(invite, name.to_string()));
+        cfg.limits = self.limits;
+        cfg
     }
 
     /// The running host, if hosting.
@@ -98,7 +106,7 @@ impl LiveLink for NetLink {
             core: figcraft_collab::Limits::default(),
         };
         let host = Host::start(cfg, inbox.clone()).map_err(|e| format!("can't listen on {ip}: {e}"))?;
-        let invite = Invite { host: host.addr().to_string(), file, token };
+        let invite = Invite::new(host.addr().to_string(), file, token);
         let info = SessionInfo {
             role: Role::Host,
             me: host.me().client_id,
@@ -110,6 +118,7 @@ impl LiveLink for NetLink {
             url: invite.url(),
             address: host.addr().to_string(),
             network: !ip.is_loopback(),
+            access: Access::Edit,
         };
         self.inbox = Some(inbox);
         self.active = Some(Active::Host(host));
@@ -118,11 +127,31 @@ impl LiveLink for NetLink {
 
     fn join(&mut self, link: &str, name: &str) -> Result<(), String> {
         let invite = Invite::parse(link)?;
+        if invite.server.secure {
+            return Err(NO_TLS.into());
+        }
+        let cfg = self.guest_config(invite, name);
         self.leave();
         let inbox = Inbox::new(self.wake.clone());
-        let mut cfg = (self.guest)(GuestConfig::new(invite, name.to_string()));
-        cfg.limits = self.limits;
         let guest = Guest::start(cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
+        self.inbox = Some(inbox);
+        self.active = Some(Active::Guest(guest));
+        Ok(())
+    }
+
+    fn publish(&mut self, o: PublishOptions) -> Result<(), String> {
+        let (server, query) = Endpoint::parse(&o.server)?;
+        if server.secure {
+            return Err(NO_TLS.into());
+        }
+        let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
+        let key = key.ok_or("the server address needs the server's key (ws://host:port/?key=…; `figcraft-server key` prints it)")?;
+        // Until the upload is done the invite names only the server.
+        let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, &o.me);
+        self.leave();
+        let inbox = Inbox::new(self.wake.clone());
+        let job = Publish { server, key, name: o.name, doc: o.doc };
+        let guest = Guest::publish(job, cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
         self.inbox = Some(inbox);
         self.active = Some(Active::Guest(guest));
         Ok(())

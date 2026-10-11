@@ -6,6 +6,13 @@
 //! way every shape covering a picked region loses that area (it becomes a vector, or is deleted
 //! when nothing is left), so the rest of the drawing stays exactly where it was.
 //!
+//! **Strokes and open paths.** A visible stroke takes part as its outlined area (a [`Part`] of its
+//! own, above the shape's fill), so stroked lines and open paths split the regions they cross and
+//! the band a stroke paints is a region too. When a stroked shape takes part in a merge or a
+//! removal, its stroke becomes an outlined vector (filled with the stroke's paints) just above it,
+//! so both keep looking the same; open paths, which have no fill, are replaced by that outline. A
+//! region merged from a stroke is filled with the stroke's paints.
+//!
 //! With the Shape builder tool (Shift+M) the canvas highlights the region under the pointer; a
 //! click or a drag across regions merges them, and Alt (or the tool's Remove mode) removes them.
 //! Each gesture is one command, so one undo step. The arrangement is cached per document version
@@ -25,6 +32,13 @@ use crate::params::*;
 use crate::tools::{Cursor, Gesture, PointerEvent, PointerKind, ToolId};
 use crate::{EngineError, Result, Session, bad, spec};
 
+/// One input of the arrangement: a shape's fill area, or its stroke's outlined area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+pub struct Part {
+    pub id: NodeId,
+    pub stroke: bool,
+}
+
 /// One region of the arrangement, in page coordinates.
 #[derive(Clone, Debug)]
 pub struct Region {
@@ -32,6 +46,8 @@ pub struct Region {
     pub path: BezPath,
     /// The shapes covering it, top-most first.
     pub sources: Vec<NodeId>,
+    /// The fills and strokes covering it, top-most first.
+    pub parts: Vec<Part>,
     pub bounds: Rect,
     /// The outline flattened to polygons (outer first), for drawing.
     pub polys: Vec<Vec<Point>>,
@@ -47,6 +63,8 @@ pub struct Arrangement {
     ids: Vec<NodeId>,
     /// The shapes taking part, bottom to top.
     pub sources: Vec<NodeId>,
+    /// Their fills and strokes, bottom to top (a shape's stroke above its fill).
+    pub parts: Vec<Part>,
     pub regions: Vec<Region>,
 }
 
@@ -64,11 +82,11 @@ impl Arrangement {
     }
 }
 
-/// Can `id` take part? Visible, unlocked shapes, boolean groups and text with an area, outside
-/// instances and boolean groups (whose structure is fixed).
+/// Can `id` take part? Visible, unlocked shapes (lines and open paths through their strokes),
+/// boolean groups and text, outside instances and boolean groups (whose structure is fixed).
 fn usable(doc: &Document, id: NodeId) -> bool {
     let Some(n) = doc.node(id) else { return false };
-    let kind_ok = (n.kind.is_shape() && !matches!(n.kind, NodeKind::Line)) || matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Text(_));
+    let kind_ok = n.kind.is_shape() || matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Text(_));
     kind_ok
         && n.visible
         && !n.locked
@@ -98,11 +116,19 @@ pub fn eligible(doc: &Document, ids: &[NodeId]) -> Vec<NodeId> {
     out
 }
 
-/// A shape's fill area in page coordinates and whether it fills even-odd.
-fn world_outline(doc: &Document, id: NodeId) -> Option<(BezPath, bool)> {
-    let n = doc.node(id)?;
-    let (mut p, rule) = figcraft_render::node_outline(doc, n)?;
-    p.apply_affine(doc.world_transform(id));
+/// A part's area in page coordinates and whether it fills even-odd: the shape's fill area (closed
+/// shapes, boolean groups and text) or its visible stroke's outlined area.
+fn world_area(doc: &Document, part: Part) -> Option<(BezPath, bool)> {
+    let n = doc.node(part.id)?;
+    let (mut p, rule) = if part.stroke {
+        figcraft_render::stroke_fill(doc, n).map(|(p, rule)| ((*p).clone(), rule))?
+    } else {
+        if !(figcraft_doc::geometry::is_closed(n) || matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Text(_))) {
+            return None;
+        }
+        figcraft_render::node_outline(doc, n)?
+    };
+    p.apply_affine(doc.world_transform(part.id));
     (!p.elements().is_empty() && figcraft_pathops::finite(&p)).then_some((p, rule == figcraft_render::FillRule::EvenOdd))
 }
 
@@ -125,11 +151,20 @@ fn polygons(path: &BezPath, bounds: Rect) -> Vec<Vec<Point>> {
 
 fn compute(doc: Arc<Document>, uid: u64, ids: &[NodeId]) -> Result<Arrangement> {
     let mut sources = Vec::new();
+    let mut parts = Vec::new();
     let mut inputs = Vec::new();
     for id in eligible(&doc, ids) {
-        if let Some(o) = world_outline(&doc, id) {
+        let before = parts.len();
+        for part in [Part { id, stroke: false }, Part { id, stroke: true }] {
+            if inputs.len() < figcraft_pathops::MAX_ARRANGEMENT_INPUTS
+                && let Some(o) = world_area(&doc, part)
+            {
+                parts.push(part);
+                inputs.push(o);
+            }
+        }
+        if parts.len() > before {
             sources.push(id);
-            inputs.push(o);
         }
     }
     let faces = figcraft_pathops::faces(&inputs).map_err(|e| EngineError::Other(format!("shape builder: {e}")))?;
@@ -138,8 +173,16 @@ fn compute(doc: Arc<Document>, uid: u64, ids: &[NodeId]) -> Result<Arrangement> 
         .filter(|f| f.path.area().abs() > 1e-4)
         .map(|f| {
             let bounds = f.path.bounding_box();
+            let covering: Vec<Part> = f.cover.iter().rev().filter_map(|i| parts.get(*i).copied()).collect();
+            let mut by: Vec<NodeId> = Vec::new();
+            for p in &covering {
+                if !by.contains(&p.id) {
+                    by.push(p.id);
+                }
+            }
             Region {
-                sources: f.cover.iter().rev().filter_map(|i| sources.get(*i).copied()).collect(),
+                sources: by,
+                parts: covering,
                 polys: polygons(&f.path, bounds),
                 point: figcraft_doc::vector_faces::interior_point(&f.path),
                 bounds,
@@ -149,7 +192,7 @@ fn compute(doc: Arc<Document>, uid: u64, ids: &[NodeId]) -> Result<Arrangement> 
         .collect();
     // Reading order: top to bottom, then left to right.
     regions.sort_by(|a, b| a.bounds.y0.total_cmp(&b.bounds.y0).then(a.bounds.x0.total_cmp(&b.bounds.x0)));
-    Ok(Arrangement { doc, uid, ids: ids.to_vec(), sources, regions })
+    Ok(Arrangement { doc, uid, ids: ids.to_vec(), sources, parts, regions })
 }
 
 /// The arrangement of `ids` (default: the selection), from the cache when the document and the
@@ -230,9 +273,16 @@ fn reshape(doc: &mut Document, id: NodeId, area: &BezPath) -> Result<()> {
     crate::vectoredit::refit(doc, id)
 }
 
-/// A new vector for the page-space area `area`, styled like `style`, just above it.
-fn create_merged(doc: &mut Document, style: NodeId, area: &BezPath) -> Result<NodeId> {
-    let src = doc.get(style)?.clone();
+/// A new vector for the page-space area `area`, styled like part `style` (a stroke part: filled
+/// with the stroke's paints), just above its shape.
+fn create_merged(doc: &mut Document, style: Part, area: &BezPath) -> Result<NodeId> {
+    let mut src = doc.get(style.id)?.clone();
+    if style.stroke {
+        src.fills = std::mem::take(&mut src.strokes);
+        src.stroke = StrokeProps::default();
+        src.styles.fill = src.styles.stroke.take();
+    }
+    let style = style.id;
     let parent = src.parent.ok_or_else(|| EngineError::Other("no parent".into()))?;
     let pw = doc.world_transform(parent);
     if !(pw.determinant().is_finite() && pw.determinant().abs() > 1e-12) {
@@ -266,7 +316,8 @@ fn apply(s: &mut Session, cmd: &str, p: &Value, merge: bool) -> Result<Value> {
         return Err(bad(cmd, "no region picked: pass `regions` (indexes from shapeBuilder.regions) or `points` inside regions"));
     }
     let regions: Vec<&Region> = pick.iter().filter_map(|i| a.regions.get(*i)).collect();
-    let touched: BTreeSet<NodeId> = regions.iter().flat_map(|r| r.sources.iter().copied()).collect();
+    let touched_parts: BTreeSet<Part> = regions.iter().flat_map(|r| r.parts.iter().copied()).collect();
+    let touched: BTreeSet<NodeId> = touched_parts.iter().map(|p| p.id).collect();
     // Merging every region of a single shape would only replace it with a copy of itself.
     let whole_shape =
         touched.len() == 1 && a.regions.iter().enumerate().all(|(i, r)| pick.contains(&i) || !r.sources.iter().any(|x| touched.contains(x)));
@@ -276,40 +327,73 @@ fn apply(s: &mut Session, cmd: &str, p: &Value, merge: bool) -> Result<Value> {
     let doc = s.doc_mut()?;
     let created = if merge {
         let area = figcraft_pathops::union_faces(regions.iter().map(|r| &r.path)).map_err(|e| EngineError::Other(e.to_string()))?;
-        let style = regions.first().and_then(|r| r.sources.first().copied()).ok_or_else(|| bad(cmd, "the region has no shape"))?;
+        let style = regions.first().and_then(|r| r.parts.first().copied()).ok_or_else(|| bad(cmd, "the region has no shape"))?;
         Some(create_merged(doc, style, &area)?)
     } else {
         None
     };
-    let mut removed = Vec::new();
-    let mut changed = Vec::new();
-    for src in a.sources.iter().copied().filter(|i| touched.contains(i)) {
+    // What part `part` keeps: the regions it covers that weren't picked, as one area (`None`:
+    // nothing).
+    let kept = |part: Part| -> Result<Option<BezPath>> {
         let keep: Vec<&BezPath> =
-            a.regions.iter().enumerate().filter(|(i, r)| !pick.contains(i) && r.sources.contains(&src)).map(|(_, r)| &r.path).collect();
+            a.regions.iter().enumerate().filter(|(i, r)| !pick.contains(i) && r.parts.contains(&part)).map(|(_, r)| &r.path).collect();
         if keep.is_empty() {
-            doc.remove(src)?;
-            removed.push(src);
-            continue;
+            return Ok(None);
         }
         let area = figcraft_pathops::union_faces(keep).map_err(|e| EngineError::Other(e.to_string()))?;
-        if area.elements().is_empty() {
-            doc.remove(src)?;
-            removed.push(src);
+        Ok((!area.elements().is_empty()).then_some(area))
+    };
+    let mut removed = Vec::new();
+    let mut changed = Vec::new();
+    let mut outlined: Vec<(NodeId, NodeId)> = Vec::new();
+    for src in a.sources.iter().copied().filter(|i| touched.contains(i)) {
+        let (fill, stroke) = (Part { id: src, stroke: false }, Part { id: src, stroke: true });
+        // The stroke becomes an outline of its own (what's left of it), the shape loses it.
+        if a.parts.contains(&stroke) {
+            if let Some(area) = kept(stroke)? {
+                outlined.push((src, create_merged(doc, stroke, &area)?));
+            }
+            let n = doc.get_mut(src)?;
+            n.strokes.clear();
+            n.styles.stroke = None;
+        }
+        let left = if !a.parts.contains(&fill) {
+            None
+        } else if touched_parts.contains(&fill) {
+            kept(fill)?
         } else {
-            reshape(doc, src, &area)?;
+            // The fill wasn't picked: the shape stays as it is.
             changed.push(src);
+            continue;
+        };
+        match left {
+            Some(area) => {
+                reshape(doc, src, &area)?;
+                changed.push(src);
+            }
+            None => {
+                doc.remove(src)?;
+                removed.push(src);
+            }
         }
     }
-    // The selection stays (minus what went) and gains the new shape unless a selected group
-    // already holds it, so the tool keeps working on the same shapes.
+    // The selection stays (minus what went, plus the outlines of selected strokes) and gains the
+    // new shape unless a selected group already holds it, so the tool keeps working on the same
+    // shapes.
     let mut sel: Vec<NodeId> = ids.iter().copied().filter(|i| !removed.contains(i)).collect();
+    for (src, o) in &outlined {
+        if ids.contains(src) {
+            sel.push(*o);
+        }
+    }
     if let Some(c) = created
         && !doc.ancestors(c).iter().any(|x| sel.contains(x))
     {
         sel.push(c);
     }
     s.set_selection(sel);
-    Ok(json!({"id": created, "changed": changed, "removed": removed, "regions": pick}))
+    let outlines: Vec<NodeId> = outlined.iter().map(|(_, o)| *o).collect();
+    Ok(json!({"id": created, "changed": changed, "removed": removed, "outlines": outlines, "regions": pick}))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -317,7 +401,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "shapeBuilder.regions",
             "Shape builder regions",
-            "{ids?} → {sources (bottom to top), regions: [{index, path (SVG, page), sources (top-most first), bounds [x, y, w, h], point [x, y] inside}]}",
+            "{ids?} → {sources (bottom to top), regions: [{index, path (SVG, page), sources (top-most first), parts: [{id, stroke}] (the fills and outlined strokes covering it, top-most first), bounds [x, y, w, h], point [x, y] inside}]} — visible strokes take part as their outlined areas, so stroked lines and open paths split regions",
             false,
             |s, p| {
                 let ids = targets(s, p);
@@ -331,6 +415,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             "index": i,
                             "path": r.path.to_svg(),
                             "sources": r.sources,
+                            "parts": r.parts,
                             "bounds": [r.bounds.x0, r.bounds.y0, r.bounds.width(), r.bounds.height()],
                             "point": r.point.map(|q| [q.x, q.y]),
                         })
@@ -342,14 +427,14 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "shapeBuilder.merge",
             "Merge regions",
-            "{ids?, regions?: [i, ...], points?: [[x, y], ...] (page)} — one new shape from the regions, styled like the top-most shape over the first; the shapes lose those areas",
+            "{ids?, regions?: [i, ...], points?: [[x, y], ...] (page)} → {id, changed, removed, outlines, regions} — one new shape from the regions, styled like the top-most fill or stroke over the first; the shapes lose those areas (strokes of the shapes involved become outlined vectors: `outlines`)",
             true,
             |s, p| apply(s, "shapeBuilder.merge", p, true)
         ),
         spec!(
             "shapeBuilder.remove",
             "Remove regions",
-            "{ids?, regions?: [i, ...], points?: [[x, y], ...] (page)} — the shapes covering the regions lose them",
+            "{ids?, regions?: [i, ...], points?: [[x, y], ...] (page)} → {changed, removed, outlines, regions} — the shapes (and strokes) covering the regions lose them",
             true,
             |s, p| apply(s, "shapeBuilder.remove", p, false)
         ),

@@ -16,10 +16,14 @@ use crate::limits::NetLimits;
 /// What the host tells everyone when it stops (the WebSocket close reason).
 pub const ENDED: &str = "The host ended the session";
 
-/// WebSocket close codes the host uses: it ended the session (going away), or it refused you
-/// (policy).
+/// What a server tells everyone when it stops (they reconnect once it is back).
+pub const RESTARTING: &str = "The server is restarting";
+
+/// WebSocket close codes hosts use: the app's session ended (going away), you were refused
+/// (policy), or the server is restarting (service restart: try again).
 pub(crate) const CLOSE_AWAY: u16 = 1001;
 pub(crate) const CLOSE_POLICY: u16 = 1008;
+pub(crate) const CLOSE_RESTART: u16 = 1012;
 
 /// How a guest connects and reconnects.
 #[derive(Clone, Debug)]
@@ -72,6 +76,7 @@ pub(crate) fn closed(code: u16, reason: &str) -> Outcome {
     match code {
         CLOSE_AWAY => Outcome::Ended(if reason.is_empty() { ENDED.to_string() } else { reason.to_string() }),
         CLOSE_POLICY => Outcome::Refused(reason.to_string()),
+        CLOSE_RESTART => Outcome::Retry(if reason.is_empty() { RESTARTING.to_string() } else { reason.to_string() }),
         _ => Outcome::Retry("the host closed the connection".into()),
     }
 }
@@ -143,7 +148,7 @@ pub(crate) enum Taken {
 /// in answer must go out on this connection.
 pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Seen, resume: &Resuming, welcomed: &dyn Fn()) -> Taken {
     match m {
-        ServerMsg::Welcome { session, client_id, seq, ref peers, .. } => {
+        ServerMsg::Welcome { session, client_id, seq, ref peers, access, .. } => {
             if let Ok(mut r) = resume.lock() {
                 *r = Some(Resume { session, client_id, seq });
             }
@@ -159,8 +164,9 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
                 pages: Vec::new(),
                 link: inv.link(),
                 url: inv.url(),
-                address: inv.host.clone(),
+                address: inv.server.display(),
                 network: !inv.loopback(),
+                access,
             };
             seen.peers = peers.clone();
             seen.info = Some(info.clone());
@@ -201,7 +207,8 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
             inbox.push(Event::Sync(m));
         }
         ServerMsg::Reject { .. } => inbox.push(Event::Sync(m)),
-        ServerMsg::Pong => {}
+        // Answers for managing connections: not this one's.
+        ServerMsg::Pong | ServerMsg::Admin(_) => {}
     }
     Taken::Continue
 }

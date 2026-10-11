@@ -38,9 +38,15 @@ pub use client::{Client, HISTORY_LIMIT};
 pub use diff::{Diff, diff};
 pub use figcraft_doc::{Document, NodeId};
 pub use history::{BatchKind, Notice};
-pub use message::{Accepted, CatchUp, ClientMsg, EditingText, Hello, Peer, Presence, Processed, Resume, ServerMsg};
+pub use message::{Accepted, Access, CatchUp, ClientMsg, EditingText, Hello, Peer, Presence, Processed, Resume, ServerMsg};
 pub use replica::{Applied, Mode, Replica};
-pub use server::{Outgoing, Server, SessionState};
+pub use server::{Journal, Outgoing, Server, SessionState, VIEW_ONLY};
+
+/// Compare secrets (tokens, keys, their hashes) without stopping at the first difference.
+pub fn same_secret(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
 
 /// What can go wrong syncing.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -118,6 +124,8 @@ mod diff_tests;
 mod entry_ids_tests;
 #[cfg(test)]
 mod frac_tests;
+#[cfg(test)]
+mod journal_tests;
 #[cfg(test)]
 mod reconnect_tests;
 #[cfg(test)]

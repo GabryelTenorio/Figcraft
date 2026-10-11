@@ -993,6 +993,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 #[cfg(test)]
 mod blur_tests;
 #[cfg(test)]
+mod boolean_hit_tests;
+#[cfg(test)]
 mod client_id_tests;
 #[cfg(test)]
 mod colors_tests;
@@ -1014,5 +1016,7 @@ mod proto_expr_parse_tests;
 mod proto_expr_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod width_sides_tests;
 #[cfg(test)]
 mod width_tests;

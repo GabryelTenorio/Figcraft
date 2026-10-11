@@ -10,8 +10,11 @@ handling and offline queueing with reconnect (`crates/collab`, wired into the en
 session and the transport). **Step 4 is implemented**: the browser build joins sessions a desktop
 app hosts, and `figcraft://` invite links open the app and join. Styles, variables, collections,
 modes and comments created in a session take ids from their creator's id space, and others' text
-carets show on the canvas. The rest is the plan the next
-implementation PRs follow and update; sections say what is built.
+carets show on the canvas. **Step 5 is implemented**: the
+standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
+many files with persistence and compaction, and share links that let people edit or only view;
+the app publishes to it. The rest is the plan the next implementation PRs follow and update;
+sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
 cursors and selections live, on the desktop app and in the browser, without a central cloud
@@ -136,7 +139,7 @@ As built:
   hash, the encoded bytes as base64). The page order is the pages' positions.
 - **Next**: this file's published library (it embeds a snapshot document; it moves with an asset
   channel, together with images, which then stop travelling inside batches); the version history
-  (kept beside the document, not in it) with the standalone server; finer entries for modes,
+  (kept beside the document, not in it) on the standalone server; finer entries for modes,
   per-mode variable values and comment replies (see Identifiers).
 - **Changes** (`Change`): `Create {id, kind, parent, position, props}` (only the properties that
   differ from a new node of that kind), `Set {id, prop, value}`, `Delete {id}` (the subtree; a
@@ -152,8 +155,9 @@ As built:
 
 ## Messages
 
-*Built* (`figcraft_collab::message`): the types below and both encodings. The transport and the
-presence UI come in step 2.
+*Built* (`figcraft_collab::message`): the types below and both encodings. Protocol version 2 (the
+`Hello`'s `protocol`): the welcome says what the client may do, and a connection can manage a
+server's files instead of joining one; a client of another version is refused with the reason.
 
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
@@ -174,17 +178,20 @@ Client → server:
 | `Presence {cursor?, selection?, viewport?, editing_text? {node, caret, selection?}}` | Ephemeral; throttled to ~30 Hz, latest wins. |
 | `Ack {seq}` | Highest sequence applied (lets the server trim per-client buffers). |
 | `Ping` | Keep-alive. |
+| `Manage {protocol, key, client_version}` | Instead of `Hello`: manage a server's files with its key. |
+| `Admin {publish {name, snapshot} \| files \| links {file} \| createLink {file, access, label} \| revoke {file, link} \| remove {file}}` | A request on a managing connection; each gets one `Admin` reply, in order. |
 
 Server → client:
 
 | Message | Meaning |
 |---|---|
-| `Welcome {session, client_id, seq, catch_up: Snapshot or Delta, processed, peers}` | Join accepted: the full document, or for a reconnecting client the batches it missed; what the server did with that client's batches (`processed {last_batch, refused}`). |
+| `Welcome {session, client_id, seq, catch_up: Snapshot or Delta, processed, peers, access}` | Join accepted: the full document, or for a reconnecting client the batches it missed; what the server did with that client's batches (`processed {last_batch, refused}`); `access` is `edit` or `view` (a view link: every batch is refused). |
 | `Changes {seq, author, batch_id, changes}` | Accepted changes, in order, to everyone (the author gets its own back as confirmation). |
 | `Reject {batch_id, reason, fixes: [Change]}` | A batch (or part of it) was invalid: the current values to roll back to. |
 | `Presence {client_id, …}` / `PeerJoined` / `PeerLeft` | Other people's cursors, selections and arrivals. |
 | `Refused {reason}` | The connection is refused (protocol version, token, session full, a message out of place). |
 | `Pong` | Keep-alive. |
+| `Admin {ready \| published {file, edit, view} \| files \| links \| link \| done \| failed {reason}}` | A managing connection's answer: the key is right, a published file with its first two links (tokens shown once), listings, a new link, done, or why not. |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -352,11 +359,12 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   `ws://`/`wss://` URL). Others on the same network (or through a forwarded port / VPN such as a
   mesh VPN) join with "File ▸ Join live session" or by opening the link. When the host leaves, the
   session ends; everyone keeps a local copy.
-- **Self-hosted server** (next step): the same server as a `figcraft-server` binary that keeps many
-  files, persists them (a snapshot plus an append-only log of accepted batches, compacted into new
-  snapshots), and survives restarts. TLS comes from a reverse proxy (`wss://`).
-- **Auth**: an unguessable per-session token in the invite link (first step); accounts and per-file
-  permissions (view, edit) come with the standalone server.
+- **Self-hosted server**: the same server as a `figcraft-server` binary that keeps many files,
+  persists them (a snapshot plus an append-only log of accepted batches, compacted into new
+  snapshots), and survives restarts. TLS comes from a reverse proxy (`wss://`). *Built*, below.
+- **Auth**: an unguessable per-session token in the invite link (hosting from the app); per-file
+  share links that let people edit or only view, and a server key that manages files (the
+  standalone server). User accounts come later.
 
 *Built* (hosting from the app and joining):
 
@@ -426,8 +434,56 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   page refuses other hosts up front with a message instead of failing obscurely. To join from
   other machines, serve the web build over `http://` on a trusted network (locally:
   `python3 -m http.server 8767` in the built site, then `http://localhost:8767/` or the machine's
-  LAN address); `wss://` comes with the standalone server behind TLS. Some browsers also ask
-  before a public site may reach private network addresses.
+  LAN address), or use `wss://` links of a `figcraft-server` behind a TLS reverse proxy (the
+  browser opens them; see *Built (the standalone server)*). Some browsers also ask before a public
+  site may reach private network addresses.
+
+*Built* (the standalone server, `apps/figcraft-server`; running it: [`server.md`](server.md)):
+
+- **One hub for both hosts.** The app's session host and the server run the same hub
+  (`crates/collab-net/src/hub.rs`): the listener, a reader and a writer thread per connection,
+  and one thread owning a core `Server` per open file. What differs sits behind a `Backend`: which
+  hellos it admits and with what access, where a file that isn't open comes from, what it keeps
+  of the changes, and the managing connections. The app's backend has one file and its session
+  token; the server's is its data directory. Hellos carry the token to the backend, which checks
+  it; the sessions themselves keep no secret.
+- **Files and share links.** Each file has links, each with an access (`edit` or `view`), a label
+  and a 128-bit token stored only as its SHA-256 hash (compared in constant time). A hello names
+  the file and a link's token; the server joins it with that link's access (`Server::join_as`). A
+  viewer gets every change and everyone's presence and sends its own presence; each batch it
+  sends is refused (`Reject`, "you can only view this file") and rolled back. Revoking a link
+  (or removing a file) disconnects whoever joined with it, with the reason; the link no longer
+  joins.
+- **Links** name the server's endpoint: `figcraft://join?host=<host:port>&file=…&token=…` for a
+  plain `ws://` endpoint at `/`, `figcraft://join?server=<ws(s)://host[:port][/path]>&file=…&token=…`
+  for any endpoint (TLS, a path behind a proxy), or `ws(s)://…?file=…&token=…`. The desktop app
+  can't open `wss://` yet (no TLS of its own); the browser can.
+- **Managing files.** A connection that opens with `Manage {key}` instead of `Hello` sends
+  `Admin` requests: publish a document (its snapshot) as a new file, which returns an edit link
+  and a view link; list files and links; make and revoke links; remove a file. The server key is
+  128 bits in the data directory. The server's command line (`figcraft-server files|links|key`)
+  uses the same requests when a server is running on the directory, else it changes the directory
+  itself (one process holds it at a time: an OS file lock).
+- **Publishing from the app.** `collab.publish {server, name?}` (Share ▸ Publish to server…)
+  uploads the open document over a managing connection, then joins the new file with its edit
+  link on the same connection thread; the tab becomes the session's synced document (read-only
+  until the welcome arrives, its undo history per person after) and `collab.peers` reports
+  `published {server, file, name, edit, view}`.
+- **Persistence.** Each open file's server keeps a journal of what changes its lasting state
+  (`Server::journaling`: client ids handed out, accepted batches, refused batch ids); the store
+  appends it to the file's log and syncs it once per burst of messages, before the hub sends what
+  the server said, so a confirmed edit is never lost to a crash. A restart restores the last
+  snapshot (`Server::restore`) and replays the log (`Server::replay`; entries already in the
+  snapshot change nothing, a log that stops making sense is cut there). Compaction writes the
+  next generation's snapshot (`Server::state`) and an empty log of that generation (a log of an
+  older generation is from a compaction cut short and is ignored), after 1,000 entries or 16 MiB
+  of log, when everyone leaves (the file is then closed) and when the server stops. Snapshots and
+  logs carry CRC-32 checksums; writes go to a temporary file that is flushed and renamed.
+  Damaged files are skipped and reported at startup, never deleted; a damaged log end is dropped.
+- **Restarts.** A stopping server closes connections with code 1012 (service restart), which
+  clients take as a dropped connection: they reconnect with their usual backoff and resume as the
+  same clients (the session id, client ids and log come back with the file), sending what they
+  made meanwhile. The app's session ending (code 1001) stays final.
 
 *Built* (opening invite links):
 
@@ -487,7 +543,8 @@ Decisions, as built:
 - **Session state.** `Server::state` returns what a server needs to carry on after a restart
   (`SessionState`: snapshot, sequence number, session id, client-id counter, the clients that can
   reconnect and what was done with their batches, deleted ids, the log), as one serde value; the
-  standalone server will store it.
+  standalone server stores it as each file's snapshot, with a journal of the changes since
+  (`Server::journaling`, `Server::replay`).
 
 Tests: random sessions where clients drop and come back mid-session converge, with the default log
 and with logs short enough that long absences fall back to snapshots; targeted tests cover a lost
@@ -496,9 +553,9 @@ saved state.
 
 ## Agents, MCP and the CLI
 
-Everything stays a command: `collab.host`, `collab.join`, `collab.leave`, `collab.peers`,
-`collab.follow` are ordinary commands, so the CLI, the control channel and MCP can host and join
-sessions; an agent can be a participant with its own cursor.
+Everything stays a command: `collab.host`, `collab.join`, `collab.publish`, `collab.leave`,
+`collab.peers`, `collab.follow` are ordinary commands, so the CLI, the control channel and MCP can
+host, publish and join sessions; an agent can be a participant with its own cursor.
 
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
@@ -522,12 +579,12 @@ chooses to share on the network; the default is the invite link with a random to
   popover says who can join.
 - **The token.** 128 bits from the operating system's random number generator, URL-safe base64,
   new for every session (stopping and starting again invalidates old links). It is compared in
-  constant time (the core's `Server`). It is in the invite link by design, so whoever holds the link
+  constant time (the hub's backend). It is in the invite link by design, so whoever holds the link
   can join until the session stops: share it like a password. It never travels in the WebSocket
   request (the path is `/`), so proxies don't log it; FigCraft never logs it (logs name addresses
   and ports only), and errors about links never echo the link. Traffic is not encrypted (`ws://`):
-  on a shared network, others on the path could read presence and the token. TLS (`wss://`) comes
-  with the standalone server behind a reverse proxy; until then, use a trusted LAN or a VPN.
+  on a shared network, others on the path could read presence and the token. Use a trusted LAN
+  or a VPN; TLS (`wss://`) comes from a reverse proxy in front of a `figcraft-server`.
 - **Limits.** At most 64 open sockets (joined or not) and the core's 256 people; a connection must
   finish the WebSocket handshake and say hello within 10 s, and one silent for 45 s is dropped
   (clients ping every 15 s); client messages are at most 16 MiB (what the host sends keeps the
@@ -536,8 +593,32 @@ chooses to share on the network; the default is the invite link with a random to
   outgoing queue fills (it can't keep up); names are cut to 64 characters without control
   characters; presence numbers must be finite and selections are cut to 10,000 ids.
 - **Malformed input.** Anything that isn't a binary message of the current wire version that
-  decodes in full is answered with `Refused` and a close; the first message must be `Hello`, for
-  this file. The invite parser and the host's reader are fuzzed (`crates/collab-net`).
+  decodes in full is answered with `Refused` and a close; the first message must be `Hello` (for
+  this file) or, on a server, `Manage`. The invite parser and the host's reader are fuzzed
+  (`crates/collab-net`), and so are the server's readers of its own files and its port
+  (`apps/figcraft-server`).
+
+*Built* (the standalone server), and what it adds to the threat model:
+
+- **Who can connect.** Whoever can reach the server's port (127.0.0.1 by default; the operator
+  chooses an interface or a reverse proxy). Joining a file needs one of its link tokens; managing
+  files needs the server key. There are no accounts: a link is a bearer secret for one file and
+  one access level, so share it like a password and revoke it when it leaks; the server key is
+  the administrator's and should stay with trusted people.
+- **Secrets at rest.** Link tokens are kept only as SHA-256 hashes, so a copy of the data
+  directory can't be used to join (the documents themselves are in it, unencrypted). The server
+  key is plain text in the data directory (owner-only on Unix): reading the directory already
+  gives every file. A lost link can't be shown again; revoke it and make a new one.
+- **View access is enforced by the server**, not by the app: a viewer's batches are refused
+  whatever client sends them; the app's read-only state is for clarity.
+- **Abuse limits.** On top of the transport's: at most `max_files` files, `max_file_mb` per file
+  (a publish over it is refused), `max_links` links per file, `max_people` per file and
+  `max_connections` sockets.
+- **TLS.** None in the server: a reverse proxy terminates it. Tokens and keys are never in the
+  WebSocket request (only in the first message), so proxies don't log them, and the server logs
+  file and link ids, never secrets.
+- **Not yet**: accounts and per-person permissions, per-address rate limits, audit logs,
+  encryption at rest.
 
 ## Implementation plan
 
@@ -558,4 +639,8 @@ chooses to share on the network; the default is the invite link with a random to
    carets on the canvas.
 4. **Browser client** (WebSocket through `web-sys`). **Done** (the web build joins
    desktop-hosted sessions; `figcraft://` links open the desktop app and join).
-5. **Standalone `figcraft-server`** with persistence, compaction and accounts.
+5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
+   **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
+   publishing from the app; see [`server.md`](server.md)).
+6. **Accounts**: people signing in, per-person permissions, teams and projects; TLS in the
+   desktop app.

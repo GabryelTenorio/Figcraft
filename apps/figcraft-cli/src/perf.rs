@@ -158,6 +158,7 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
         Point::new(bounds.x0 + bounds.width() * fx, bounds.y0 + bounds.height() * fy)
     };
     table.put(col, "hit test (µs each)", mean(hits, |i| _ = doc.hit_test(page, pt(i), 1.0)) * 1000.0);
+    measure_boolean_drag(table, col);
 
     let mut s = Session::with_document(doc);
     let doc = s.doc().map_err(failed)?.clone();
@@ -238,6 +239,41 @@ fn measure(table: &mut Table, col: usize, layers: usize) -> CliResult<()> {
     exec(&mut s, "transform.move", json!({"dx": 10, "dy": 0}));
     table.put(col, "select all + move every screen", ms(t));
     Ok(())
+}
+
+/// Live boolean editing: one drag frame of an operand of a boolean group of 24 overlapping
+/// circles, i.e. the group's result recomputed with the operand somewhere new (each frame a new
+/// position, as in a real drag). The top operand recombines one step; the bottom one, all 23.
+fn measure_boolean_drag(table: &mut Table, col: usize) {
+    let mut d = Document::new("booleans");
+    let Some(page) = d.first_page() else { return };
+    let Ok(b) = d.create(page, NodeKind::BooleanOp { op: figcraft_doc::BoolOp::Union }, "Union", 0.0, 0.0, 0.0, 0.0) else { return };
+    let kids: Vec<NodeId> = (0..24)
+        .filter_map(|i| {
+            let a = f64::from(i) * std::f64::consts::TAU / 24.0;
+            d.create(
+                b,
+                NodeKind::Ellipse { start: 0.0, sweep: std::f64::consts::TAU, inner: 0.0 },
+                "Circle",
+                200.0 + 120.0 * a.cos(),
+                200.0 + 120.0 * a.sin(),
+                90.0,
+                90.0,
+            )
+            .ok()
+        })
+        .collect();
+    let _ = d.fit_to_children(b);
+    let frame = |which: usize, k: usize| {
+        let mut moved = d.clone();
+        if let Some(n) = kids.get(which).and_then(|id| moved.node_mut(*id)) {
+            // Distinct offsets per run and column, so no frame is served from the cache.
+            n.transform = figcraft_doc::geom::Affine::translate((0.37 * (k + 1) as f64 + 1000.0 * col as f64, 0.11 * k as f64)) * n.transform;
+        }
+        moved.node(b).and_then(|n| figcraft_render::node_outline(&moved, n)).is_some()
+    };
+    table.put(col, "boolean of 24: drag frame, top operand", mean(20, |k| _ = frame(23, k)));
+    table.put(col, "boolean of 24: drag frame, bottom operand", mean(5, |k| _ = frame(0, 100 + k)));
 }
 
 /// Time the hot paths for each document size in `sizes` (layers) and, with the synthetic design

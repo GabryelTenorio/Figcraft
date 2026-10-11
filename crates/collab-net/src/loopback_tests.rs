@@ -93,7 +93,7 @@ fn start_with(limits: NetLimits, core: Limits) -> (Host, Probe, Invite) {
         core,
     };
     let host = Host::start(cfg, probe.inbox.clone()).unwrap();
-    let invite = Invite { host: host.addr().to_string(), file: FILE.into(), token: TOKEN.into() };
+    let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
     (host, probe, invite)
 }
 
@@ -240,7 +240,7 @@ fn a_wrong_token_or_file_is_refused() {
 fn unreachable_hosts_fail_at_once() {
     // A port nothing listens on.
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
-    let (_g, mut gp) = join(&Invite { host: free.to_string(), file: FILE.into(), token: TOKEN.into() }, "Ada");
+    let (_g, mut gp) = join(&Invite::new(free.to_string(), FILE, TOKEN), "Ada");
     gp.wait("a failure", |e| e.iter().any(|e| matches!(e, Event::Status(Status::Failed { reason }) if reason.starts_with("Couldn't join"))));
     assert!(!gp.events.iter().any(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))), "a first join doesn't retry");
 }
@@ -292,7 +292,7 @@ fn a_newcomer_sees_where_everyone_already_is() {
 #[test]
 fn presence_is_throttled_and_the_latest_wins() {
     let (mut host, _hp, invite) = start();
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut watcher = Raw::hello(addr, TOKEN);
     assert!(matches!(watcher.next(), Some(ServerMsg::Welcome { .. })));
     let mut sender = Raw::hello(addr, TOKEN);
@@ -336,7 +336,7 @@ fn leaving_and_dropping_clean_up() {
     bp.wait("Bo sees Ada leave", |e| e.iter().any(|e| matches!(e, Event::PeerLeft(id) if *id == ada)));
     connections_settle(&host, 1);
     // A connection that just vanishes (no close) counts as leaving too.
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut raw = Raw::hello(addr, TOKEN);
     let Some(ServerMsg::Welcome { client_id: rid, .. }) = raw.next() else { panic!("no welcome") };
     drop(raw);
@@ -366,7 +366,7 @@ fn a_full_session_refuses_more() {
 #[test]
 fn too_many_connections_are_turned_away() {
     let (mut host, _hp, invite) = start_with(NetLimits { max_connections: 2, ..fast_limits() }, Limits::default());
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut a = Raw::hello(addr, TOKEN);
     let mut b = Raw::hello(addr, TOKEN);
     assert!(a.next().is_some() && b.next().is_some());
@@ -380,7 +380,7 @@ fn too_many_connections_are_turned_away() {
 #[test]
 fn oversized_messages_end_the_connection() {
     let (mut host, mut hp, invite) = start_with(NetLimits { max_client_message: 4096, ..fast_limits() }, Limits::default());
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut raw = Raw::hello(addr, TOKEN);
     let Some(ServerMsg::Welcome { client_id, .. }) = raw.next() else { panic!("no welcome") };
     raw.send(&ClientMsg::Presence(Presence { selection: Some((0..5000).map(NodeId).collect()), ..Presence::default() }));
@@ -395,7 +395,7 @@ fn oversized_messages_end_the_connection() {
 #[test]
 fn flooding_ends_the_connection() {
     let (mut host, _hp, invite) = start_with(NetLimits { rate: 5.0, burst: 20.0, ..fast_limits() }, Limits::default());
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut raw = Raw::hello(addr, TOKEN);
     assert!(matches!(raw.next(), Some(ServerMsg::Welcome { .. })));
     for _ in 0..100 {
@@ -410,7 +410,7 @@ fn flooding_ends_the_connection() {
 #[test]
 fn malformed_frames_are_refused() {
     let (mut host, _hp, invite) = start();
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     // Garbage instead of a hello, a wrong wire version, text, and something other than a hello.
     type Case = (Box<dyn Fn(&mut Raw)>, &'static str);
     let cases: Vec<Case> = vec![
@@ -445,7 +445,7 @@ fn random_frames_never_hurt_the_host() {
     use proptest::strategy::{Strategy, ValueTree};
     use proptest::test_runner::TestRunner;
     let (mut host, _hp, invite) = start();
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut runner = TestRunner::deterministic();
     let mut join_first = false;
     let frames = proptest::collection::vec(proptest::collection::vec(proptest::num::u8::ANY, 0..200), 1..6);
@@ -476,7 +476,7 @@ fn random_frames_never_hurt_the_host() {
 #[test]
 fn silent_connections_time_out() {
     let (mut host, _hp, invite) = start_with(NetLimits { hello_timeout: Duration::from_millis(200), ..fast_limits() }, Limits::default());
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(WAIT)).unwrap();
     let t0 = Instant::now();
@@ -545,7 +545,7 @@ fn quiet_guests_stay_and_silent_connections_are_dropped() {
     let mut gp = probe;
     gp.wait("welcome", welcomed);
     // A joined raw client that never says anything again.
-    let addr: SocketAddr = invite.host.parse().unwrap();
+    let addr: SocketAddr = invite.server.host.parse().unwrap();
     let mut raw = Raw::hello(addr, TOKEN);
     let Some(ServerMsg::Welcome { client_id: silent, .. }) = raw.next() else { panic!("no welcome") };
     hp.wait("the silent one is dropped", |e| e.iter().any(|e| matches!(e, Event::PeerLeft(id) if *id == silent)));

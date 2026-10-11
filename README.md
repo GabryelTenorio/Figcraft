@@ -88,7 +88,7 @@
   <tr>
     <td width="50%" valign="top">
       <h3>Vectors without compromise</h3>
-      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude), flatten, outline stroke, arrowheads, dashes, per-side strokes and variable width strokes (width profile presets, and a Variable width tool that drags width points along the path). Rectangles with smooth (squircle) corners, polygons, stars, and arcs and rings shaped with on-canvas sweep, start and ratio handles.
+      Real vector networks: the Pen and Pencil tools, vector edit mode with its own tools (pen that extends and branches paths, bend, paint bucket fills for any closed area, lasso, cut), point panel with handle mirroring and per-point corner radius, join, split and heal-on-delete, the shape builder (click or drag across the regions of overlapping shapes, strokes and open paths to merge them, Alt to remove them), boolean groups (union, subtract, intersect, exclude) whose operands stay editable on the canvas with the result following every drag, an operation per operand, flatten, outline stroke, arrowheads, dashes, per-side strokes and variable width strokes (width profile presets, and a Variable width tool that drags width points along the path, one side at a time with Alt). Rectangles with smooth (squircle) corners, polygons, stars, and arcs and rings shaped with on-canvas sweep, start and ratio handles or the Design panel's Arc fields.
     </td>
     <td width="50%" valign="top">
       <h3>Paints and effects</h3>
@@ -139,7 +139,8 @@ The desktop app also offers a loopback-only control channel (`figcraft --control
 - **Runs in the browser:** the whole engine and UI compile to WebAssembly.
 - **Accessible:** screen readers get names, roles, values and states for the tools, layer rows, fields, dropdowns, tabs and menus (AccessKit on desktop), F6 moves the keyboard between the toolbar, layers, canvas and properties (Tab within them, Escape back to the canvas), the system's reduce-motion setting is honoured, and panel text meets WCAG AA contrast in both themes.
 - **Plugins:** sandboxed WebAssembly plugins (a metered, pure-Rust interpreter with a memory cap and no file or network access, in the browser too) that act through the same commands, each run one undo step, within the permissions their manifest asks for. A Rust SDK and two example plugins are in [`plugins/`](plugins); see [`docs/plugins.md`](docs/plugins.md).
-- **Live sessions (preview):** host the open file from the app (this machine or your local network), share the invite link, and edit it together: everyone's changes sync live, with cursors, selections, avatars and follow (undo is not per person yet). Others join from the desktop app (invite links open it) or from the browser build. See [`docs/collab-protocol.md`](docs/collab-protocol.md).
+- **Live sessions (preview):** host the open file from the app (this machine or your local network), share the invite link, and edit it together: everyone's changes sync live, with cursors, selections, avatars and follow, and undo takes back only your own changes. Others join from the desktop app (invite links open it) or from the browser build. See [`docs/collab-protocol.md`](docs/collab-protocol.md).
+- **A server of your own (preview):** `figcraft-server` keeps a team's files, publishes them from the app (Share ▸ Publish to server…) and hands out share links that let people edit or only view; files survive restarts and apps reconnect where they were. No accounts yet: links are the access. See [`docs/server.md`](docs/server.md).
 - **Never crashes:** no `unwrap`, `expect` or `panic` in shipped code, enforced by clippy; commands run behind a guard so a bug fails one action, not your session.
 - **Clean-room:** implemented from public documentation and observed behaviour only. No proprietary code, file formats, icons or images.
 
@@ -149,6 +150,7 @@ The desktop app also offers a loopback-only control channel (`figcraft --control
 git clone https://github.com/storytold/figcraft
 cd figcraft
 cargo run --release -p figcraft            # the desktop app
+cargo run --release -p figcraft-server     # the collaboration server (docs/server.md)
 cargo test --workspace                     # the test suite
 cargo xtask ci                             # fmt, clippy, tests, layering and asset checks
 ```
@@ -166,7 +168,7 @@ New contributors and AI agents: start with [`AGENTS.md`](AGENTS.md), then [`docs
 Installers for macOS (universal, signed and notarized), Windows (x64, x86 and arm64), Linux (AppImage, `.deb`, `.rpm`, Flatpak and tarball), FreeBSD and the web are attached to each [GitHub release](https://github.com/storytold/figcraft/releases). Maintainers: [`docs/releasing.md`](docs/releasing.md) explains how releases are built, signed and published.
 
 > [!IMPORTANT]
-> **Status:** FigCraft is in **alpha**: about 47% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft can't open `.fig` files yet, has only a first preview of multiplayer (live sessions hosted from the app on a local network, with per-person undo; no sharing or permissions yet), runs its own WebAssembly plugins rather than Figma's, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
+> **Status:** FigCraft is in **alpha**: about 47% of the way to replacing Figma for real work, by our own estimate. Nearly all of Figma's main menu is wired ([`docs/parity-checklist.md`](docs/parity-checklist.md)) and the core editor works end to end, but FigCraft can't open `.fig` files yet, has only a first preview of multiplayer (live sessions hosted from the app or a self-hosted server, with per-person undo and share links to edit or to view; no accounts, teams or cloud yet), runs its own WebAssembly plugins rather than Figma's, and hasn't been checked against real Figma documents. The honest, area-by-area picture is in the [roadmap](ROADMAP.md) and [`docs/target-app-parity.md`](docs/target-app-parity.md). Expect rough edges and please file issues, or tell us what broke on [Discord](https://discord.gg/artcraft).
 
 ## The Crafting Apps
 

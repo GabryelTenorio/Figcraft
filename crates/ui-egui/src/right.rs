@@ -255,8 +255,17 @@ pub fn menu_row(ui: &mut Ui, label: &str, shortcut: &str, art_w: f32, art: impl 
 
 /// A menu item with a check mark when `on` (the unchecked ones line up with it).
 pub fn menu_check(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
-    let resp = menu_row(ui, &format!("{}{label}", if on { "✓ " } else { "    " }), shortcut, 0.0, |_, _, _| {});
-    a11y::menu_item(&resp, label, shortcut, Some(on));
+    marked_row(ui, Some(on), label, shortcut)
+}
+
+/// A plain menu item lined up with the check items above or below it.
+pub fn menu_item_beside_checks(ui: &mut Ui, label: &str, shortcut: &str) -> bool {
+    marked_row(ui, None, label, shortcut)
+}
+
+fn marked_row(ui: &mut Ui, on: Option<bool>, label: &str, shortcut: &str) -> bool {
+    let resp = menu_row(ui, &format!("{}{label}", if on == Some(true) { "✓ " } else { "    " }), shortcut, 0.0, |_, _, _| {});
+    a11y::menu_item(&resp, label, shortcut, on);
     resp.clicked()
 }
 
@@ -296,6 +305,7 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     // Editing a vector with points selected, the points' fields stand in for the layer's position
     // and dimensions.
     let points_selected = vector_edit.as_ref().is_some_and(|ve| !ve.vertices.is_empty() || !ve.segments.is_empty());
+    let vector_edit_none = vector_edit.is_none();
     match vector_edit {
         Some(ve) => crate::vector_panel::points(app, ui, &doc, &ve),
         None => {
@@ -310,6 +320,9 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     widgets::separator(ui);
     if !points_selected {
         crate::layout_panel::layout_section(app, ui, &doc, &sel);
+        widgets::separator(ui);
+    }
+    if vector_edit_none && arc_section(app, ui, &doc, &sel) {
         widgets::separator(ui);
     }
     appearance(app, ui, &doc, &sel);
@@ -466,6 +479,8 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         (Icon::Mask, "Use as mask", "object.mask"),
         (Icon::Union, "Boolean groups", "bool.union"),
     ];
+    // Layers in boolean groups, or one boolean group: the operation they use (checked in the menu).
+    let current = figcraft_engine::booleans::shown_op(doc, sel);
     for (icon, label, cmd) in actions.into_iter().rev() {
         let br = Rect::from_min_size(pos2(x - 24.0, r.center().y - 12.0), vec2(24.0, 24.0));
         let tip = if cmd == "bool.union" { label } else { crate::shortcuts::tip(label, cmd) };
@@ -473,20 +488,35 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         if bresp.hovered() {
             ui.painter().rect_filled(br, CornerRadius::same(5), t.hover);
         }
+        // The boolean button shows the operation in use.
+        let icon = match (cmd, current) {
+            ("bool.union", Some(op)) => crate::layers::op_icon(op),
+            _ => icon,
+        };
         icons::paint(ui.painter(), br.shrink(5.0), icon, t.icon);
         if cmd == "bool.union" {
             menu_popup(&bresp).width(180.0).show(|ui| {
-                for (l, c) in [
-                    ("Union", "bool.union"),
-                    ("Subtract", "bool.subtract"),
-                    ("Intersect", "bool.intersect"),
-                    ("Exclude", "bool.exclude"),
-                    ("Flatten", "vector.flatten"),
+                for (op, c) in [
+                    (BoolOp::Union, "bool.union"),
+                    (BoolOp::Subtract, "bool.subtract"),
+                    (BoolOp::Intersect, "bool.intersect"),
+                    (BoolOp::Exclude, "bool.exclude"),
                 ] {
-                    if menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
+                    let key = crate::shortcuts::shortcut(c).unwrap_or("");
+                    let picked = match current {
+                        Some(cur) => menu_check(ui, cur == op, op.label(), key),
+                        None => menu_item(ui, op.label(), key),
+                    };
+                    if picked {
                         app.run(c, json!({}));
                         ui.close();
                     }
+                }
+                let key = crate::shortcuts::shortcut("vector.flatten").unwrap_or("");
+                let flatten = if current.is_some() { menu_item_beside_checks(ui, "Flatten", key) } else { menu_item(ui, "Flatten", key) };
+                if flatten {
+                    app.run("vector.flatten", json!({}));
+                    ui.close();
                 }
             });
         } else if bresp.clicked() {
@@ -603,6 +633,50 @@ fn position(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         });
     }
     ui.add_space(8.0);
+}
+
+/// The selected ellipses' arc: Start (degrees), Sweep (a share of a full turn, negative running
+/// the other way) and Ratio (the inner radius), the same values the canvas arc handles drag
+/// (`node.set`'s `arcStart` / `arcSweep` / `arcInner`; bindable to number variables, sweep and
+/// ratio ones holding percentages). Returns whether it showed.
+fn arc_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) -> bool {
+    let arcs: Vec<(f64, f64, f64)> = sel
+        .iter()
+        .filter_map(|i| match doc.node(*i)?.kind {
+            NodeKind::Ellipse { start, sweep, inner } => Some((start, sweep, inner)),
+            _ => None,
+        })
+        .collect();
+    if arcs.is_empty() || arcs.len() != sel.len() {
+        return false;
+    }
+    let ids = sel.to_vec();
+    let same = |f: &dyn Fn(&(f64, f64, f64)) -> f64| -> Option<f64> {
+        let v = (f(arcs.first()?) * 100.0).round() / 100.0;
+        arcs.iter().all(|a| ((f(a) * 100.0).round() / 100.0 - v).abs() < 1e-9).then_some(v)
+    };
+    let start = same(&|a| a.0.to_degrees().rem_euclid(360.0));
+    let sweep = same(&|a| a.1 / std::f64::consts::TAU * 100.0);
+    let ratio = same(&|a| a.2 * 100.0);
+    widgets::section_header(ui, "Arc", &[], false);
+    let col = widgets::col_width(ui.available_width());
+    let field = |app: &mut FigApp, ui: &mut Ui, key: &str, icon: Icon, name: &str, value: Option<f64>, suffix: &str| {
+        crate::variable_ui::number_field(app, ui, &ids, key, Id::new(("arc", key)), Lead::Icon(icon, name), value, suffix, col)
+    };
+    widgets::sublabels(ui, "Start", Some("Sweep"));
+    row(ui, 32.0, |ui| {
+        let e = field(app, ui, "arcStart", Icon::ArcStart, "Arc start", start, "°");
+        app.field(&ids, "arcStart", e, |v| json!(v));
+        let e = field(app, ui, "arcSweep", Icon::ArcSweep, "Arc sweep", sweep, "%");
+        app.field(&ids, "arcSweep", e, |v| json!(v.clamp(-100.0, 100.0) * 3.6));
+    });
+    widgets::sublabels(ui, "Ratio", None);
+    row(ui, 32.0, |ui| {
+        let e = field(app, ui, "arcInner", Icon::ArcRatio, "Arc ratio", ratio, "%");
+        app.field(&ids, "arcInner", e, |v| json!((v / 100.0).clamp(0.0, 0.99)));
+    });
+    ui.add_space(8.0);
+    true
 }
 
 fn pretty(s: &str) -> String {
@@ -1033,13 +1107,17 @@ pub(crate) fn profile_art(painter: &egui::Painter, rect: Rect, profile: Option<&
     let (mut top, mut bottom) = (Vec::new(), Vec::new());
     for i in 0..=STEPS {
         let t = f64::from(i) / f64::from(STEPS);
-        let s = profile.map_or(0.5, |p| p.scale_at(t) / max) as f32;
+        // The path runs left to right: its left side is drawn on top.
+        let (l, r) = profile.map_or((0.5, 0.5), |p| {
+            let (l, r) = p.sides_at(t);
+            (l / max, r / max)
+        });
         let x = rect.min.x + rect.width() * t as f32;
-        let h = (s * half).max(0.5);
-        top.push(pos2(x, cy - h));
-        bottom.push(pos2(x, cy + h));
-        mesh.colored_vertex(pos2(x, cy - h), col);
-        mesh.colored_vertex(pos2(x, cy + h), col);
+        let (hl, hr) = (((l as f32) * half).max(0.5), ((r as f32) * half).max(0.5));
+        top.push(pos2(x, cy - hl));
+        bottom.push(pos2(x, cy + hr));
+        mesh.colored_vertex(pos2(x, cy - hl), col);
+        mesh.colored_vertex(pos2(x, cy + hr), col);
     }
     for i in 0..STEPS {
         let k = 2 * i;
@@ -1088,7 +1166,8 @@ fn width_profile_row(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], profile: Opt
         if flip.clicked()
             && let Some(p) = custom
         {
-            let pts: Vec<[f64; 2]> = p.points.iter().rev().map(|q| [1.0 - q.t, q.scale]).collect();
+            let pts: Vec<Value> =
+                p.points.iter().rev().map(|q| figcraft_engine::cmd::props::width_point_json(&WidthPoint { t: 1.0 - q.t, ..*q })).collect();
             app.run("stroke.widthProfile", json!({"ids": ids, "points": pts}));
         }
     });

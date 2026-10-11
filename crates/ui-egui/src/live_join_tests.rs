@@ -102,6 +102,6 @@ fn the_browser_joins_but_does_not_host() {
     assert!(h.app.ui.live.join.is_some());
     assert!(has_text(
         &shapes,
-        "In the browser you can join sessions hosted by the desktop app. A page opened over https can only reach sessions on this computer."
+        "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS)."
     ));
 }

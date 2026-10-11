@@ -70,6 +70,14 @@ is in the workspace: `packaging/env.sh` sets `BINS`/`HAS_CLI` from that, and `pa
 `figcraft --version` prints the version and, in CI builds, the commit (`FIGCRAFT_BUILD_SHA`,
 read by `apps/figcraft/build.rs`).
 
+**The collaboration server** (`apps/figcraft-server`, binary `figcraft-server`, see
+[`server.md`](server.md)) is in the workspace but not packaged yet: releases don't ship it, and
+operators build it with `cargo build --release -p figcraft-server`. Shipping it means a
+`figcraft-server-<v>-<platform>-<arch>` archive per desktop platform (a headless binary: no
+bundle, installer entry or desktop file), signed like `figcraft-cli` on macOS and Windows; that
+is a change to `release.yml` and `packaging/` of its own, not part of `BINS` (which every
+desktop package installs).
+
 **Fonts.** Every build job checks out [craft-fonts](https://github.com/storytold/craft-fonts) at
 `CRAFT_FONTS_REF` (top of `release.yml`) and builds with `CRAFT_FONTS_DIR` and
 `CRAFT_FONTS_REQUIRED=1`, so releases embed its fonts and fail rather than ship without them.

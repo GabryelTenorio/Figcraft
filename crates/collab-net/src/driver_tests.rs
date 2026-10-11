@@ -57,7 +57,7 @@ impl Socket for Script {
 }
 
 fn invite() -> Invite {
-    Invite { host: "127.0.0.1:47900".into(), file: FILE.into(), token: TOKEN.into() }
+    Invite::new("127.0.0.1:47900", FILE, TOKEN)
 }
 
 fn start(sock: Script, t0: Instant) -> (Driver<Script>, Inbox) {
@@ -363,7 +363,7 @@ fn joins_a_real_host_and_edits_with_it() {
         host_probe.clone(),
     )
     .unwrap();
-    let invite = Invite { host: host.addr().to_string(), file: FILE.into(), token: TOKEN.into() };
+    let invite = Invite::new(host.addr().to_string(), FILE, TOKEN);
     let inbox = Inbox::new(Arc::new(|| {}));
     let mut d = Driver::start(Loopback::default(), GuestConfig::new(invite, "Ada".into()), inbox.clone(), Instant::now());
     let mut events = Vec::new();

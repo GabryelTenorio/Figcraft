@@ -66,6 +66,26 @@ pub fn shutdown(s: &TcpStream) {
     let _ = s.shutdown(Shutdown::Both);
 }
 
+/// Connect to `host` (`name:port`), trying each of its addresses within `timeout`, with Nagle off
+/// and reads and writes bounded by `limits`' hello and write timeouts.
+pub fn dial(host: &str, timeout: Duration, limits: &NetLimits) -> Result<TcpStream, String> {
+    use std::net::ToSocketAddrs;
+    let addrs = host.to_socket_addrs().map_err(|e| format!("can't find {host}: {e}"))?;
+    let mut last = format!("can't find {host}");
+    for a in addrs {
+        match TcpStream::connect_timeout(&a, timeout) {
+            Ok(s) => {
+                let _ = s.set_nodelay(true);
+                s.set_read_timeout(Some(limits.hello_timeout)).map_err(|e| e.to_string())?;
+                s.set_write_timeout(Some(limits.write_timeout)).map_err(|e| e.to_string())?;
+                return Ok(s);
+            }
+            Err(e) => last = format!("no answer from {a}: {e}"),
+        }
+    }
+    Err(last)
+}
+
 /// A token bucket: `rate` per second on average, `burst` at once.
 #[derive(Debug)]
 pub struct Bucket {

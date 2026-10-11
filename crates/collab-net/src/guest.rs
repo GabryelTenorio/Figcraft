@@ -4,25 +4,42 @@
 //! second, latest wins; a ping when quiet) while a reader thread takes in what the host sends.
 //! When the connection drops after having been live, it reconnects with growing pauses; a
 //! refusal or the host ending the session is final.
+//!
+//! Publishing ([`Guest::publish`]) first uploads the document to a server over a managing
+//! connection, then joins the new file with its edit link on the same thread.
 
 use std::io;
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::sync::Arc;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
-use figcraft_engine::live::{Event, Status};
+use figcraft_collab::Replica;
+use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, Presence, ServerMsg};
+use figcraft_doc::Document;
+use figcraft_engine::live::{Event, Published, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::protocol::{CloseFrame, Role as WsRole, WebSocket};
 use tungstenite::{Bytes, Message};
 
 use crate::inbox::Inbox;
+use crate::invite::{Endpoint, Invite};
 pub use crate::join::GuestConfig;
 use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
-use crate::net::{Duplex, config, shutdown};
+use crate::manage;
+use crate::net::{Duplex, config, dial, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
+
+/// What [`Guest::publish`] uploads, and where.
+pub struct Publish {
+    pub server: Endpoint,
+    /// The server's key.
+    pub key: String,
+    /// The file's name on the server.
+    pub name: String,
+    pub doc: Arc<Document>,
+}
 
 /// A joined (or joining) session. Dropping it leaves.
 pub struct Guest {
@@ -47,6 +64,37 @@ impl Guest {
         let (tx, rx) = channel();
         let me = tx.clone();
         let thread = std::thread::Builder::new().name("live-guest".into()).spawn(move || supervise(&cfg, &inbox, &rx, &me))?;
+        Ok(Guest { cmd: tx, thread: Some(thread) })
+    }
+
+    /// Upload `job.doc` to the server as a new file, then join it with its edit link (returns at
+    /// once: [`Event::Published`] with the file's links, then the session, arrive in `inbox`).
+    /// `cfg` says how to join; its invite is replaced by the new file's.
+    pub fn publish(job: Publish, cfg: GuestConfig, inbox: Inbox) -> io::Result<Guest> {
+        let (tx, rx) = channel();
+        let me = tx.clone();
+        let thread = std::thread::Builder::new().name("live-publish".into()).spawn(move || {
+            inbox.push(Event::Status(Status::Connecting));
+            let (cfg, published) = match upload(&job, cfg) {
+                Ok(done) => done,
+                Err(e) => return inbox.push(Event::Status(Status::Failed { reason: format!("Couldn't publish to the server: {e}") })),
+            };
+            inbox.push(Event::Published(published));
+            // Left while uploading: the file stays on the server, nobody joins it. Anything else
+            // that came meanwhile (presence) waits for the session.
+            let mut waiting = Vec::new();
+            loop {
+                match rx.try_recv() {
+                    Ok(Cmd::Leave) | Err(TryRecvError::Disconnected) => return,
+                    Ok(c) => waiting.push(c),
+                    Err(TryRecvError::Empty) => break,
+                }
+            }
+            for c in waiting {
+                let _ = me.send(c);
+            }
+            supervise(&cfg, &inbox, &rx, &me);
+        })?;
         Ok(Guest { cmd: tx, thread: Some(thread) })
     }
 
@@ -90,26 +138,28 @@ struct Conn {
     sock: TcpStream,
 }
 
+/// Upload the document; the join settings for the new file and its links.
+fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published), String> {
+    let snapshot = Replica::new((*job.doc).clone()).snapshot().map_err(|e| e.to_string())?;
+    let replies =
+        manage::request(&job.server, &job.key, vec![Admin::Publish { name: job.name.clone(), snapshot }], &cfg.limits, cfg.connect_timeout)?;
+    let (file, edit, view) = match replies.into_iter().next() {
+        Some(AdminReply::Published { file, edit, view }) => (file, edit, view),
+        Some(AdminReply::Failed { reason }) => return Err(reason),
+        _ => return Err("the server didn't say where the file is".into()),
+    };
+    let link = |token: String| Invite { server: job.server.clone(), file: file.id.clone(), token };
+    let (edit, view) = (link(edit.token), link(view.token));
+    let published = Published { server: job.server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link() };
+    cfg.invite = edit;
+    Ok((cfg, published))
+}
+
 fn connect(cfg: &GuestConfig) -> Result<Conn, String> {
-    let addrs: Vec<SocketAddr> = cfg.invite.host.to_socket_addrs().map_err(|e| format!("can't find {}: {e}", cfg.invite.host))?.collect();
-    let mut last = format!("can't find {}", cfg.invite.host);
-    let mut stream = None;
-    for a in addrs {
-        match TcpStream::connect_timeout(&a, cfg.connect_timeout) {
-            Ok(s) => {
-                stream = Some(s);
-                break;
-            }
-            Err(e) => last = format!("no answer from {a}: {e}"),
-        }
-    }
-    let stream = stream.ok_or(last)?;
-    let _ = stream.set_nodelay(true);
-    stream.set_read_timeout(Some(cfg.limits.hello_timeout)).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(Some(cfg.limits.write_timeout)).map_err(|e| e.to_string())?;
+    let stream = dial(&cfg.invite.server.host, cfg.connect_timeout, &cfg.limits)?;
     let (rd, wr, sock) = Duplex::split(stream).map_err(|e| e.to_string())?;
     let (reader, _) = tungstenite::client::client_with_config(cfg.invite.endpoint(), rd, Some(config(cfg.limits.max_server_message)))
-        .map_err(|e| format!("{} doesn't answer as a FigCraft session: {e}", cfg.invite.host))?;
+        .map_err(|e| format!("{} doesn't answer as a FigCraft session: {e}", cfg.invite.server.display()))?;
     let writer = WebSocket::from_raw_socket(wr, WsRole::Client, Some(config(cfg.limits.max_client_message)));
     reader.get_ref().set_read_timeout(Some(cfg.limits.idle_timeout)).map_err(|e| e.to_string())?;
     Ok(Conn { reader, writer, sock })

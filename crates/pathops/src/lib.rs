@@ -6,6 +6,10 @@
 //!   dashes, caps, joins, arrowheads and variable width profiles ([`width`]).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(test)]
+mod ops_tests;
+#[cfg(test)]
+mod sides_tests;
 pub mod width;
 #[cfg(test)]
 mod width_tests;
@@ -79,44 +83,37 @@ pub fn simplify(path: &BezPath) -> Result<BezPath, PathOpsError> {
     binary(path, &BezPath::new(), linesweeper::BinaryOp::Union)
 }
 
+/// Combine `acc` (the operands so far) with the next operand `p` by `op`.
+pub fn boolean_step(acc: &BezPath, p: &BezPath, op: BoolOp) -> Result<BezPath, PathOpsError> {
+    let op = match op {
+        BoolOp::Union => linesweeper::BinaryOp::Union,
+        BoolOp::Intersect => linesweeper::BinaryOp::Intersection,
+        BoolOp::Exclude => linesweeper::BinaryOp::Xor,
+        BoolOp::Subtract => linesweeper::BinaryOp::Difference,
+    };
+    binary(acc, p, op)
+}
+
 /// Apply a boolean operation to `paths` in order (bottom to top, like a boolean group's children):
 /// Subtract removes every later shape from the first one.
 pub fn boolean(paths: &[BezPath], op: BoolOp) -> Result<BezPath, PathOpsError> {
-    let mut it = paths.iter();
-    let Some(first) = it.next() else { return Ok(BezPath::new()) };
-    let mut acc = first.clone();
-    match op {
-        BoolOp::Union => {
-            for p in it {
-                acc = binary(&acc, p, linesweeper::BinaryOp::Union)?;
-            }
-        }
-        BoolOp::Intersect => {
-            for p in it {
-                acc = binary(&acc, p, linesweeper::BinaryOp::Intersection)?;
-            }
-        }
-        BoolOp::Exclude => {
-            for p in it {
-                acc = binary(&acc, p, linesweeper::BinaryOp::Xor)?;
-            }
-        }
-        BoolOp::Subtract => {
-            let rest: Vec<BezPath> = it.cloned().collect();
-            if rest.is_empty() {
-                return Ok(acc);
-            }
-            let mut cut = BezPath::new();
-            for p in &rest {
-                cut = binary(&cut, p, linesweeper::BinaryOp::Union)?;
-            }
-            acc = binary(&acc, &cut, linesweeper::BinaryOp::Difference)?;
-        }
+    boolean_ops(paths.iter().map(|p| (p, op)))
+}
+
+/// Fold `operands` bottom to top, each combined with the result of those below it by its own
+/// operation (the bottom operand's operation is unused): what a boolean group whose operands carry
+/// their own operations paints. A lone operand comes out simplified.
+pub fn boolean_ops<'a>(operands: impl IntoIterator<Item = (&'a BezPath, BoolOp)>) -> Result<BezPath, PathOpsError> {
+    let mut it = operands.into_iter();
+    let Some((first, _)) = it.next() else { return Ok(BezPath::new()) };
+    let mut acc: Option<BezPath> = None;
+    for (p, op) in it {
+        acc = Some(boolean_step(acc.as_ref().unwrap_or(first), p, op)?);
     }
-    if paths.len() == 1 {
-        return simplify(&acc);
+    match acc {
+        Some(a) => Ok(a),
+        None => simplify(first),
     }
-    Ok(acc)
 }
 
 /// Per-input winding numbers for [`faces`] (index = input path; trailing zeros trimmed so equal

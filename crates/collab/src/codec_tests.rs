@@ -4,8 +4,8 @@ use figcraft_doc::{Document, NodeId, NodeKind};
 
 use crate::change::{Change, Json, Prop};
 use crate::message::{
-    Accepted, CatchUp, ClientMsg, EditingText, Hello, PROTOCOL, Peer, Presence, Processed, Resume, ServerMsg, WIRE_VERSION, decode, decode_json,
-    encode, encode_json,
+    Accepted, Access, Admin, AdminReply, CatchUp, ClientMsg, EditingText, FileInfo, Hello, LinkInfo, Manage, NewLink, PROTOCOL, Peer, Presence,
+    Processed, Resume, ServerMsg, WIRE_VERSION, decode, decode_json, encode, encode_json,
 };
 use crate::sim::Rng;
 use crate::{Error, Replica, diff};
@@ -49,8 +49,18 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         }),
         ClientMsg::Ack { seq: 9 },
         ClientMsg::Ping,
+        ClientMsg::Manage(Manage { protocol: PROTOCOL, key: "k".into(), client_version: "0.3.1".into() }),
+        ClientMsg::Admin(Admin::Publish { name: "Café".into(), snapshot: Replica::new(Document::new("Up")).snapshot().unwrap() }),
+        ClientMsg::Admin(Admin::Files),
+        ClientMsg::Admin(Admin::Links { file: "f".into() }),
+        ClientMsg::Admin(Admin::CreateLink { file: "f".into(), access: Access::View, label: "Review".into() }),
+        ClientMsg::Admin(Admin::Revoke { file: "f".into(), link: "l".into() }),
+        ClientMsg::Admin(Admin::Remove { file: "f".into() }),
     ];
     let snapshot = Replica::new(Document::new("Snap")).snapshot().unwrap();
+    let file = FileInfo { id: "f".into(), name: "Café".into(), created: 1, updated: 2, seq: 3, bytes: 4, people: 5 };
+    let link = LinkInfo { id: "l".into(), file: "f".into(), access: Access::Edit, label: String::new(), created: 6 };
+    let new_link = NewLink { link: link.clone(), token: "t".into() };
     let server = vec![
         ServerMsg::Welcome {
             session: 77,
@@ -59,6 +69,7 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
             catch_up: CatchUp::Snapshot(snapshot),
             processed: Processed::default(),
             peers: vec![peer.clone()],
+            access: Access::Edit,
         },
         ServerMsg::Welcome {
             session: 77,
@@ -67,6 +78,7 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
             catch_up: CatchUp::Delta(vec![Accepted { seq: 11, author: 5, batch_id: 1, changes: vec![set.clone()] }]),
             processed: Processed { last_batch: 7, refused: vec![3, 6] },
             peers: vec![],
+            access: Access::View,
         },
         ServerMsg::Changes(Accepted { seq: 11, author: 4, batch_id: 2, changes: vec![set.clone(), Change::Delete { id: NodeId(5) }] }),
         ServerMsg::Reject { batch_id: 3, reason: "no".into(), fixes: vec![set] },
@@ -75,6 +87,13 @@ fn samples() -> (Vec<ClientMsg>, Vec<ServerMsg>) {
         ServerMsg::PeerLeft { client_id: 4 },
         ServerMsg::Refused { reason: "full".into() },
         ServerMsg::Pong,
+        ServerMsg::Admin(Box::new(AdminReply::Ready)),
+        ServerMsg::Admin(Box::new(AdminReply::Published { file: file.clone(), edit: new_link.clone(), view: new_link.clone() })),
+        ServerMsg::Admin(Box::new(AdminReply::Files(vec![file]))),
+        ServerMsg::Admin(Box::new(AdminReply::Links(vec![link]))),
+        ServerMsg::Admin(Box::new(AdminReply::Link(new_link))),
+        ServerMsg::Admin(Box::new(AdminReply::Done)),
+        ServerMsg::Admin(Box::new(AdminReply::Failed { reason: "no".into() })),
     ];
     (client, server)
 }

@@ -16,6 +16,8 @@ pub mod transform;
 mod transform_tests;
 mod width;
 #[cfg(test)]
+mod width_sides_tests;
+#[cfg(test)]
 mod width_tests;
 
 use figcraft_doc::*;

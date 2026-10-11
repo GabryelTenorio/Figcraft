@@ -689,6 +689,8 @@ fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize, spare: BT
     fresh.dev_changed = root.dev_changed;
     fresh.dev_note = root.dev_note.clone();
     fresh.constrain_proportions = root.constrain_proportions;
+    // How the instance combines in a boolean group it sits in is its own.
+    fresh.bool_op = root.bool_op;
     // A swapped nested instance keeps the name its layer was given in the outer main.
     let renamed = nested_copy
         && root.source.and_then(|s| doc.node(s)).is_some_and(|s| match &s.kind {

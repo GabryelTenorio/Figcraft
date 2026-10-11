@@ -16,6 +16,11 @@
 //! through the client and installed with [`Session::apply_remote`], which never touches the undo
 //! history. After a dropped connection the client resumes with its id and catches up; what it
 //! made meanwhile goes out then.
+//!
+//! A file can also live on a `figcraft-server`: `collab.publish` uploads the open document and
+//! syncs that tab through the server, whose share links let others edit or only view. A view link
+//! makes the synced document read-only here (every edit is refused before it is sent; the server
+//! refuses it too).
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;
@@ -23,6 +28,8 @@ use std::sync::Arc;
 
 use figcraft_collab::Client;
 use figcraft_collab::message::{ClientMsg, EditingText, ServerMsg};
+
+pub use figcraft_collab::message::Access;
 use figcraft_doc::{Document, NodeId};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -32,6 +39,7 @@ pub use figcraft_collab::message::{Peer, Presence};
 use crate::cmd::CommandSpec;
 use crate::collab::EngineRecompute;
 use crate::params::{get, num, req_string, string};
+use crate::tools::ToolId;
 use crate::{DocState, EngineError, Result, Session, TextEdit, ViewState, bad, spec};
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
@@ -127,10 +135,28 @@ pub struct SessionInfo {
     /// invite.
     pub link: String,
     pub url: String,
-    /// `ip:port` the session listens on (host) or connects to (guest).
+    /// `ip:port` the session listens on (host) or connects to (guest); a server's URL when it
+    /// isn't plain `ws://` at `/`.
     pub address: String,
     /// Reachable from other machines (the host listens on a network address, not loopback).
     pub network: bool,
+    /// What you may do: edit, or only view (a server's view link).
+    pub access: Access,
+}
+
+/// A file you published to a server: where, and its first share links (they carry their tokens:
+/// share them like passwords; the server keeps only hashes).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Published {
+    /// The server's address.
+    pub server: String,
+    /// The file's id and name on the server.
+    pub file: String,
+    pub name: String,
+    /// The link that lets people edit, and the one that lets them only view.
+    pub edit: String,
+    pub view: String,
 }
 
 /// What happened in the session since the last [`LiveLink::poll`].
@@ -152,6 +178,8 @@ pub enum Event {
     Ended {
         reason: String,
     },
+    /// The document is on the server (`collab.publish`); joining it follows.
+    Published(Published),
 }
 
 /// Which network interface a hosted session listens on.
@@ -177,6 +205,21 @@ pub struct HostOptions {
     pub doc: Arc<Document>,
 }
 
+/// What [`LiveLink::publish`] needs to put the open file on a server.
+#[derive(Clone, Debug)]
+pub struct PublishOptions {
+    /// The server's address (`ws://host:port/`, `wss://host/path/`), which may carry its key
+    /// (`?key=…`).
+    pub server: String,
+    /// The server's key, when the address doesn't carry it.
+    pub key: Option<String>,
+    /// The file's name on the server.
+    pub name: String,
+    /// Your name in the session (empty: the server picks one).
+    pub me: String,
+    pub doc: Arc<Document>,
+}
+
 /// The networking behind live sessions, installed by the app ([`Live::install`]). Calls return
 /// at once; what happens later arrives through [`poll`](Self::poll).
 pub trait LiveLink: Send {
@@ -189,6 +232,12 @@ pub trait LiveLink: Send {
     /// Start joining the session behind an invite link (ending any current one). Errors are for
     /// links that can't be used; they never echo the link (it holds the token).
     fn join(&mut self, link: &str, name: &str) -> std::result::Result<(), String>;
+    /// Start uploading `opts.doc` to a server as a new file, then join it with its edit link
+    /// (ending any current session): [`Event::Published`] with its links, then the welcome.
+    /// Errors are for addresses that can't be used; they never echo the key.
+    fn publish(&mut self, _opts: PublishOptions) -> std::result::Result<(), String> {
+        Err("publishing to a server needs the desktop app or the MCP server".into())
+    }
     /// End the current session (stop hosting or leave).
     fn leave(&mut self);
     /// Your latest presence (the link throttles and coalesces).
@@ -238,6 +287,8 @@ pub struct Live {
     /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
     /// installs one; see [`crate::invite_links`]).
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
+    /// The file you published to a server in this session, with its links.
+    pub published: Option<Published>,
 }
 
 impl Live {
@@ -274,6 +325,7 @@ impl Live {
         self.synced = None;
         self.deferred.clear();
         self.hold = 0;
+        self.published = None;
     }
 
     /// The document sync client (once the welcome arrived): peers, pending batches, the user's
@@ -348,6 +400,11 @@ pub fn editing_hint(names: &[&str]) -> Option<String> {
         [first, rest @ ..] => format!("{first} and {} others are {verb}", rest.len()),
     })
 }
+
+/// Why an edit of a server file you joined with a view link is refused.
+pub const VIEW_ONLY: &str = "View only: the link you joined with lets you see this file, not change it";
+/// Why an edit of a file on its way to a server is refused.
+pub const PUBLISHING: &str = "The file is being published: you can edit it again once it is on the server";
 
 /// A gesture, version preview or live text preview shows a document that isn't the edit to
 /// sync yet.
@@ -504,6 +561,10 @@ impl Session {
                 self.message = Some(reason);
                 live.reset();
             }
+            Event::Published(p) => {
+                self.message = Some(format!("Published {} to the server", p.name));
+                live.published = Some(p);
+            }
         }
     }
 
@@ -533,8 +594,19 @@ impl Session {
                 self.live.synced = None;
             }
             (Some(Role::Guest), Some(uid)) => {
+                // Joining again in this tab, or the file you published arriving from the server.
                 let doc = Arc::new(client.document().clone());
+                let was_dirty = self.docs.iter().find(|d| d.uid == uid).is_some_and(DocState::is_dirty);
                 self.apply_remote(uid, doc.clone());
+                if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
+                    // Undo is per user from now on: earlier whole-document steps would revert
+                    // others' edits.
+                    ds.history.undo.clear();
+                    ds.history.redo.clear();
+                    if !was_dirty {
+                        ds.mark_saved();
+                    }
+                }
                 self.live.synced = Some(doc);
             }
             (Some(Role::Guest), None) => {
@@ -551,6 +623,10 @@ impl Session {
         if let Some(info) = self.live.info.as_mut() {
             info.file_name = doc.name.clone();
             info.pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
+        }
+        // A view link: the editing tools are off.
+        if client.access() == Access::View && !matches!(self.tool.tool, ToolId::Move | ToolId::Hand) {
+            self.set_tool(ToolId::Move);
         }
         self.live.client = Some(client);
         self.live.deferred.clear();
@@ -573,6 +649,25 @@ impl Session {
         self.live_edit(None);
     }
 
+    /// Why document `uid` can't be edited now, if it can't: it is the session's document and you
+    /// may only view it, or it is on its way to a server.
+    pub fn live_read_only(&self, uid: u64) -> Option<&'static str> {
+        if self.live.doc_uid != Some(uid) {
+            return None;
+        }
+        match &self.live.client {
+            Some(c) if c.access() == Access::View => Some(VIEW_ONLY),
+            Some(_) => None,
+            None if self.live.status.active() && self.live.role() != Some(Role::Host) => Some(PUBLISHING),
+            None => None,
+        }
+    }
+
+    /// The active document can't be edited now (see [`live_read_only`](Self::live_read_only)).
+    pub fn active_read_only(&self) -> Option<&'static str> {
+        self.ds().ok().and_then(|ds| self.live_read_only(ds.uid))
+    }
+
     /// Whether document `uid` is the live session's synced document: its edits sync and its undo
     /// history is the user's own.
     pub fn live_doc(&self, uid: u64) -> bool {
@@ -586,6 +681,13 @@ impl Session {
         let Some(uid) = self.live.doc_uid else { return };
         let Some(ds) = self.docs.iter().find(|d| d.uid == uid) else { return };
         if self.live.hold > 0 || busy(ds) || self.live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
+            return;
+        }
+        if self.live_read_only(uid).is_some() {
+            // Nothing goes out: what changed outside a command is put back.
+            if let Some(s) = self.live.synced.clone() {
+                self.apply_remote(uid, s);
+            }
             return;
         }
         let doc = ds.doc.clone();
@@ -793,6 +895,9 @@ impl Session {
             "url": info.map(|i| i.url.as_str()),
             "address": info.map(|i| i.address.as_str()),
             "network": info.map(|i| i.network),
+            "access": l.client.as_ref().map(Client::access).or(info.map(|i| i.access)),
+            "readOnly": self.active_read_only().is_some(),
+            "published": l.published,
             "follow": l.follow,
             "syncing": l.syncing(),
             "document": l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u)),
@@ -831,6 +936,23 @@ fn host(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(s.live_summary())
 }
 
+fn publish(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.publish";
+    let server = req_string(CMD, p, "server")?;
+    let key = string(p, "key").map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
+    let name = string(p, "name").map(|n| n.trim().chars().filter(|c| !c.is_control()).take(256).collect::<String>()).filter(|n| !n.is_empty());
+    let opts =
+        PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me: display_name(&s.prefs), doc };
+    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
+    link.publish(opts).map_err(|e| bad(CMD, e))?;
+    s.live.reset();
+    s.live.status = Status::Connecting;
+    // This tab becomes the server file's synced document once it is there.
+    s.live.doc_uid = Some(uid);
+    Ok(s.live_summary())
+}
+
 fn join(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.join";
     let link_text = req_string(CMD, p, "link")?;
@@ -844,10 +966,14 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn leave(s: &mut Session, _: &Value) -> Result<Value> {
     let was = s.live.status.active();
+    let kept = s.live.syncing() && s.live.role() == Some(Role::Guest);
     if let Some(l) = s.live.link.as_mut() {
         l.leave();
     }
     s.live.reset();
+    if kept {
+        s.message = Some("You left the session; your copy stays open here".into());
+    }
     Ok(json!({"ended": was}))
 }
 
@@ -887,15 +1013,22 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.join",
             "Join live session",
-            "{link: figcraft://join?host=…&file=…&token=… or ws://host:port/?file=…&token=…} → status \"connecting\"; `collab.peers` tells when it's live",
+            "{link: figcraft://join?host=…&file=…&token=…, figcraft://join?server=ws(s)://…&file=…&token=… or ws(s)://host:port/?file=…&token=… (a session an app hosts, or a server's share link)} → status \"connecting\"; `collab.peers` tells when it's live",
             false,
             join
         ),
-        spec!("collab.leave", "Leave live session", "{} → {ended}", false, leave),
+        spec!("collab.leave", "Leave live session", "{} (the synced file stays open as a local copy) → {ended}", false, leave),
+        spec!(
+            "collab.publish",
+            "Publish to server",
+            "{server: ws://host:port/?key=… or wss://host/path/?key=… (the server's address with its key; `figcraft-server key` prints it), key? (when the address has none), name? (default: the file's name)} → status \"connecting\": the open file is uploaded as a new file and this tab syncs through the server; `collab.peers` then has `published: {server, file, name, edit, view}` (share links: edit, or view only)",
+            false,
+            publish
+        ),
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
+            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view (view: a server's view link; edits are refused), readOnly (the open file can't be edited now: view only, or being published), published (a file you published: {server, file, name, edit, view}), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
             false,
             |s, _| Ok(s.live_summary())
         ),

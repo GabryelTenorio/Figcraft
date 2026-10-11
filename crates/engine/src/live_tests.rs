@@ -8,7 +8,7 @@ use figcraft_collab::{Client, Limits, Outgoing, Server};
 use figcraft_doc::{Document, NodeId};
 use serde_json::json;
 
-use crate::live::{Event, HostOptions, LiveLink, Peer, Presence, Role, SessionInfo, Status};
+use crate::live::{Access, Event, HostOptions, LiveLink, Peer, Presence, PublishOptions, Role, SessionInfo, Status};
 use crate::{EngineError, Session};
 
 /// What the scripted link was asked to do, and the events it hands out next.
@@ -20,6 +20,7 @@ pub(crate) struct Script {
     joined: Vec<String>,
     left: usize,
     pub(crate) msgs: Vec<ClientMsg>,
+    pub(crate) published: Vec<PublishOptions>,
 }
 
 pub(crate) struct Mock(pub(crate) Arc<Mutex<Script>>);
@@ -34,6 +35,13 @@ impl LiveLink for Mock {
             return Err("not an invite".into());
         }
         self.0.lock().unwrap().joined.push(link.to_string());
+        Ok(())
+    }
+    fn publish(&mut self, opts: PublishOptions) -> Result<(), String> {
+        if !opts.server.starts_with("ws") {
+            return Err("not a server address".into());
+        }
+        self.0.lock().unwrap().published.push(opts);
         Ok(())
     }
     fn leave(&mut self) {
@@ -62,6 +70,7 @@ pub(crate) fn info(role: Role, me: u32) -> SessionInfo {
         url: "ws://127.0.0.1:47900/?file=f&token=t".into(),
         address: "127.0.0.1:47900".into(),
         network: false,
+        access: crate::live::Access::Edit,
     }
 }
 
@@ -69,28 +78,33 @@ fn peer(id: u32, name: &str) -> Peer {
     Peer { client_id: id, name: name.into(), color: "#9747FF".into() }
 }
 
-fn session() -> (Session, Arc<Mutex<Script>>) {
+pub(crate) fn session() -> (Session, Arc<Mutex<Script>>) {
     let mut s = Session::new();
     let script = Arc::new(Mutex::new(Script::default()));
     s.live.install(Box::new(Mock(script.clone())));
     (s, script)
 }
 
-fn push(script: &Arc<Mutex<Script>>, events: Vec<Event>) {
+pub(crate) fn push(script: &Arc<Mutex<Script>>, events: Vec<Event>) {
     script.lock().unwrap().events.extend(events);
 }
 
 /// A session server for `doc` and the welcome it gives a first client (as `Event::Sync`).
 fn serve(doc: &Document) -> (Server, u32, Event) {
+    serve_as(doc, Access::Edit)
+}
+
+/// [`serve`] for a client that may do `access`.
+pub(crate) fn serve_as(doc: &Document, access: Access) -> (Server, u32, Event) {
     let mut server = Server::new(doc.clone(), "", Limits::default());
     let ClientMsg::Hello(h) = Client::hello("f", "", "Me", "") else { panic!("no hello") };
-    let (id, outs) = server.join(h).unwrap();
+    let (id, outs) = server.join_as(h, access).unwrap();
     let w = outs.into_iter().find_map(|o| if let Outgoing::To(_, w @ ServerMsg::Welcome { .. }) = o { Some(w) } else { None }).unwrap();
     (server, id, Event::Sync(w))
 }
 
 /// Feed what the session sent to the server; the server's answers for the session, in order.
-fn relay(script: &Arc<Mutex<Script>>, server: &mut Server, from: u32) -> Vec<Event> {
+pub(crate) fn relay(script: &Arc<Mutex<Script>>, server: &mut Server, from: u32) -> Vec<Event> {
     let msgs = std::mem::take(&mut script.lock().unwrap().msgs);
     let mut out = Vec::new();
     for m in msgs {

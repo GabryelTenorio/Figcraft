@@ -166,6 +166,12 @@ icons! {
     Reaction,
     /// Drag to reorder: two columns of three dots.
     DragHandle,
+    /// Arc start: a circle with a radius to the dot where the arc begins.
+    ArcStart,
+    /// Arc sweep: a circle with a wedge cut out of it.
+    ArcSweep,
+    /// Arc ratio: a ring.
+    ArcRatio,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -712,7 +718,8 @@ fn draw(p: &P, icon: Icon) {
         }
         Play => p.fill(&[(4.5, 2.5), (13.5, 8.0), (4.5, 13.5)]),
         Home => {
-            p.poly(&[(3.5, 13.5), (3.5, 7.0), (8.0, 2.8), (12.5, 7.0), (12.5, 13.5)], true);
+            // Unhinted so the roof's peak stays centred; the floor stops at the door.
+            p.path(&[(6.5, 13.5), (3.5, 13.5), (3.5, 7.0), (8.0, 2.8), (12.5, 7.0), (12.5, 13.5), (9.5, 13.5)], false);
             p.poly(&[(6.5, 13.5), (6.5, 9.5), (9.5, 9.5), (9.5, 13.5)], false);
         }
         Bell => {
@@ -819,9 +826,10 @@ fn draw(p: &P, icon: Icon) {
         StrokeIcon => p.rect(2.5, 2.5, 13.5, 13.5, 2.0),
         Fill => p.fill_rect(2.0, 2.0, 14.0, 14.0, 2.0),
         Moon => {
-            // A crescent: the outer rim, then the shadowing circle's edge back.
-            let mut m: Vec<(f32, f32)> = arc_pts(8.0, 8.0, 5.5, 0.166, TAU - 1.737).collect();
-            m.extend(arc_pts(11.0, 5.0, 4.6, -2.586, 1.016 - TAU));
+            // A crescent: the outer rim, then the shadowing circle's edge back. Both arcs stop short
+            // of where the circles meet, so each tip is two blunt joins (a single cusp join folds).
+            let mut m: Vec<(f32, f32)> = arc_pts(8.0, 8.0, 5.5, 0.166 + 0.12, TAU - 1.737 - 0.12).collect();
+            m.extend(arc_pts(11.0, 5.0, 4.6, -2.586 - 0.18, 1.016 - TAU + 0.18));
             p.path(&m, true);
         }
         Undo | Redo => {
@@ -967,6 +975,20 @@ fn draw(p: &P, icon: Icon) {
             for (x, y) in [(2.5, 2.5), (9.5, 2.5), (2.5, 9.5), (9.5, 9.5)] {
                 p.rect(x, y, x + 4.0, y + 4.0, 1.0);
             }
+        }
+        ArcStart => {
+            p.circle(8.0, 8.0, 5.5);
+            p.line(8.0, 8.0, 13.5, 8.0);
+            p.dot(13.5, 8.0, 1.6);
+        }
+        ArcSweep => {
+            let mut wedge = vec![(8.0, 8.0)];
+            wedge.extend(arc_pts(8.0, 8.0, 5.5, 0.0, 1.5 * PI));
+            p.path(&wedge, true);
+        }
+        ArcRatio => {
+            p.circle(8.0, 8.0, 5.5);
+            p.circle(8.0, 8.0, 2.5);
         }
         Logo => {
             // FigCraft's own mark: three stacked rounded tiles forming an "F" shape.

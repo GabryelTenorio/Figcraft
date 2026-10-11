@@ -27,6 +27,9 @@ impl LiveLink for Mock {
     fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
         Ok(())
     }
+    fn publish(&mut self, _: figcraft_engine::live::PublishOptions) -> Result<(), String> {
+        Ok(())
+    }
     fn leave(&mut self) {}
     fn presence(&mut self, _: &Presence) {}
     fn send(&mut self, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
@@ -115,6 +118,7 @@ impl Harness {
             url: String::new(),
             address: "127.0.0.1:47900".into(),
             network: false,
+            access: figcraft_engine::live::Access::Edit,
         };
         self.send(vec![LiveEvent::Welcome { info, peers: vec![Peer { client_id: 1, name: "Hana".into(), color: "#9747FF".into() }] }]);
     }

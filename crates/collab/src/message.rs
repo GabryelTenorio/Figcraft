@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 use crate::change::Change;
 
-/// The protocol version a client announces in [`Hello`].
-pub const PROTOCOL: u32 = 1;
+/// The protocol version a client announces in [`Hello`] (2: the welcome says what you may do, and
+/// connections can manage a server).
+pub const PROTOCOL: u32 = 2;
 
 /// The first byte of every binary message.
 pub const WIRE_VERSION: u8 = 1;
@@ -30,6 +31,35 @@ pub struct Hello {
     /// Coming back after a dropped connection: who this client was and the last sequence number
     /// it applied (`None`: a new participant).
     pub resume: Option<Resume>,
+}
+
+/// What a participant may do: edit, or only view (a view link). A viewer gets everyone's changes
+/// and presence, and the server refuses every batch it sends.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Access {
+    #[default]
+    Edit,
+    View,
+}
+
+impl Access {
+    /// `"edit"` or `"view"`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Access::Edit => "edit",
+            Access::View => "view",
+        }
+    }
+
+    /// From [`id`](Self::id) (any case, surrounding spaces ignored).
+    pub fn parse(s: &str) -> Option<Access> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "edit" => Some(Access::Edit),
+            "view" => Some(Access::View),
+            _ => None,
+        }
+    }
 }
 
 /// What a reconnecting client tells the server in its [`Hello`].
@@ -115,6 +145,93 @@ pub enum CatchUp {
     Delta(Vec<Accepted>),
 }
 
+/// Opens a connection that manages a server's files (instead of [`Hello`]): the server's admin
+/// key. Answered with [`AdminReply::Ready`] or `Refused`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Manage {
+    pub protocol: u32,
+    pub key: String,
+    pub client_version: String,
+}
+
+/// A request on a managing connection; each gets one [`AdminReply`], in order.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Admin {
+    /// Keep a document as a new file: its name and its snapshot
+    /// ([`Replica::snapshot`](crate::Replica::snapshot)). The reply has a new edit link and a new
+    /// view link for it.
+    Publish { name: String, snapshot: Vec<Change> },
+    /// The files kept.
+    Files,
+    /// A file's links (without their tokens).
+    Links { file: String },
+    /// A new link to a file.
+    CreateLink { file: String, access: Access, label: String },
+    /// Revoke a link: it no longer joins, and whoever joined with it is disconnected.
+    Revoke { file: String, link: String },
+    /// Remove a file and its links (whoever is in it is disconnected).
+    Remove { file: String },
+}
+
+/// A file a server keeps.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FileInfo {
+    /// Its id (in links: `file=<id>`).
+    pub id: String,
+    pub name: String,
+    /// Seconds since 1970 (UTC).
+    pub created: u64,
+    pub updated: u64,
+    /// The sequence number of its last accepted batch.
+    pub seq: u64,
+    /// Bytes on disk.
+    pub bytes: u64,
+    /// People in it now.
+    pub people: u32,
+}
+
+/// A share link (the server keeps only a hash of its token).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LinkInfo {
+    /// Its id (to revoke it by; not a secret).
+    pub id: String,
+    pub file: String,
+    pub access: Access,
+    pub label: String,
+    /// Seconds since 1970 (UTC).
+    pub created: u64,
+}
+
+/// A link just made, with its token: shown this once.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NewLink {
+    pub link: LinkInfo,
+    pub token: String,
+}
+
+/// The answer to an [`Admin`] request (the first one on a connection answers [`Manage`]).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AdminReply {
+    /// The key is right: requests may follow.
+    Ready,
+    Published {
+        file: FileInfo,
+        edit: NewLink,
+        view: NewLink,
+    },
+    Files(Vec<FileInfo>),
+    Links(Vec<LinkInfo>),
+    Link(NewLink),
+    /// Done (a revoke or a removal).
+    Done,
+    /// The request couldn't be done (the connection stays open).
+    Failed {
+        reason: String,
+    },
+}
+
 /// Client → server.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,6 +250,10 @@ pub enum ClientMsg {
         seq: u64,
     },
     Ping,
+    /// Manage the server's files (the first message on a connection, instead of `Hello`).
+    Manage(Manage),
+    /// A request on a managing connection.
+    Admin(Admin),
 }
 
 /// Server → client.
@@ -142,7 +263,7 @@ pub enum ServerMsg {
     /// Joined: the session's identity (a server that restarted without its saved state is a new
     /// session), this connection's client id, the current sequence number, the document (or the
     /// batches missed since a reconnecting client's last sequence number), what the server did
-    /// with this client's batches so far and who else is here.
+    /// with this client's batches so far, who else is here and what this client may do.
     Welcome {
         session: u64,
         client_id: u32,
@@ -150,6 +271,7 @@ pub enum ServerMsg {
         catch_up: CatchUp,
         processed: Processed,
         peers: Vec<Peer>,
+        access: Access,
     },
     /// Accepted changes, in order, to everyone (the author's own come back as confirmation).
     Changes(Accepted),
@@ -175,6 +297,8 @@ pub enum ServerMsg {
         reason: String,
     },
     Pong,
+    /// The answer to a managing connection's request.
+    Admin(Box<AdminReply>),
 }
 
 /// The binary form of `msg`: [`WIRE_VERSION`], then postcard.

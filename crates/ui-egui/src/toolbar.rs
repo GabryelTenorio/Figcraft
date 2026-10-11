@@ -52,6 +52,11 @@ fn remembered(ui: &Ui, key: &str, default: ToolId) -> ToolId {
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let canvas = app.canvas.rect;
+    // A file you can't edit now (view only, or on its way to a server): moving around only.
+    if let Some(why) = app.session.active_read_only() {
+        view_only_toolbar(app, ui, why);
+        return;
+    }
     // Vector edit mode swaps the tools for the edit tools.
     if let Some(tool) = app.session.ds().ok().and_then(|d| d.vector_edit.as_ref()).map(|v| v.tool) {
         edit_toolbar(app, ui, tool);
@@ -180,6 +185,43 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// The pill shown for a file you can't edit now: Move and Hand, and a badge saying why ("View
+/// only", or "Publishing…" until the file is on the server).
+fn view_only_toolbar(app: &mut FigApp, ui: &mut Ui, why: &'static str) {
+    let t = Tokens::get(ui.ctx());
+    // The editing tools are off: the tool falls back to moving around.
+    if !matches!(app.session.tool.tool, ToolId::Move | ToolId::Hand) {
+        app.run("tool.set", json!({"tool": "move"}));
+    }
+    let label = if why == figcraft_engine::live::PUBLISHING { "Publishing…" } else { "View only" };
+    let cell = 32.0;
+    let text = ui.painter().layout_no_wrap(label.to_string(), crate::theme::semibold(11.5), t.text);
+    let badge_w = 12.0 + 14.0 + 6.0 + text.size().x + 12.0;
+    let width = 2.0 * (cell + 4.0) + 8.0 + 12.0 + badge_w + 8.0;
+    let rect = pill(ui, &mut app.ui.nav, app.canvas.rect, width, &t);
+    let cy = rect.center().y;
+    let mut x = rect.min.x + 8.0;
+    for (tool, icon) in [(ToolId::Move, Icon::Move), (ToolId::Hand, Icon::Hand)] {
+        let r = Rect::from_center_size(pos2(x + cell / 2.0, cy), vec2(cell, cell));
+        let active = app.session.tool.tool == tool;
+        let resp = tool_cell(ui, &t, r, ("tool", tool.id()), icon, active, &format!("{}  {}", tool.label(), pretty_shortcut(tool.shortcut())));
+        if active {
+            a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
+        }
+        if resp.clicked() {
+            app.run("tool.set", json!({"tool": tool.id()}));
+        }
+        x += cell + 4.0;
+    }
+    divider(ui, &t, x, cy);
+    let badge = Rect::from_min_size(pos2(x + 12.0, cy - 13.0), vec2(badge_w, 26.0));
+    let resp = ui.interact(badge, ui.id().with("view_only"), Sense::hover()).on_hover_text(why);
+    a11y::status(&resp, label, why);
+    ui.painter().rect_filled(badge, CornerRadius::same(13), t.field);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(badge.min.x + 12.0 + 7.0, cy), vec2(14.0, 14.0)), Icon::Eye, t.icon_secondary);
+    ui.painter().galley(pos2(badge.min.x + 12.0 + 14.0 + 6.0, cy - text.size().y / 2.0), text, t.text);
 }
 
 /// The pill shown in vector edit mode: the edit tools and Done.

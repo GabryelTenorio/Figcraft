@@ -76,6 +76,8 @@ mod layers_rename_tests;
 #[cfg(test)]
 mod live_join_tests;
 #[cfg(test)]
+mod live_server_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
@@ -99,6 +101,8 @@ mod proto_responsive_tests;
 mod shortcuts_tests;
 #[cfg(test)]
 mod titlebar_tests;
+#[cfg(test)]
+mod vector_tail_ui_tests;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -744,7 +748,7 @@ impl FigApp {
         present::show_pane(self, &ctx);
         comments::keys(self, &ctx);
         dev_compare::keys(self, &ctx);
-        live::join_keys(self, &ctx);
+        live::dialog_keys(self, &ctx);
         shortcuts::handle(self, &ctx, typing);
         menus::popups(self, &ctx);
         variable_ui::picker(self, &ctx);

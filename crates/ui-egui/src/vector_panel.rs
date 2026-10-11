@@ -53,6 +53,23 @@ fn width_point(app: &mut FigApp, ui: &mut Ui, doc: &Document, ve: &VectorEdit) {
         let e = widgets::number_field(ui, Id::new("wpt_w"), Lead::Icon(Icon::StrokeIcon, "Width"), Some(round(p.scale * weight)), "", col, 1.0);
         point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "width": v.max(0.0)}));
     });
+    // Each side's reach from the centre line (Alt-drag a handle on the canvas for one side).
+    let (l, r) = p.sides();
+    widgets::sublabels(ui, "Left side", Some("Right side"));
+    row(ui, 32.0, |ui| {
+        for (side, scale, name) in [("left", l, "Left side width"), ("right", r, "Right side width")] {
+            let e = widgets::number_field(
+                ui,
+                Id::new(("wpt_side", side)),
+                Lead::Icon(Icon::StrokeIcon, name),
+                Some(round(scale * weight / 2.0)),
+                "",
+                col,
+                1.0,
+            );
+            point_field(app, "vector.edit.widthPoint", e, |v| json!({"index": i, "side": side, "width": v.max(0.0)}));
+        }
+    });
     ui.add_space(8.0);
 }
 

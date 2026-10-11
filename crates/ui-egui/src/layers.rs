@@ -14,8 +14,22 @@ use crate::{FigApp, LeftTab};
 
 pub const ROW: f32 = 32.0;
 
+/// A boolean operation's icon.
+pub fn op_icon(op: figcraft_doc::BoolOp) -> Icon {
+    match op {
+        figcraft_doc::BoolOp::Union => Icon::Union,
+        figcraft_doc::BoolOp::Subtract => Icon::Subtract,
+        figcraft_doc::BoolOp::Intersect => Icon::Intersect,
+        figcraft_doc::BoolOp::Exclude => Icon::Exclude,
+    }
+}
+
 pub fn node_icon(doc: &Document, id: NodeId) -> Icon {
     let Some(n) = doc.node(id) else { return Icon::Rectangle };
+    // An operand combining by an operation other than its group's shows that operation.
+    if let Some(op) = figcraft_engine::booleans::distinct_op(doc, id) {
+        return op_icon(op);
+    }
     match &n.kind {
         NodeKind::Page { .. } => Icon::Page,
         NodeKind::Frame if figcraft_engine::components::is_slot(doc, id) => Icon::Slot,
@@ -51,12 +65,7 @@ pub fn node_icon(doc: &Document, id: NodeId) -> Icon {
         }
         NodeKind::Vector { .. } => Icon::Vector,
         NodeKind::Text(_) => Icon::Text,
-        NodeKind::BooleanOp { op } => match op {
-            figcraft_doc::BoolOp::Union => Icon::Union,
-            figcraft_doc::BoolOp::Subtract => Icon::Subtract,
-            figcraft_doc::BoolOp::Intersect => Icon::Intersect,
-            figcraft_doc::BoolOp::Exclude => Icon::Exclude,
-        },
+        NodeKind::BooleanOp { op } => op_icon(*op),
         NodeKind::Component { .. } => Icon::Component,
         NodeKind::ComponentSet { .. } => Icon::ComponentSet,
         NodeKind::Instance { .. } => Icon::Instance,

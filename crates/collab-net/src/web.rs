@@ -1,6 +1,7 @@
 //! The browser client (step 4 of `docs/collab-protocol.md`): the web build joins a session a
-//! desktop app hosts, through the browser's WebSocket API (`web-sys`), with the same messages as
-//! the native guest. The connection logic is the [`Driver`]'s; this file feeds it the socket's
+//! desktop app hosts, or a file on a `figcraft-server` (also over `wss://` behind a TLS reverse
+//! proxy), through the browser's WebSocket API (`web-sys`), with the same messages as the native
+//! guest. The connection logic is the [`Driver`]'s; this file feeds it the socket's
 //! events and wakes it with a timer. Hosting needs the desktop app (a page can't listen on a
 //! socket).
 //!
@@ -8,8 +9,8 @@
 //! thread-local table, and [`NetLink`] (the engine needs it to be `Send`) holds only the session's
 //! number and its [`Inbox`]. Whatever arrives wakes egui through the [`Waker`]; nothing polls.
 //!
-//! An `https://` page can't open the unencrypted `ws://` connection of a desktop-hosted session
-//! (browsers block mixed content) except to this machine; [`NetLink::join`] says so up front.
+//! An `https://` page can't open an unencrypted `ws://` connection (browsers block mixed content)
+//! except to this machine; [`NetLink::join`] says so up front.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -167,8 +168,8 @@ impl LiveLink for NetLink {
 
     fn join(&mut self, link: &str, name: &str) -> Result<(), String> {
         let invite = Invite::parse(link)?;
-        if secure_page() && !invite.loopback() {
-            return Err("this page was loaded over https, and browsers block the unencrypted ws:// connection of a session the desktop app hosts; open FigCraft from an http:// address (like http://localhost:8767) or join from the desktop app".into());
+        if secure_page() && !invite.server.secure && !invite.loopback() {
+            return Err("this page was loaded over https, and browsers block unencrypted ws:// connections; use a wss:// link (a server behind TLS), open FigCraft from an http:// address (like http://localhost:8767), or join from the desktop app".into());
         }
         self.leave();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));

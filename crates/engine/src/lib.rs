@@ -10,6 +10,7 @@
 pub mod al_keys;
 pub mod annotations;
 pub mod arc_handles;
+pub mod booleans;
 pub mod catalog;
 pub mod cmd;
 pub mod codegen;
@@ -620,7 +621,8 @@ impl Session {
         let before = self.ds().ok().map(|d| (d.doc.clone(), d.selection.clone(), d.page, d.uid));
         let result = guard::run(id, || (spec.run)(self, params))
             .and_then(|v| self.check_instance_structure(id, &before).map(|()| v))
-            .and_then(|v| self.check_preview(id, &before).map(|()| v));
+            .and_then(|v| self.check_preview(id, &before).map(|()| v))
+            .and_then(|v| self.check_live_access(id, &before).map(|()| v));
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
@@ -655,6 +657,17 @@ impl Session {
             return Ok(());
         }
         Err(EngineError::Disabled(id.to_string(), PREVIEW_READ_ONLY.into()))
+    }
+
+    /// A live session's document you may only view (or that is on its way to a server) is
+    /// read-only: refuse an edit (it is rolled back).
+    fn check_live_access(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
+        let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
+        let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
+        match self.live_read_only(*uid) {
+            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) => Err(EngineError::Disabled(id.to_string(), why.into())),
+            _ => Ok(()),
+        }
     }
 
     /// Instances can't gain, lose or reorder layers, and library copies are read-only: refuse such
@@ -731,6 +744,9 @@ impl Session {
     /// Start a gesture: later [`preview`](Self::preview) calls re-apply edits to this snapshot.
     pub fn begin_interaction(&mut self, label: &str) -> Result<()> {
         textpreview::end(self);
+        if let Some(why) = self.active_read_only() {
+            return Err(EngineError::Disabled(label.to_string(), why.into()));
+        }
         let ds = self.ds_mut()?;
         if ds.preview.is_some() {
             return Err(EngineError::Disabled(label.to_string(), PREVIEW_READ_ONLY.into()));
@@ -1123,11 +1139,15 @@ mod annotation_categories_tests;
 #[cfg(test)]
 mod annotations_tests;
 #[cfg(test)]
+mod arc_fields_tests;
+#[cfg(test)]
 mod arc_handles_tests;
 #[cfg(test)]
 mod autosave_tests;
 #[cfg(test)]
 mod binding_lists_tests;
+#[cfg(test)]
+mod booleans_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]
@@ -1168,6 +1188,8 @@ mod invite_links_tests;
 mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
+#[cfg(test)]
+mod live_access_tests;
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]
@@ -1214,6 +1236,8 @@ mod section_contents_tests;
 mod section_tests;
 #[cfg(test)]
 mod selection_depth_tests;
+#[cfg(test)]
+mod shapebuilder_strokes_tests;
 #[cfg(test)]
 mod shapebuilder_tests;
 #[cfg(test)]
