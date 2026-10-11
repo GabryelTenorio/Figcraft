@@ -281,6 +281,8 @@ fn lines_and_text() {
     // box.
     let t = id(&ex(&mut s, "text.create", json!({"text": "Hello world", "x": 0, "y": 200})));
     let auto = |s: &Session| s.doc().unwrap().node(t).unwrap().kind.text().map(|d| d.auto_resize);
+    // Large type, so the box is big enough for side handles whatever font the machine falls back to.
+    set(&mut s, &[t], json!({"fontSize": 48}));
     assert_eq!(auto(&s), Some(TextAutoResize::WidthAndHeight));
     ex(&mut s, "select.set", json!({"ids": [t]}));
     let b = bounds(&s, t);
