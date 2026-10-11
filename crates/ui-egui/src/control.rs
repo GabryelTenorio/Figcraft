@@ -478,6 +478,20 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
                     c.split = x.clamp(0.0, 1.0) as f32;
                 }
             }
+            // The branch review dialog: a branch id opens it, null closes it; `branchReviewPicks`
+            // chooses sides ({<conflict key>: "branch" | "main"}).
+            if let Some(v) = p.get("branchReview") {
+                match v.as_str() {
+                    Some(id) => crate::branch_ui::open(app, Some(id)),
+                    None => app.ui.branch_review = None,
+                }
+            }
+            if let (Some(r), Some(picks)) = (app.ui.branch_review.as_mut(), p.get("branchReviewPicks").and_then(Value::as_object)) {
+                for (k, v) in picks {
+                    let side = v.as_str().and_then(figcraft_engine::branches::Side::parse).ok_or("branchReviewPicks: \"branch\" or \"main\"")?;
+                    r.picks.insert(k.clone(), side);
+                }
+            }
             // Which annotations the canvas shows: all, none (uncategorised) or a category.
             if let Some(v) = p.get("annotationFilter").and_then(Value::as_str) {
                 let doc = app.session.doc().map_err(|e| e.to_string())?;
