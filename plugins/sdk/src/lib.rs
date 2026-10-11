@@ -18,6 +18,11 @@
 //! entry!(run);
 //! ```
 //!
+//! A plugin can also show a panel ([`show_ui`]): FigCraft draws its controls and calls the plugin
+//! again for each button press or changed value, with [`Input::event`] set. The module stays
+//! loaded while the panel is open, so statics keep their values between those calls. Settings
+//! ([`setting`], [`set_setting`]) last from one run to the next.
+//!
 //! The SDK is `no_std` (it needs `alloc`); outside WebAssembly every host call fails, so a plugin's
 //! own logic can still be unit-tested on the host. See `docs/plugins.md` for the ABI underneath.
 #![cfg_attr(not(test), no_std)]
@@ -43,6 +48,19 @@ pub struct Input {
     pub params: Value,
     /// The selected layer ids.
     pub selection: Vec<u64>,
+    /// Set when the plugin's panel calls it back.
+    pub event: Option<Event>,
+}
+
+/// A button pressed or a value changed in the plugin's panel.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Event {
+    /// The control's name.
+    pub control: String,
+    /// A field's new value (null for a button).
+    pub value: Value,
+    /// Every field's value, by name.
+    pub values: Value,
 }
 
 impl Input {
@@ -53,6 +71,11 @@ impl Input {
             command: v.get("command").and_then(Value::as_str).unwrap_or_default().to_string(),
             params: v.get("params").cloned().unwrap_or(Value::Null),
             selection: ids(v.get("selection")),
+            event: v.get("event").map(|e| Event {
+                control: e.get("control").and_then(Value::as_str).unwrap_or_default().to_string(),
+                value: e.get("value").cloned().unwrap_or(Value::Null),
+                values: v.get("values").cloned().unwrap_or(Value::Null),
+            }),
         })
     }
 
@@ -102,6 +125,37 @@ pub fn notify(message: &str) {
     host::notify(message.as_bytes());
 }
 
+/// Show the plugin's panel, or replace the one showing: `{"title", "controls": [...]}` (see
+/// `docs/plugins.md`). An invalid panel is an error.
+pub fn show_ui(panel: &Value) -> Result<()> {
+    let spec = serde_json::to_string(panel).map_err(|e| e.to_string())?;
+    if host::ui_show(spec.as_bytes()) == 0 { Ok(()) } else { Err(String::from_utf8_lossy(&host::reply()).into_owned()) }
+}
+
+/// Close the plugin's panel (the plugin isn't called again until it's run again).
+pub fn close_ui() {
+    host::ui_close();
+}
+
+/// The plugin's setting `key`, as stored by [`set_setting`].
+pub fn setting(key: &str) -> Option<Value> {
+    if host::setting_get(key.as_bytes()) != 0 {
+        return None;
+    }
+    serde_json::from_slice(&host::reply()).ok()
+}
+
+/// Remember `value` under `key` for later runs (64 KB of settings per plugin).
+pub fn set_setting(key: &str, value: &Value) -> Result<()> {
+    let v = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    if host::setting_set(key.as_bytes(), v.as_bytes()) == 0 { Ok(()) } else { Err(String::from_utf8_lossy(&host::reply()).into_owned()) }
+}
+
+/// Forget setting `key`.
+pub fn delete_setting(key: &str) {
+    host::setting_delete(key.as_bytes());
+}
+
 /// The body of `figcraft_run` (use [`entry!`]): read the input, run `f`, hand back its output.
 pub fn run_plugin(input_len: i32, f: fn(Input) -> Result<Value>) -> i32 {
     let input = host::reply();
@@ -147,6 +201,11 @@ mod host {
             pub fn log(ptr: *const u8, len: usize);
             pub fn notify(ptr: *const u8, len: usize);
             pub fn set_output(ptr: *const u8, len: usize);
+            pub fn ui_show(ptr: *const u8, len: usize) -> i32;
+            pub fn ui_close();
+            pub fn setting_get(key: *const u8, key_len: usize) -> i32;
+            pub fn setting_set(key: *const u8, key_len: usize, value: *const u8, value_len: usize) -> i32;
+            pub fn setting_delete(key: *const u8, key_len: usize);
         }
     }
 
@@ -174,6 +233,21 @@ mod host {
     pub fn set_output(s: &[u8]) {
         unsafe { sys::set_output(s.as_ptr(), s.len()) }
     }
+    pub fn ui_show(s: &[u8]) -> i32 {
+        unsafe { sys::ui_show(s.as_ptr(), s.len()) }
+    }
+    pub fn ui_close() {
+        unsafe { sys::ui_close() }
+    }
+    pub fn setting_get(key: &[u8]) -> i32 {
+        unsafe { sys::setting_get(key.as_ptr(), key.len()) }
+    }
+    pub fn setting_set(key: &[u8], value: &[u8]) -> i32 {
+        unsafe { sys::setting_set(key.as_ptr(), key.len(), value.as_ptr(), value.len()) }
+    }
+    pub fn setting_delete(key: &[u8]) {
+        unsafe { sys::setting_delete(key.as_ptr(), key.len()) }
+    }
 }
 
 /// Outside WebAssembly (a plugin's own unit tests) every host call fails.
@@ -193,6 +267,17 @@ mod host {
     pub fn log(_s: &[u8]) {}
     pub fn notify(_s: &[u8]) {}
     pub fn set_output(_s: &[u8]) {}
+    pub fn ui_show(_s: &[u8]) -> i32 {
+        1
+    }
+    pub fn ui_close() {}
+    pub fn setting_get(_key: &[u8]) -> i32 {
+        1
+    }
+    pub fn setting_set(_key: &[u8], _value: &[u8]) -> i32 {
+        1
+    }
+    pub fn setting_delete(_key: &[u8]) {}
 }
 
 #[cfg(test)]
@@ -208,5 +293,12 @@ mod tests {
         assert!(Input::parse("nope").is_err());
         assert!(call("node.get", &json!({"id": 1})).is_err());
         assert!(selection().is_empty());
+        assert!(i.event.is_none());
+        let e = Input::parse(r#"{"command":"panel","event":{"control":"go","value":null},"values":{"n":2}}"#)
+            .unwrap_or_default()
+            .event
+            .unwrap_or_default();
+        assert_eq!((e.control.as_str(), &e.value, &e.values), ("go", &Value::Null, &json!({"n": 2})));
+        assert!(show_ui(&json!({})).is_err() && setting("k").is_none() && set_setting("k", &json!(1)).is_err());
     }
 }

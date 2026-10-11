@@ -18,7 +18,7 @@ enum OnRefusal {
 }
 
 /// `s` as a WAT string literal.
-fn lit(s: &str) -> String {
+pub(crate) fn lit(s: &str) -> String {
     s.bytes()
         .map(|b| if b.is_ascii_graphic() && b != b'"' && b != b'\\' || b == b' ' { (b as char).to_string() } else { format!("\\{b:02x}") })
         .collect()
@@ -62,30 +62,30 @@ fn script(calls: &[(&str, Value)], on_refusal: OnRefusal, tail: &str) -> Vec<u8>
     wat::parse_str(&wat).unwrap_or_else(|e| panic!("{e}\n{wat}"))
 }
 
-fn b64(bytes: &[u8]) -> String {
+pub(crate) fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn manifest(id: &str, access: &str, allow: &[&str]) -> Value {
+pub(crate) fn manifest(id: &str, access: &str, allow: &[&str]) -> Value {
     json!({"id": id, "name": format!("Plugin {id}"), "version": "1.0.0", "main": "plugin.wasm",
            "permissions": {"access": access, "commands": allow}})
 }
 
 /// Install a plugin from a manifest and module bytes (no files).
-fn install(s: &mut Session, manifest: Value, wasm: &[u8]) {
+pub(crate) fn install(s: &mut Session, manifest: Value, wasm: &[u8]) {
     ex(s, "plugin.import", json!({"manifest": manifest, "wasm": b64(wasm)}));
 }
 
-fn rect(s: &mut Session, x: f64) -> NodeId {
+pub(crate) fn rect(s: &mut Session, x: f64) -> NodeId {
     idv(&ex(s, "shape.rectangle", json!({"x": x, "y": 0, "width": 10, "height": 10})))
 }
 
-fn layer_count(s: &Session) -> usize {
+pub(crate) fn layer_count(s: &Session) -> usize {
     let ds = s.ds().unwrap();
     ds.doc.node(ds.page).unwrap().children.len()
 }
 
-fn undo_len(s: &Session) -> usize {
+pub(crate) fn undo_len(s: &Session) -> usize {
     s.ds().unwrap().history.undo.len()
 }
 

@@ -18,14 +18,14 @@ use crate::{ControlRequest, FigApp, NoServices};
 /// here edits text).
 const IDLE: Duration = Duration::from_secs(1);
 
-struct Harness {
+pub(crate) struct Harness {
     ctx: egui::Context,
     app: FigApp,
     time: f64,
 }
 
 impl Harness {
-    fn new(s: Session) -> Self {
+    pub(crate) fn new(s: Session) -> Self {
         Self { ctx: egui::Context::default(), app: FigApp::new(s, Box::new(NoServices)), time: 0.0 }
     }
 
@@ -63,7 +63,7 @@ impl Harness {
     }
 
     /// Settles, then stays idle: more frames with no input ask for nothing sooner.
-    fn assert_idle(&mut self, what: &str) {
+    pub(crate) fn assert_idle(&mut self, what: &str) {
         self.settle();
         for _ in 0..10 {
             let delay = self.frame(vec![]);
