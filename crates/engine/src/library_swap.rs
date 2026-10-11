@@ -188,6 +188,12 @@ pub fn swap_library(doc: &mut Document, from: &str, to: &PublishedLibrary) -> Re
         colls.insert(a.clone(), (b.clone(), modes));
     }
     out.variables = vars.len();
+    // shortcut: this file's collections extending one of A's stay on A (listed); move them with their
+    // overrides (mode ids differ between libraries) when swapping themes needs it.
+    let a_colls: BTreeSet<&str> = doc.libraries.collections.iter().filter(|r| r.library == from).map(|r| r.local.as_str()).collect();
+    for c in doc.variables.collections.iter().filter(|c| c.extends.as_deref().is_some_and(|e| a_colls.contains(e))) {
+        out.unmatched.push(format!("extended collection {}", c.name));
+    }
 
     // Re-point layers outside the library copies, and local variables aliasing A's.
     let ids: Vec<NodeId> = doc.nodes().filter(|n| outside(doc, n.id)).map(|n| n.id).collect();

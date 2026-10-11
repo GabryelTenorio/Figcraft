@@ -76,12 +76,13 @@ fn swap_moves_instances_styles_and_variables_by_name() {
     ex(&mut s, "library.applyStyle", json!({"library": a, "style": "Brand", "ids": [rect]}));
     let dot = idv(&ex(&mut s, "shape.rectangle", json!({"x": 50, "y": 200, "width": 10, "height": 10})));
     ex(&mut s, "library.bindVariable", json!({"library": a, "variable": "accent", "field": "fill", "ids": [dot]}));
+    let extended = ex(&mut s, "library.extendCollection", json!({"library": a, "collection": "Theme"}))["id"].clone();
     let before = s.doc().unwrap().clone();
 
     let r = ex(&mut s, "library.swap", json!({"from": a, "to": b}));
     assert_eq!((r["components"].as_u64(), r["styles"].as_u64(), r["variables"].as_u64()), (Some(1), Some(1), Some(1)), "{r}");
-    assert_eq!(r["unmatched"], json!(["component Only in A"]));
-    assert_eq!(r["removed"], false, "Only in A still uses library A");
+    assert_eq!(r["unmatched"], json!(["component Only in A", "extended collection Theme (extended)"]));
+    assert_eq!(r["removed"], false, "Only in A and the extension still use library A");
     let doc = s.doc().unwrap();
     assert_eq!(library_of(doc, main_of(&s, inst)), Some(b.as_str()), "the instance shows B's Button");
     assert_eq!(library_of(doc, main_of(&s, only)), Some(a.as_str()), "no match: still A's");
@@ -105,6 +106,7 @@ fn swap_moves_instances_styles_and_variables_by_name() {
 
     // Swapping what has a match for everything removes the old library.
     ex(&mut s, "edit.delete", json!({"ids": [only]}));
+    ex(&mut s, "variable.deleteCollection", json!({"collection": extended}));
     let r = ex(&mut s, "library.swap", json!({"from": a, "to": b}));
     assert_eq!((r["unmatched"].as_array().map(Vec::len), &r["removed"]), (Some(0), &json!(true)), "{r}");
     assert!(s.doc().unwrap().libraries.enabled.iter().all(|l| l.id != a));

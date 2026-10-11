@@ -375,7 +375,8 @@ most when it can't be reached).
   style and variable copied from `from` to the published asset of the same name in `to` (variants
   by name in their set, styles by name and type, variables by collection, name and type, modes by
   name), keeping overrides; one undo step → `{components, styles, variables, unmatched: [names
-  still from `from`], removed (nothing of `from` was left, so it was removed)}`.
+  still from `from`, including this file's collections that extend one of its collections],
+  removed (nothing of `from` was left, so it was removed)}`.
 
 ### Swapping instances
 
