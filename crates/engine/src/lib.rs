@@ -47,6 +47,7 @@ pub mod shapebuilder;
 pub mod snap;
 pub mod synthetic;
 pub mod synthetic_ds;
+pub mod templates;
 pub mod textedit;
 pub mod textpreview;
 pub mod tools;
@@ -585,6 +586,9 @@ pub struct Prefs {
     /// [`online`]), most recently opened first, at most [`online::MAX_ONLINE_FILES`].
     #[serde(skip_serializing_if = "Vec::is_empty", deserialize_with = "online::read")]
     pub online_files: Vec<online::OnlineFile>,
+    /// The Getting started tips on the home screen were closed (Help ▸ Getting started shows them
+    /// again).
+    pub getting_started_dismissed: bool,
 }
 
 impl Default for Prefs {
@@ -609,6 +613,7 @@ impl Default for Prefs {
             publish_server: live::DEFAULT_SERVER.into(),
             recent_files: Vec::new(),
             online_files: Vec::new(),
+            getting_started_dismissed: false,
         }
     }
 }
@@ -1508,6 +1513,8 @@ mod style_tests;
 mod styles_behaviour_tests;
 #[cfg(test)]
 mod svg_import_tests;
+#[cfg(test)]
+mod templates_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

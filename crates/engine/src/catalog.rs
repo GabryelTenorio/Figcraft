@@ -21,6 +21,9 @@ pub const SEP: &str = "-";
 pub static MENU: &[MenuItem] = &[
     // File
     m!("File", "New design file", "file.new"),
+    // FigCraft's own: starter templates (not counted by `parity`, like the other items of its own
+    // listed in `OWN`).
+    m!("File", "New from template…", "file.newFromTemplate"),
     m!("File", "New window", "window.new"),
     m!("File", "Open…", "file.open"),
     m!("File", "Import from file…", "file.import"),
@@ -251,6 +254,7 @@ pub static MENU: &[MenuItem] = &[
     m!("Libraries", "Publish library…", "libraries.publish"),
     m!("Libraries", "Hide when publishing", "component.hideWhenPublishing"),
     // Help
+    m!("Help", "Getting started", "help.gettingStarted"),
     m!("Help", "Keyboard shortcuts", "help.shortcuts"),
     m!("Help", "Help page", "help.page"),
     m!("Help", "About FigCraft", "help.about"),
@@ -280,12 +284,15 @@ pub fn items() -> impl Iterator<Item = &'static MenuItem> {
     MENU.iter().filter(|m| m.label != SEP)
 }
 
+/// Items of FigCraft's own that the parity count leaves out (as it does the `collab.` ones).
+const OWN: [&str; 2] = ["file.newFromTemplate", "help.gettingStarted"];
+
 /// Coverage: (implemented, total, missing ids). `extra` lists ids implemented by the UI layer.
 pub fn parity(extra: &[&str]) -> (usize, usize, Vec<&'static str>) {
     let mut done = 0;
     let mut missing = Vec::new();
     let mut total = 0;
-    for m in items().filter(|m| !m.id.starts_with("collab.")) {
+    for m in items().filter(|m| !m.id.starts_with("collab.") && !OWN.contains(&m.id)) {
         total += 1;
         if crate::find_command(m.id).is_some() || extra.contains(&m.id) {
             done += 1;
