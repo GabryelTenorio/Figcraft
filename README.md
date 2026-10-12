@@ -267,7 +267,8 @@ share or join a file. Live sessions are a **preview**. Before you share anything
 know what sharing does:
 
 - **Share ▸ Online uploads the file to a server.** By default that is the public server at
-  `collab.craftapps.dev`; you can set another one, or your own, in Preferences. The file stays on
+  `collab.craftapps.dev`; you can set another one, or your own, in Preferences (and a build can
+  ship without it: [`docs/releasing.md`](docs/releasing.md#the-default-server)). The file stays on
   the server after you stop sharing, until you remove it (Share ▸ Advanced ▸ Remove from server…)
   or nobody has opened it for 30 days, when a public server deletes it.
 - **It is not end-to-end encrypted.** The connection to the server is encrypted (TLS), but the

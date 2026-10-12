@@ -61,7 +61,14 @@ use crate::{DocState, EngineError, Result, Session, TextEdit, ViewState, bad, sp
 
 /// The server files are shared through online unless Preferences name another: the only place
 /// its address is written.
-pub const DEFAULT_SERVER: &str = "wss://collab.craftapps.dev/";
+///
+/// A build can ship another one, or none: set `FIGCRAFT_DEFAULT_SERVER` when compiling to a
+/// server's address (`wss://host/`), or to nothing (`FIGCRAFT_DEFAULT_SERVER=`) for a build whose
+/// online sharing stays off until the user enters a server in Preferences.
+pub const DEFAULT_SERVER: &str = match option_env!("FIGCRAFT_DEFAULT_SERVER") {
+    Some(server) => server,
+    None => "wss://collab.craftapps.dev/",
+};
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;

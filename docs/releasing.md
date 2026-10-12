@@ -52,6 +52,22 @@ Windows and draft-release jobs declare `environment: release`; off the `release`
 environment refuses them (0 steps) and no release is created. The `version` input is applied with
 `xtask version set` before building, so the binaries report it too.
 
+## The default server
+
+Share ▸ Online uses the server in Preferences, which starts as the public one built into the app
+(`figcraft_engine::live::DEFAULT_SERVER`). Distributions that would rather not ship that default
+set `FIGCRAFT_DEFAULT_SERVER` when building: to their own server's address (`wss://host/`), or to
+nothing for a build with no default, where online sharing stays off until the user enters a
+server (sharing on the local network works either way):
+
+```sh
+FIGCRAFT_DEFAULT_SERVER= cargo build --release -p figcraft          # no default server
+FIGCRAFT_DEFAULT_SERVER=wss://design.example.org/ cargo build --release -p figcraft
+```
+
+The release workflow leaves it unset. The public server's terms are in
+[`online-sharing-terms.md`](online-sharing-terms.md).
+
 ## What gets built
 
 | Platform | Artifacts | Built on |
