@@ -103,10 +103,13 @@ session of the window's active file as the window shows it (sessions are per fil
 shows its own, or `status: "off"`): `session` (its id, null when the file isn't in one),
 `sessions` (how many the app has running), `status`, `role`, the number of `peers`, who you `follow`, the
 peers whose cursors are drawn on the canvas (`cursorsShown`), whether the Join and Publish to
-server dialogs are open (`joinDialog`, `publishDialog`; Escape closes them) and why the active
+server dialogs are open (`joinDialog`, `publishDialog`; Escape closes them), the join code the
+Share popover shows (`code`, with `share: {via, access}`; null when the file isn't shared with
+one), what is typed in the popover's and the home screen's join field (`joinField`), whether the
+popover has Local network chosen and Advanced open (`local`, `advanced`), and why the active
 document can't be edited now (`readOnly`: the "View only" or "Publishing" reason, else null); the
-session itself is `engine.execute {command: "collab.peers"}` (hosting, joining and publishing are
-`collab.host`, `collab.join` and `collab.publish`, opening invite links `collab.registerLinks`,
+session itself is `engine.execute {command: "collab.peers"}` (sharing with a join code, hosting,
+joining and publishing are `collab.share`, `collab.host`, `collab.join` and `collab.publish`, opening invite links `collab.registerLinks`,
 see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
 was started with (`figcraft "figcraft://join?…"`).
 

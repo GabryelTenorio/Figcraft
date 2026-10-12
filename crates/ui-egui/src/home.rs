@@ -1,4 +1,4 @@
-//! The home screen: new file, open, recent files, templates.
+//! The home screen: new file, open, join with a code, recent files, templates.
 
 use egui::{Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::json;
@@ -71,8 +71,29 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         if open {
             app.open_dialog();
         }
+        // Join a file someone shared: the join field, and what the join is doing.
+        let join = Rect::from_min_size(pos2(main.min.x, cy + 96.0), vec2(main.width().min(540.0), 74.0));
+        ui.painter().text(join.min, Align2::LEFT_TOP, tr("Join with a code"), semibold(12.0), t.text_secondary);
+        let field = Rect::from_min_max(pos2(join.min.x, join.min.y + 24.0), join.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(field).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+            if let Some(session) = crate::live::join_row(app, ui, 260.0) {
+                app.ui.live.home_join = Some(session);
+            }
+            if let Some(session) = app.ui.live.home_join {
+                crate::live::join_status(app, ui, &t, session);
+            }
+        });
+        // The shared file opened in a tab of its own: show it. (A join that was left is forgotten.)
+        match app.ui.live.home_join.map(|id| app.session.live.get(id).map(figcraft_engine::live::Live::syncing)) {
+            Some(Some(true)) => {
+                app.ui.live.home_join = None;
+                app.ui.home = false;
+            }
+            Some(None) => app.ui.live.home_join = None,
+            _ => {}
+        }
         // Open documents and recent files.
-        let mut y = cy + 108.0;
+        let mut y = join.max.y + 22.0;
         ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, tr("Open files"), semibold(12.0), t.text_secondary);
         y += 28.0;
         let mut switch = None;

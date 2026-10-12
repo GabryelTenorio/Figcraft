@@ -28,6 +28,11 @@
 //! closing a document ends its session only. One link carries them all, each under its
 //! [`SessionId`].
 //!
+//! Sharing with a join code (`collab.share`): online, the open document is published to the
+//! server in Preferences and the server names its links with short codes; on the local network
+//! the app hosts and the code carries the host's address and the session's secret
+//! ([`figcraft_collab::code`]). `collab.join` takes a code of either kind, or an invite link.
+//!
 //! Cursor chat (`collab.cursorChat`) and spotlights (`collab.spotlight`) travel as signals:
 //! short-lived presence the host passes on to everyone, never stored. A spotlight makes everyone
 //! follow the person who started it; moving your own view stops following, as with any follow.
@@ -37,6 +42,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use figcraft_collab::Client;
+use figcraft_collab::code::{self, Code};
 pub use figcraft_collab::message::Signal;
 use figcraft_collab::message::{Admin, AdminReply, ClientMsg, EditingText, LibraryReply, LibraryReq, PluginReply, PluginReq, ServerMsg};
 
@@ -52,6 +58,10 @@ use crate::collab::EngineRecompute;
 use crate::params::{get, num, req_string, string};
 use crate::tools::ToolId;
 use crate::{DocState, EngineError, Result, Session, TextEdit, ViewState, bad, spec};
+
+/// The server files are shared through online unless Preferences name another: the only place
+/// its address is written.
+pub const DEFAULT_SERVER: &str = "wss://collab.craftapps.dev/";
 
 /// Most selected ids one presence update carries (the rest aren't shown to others).
 pub const MAX_SELECTION: usize = 10_000;
@@ -175,6 +185,56 @@ pub struct Published {
     pub expires: Option<u64>,
 }
 
+/// How a file is shared with a join code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Via {
+    /// Through a server: the file is kept there and the server hands out the codes.
+    Online,
+    /// From this app, to people on the same network.
+    Local,
+}
+
+/// A file shared with a join code (`collab.share`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Share {
+    pub via: Via,
+    /// Online: the server's address (without a key).
+    pub server: String,
+    /// What the code shown lets people do.
+    pub access: Access,
+    /// The join codes (their symbols) that let people edit and only view. `None`: not there yet,
+    /// or there is none (a server from before join codes, a host without an IPv4 address; on the
+    /// local network everyone edits): the invite links are shared instead.
+    pub edit: Option<String>,
+    pub view: Option<String>,
+}
+
+impl Share {
+    /// The code to show: the one for [`access`](Self::access), grouped (`K7M-2QX-9TD`).
+    pub fn code(&self) -> Option<String> {
+        let code = if self.access == Access::View { &self.view } else { &self.edit };
+        code.as_deref().map(code::grouped)
+    }
+}
+
+/// What someone typed to join, as what the link joins: an invite link as it is, a local network
+/// code as the link it stands for, an online code with `server` to ask about it.
+pub fn join_target(server: &str, typed: &str) -> std::result::Result<String, String> {
+    let typed = typed.trim();
+    if typed.contains("://") || typed.contains('?') {
+        return Ok(typed.to_string());
+    }
+    match code::parse(typed)? {
+        Code::Local(local) => Ok(local.link()),
+        Code::Online(_) if server.trim().is_empty() => Err(format!("that is an online join code, and {ONLINE_OFF}")),
+        Code::Online(code) => Ok(format!("figcraft://join?server={}&code={code}", server.trim())),
+    }
+}
+
+/// Why nothing can be shared or joined online.
+pub const ONLINE_OFF: &str = "online sharing is off: choose a server in Preferences (or share on the local network)";
+
 /// A session's number on the link: the engine picks it (from 1) when it starts the session.
 pub type SessionId = u64;
 /// The [`SessionId`] of events that aren't about a session (answers to background requests).
@@ -203,6 +263,12 @@ pub enum Event {
     },
     /// The document is on the server (`collab.publish`); joining it follows.
     Published(Published),
+    /// The server's join codes for the published file's edit link and view link (`collab.share`;
+    /// a server from before join codes sends none).
+    Codes {
+        edit: String,
+        view: String,
+    },
     /// What the server says about its hosting (operator, terms, this file's expiry).
     Hosting(HostInfo),
     /// The server's answer to `collab.report`: kept, or why not.
@@ -306,6 +372,8 @@ pub struct HostOptions {
     pub name: String,
     /// The shared file (the session's authoritative copy starts from it).
     pub doc: Arc<Document>,
+    /// Shared with a join code (`collab.share`): the session's secret is short enough to type.
+    pub short: bool,
 }
 
 /// What [`LiveLink::publish`] needs to put the open file on a server.
@@ -322,6 +390,8 @@ pub struct PublishOptions {
     /// Your name in the session (empty: the server picks one).
     pub me: String,
     pub doc: Arc<Document>,
+    /// Ask the server for join codes for the file's links ([`Event::Codes`]; `collab.share`).
+    pub codes: bool,
 }
 
 /// The networking behind live sessions, installed by the app ([`Lives::install`]). It carries
@@ -444,6 +514,8 @@ pub struct Live {
     hold: u32,
     /// The file you published to a server in this session, with its links.
     pub published: Option<Published>,
+    /// The session was started by sharing with a join code (`collab.share`): how, and its codes.
+    pub share: Option<Share>,
     /// What the server of the file you're in says about its hosting (operator, terms, expiry);
     /// a server that says it takes reports (`collab.report`).
     pub hosting: Option<HostInfo>,
@@ -856,8 +928,18 @@ impl Session {
                 self.live.end(id);
             }
             Event::Published(p) => {
-                self.message = Some(format!("Published {} to the server", p.name));
+                // Shared with a code: the popover shows it, nothing more to say.
+                if live.share.is_none() {
+                    self.message = Some(format!("Published {} to the server", p.name));
+                }
                 live.published = Some(p);
+            }
+            Event::Codes { edit, view } => {
+                // Only what a server made: nine symbols each, or nothing.
+                let online = |c: String| code::normalize(&c).ok().filter(|c| c.len() == code::ONLINE_LEN);
+                if let Some(share) = live.share.as_mut() {
+                    (share.edit, share.view) = (online(edit), online(view));
+                }
             }
             Event::Hosting(info) => live.hosting = Some(clean_hosting(info)),
             Event::Reported(error) => {
@@ -1343,6 +1425,13 @@ impl Session {
             "access": l.client.as_ref().map(Client::access).or(info.map(|i| i.access)),
             "readOnly": l.doc_uid.is_some_and(|u| self.live_read_only(u).is_some()),
             "published": l.published,
+            "code": l.share.as_ref().and_then(Share::code),
+            "share": l.share.as_ref().map(|sh| json!({
+                "via": sh.via,
+                "access": sh.access.id(),
+                "editCode": sh.edit.as_deref().map(code::grouped),
+                "viewCode": sh.view.as_deref().map(code::grouped),
+            })),
             "hosting": l.hosting.as_ref().map(hosting_json),
             "follow": l.follow,
             "signals": l.signals,
@@ -1391,34 +1480,98 @@ fn unavailable(cmd: &str) -> EngineError {
 }
 
 fn host(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "collab.host";
+    start_host(s, "collab.host", p, Bind::Local, false)?;
+    Ok(s.live_summary())
+}
+
+/// Start hosting the open file for command `cmd` (on `bind` unless `p` says where; `short`: with
+/// a secret a join code can carry): the new session.
+fn start_host(s: &mut Session, cmd: &str, p: &Value, bind: Bind, short: bool) -> Result<SessionId> {
     let port = match get(p, "port") {
         None => None,
-        Some(v) => Some(v.as_u64().and_then(|n| u16::try_from(n).ok()).ok_or_else(|| bad(CMD, "`port` must be a whole number from 0 to 65535"))?),
+        Some(v) => Some(v.as_u64().and_then(|n| u16::try_from(n).ok()).ok_or_else(|| bad(cmd, "`port` must be a whole number from 0 to 65535"))?),
     };
     let bind = match string(p, "bind").as_deref().map(str::trim) {
-        None | Some("local") => Bind::Local,
+        None => bind,
+        Some("local") => Bind::Local,
         Some("lan") => Bind::Lan,
-        Some(other) => other.parse::<IpAddr>().map(Bind::Addr).map_err(|_| bad(CMD, "`bind` must be \"local\", \"lan\" or an IP address"))?,
+        Some(other) => other.parse::<IpAddr>().map(Bind::Addr).map_err(|_| bad(cmd, "`bind` must be \"local\", \"lan\" or an IP address"))?,
     };
     let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
-    let opts = HostOptions { port, bind, name: display_name(&s.prefs), doc };
-    let (id, info) = s.live.start(CMD, |l, id| l.host(id, opts).map_err(|e| EngineError::Other(format!("couldn't start the live session: {e}"))))?;
+    let opts = HostOptions { port, bind, name: display_name(&s.prefs), doc, short };
+    let (id, info) = s.live.start(cmd, |l, id| l.host(id, opts).map_err(|e| EngineError::Other(format!("couldn't start the live session: {e}"))))?;
     s.live.open(Live { id, status: Status::Live, info: Some(info), doc_uid: Some(uid), tab: Some(uid), ..Live::default() });
-    Ok(s.live_summary())
+    Ok(id)
 }
 
 fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.publish";
     let server = req_string(CMD, p, "server")?;
+    start_publish(s, CMD, &server, p, false)?;
+    Ok(s.live_summary())
+}
+
+/// Start publishing the open file to `server` for command `cmd` (`codes`: asking for join codes
+/// too): the new session.
+fn start_publish(s: &mut Session, cmd: &str, server: &str, p: &Value, codes: bool) -> Result<SessionId> {
     let key = string(p, "key").map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
     let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
     let name = string(p, "name").map(|n| n.trim().chars().filter(|c| !c.is_control()).take(256).collect::<String>()).filter(|n| !n.is_empty());
-    let opts =
-        PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me: display_name(&s.prefs), doc };
-    let (id, ()) = s.live.start(CMD, |l, id| l.publish(id, opts).map_err(|e| bad(CMD, e)))?;
+    let me = display_name(&s.prefs);
+    let opts = PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me, doc, codes };
+    let (id, ()) = s.live.start(cmd, |l, id| l.publish(id, opts).map_err(|e| bad(cmd, e)))?;
     // This tab becomes the server file's synced document once it is there.
     s.live.open(Live { id, status: Status::Connecting, doc_uid: Some(uid), tab: Some(uid), ..Live::default() });
+    Ok(id)
+}
+
+/// Why a local network share has no view-only code.
+const LOCAL_EDITS: &str = "everyone who joins a file shared on the local network can edit it: share it online for a view-only code";
+
+fn share(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.share";
+    let via = match string(p, "via").as_deref().map(str::trim) {
+        None | Some("online") => Via::Online,
+        Some("local") => Via::Local,
+        Some(_) => return Err(bad(CMD, "`via` must be \"online\" or \"local\"")),
+    };
+    let access = match string(p, "access") {
+        None => None,
+        Some(a) => Some(Access::parse(&a).ok_or_else(|| bad(CMD, "`access` must be \"edit\" or \"view\""))?),
+    };
+    // Already shared: only which code is shown changes.
+    if let Some(shared) = s.live().share.as_ref().filter(|_| s.live().status.active()).map(|sh| sh.via) {
+        if get(p, "via").is_some() && shared != via {
+            return Err(bad(CMD, "this file is shared the other way already: stop sharing it first (collab.stop)"));
+        }
+        if access == Some(Access::View) && shared == Via::Local {
+            return Err(bad(CMD, LOCAL_EDITS));
+        }
+        if let (Some(a), Some(sh)) = (access, s.live_mut().and_then(|l| l.share.as_mut())) {
+            sh.access = a;
+        }
+        return Ok(s.live_summary());
+    }
+    let access = access.unwrap_or_default();
+    let mut server = String::new();
+    let id = match via {
+        Via::Local if access == Access::View => return Err(bad(CMD, LOCAL_EDITS)),
+        Via::Local => start_host(s, CMD, p, Bind::Lan, true)?,
+        Via::Online => {
+            server = string(p, "server").unwrap_or_else(|| s.prefs.publish_server.clone()).trim().to_string();
+            if server.is_empty() {
+                return Err(EngineError::Disabled(CMD.into(), ONLINE_OFF.into()));
+            }
+            start_publish(s, CMD, &server, p, true)?
+        }
+    };
+    if let Some(live) = s.live.sessions.get_mut(&id) {
+        // On the local network the code says where the session is and its secret, as its link does.
+        let edit = live.info.as_ref().and_then(|i| code::Local::from_link(&i.link)).map(|l| l.code());
+        // Kept without a key the address may carry: stopping asks the server as the file's owner.
+        let server = server.split('?').next().unwrap_or_default().to_string();
+        live.share = Some(Share { via, server, access, edit, view: None });
+    }
     Ok(s.live_summary())
 }
 
@@ -1495,9 +1648,13 @@ pub const MAX_REPORT: usize = 500;
 
 fn join(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.join";
-    let link = req_string(CMD, p, "link")?;
+    let typed = match string(p, "code") {
+        Some(code) => code,
+        None => req_string(CMD, p, "link").map_err(|_| bad(CMD, "give the join `code` you were told, or the invite `link`"))?,
+    };
+    let link = join_target(&s.prefs.publish_server, &typed).map_err(|e| bad(CMD, e))?;
     let (name, tab) = (display_name(&s.prefs), s.tab());
-    let (id, ()) = s.live.start(CMD, |l, id| l.join(id, link.trim(), &name).map_err(|e| bad(CMD, e)))?;
+    let (id, ()) = s.live.start(CMD, |l, id| l.join(id, &link, &name).map_err(|e| bad(CMD, e)))?;
     // The session's file opens in a tab of its own; until then the join shows on this one.
     s.live.open(Live { id, status: Status::Connecting, tab, ..Live::default() });
     Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
@@ -1509,6 +1666,29 @@ fn leave(s: &mut Session, _: &Value) -> Result<Value> {
         s.message = Some("You left the session; your copy stays open here".into());
     }
     Ok(json!({"ended": ended.is_some_and(|l| l.status.active())}))
+}
+
+fn stop(s: &mut Session, p: &Value) -> Result<Value> {
+    // A file shared online was put on the server for this: it goes with the sharing (its codes
+    // and links stop working; everyone keeps the copy they have).
+    let live = s.live();
+    let remove = match (&live.share, &live.published) {
+        (Some(Share { via: Via::Online, server, .. }), Some(Published { file, owner: Some(owner), .. })) => Some(NetRequest::Hosting {
+            server: server.clone(),
+            file: file.clone(),
+            owner: owner.clone(),
+            req: Some(Admin::Remove { file: file.clone() }),
+        }),
+        _ => None,
+    };
+    let out = leave(s, p)?;
+    // Nobody waits for the answer (job 0 is no command's): a file that stays expires on its own.
+    if let (Some(req), Some(link)) = (remove, s.live.link())
+        && !link.background(0, req.clone())
+    {
+        let _ = link.request(req);
+    }
+    Ok(out)
 }
 
 fn follow(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1568,11 +1748,24 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             host
         ),
-        spec!("collab.stop", "Stop live session", "{} (the open file's session; also leaves a joined session) → {ended}", false, leave),
+        spec!(
+            "collab.share",
+            "Share with a join code",
+            "{via?: \"online\" (default: the open file is kept on the server in Preferences, `pref.publishServer`, and the server hands out the codes) | \"local\" (this app hosts it for people on the same network; no server), access?: \"edit\" (default) | \"view\" (online only: which code `code` is), server? (online: another server's address, with ?key=… when it needs its key), name? (online: the file's name there), port?, bind?: \"lan\" (default) | \"local\" (this machine only) | an IP address (local)} → the open file's session as `collab.peers` gives it: `code` is what others type to join (`collab.join {code}`, the Join field), `link` an invite link. Local: at once, the code carries the host's IPv4 address, port and secret (K7M2Q-…, 20 symbols). Online: status \"connecting\" first; once live `code` is the server's (K7M-2QX-9TD) and `share` has both (`editCode`, `viewCode`); `code` stays null when the server is older than join codes (share `published.edit` / `published.view` instead). Called again while shared: only switches which code `code` is (`access`). `collab.stop` ends it",
+            false,
+            share
+        ),
+        spec!(
+            "collab.stop",
+            "Stop live session",
+            "{} (the open file's session; also leaves a joined session; a file shared online with `collab.share` is removed from the server, so its codes and links stop working: `collab.leave` keeps it there) → {ended}",
+            false,
+            stop
+        ),
         spec!(
             "collab.join",
             "Join live session",
-            "{link: figcraft://join?host=…&file=…&token=…, figcraft://join?server=ws(s)://…&file=…&token=… or ws(s)://host:port/?file=…&token=… (a session an app hosts, or a server's share link)} → the new session: {session, status: \"connecting\", …}; its file opens in a tab of its own (other files' sessions go on) and `collab.peers` tells when it's live (`sessions` lists it until then, and if it fails)",
+            "{code: a join code (K7M-2QX-9TD from a server, asked at the server in Preferences; a longer one for the local network; spaces, dashes and case don't matter, O reads as 0 and I or L as 1) | link: figcraft://join?host=…&file=…&token=…, figcraft://join?server=ws(s)://…&file=…&token=… or ws(s)://host:port/?file=…&token=… (a session an app hosts, or a server's share link; a code here works too)} → the new session: {session, status: \"connecting\", …}; its file opens in a tab of its own (other files' sessions go on) and `collab.peers` tells when it's live (`sessions` lists it until then, and if it fails)",
             false,
             join
         ),
@@ -1614,7 +1807,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → the open file's session (each open file has its own or none): {available, canHost (false in the browser: it can only join), session (its id; null: this file isn't in a session), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view (view: a server's view link; edits are refused), readOnly (the open file can't be edited now: view only, or being published), published (a file you published: {server, file, name, edit, view}), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}], sessions: [{session, document (index of its open document; null for a join on its way), status, reason, role, fileName, link, peers (how many others)}] (every session of the app)}",
+            "{} → the open file's session (each open file has its own or none): {available, canHost (false in the browser: it can only join), session (its id; null: this file isn't in a session), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view (view: a server's view link; edits are refused), readOnly (the open file can't be edited now: view only, or being published), published (a file you published: {server, file, name, edit, view}), code (the join code to give others, when the file was shared with `collab.share`; null otherwise or while it is on its way), share ({via: online|local, access, editCode, viewCode} or null), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}], sessions: [{session, document (index of its open document; null for a join on its way), status, reason, role, fileName, link, peers (how many others)}] (every session of the app)}",
             false,
             |s, _| Ok(s.live_summary())
         ),

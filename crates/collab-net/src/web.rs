@@ -168,13 +168,14 @@ impl LiveLink for NetLink {
     }
 
     fn join(&mut self, session: SessionId, link: &str, name: &str) -> Result<(), String> {
-        let invite = Invite::parse(link)?;
+        let (invite, code) = Invite::parse_join(link)?;
         if secure_page() && !invite.server.secure && !invite.loopback() {
             return Err("this page was loaded over https, and browsers block unencrypted ws:// connections; use a wss:// link (a server behind TLS), open FigCraft from an http:// address (like http://localhost:8767), or join from the desktop app".into());
         }
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let inbox = self.sessions.inbox();
-        let driver = Driver::start(BrowserSocket { id, ws: None }, GuestConfig::new(invite, name.to_string()), inbox.clone(), Instant::now());
+        let cfg = GuestConfig { code, ..GuestConfig::new(invite, name.to_string()) };
+        let driver = Driver::start(BrowserSocket { id, ws: None }, cfg, inbox.clone(), Instant::now());
         let timer = Closure::<dyn FnMut()>::new(move || with_driver(id, |d, now| d.tick(now)));
         let mut g = Guest { driver, timer, timeout: None };
         g.arm();

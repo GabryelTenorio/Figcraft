@@ -5,14 +5,18 @@
 //! the server didn't get), presence throttled to about 30 a second (latest wins), a ping when quiet, a connection that goes silent counted as
 //! dropped, and reconnects with growing pauses after a live connection drops. The browser layer
 //! (`web.rs`) feeds it the WebSocket's events and wakes it at [`Driver::deadline`].
+//!
+//! A join by code ([`GuestConfig::code`]) first asks the server which file the code opens on a
+//! connection of its own, then joins that file as with a link; a server that doesn't know the
+//! code (or can't be reached) ends the join with the reason.
 
-use figcraft_collab::message::{self, ClientMsg, Presence, ServerMsg};
+use figcraft_collab::message::{self, ClientMsg, PROTOCOL, Presence, Resolve, ServerMsg};
 use figcraft_engine::live::{Event, Status};
 // `std::time::Instant` on native builds; the browser's clock in the web build.
 use web_time::Instant;
 
 use crate::inbox::Inbox;
-use crate::join::{GuestConfig, Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
+use crate::join::{GuestConfig, Next, Outcome, Resuming, Seen, Taken, after, closed, hello, resolved, take, unresolved};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
 
 /// A WebSocket the driver opens, writes and closes; what it receives comes back through the
@@ -93,12 +97,15 @@ impl<S: Socket> Driver<S> {
         }
     }
 
-    /// The connection is open: say hello.
+    /// The connection is open: say hello (or ask about the join code first).
     pub(crate) fn opened(&mut self, now: Instant) {
         let Some(c) = self.conn.as_mut() else { return };
         c.opened = true;
         c.last_heard = now;
-        let hello = hello(&self.cfg, &self.resume);
+        let hello = match &self.cfg.code {
+            Some(code) => ClientMsg::Resolve(Resolve { protocol: PROTOCOL, client_version: message::client_version(), code: code.clone() }),
+            None => hello(&self.cfg, &self.resume),
+        };
         if !self.write(&hello, now) {
             self.end(Outcome::Retry("the connection dropped".into()), now);
         }
@@ -109,6 +116,16 @@ impl<S: Socket> Driver<S> {
         let Some(c) = self.conn.as_mut() else { return };
         c.last_heard = now;
         let taken = match message::decode::<ServerMsg>(bytes, self.cfg.limits.max_server_message) {
+            // The join code's answer: join the file it opens, on a new connection.
+            Ok(ServerMsg::Resolved { file, token }) if self.cfg.code.is_some() => {
+                return match resolved(&mut self.cfg, file, token) {
+                    Ok(()) => {
+                        self.sock.close();
+                        self.connect(now);
+                    }
+                    Err(o) => self.end(o, now),
+                };
+            }
             // Single-threaded: the connection counts as welcomed below, before the engine polls.
             Ok(m) => take(m, &self.cfg, &self.inbox, &mut c.seen, &self.resume, &|| {}),
             Err(e) => Taken::End(Outcome::Refused(format!("the host sent a message this version can't read ({e})"))),
@@ -233,6 +250,8 @@ impl<S: Socket> Driver<S> {
 
     /// The connection ended: close it, then stop or plan the reconnect.
     fn end(&mut self, outcome: Outcome, now: Instant) {
+        // Still asking about the join code: whatever went wrong is final.
+        let outcome = if self.cfg.code.is_some() { unresolved(&self.cfg, outcome) } else { outcome };
         if self.conn.take().is_some() {
             self.sock.close();
         }

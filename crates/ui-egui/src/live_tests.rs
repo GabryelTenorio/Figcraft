@@ -332,18 +332,20 @@ fn share_popover_and_join_dialog() {
     let share = text_center(&shapes, "Share");
     h.click(share);
     let shapes = h.frames(2);
-    for t in ["Live session", "Start live session", "Share on the local network", "Export…"] {
+    for t in ["Share this file", "Online", "Local network", "Start sharing", "Join with a code", "Export…"] {
         assert!(has_text(&shapes, t), "the popover shows {t:?}");
     }
     // Starting fails with this link: the error shows, nothing else changes.
-    h.click(text_center(&shapes, "Start live session"));
+    h.click(text_center(&shapes, "Local network"));
+    let shapes = h.frames(2);
+    h.click(text_center(&shapes, "Start sharing"));
     assert_eq!(h.app.session.live().status, Status::Off);
     assert!(h.app.ui.last_error.as_deref().is_some_and(|e| e.contains("not in this test")));
     // File ▸ Join live session opens the dialog.
     h.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);
     crate::menus::invoke(&mut h.app, "collab.join");
     let shapes = h.frames(2);
-    assert!(has_text(&shapes, "Join live session") && has_text(&shapes, "Paste the invite link the host shared with you."));
+    assert!(has_text(&shapes, "Join live session") && has_text(&shapes, "Type the join code you were given, or paste an invite link."));
     assert_eq!(h.app.inspect()["live"]["joinDialog"], true);
     h.click(text_center(&shapes, "Cancel"));
     h.frames(1);

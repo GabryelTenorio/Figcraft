@@ -827,6 +827,14 @@ pub fn menu_button(resp: &Response, label: &str, expanded: bool) {
     });
 }
 
+/// A button that shows or hides what is under it, `expanded` while that shows.
+pub fn disclosure(resp: &Response, label: &str, expanded: bool) {
+    node(resp, label, |n| {
+        n.set_role(Role::Button);
+        n.set_expanded(expanded);
+    });
+}
+
 /// A toggle button (a tool, a segment), pressed when `on`.
 pub fn toggle(resp: &Response, tip: &str, on: bool) {
     let (name, key) = split_tip(tip);

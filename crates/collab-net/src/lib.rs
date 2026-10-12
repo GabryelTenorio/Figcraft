@@ -53,6 +53,8 @@ pub use link::{DEFAULT_PORT, NetLink, lan_ip};
 pub use web::NetLink;
 
 #[cfg(test)]
+mod code_tests;
+#[cfg(test)]
 mod driver_tests;
 #[cfg(test)]
 mod invite_tests;

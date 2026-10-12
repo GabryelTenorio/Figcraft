@@ -275,6 +275,10 @@ fn every_command_survives_junk_params() {
         // Open hosting: servers, owner tokens, actions, reports and the publish server as junk.
         json!({"server": "wss://\u{0}", "file": [1], "owner": {"x": 1}, "action": "remove", "reason": 5, "link": -1, "access": "admin", "url": 7}),
         json!({"server": "ws://127.0.0.1:1/", "file": "../x", "owner": "", "action": "createLink", "reason": "\u{7}\u{0}", "name": "", "url": "ws://x/?key=k"}),
+        // Sharing with a join code: ways, access, codes, servers, ports and interfaces as junk.
+        json!({"via": 7, "access": [1], "code": {"x": 1}, "link": -1, "server": 5, "port": -1, "bind": 3, "name": [1]}),
+        json!({"via": "carrier pigeon", "access": "admin", "code": "K7M-2QX-9T\u{0}", "server": "wss://\u{0}", "port": 1e308, "bind": "::::"}),
+        json!({"via": "local", "access": "view", "code": "\u{1F4A5}".repeat(64), "port": 70000, "bind": "lan"}),
         // Rotation origins and placing with a tool as junk.
         json!({"tool": [1], "x": 1e308, "y": "NaN", "reset": "maybe", "on": {"x": 1}}),
         json!({"tool": "frame", "x": -1e308, "y": 1e308, "reset": true, "on": "yes"}),

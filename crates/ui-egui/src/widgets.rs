@@ -533,32 +533,76 @@ pub fn elide_font(ui: &Ui, s: &str, max_w: f32, font: egui::FontId) -> String {
 
 /// A row of icon buttons; returns the index clicked.
 pub fn segmented(ui: &mut Ui, items: &[(Icon, &str)], active: Option<usize>, cell: f32) -> Option<usize> {
+    let names: Vec<&str> = items.iter().map(|(_, tip)| *tip).collect();
+    segments(ui, &names, active, cell, true, |ui, r, i, on, t| {
+        if let Some((icon, _)) = items.get(i) {
+            icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(14.0, 14.0)), *icon, if on { t.icon } else { t.icon_secondary });
+        }
+    })
+}
+
+/// A choice between a few labelled options across the available width (the active one raised);
+/// returns the index clicked. A label too long for its cell ends with an ellipsis.
+pub fn segmented_text(ui: &mut Ui, labels: &[&str], active: usize) -> Option<usize> {
+    let cell = (ui.available_width() / labels.len().max(1) as f32).floor();
+    segments(ui, labels, Some(active), cell, false, |ui, r, i, on, t| {
+        let label = labels.get(i).copied().unwrap_or_default();
+        let font = if on { semibold(11.0) } else { regular(11.0) };
+        let shown = elide_font(ui, label, r.width() - 12.0, font.clone());
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, shown, font, if on { t.text } else { t.text_secondary });
+    })
+}
+
+/// The cells of a segmented control, each `cell` wide and named by `names` (shown on hover when
+/// `tips`), drawn by `paint(ui, cell, index, active, tokens)`; returns the index clicked.
+fn segments(
+    ui: &mut Ui,
+    names: &[&str],
+    active: Option<usize>,
+    cell: f32,
+    tips: bool,
+    paint: impl Fn(&Ui, Rect, usize, bool, &Tokens),
+) -> Option<usize> {
     let t = Tokens::get(ui.ctx());
-    let w = cell * items.len() as f32;
+    let w = cell * names.len() as f32;
     let (rect, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
     ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
     let mut out = None;
-    for (i, (icon, tip)) in items.iter().enumerate() {
+    for (i, name) in names.iter().enumerate() {
         let r = Rect::from_min_size(pos2(rect.min.x + i as f32 * cell, rect.min.y), vec2(cell, FIELD_H));
-        let resp = ui.interact(r, ui.id().with(("seg", i, *tip)), Sense::click()).on_hover_text(*tip);
-        a11y::toggle(&resp, tip, active == Some(i));
+        let mut resp = ui.interact(r, ui.id().with(("seg", i, *name)), Sense::click());
+        if tips {
+            resp = resp.on_hover_text(*name);
+        }
+        a11y::toggle(&resp, name, active == Some(i));
         if active == Some(i) {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.panel);
             ui.painter().rect_stroke(r.shrink(2.0), CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
         } else if resp.hovered() {
             ui.painter().rect_filled(r.shrink(2.0), CornerRadius::same(4), t.hover);
         }
-        icons::paint(
-            ui.painter(),
-            Rect::from_center_size(r.center(), vec2(14.0, 14.0)),
-            *icon,
-            if active == Some(i) { t.icon } else { t.icon_secondary },
-        );
+        paint(ui, r, i, active == Some(i), &t);
         if resp.clicked() {
             out = Some(i);
         }
     }
     out
+}
+
+/// A row that shows or hides what is under it: a chevron and `label`; returns whether it was
+/// clicked.
+pub fn disclosure(ui: &mut Ui, label: &str, open: bool) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let galley = ui.painter().layout_no_wrap(label.to_string(), regular(11.0), t.text_secondary);
+    let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x + 22.0, FIELD_H), Sense::click());
+    a11y::disclosure(&resp, label, open);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(4), t.hover);
+    }
+    let chevron = Rect::from_center_size(pos2(rect.min.x + 8.0, rect.center().y), vec2(10.0, 10.0));
+    icons::paint(ui.painter(), chevron, if open { Icon::Chevron } else { Icon::ChevronRight }, t.icon_secondary);
+    ui.painter().galley(pos2(rect.min.x + 18.0, rect.center().y - galley.size().y / 2.0), galley, t.text_secondary);
+    resp.clicked()
 }
 
 /// A section header ("Fill", "Stroke"…) with optional right-side icon buttons; returns which

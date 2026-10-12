@@ -13,7 +13,9 @@ modes and comments created in a session take ids from their creator's id space, 
 carets, cursor chat and spotlights show live (see Presence). **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
-the app publishes to it, and a file's team library lives there for other files to use. Sessions
+the app publishes to it, and a file's team library lives there for other files to use. Files are
+shared with **join codes** (see *Sharing with a join code*): online through a server that names
+its links with short codes, or on the local network with a code that carries the host's address. Sessions
 are per document: an app hosts, joins and publishes several files at once (see Hosting and
 joining). The rest is the plan the next implementation PRs follow and update;
 sections say what is built.
@@ -182,6 +184,13 @@ welcome, and a client sends `Report` only to a server that sent it one. New vari
 at the end of an enum, and existing messages keep their fields, so nothing an older peer reads
 changes.
 
+**Join codes** came later within version 2 the same way: a connection that opens with `Resolve`
+asks a server which file a code opens, and `Admin code` asks it for a link's code. Both are new
+variants at the end of their enums, so everything an older peer reads is unchanged. A server from
+before join codes can't read either message and refuses the connection ("that message couldn't be
+read"): the app then says the server doesn't know join codes (joining) or shows the invite links in
+place of a code (sharing). An older app never sends them and joins by link as before.
+
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
 document types use tagged and flattened serde forms that only self-describing formats can read
@@ -211,6 +220,8 @@ Client → server:
 | `Admin {rename {file, name} \| listing \| reports \| block {ip} \| unblock {ip} \| blocked}` | Later managing requests: rename a file on the server, the files with what the operator moderates by, the reports, blocking addresses (an IPv6 address: its /64). Owner tokens may only rename their file. |
 | `Report {reason}` | On a joined connection, only to a server that sent `Hosting`: report the file to the operator (at most 500 characters kept; ten an hour per address). |
 | `Plugins {list {query} \| fetch {id, version?} \| publish {bundle} \| unpublish {id, version?}}` | A request on a plugin directory connection; each gets one `Plugins` reply, in order. `bundle` is a plugin bundle's bytes (`figcraft_plugin::bundle`). |
+| `Resolve {protocol, client_version, code}` | Instead of `Hello`: ask which file a join code opens (the code's nine symbols). Answered with `Resolved`, then the server closes the connection; a code it doesn't know, too many wrong ones from the address, or a session hosted by an app is `Refused` with the reason. |
+| `Admin {code {file, token}}` | A later managing request (with the server key, or the file's owner token on an open hosting connection): a new join code for the link of `file` whose token this is. A link has one code; asking again replaces it. |
 
 Server → client:
 
@@ -229,6 +240,8 @@ Server → client:
 | `Admin {hosted {file, edit, view, owner, expires?} \| listing [row] \| reports [report] \| blocked [ip]}` | A file published without the key with its links and owner token (shown once), and the answers to the later managing requests. |
 | `Reported {error?}` | The answer to `Report`: kept, or why not. |
 | `Plugins {ready {publisher} \| list [entry] \| bundle {entry, bundle} \| published entry \| removed [version] \| failed {reason}}` | A plugin directory connection's answer: opened (with the key or not), the latest version of each plugin with the versions kept, a bundle and its entry (its SHA-256 among them), kept, unpublished, or why not. |
+| `Resolved {file, token}` | The answer to `Resolve`: the file the code opens and its link's token, which the client then joins with in an ordinary `Hello` on a new connection (so reconnects, access and revocation are the link's). |
+| `Admin {code {code}}` | The answer to `Admin code`: the link's new join code, shown this once (the server keeps only what it needs to recognise it). |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -413,8 +426,9 @@ resuming with its offline edits, and leaving the session going back to snapshot 
 
 ## Hosting and joining
 
-- **Host from the app** (first step, no public server): "Share ▸ Start live session" starts the
-  embedded server on the local machine for the open file and shows an invite link
+- **Host from the app** (first step, no public server): "Share ▸ Local network ▸ Start sharing"
+  (or `collab.host`) starts the embedded server on the local machine for the open file and shows
+  a join code and an invite link
   (`figcraft://join?host=192.168.1.20:47900&file=<id>&token=<secret>`; also a plain
   `ws://`/`wss://` URL). Others on the same network (or through a forwarded port / VPN such as a
   mesh VPN) join with "File ▸ Join live session" or by opening the link. When the host leaves, the
@@ -428,11 +442,15 @@ resuming with its offline edits, and leaving the session going back to snapshot 
 
 *Built* (hosting from the app and joining):
 
-- "Share" in the right panel opens a popover: your name, **Share on the local network** (off:
-  127.0.0.1 only), **Start live session**; while hosting, the invite link and the `ws://` URL with
-  Copy buttons, how many joined, and **Stop session**; while joined, **Leave session**. "File ▸
-  Join live session…" (and "Join a session…" in the popover) asks for the link. Commands:
-  `collab.host {port?, bind?: "local" | "lan" | <ip>}`, `collab.stop`, `collab.join {link}`,
+- "Share" in the right panel opens a popover: your name, a choice between **Online** and **Local
+  network**, and **Start sharing**; while sharing, the join code (large), **Copy code** and **Copy
+  link**, what the code lets people do (online: can edit or can view), who is here, and **Stop
+  sharing**; while joined, **Leave session**. **Join with a code** is one field in the popover, on
+  the home screen and in "File ▸ Join live session…": it takes a code of either kind or an invite
+  link. Another server, a server key, the port and "this computer only" are under **Advanced**;
+  the server for online sharing is in Preferences (see *Sharing with a join code*). Commands:
+  `collab.share {via?: "online" | "local", access?, …}`,
+  `collab.host {port?, bind?: "local" | "lan" | <ip>}`, `collab.stop`, `collab.join {code | link}`,
   `collab.leave`, `collab.peers`, `collab.follow {client?}`, `collab.cursor {x?, y?}` (an agent's
   pointer), `collab.cursorChat {text?}`, `collab.spotlight {on?}`.
 - **Sessions are per document.** Every open file has its own session or none: hosting, joined,
@@ -467,6 +485,52 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   client: the guest's connection keeps the session id, client id and last sequence number from
   the messages it read and sends them in its next `Hello` (see Offline and reconnect).
 - The browser build joins (see *Built (the browser client)*); hosting needs the desktop app.
+
+*Built* (sharing with a join code; `figcraft_collab::code`, `collab.share`, `collab.join {code}`):
+
+- **Why codes.** An invite link is long and carries a 128-bit secret; a code is what one person
+  reads to another. Both kinds use Crockford's base32 alphabet (digits and capitals without `I`,
+  `L`, `O`, `U`); reading one ignores case, spaces and dashes and takes `O` as `0` and `I` or `L`
+  as `1`. The join field tells the kinds apart by length (anything with `://` is a link).
+- **Online** (`collab.share {via: "online"}`, the default): the open file is published to the
+  server in Preferences (`pref.publishServer`; built in: `wss://collab.craftapps.dev/`, written
+  once, as `figcraft_engine::live::DEFAULT_SERVER`; empty turns online sharing off) exactly as
+  `collab.publish` does on a server open to the public, owner token included; the app then asks
+  for a code for the edit link and one for the view link (`Admin code`, as the file's owner) and
+  shows the edit code, `K7M-2QX-9TD`: **nine symbols, 45 random bits**, a different code per link.
+  A joiner's app sends `Resolve {code}` to its own server in Preferences, gets the file and the
+  link's token, and joins with them as with the link. **Stop sharing** (`collab.stop`) leaves and
+  has the server remove the file (`Admin remove` with the owner token): codes and links stop
+  working and everyone keeps the copy they have. `collab.leave` keeps the file on the server.
+- **What the server keeps of a code.** Never the code. It is stretched (SHA-256 of the code under
+  a fixed label, then 10,000 more rounds); a hash of the result finds the link, and another is the
+  pad the link's token is wrapped with (XOR), so only the code gives the token back. Lookups
+  compare every link's hash in constant time. A code goes with its link: revoking the link,
+  removing the file or the file expiring ends it, and a newer code for the link replaces it (such
+  a code is answered "That code has expired or its sharing was stopped" until the server restarts,
+  then "No session with that code").
+- **Guessing online.** 45 bits are far fewer than a link's 128, so the server limits tries, on
+  every server (private ones too): an address may try 10 codes a minute; 10 wrong ones in a row
+  (within 15 minutes of each other) lock it out of codes for 15 minutes, during which nothing is
+  looked up for it; and everyone together may get 1,000 wrong an hour, after which codes are
+  paused for all until the budget refills (links keep joining). IPv6 addresses count by /64, and
+  their /56 and /48 with 2 and 4 times the limits. With 20,000 live codes a guess is right with
+  probability about 6 in 10 billion, so the hourly budget gives a chance of roughly one hit in two
+  hundred years; an attacker can make codes unavailable for a while, not find one. A copy of the
+  data directory lets someone try codes offline at 10,000 hashes a guess: slow, not impossible
+  (the files themselves are in that directory, unencrypted).
+- **Local network** (`collab.share {via: "local"}`): the app hosts the session itself (as
+  `collab.host` on the local network's interface) and there is no server to ask, so the code
+  carries what a joiner needs: **20 symbols** (shown in fives), 100 bits: the host's IPv4 address
+  (32), its port (16), the session's secret (44) and 8 check bits that catch a mistyped code
+  before anything connects. The session's token is that secret (`local-<11 hex digits>`, file id
+  `local`), so a local share is protected by 44 bits, not 128: a code is guessed over the network
+  at the rate the host accepts connections, which makes 44 bits years of trying, but treat it as
+  a secret for the local network, not for the internet. The invite link names the same session.
+  Whoever sees the code learns the host's address. Everyone who joins edits; a host without an
+  IPv4 address gets no code and shares its link.
+- **In the browser** a code joins like a link (the page asks the server over its own WebSocket,
+  then opens the session's); sharing needs the desktop app.
 
 *Built* (document sync between apps):
 
@@ -543,7 +607,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   128 bits in the data directory. The server's command line (`figcraft-server files|links|key`)
   uses the same requests when a server is running on the directory, else it changes the directory
   itself (one process holds it at a time: an OS file lock).
-- **Publishing from the app.** `collab.publish {server, name?}` (Share ▸ Publish to server…)
+- **Publishing from the app.** `collab.publish {server, name?}` (File ▸ Publish to server…)
   uploads the open document over a managing connection, then joins the new file with its edit
   link on the same connection thread; the tab becomes the session's synced document (read-only
   until the welcome arrives, its undo history per person after) and `collab.peers` reports
@@ -708,8 +772,8 @@ saved state.
 
 ## Agents, MCP and the CLI
 
-Everything stays a command: `collab.host`, `collab.join`, `collab.publish`, `collab.leave`,
-`collab.peers`, `collab.follow` are ordinary commands, so the CLI, the control channel and MCP can
+Everything stays a command: `collab.share`, `collab.host`, `collab.join`, `collab.publish`,
+`collab.leave`, `collab.peers`, `collab.follow` are ordinary commands, so the CLI, the control channel and MCP can
 host, publish and join sessions; an agent can be a participant with its own cursor.
 
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
@@ -781,6 +845,11 @@ chooses to share on the network; the default is the invite link with a random to
   (listing files, other files' links, reports, blocks, the plugin directory's publishing) needs the
   server key. Files are not end-to-end encrypted: the server reads what it keeps, and so can its
   operator.
+- **Join codes** are weaker secrets than links by design (45 bits online, 44 on the local
+  network): online they stand on the server's limits on wrong codes, locally on how fast a host
+  takes connections (see *Sharing with a join code*). A code is never stored, logged or sent back
+  after it is handed out; it travels only in the first message of a connection, never in the
+  WebSocket request. Anything that needs a stronger secret shares the link.
 - **TLS.** None in the server: a reverse proxy terminates it (Caddy and nginx examples in
   `packaging/server/`, deployment in [`server.md`](server.md#deploy-on-a-linux-server)); clients
   speak `wss://` to the proxy. Tokens and keys are never in the
@@ -811,5 +880,6 @@ chooses to share on the network; the default is the invite link with a random to
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
    publishing from the app; see [`server.md`](server.md)), followed by open hosting for a public
-   server (owner tokens, limits per address, idle expiry, reports and blocks).
+   server (owner tokens, limits per address, idle expiry, reports and blocks) and by sharing with
+   join codes (online through the server, or carrying the host's address on the local network).
 6. **Accounts**: people signing in, per-person permissions, teams and projects.

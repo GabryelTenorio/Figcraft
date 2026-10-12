@@ -10,6 +10,10 @@
 //! connects to the endpoint and sends the token in its `Hello`. A server address for managing
 //! files carries the server's key the same way (`ws://host:port/?key=<key>`). Errors never echo a
 //! link or an address.
+//!
+//! A join by code names the server to ask and the code:
+//! `figcraft://join?server=<ws(s)://…>&code=<code>` ([`Invite::parse_join`]); the server says which
+//! file and token the code stands for.
 
 /// Where a session or a server listens: `ws://host:port/path` or `wss://…` (TLS).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +138,15 @@ impl Invite {
 
     /// Read an invite link (any form; surrounding spaces, quotes or angle brackets are fine).
     pub fn parse(link: &str) -> Result<Invite, String> {
+        match Self::parse_join(link)? {
+            (invite, None) => Ok(invite),
+            (_, Some(_)) => Err("that names a join code, not a file: join with it first".into()),
+        }
+    }
+
+    /// Read what a join starts from: an invite link, or a server with a join code to ask it about
+    /// (then the invite names only the server, until the server says what the code opens).
+    pub fn parse_join(link: &str) -> Result<(Invite, Option<String>), String> {
         let link = clean(link);
         if link.len() > MAX_LINK {
             return Err(NOT.into());
@@ -158,9 +171,14 @@ impl Invite {
             return Err(NOT.into());
         };
         let get = |k: &str| query.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+        if let Some(code) = get("code") {
+            let code = figcraft_collab::code::normalize(&code).ok().filter(|c| c.len() == figcraft_collab::code::ONLINE_LEN);
+            let code = code.ok_or("the link's join code isn't one")?;
+            return Ok((Invite { server, file: String::new(), token: String::new() }, Some(code)));
+        }
         let file = get("file").filter(|f| valid_id(f, 1, 64)).ok_or("the invite link has no valid file id")?;
         let token = get("token").filter(|t| valid_id(t, 16, 128)).ok_or("the invite link has no valid token")?;
-        Ok(Invite { server, file, token })
+        Ok((Invite { server, file, token }, None))
     }
 }
 

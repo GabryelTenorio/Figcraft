@@ -5,10 +5,16 @@
 //! everyone besides ([`PUBLISHES_ALL`] times one address's). The table keeps at most
 //! [`MAX_ADDRESSES`] addresses: when it is full the half used longest ago is forgotten, so a flood
 //! of addresses costs bounded memory (and forgotten addresses start with full buckets).
+//!
+//! Join codes are short, so guessing them is held back three ways: an address may try
+//! [`CODES_PER_MINUTE`] codes a minute, [`WRONG_CODES`] wrong ones in a row lock it out of codes for
+//! [`CODE_LOCKOUT`] (links still join), and everyone together may get [`WRONG_CODES_PER_HOUR`]
+//! wrong an hour (an attacker with many addresses is slowed to that; while it lasts, people join
+//! with their links).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use figcraft_collab_net::hub::{Block, ip_blocks};
 use figcraft_collab_net::net::Bucket;
@@ -27,6 +33,15 @@ pub const DOWNLOAD_BURST: f64 = (16u64 << 20) as f64;
 /// Everyone together may publish without the key this many times what one address may: eight
 /// times what the widest block (an IPv6 /48, four addresses' worth) may, so no block takes it all.
 pub const PUBLISHES_ALL: f64 = 32.0;
+
+/// Join codes one address may try a minute (right or wrong).
+pub const CODES_PER_MINUTE: f64 = 10.0;
+/// Wrong codes in a row (within [`CODE_LOCKOUT`] of each other) that lock an address out of codes.
+pub const WRONG_CODES: u32 = 10;
+/// How long an address is locked out of join codes.
+pub const CODE_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+/// Wrong codes everyone together may try an hour.
+pub const WRONG_CODES_PER_HOUR: f64 = 1_000.0;
 
 /// The rates (see the server's settings).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,6 +64,8 @@ pub enum Action {
     Report,
     /// Downloading this many bytes.
     Download(usize),
+    /// Trying a join code.
+    Code,
 }
 
 struct Address {
@@ -58,6 +75,12 @@ struct Address {
     presence: Bucket,
     reports: Bucket,
     downloads: Bucket,
+    codes: Bucket,
+    /// Wrong join codes in a row, and when the last one was.
+    wrong: u32,
+    wrong_at: Instant,
+    /// Locked out of join codes until then.
+    locked: Option<Instant>,
     used: Instant,
 }
 
@@ -67,6 +90,8 @@ pub struct Abuse {
     table: HashMap<Block, Address>,
     /// Publishing without the key, everyone together.
     publishes: Bucket,
+    /// Wrong join codes, everyone together.
+    wrong_codes: Bucket,
 }
 
 /// `n` every `period` seconds on average, and all `n` at once at most.
@@ -77,7 +102,44 @@ fn bucket(n: f64, period: f64) -> Bucket {
 impl Abuse {
     pub fn new(cfg: AbuseConfig) -> Self {
         let publishes = bucket(f64::from(cfg.publishes_per_hour) * PUBLISHES_ALL, 3600.0);
-        Self { cfg, table: HashMap::new(), publishes }
+        Self { cfg, table: HashMap::new(), publishes, wrong_codes: bucket(WRONG_CODES_PER_HOUR, 3600.0) }
+    }
+
+    /// How long `ip` is still locked out of join codes (in any block it is in), if it is.
+    pub fn code_locked(&self, ip: IpAddr, now: Instant) -> Option<Duration> {
+        let until = ip_blocks(ip).into_iter().filter_map(|(k, _)| self.table.get(&k)?.locked).max()?;
+        Some(until.saturating_duration_since(now)).filter(|d| !d.is_zero())
+    }
+
+    /// Everyone together has wrong codes left to try (see [`WRONG_CODES_PER_HOUR`]).
+    pub fn codes_open(&mut self, now: Instant) -> bool {
+        let open = self.wrong_codes.take(now);
+        if open {
+            self.wrong_codes.give(1.0);
+        }
+        open
+    }
+
+    /// `ip` tried a join code that was right (`ok`) or wrong: a right one forgives the wrong ones
+    /// before it; enough wrong ones in a row lock the address out.
+    pub fn code_tried(&mut self, ip: IpAddr, ok: bool, now: Instant) {
+        if !ok {
+            self.wrong_codes.take(now);
+        }
+        for (k, times) in ip_blocks(ip) {
+            let a = self.address(k, f64::from(times), now);
+            if ok || now.saturating_duration_since(a.wrong_at) > CODE_LOCKOUT {
+                a.wrong = 0;
+            }
+            if !ok {
+                a.wrong += 1;
+                a.wrong_at = now;
+                if a.wrong >= WRONG_CODES.saturating_mul(times) {
+                    a.wrong = 0;
+                    a.locked = Some(now + CODE_LOCKOUT);
+                }
+            }
+        }
     }
 
     /// Whether `ip` may do `what` now (counting it, in every block it is in, when it may).
@@ -114,6 +176,10 @@ impl Abuse {
             presence: Bucket::new(f64::from(c.messages_per_second) * times * 2.0, f64::from(c.messages_per_second) * times * 8.0),
             reports: bucket(REPORTS_PER_HOUR * times, 3600.0),
             downloads: Bucket::new(DOWNLOAD_RATE * times, DOWNLOAD_BURST * times),
+            codes: bucket(CODES_PER_MINUTE * times, 60.0),
+            wrong: 0,
+            wrong_at: now,
+            locked: None,
             used: now,
         });
         a.used = now;
@@ -128,6 +194,7 @@ impl Abuse {
             Action::Presence => (&mut a.presence, 1.0),
             Action::Report => (&mut a.reports, 1.0),
             Action::Download(n) => (&mut a.downloads, n as f64),
+            Action::Code => (&mut a.codes, 1.0),
         }
     }
 

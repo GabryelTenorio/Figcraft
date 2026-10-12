@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use figcraft_collab::message::{
     self, Access, Admin, AdminReply, ClientMsg, Hello, HostInfo, LibraryReply, LibraryReq, Manage, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL,
-    PluginReply, PluginReq, Presence, ServerMsg, reads_hosting,
+    PluginReply, PluginReq, Presence, Resolve, ServerMsg, reads_hosting,
 };
 use figcraft_collab::{Outgoing, Server};
 use figcraft_engine::live::{Event, MAX_NAME, PEOPLE, sanitize};
@@ -203,6 +203,12 @@ pub trait Backend: Send + 'static {
     /// Someone in `file` (joined with `link`, from `ip`) reports it to the operator.
     fn report(&mut self, _file: &str, _link: Option<&str>, _ip: IpAddr, _reason: &str) -> Result<(), String> {
         Err("this session is hosted by an app: tell the person hosting it".into())
+    }
+
+    /// A join code typed by someone at `ip`: the file it opens and that link's token, or why not
+    /// (shown to them; wrong codes are counted against the address).
+    fn resolve(&mut self, _ip: IpAddr, _code: &str) -> Result<(String, String), String> {
+        Err("this session is hosted by an app: join it with its own code or invite link".into())
     }
 
     /// What everyone is told when the hub stops.
@@ -386,8 +392,8 @@ impl InFlight {
 }
 
 enum HubIn {
-    /// A connection's first message (`Hello`, `Manage`, `OpenLibrary`, `OpenPlugins` or
-    /// `OpenHosting`) and its client's address ([`ip_key`]).
+    /// A connection's first message (`Hello`, `Manage`, `OpenLibrary`, `OpenPlugins`,
+    /// `OpenHosting` or `Resolve`) and its client's address ([`ip_key`]).
     Open {
         conn: u64,
         ip: IpAddr,
@@ -907,7 +913,8 @@ fn serve(mut stream: TcpStream, conn: u64, hub: &Sender<HubIn>, limits: NetLimit
                 | ClientMsg::Manage(_)
                 | ClientMsg::OpenLibrary(_)
                 | ClientMsg::OpenPlugins(_)
-                | ClientMsg::OpenHosting(_)),
+                | ClientMsg::OpenHosting(_)
+                | ClientMsg::Resolve(_)),
                 bytes,
             ))) => {
                 // Sessions and the operator may use the last connections; one-shot requests
@@ -1171,6 +1178,7 @@ impl<B: Backend> Hub<B> {
                     ClientMsg::OpenLibrary(o) => self.open_library(conn, o, c),
                     ClientMsg::OpenPlugins(o) => self.open_plugins(conn, &o, c),
                     ClientMsg::OpenHosting(o) => self.open_hosting(conn, &o, c),
+                    ClientMsg::Resolve(r) => self.resolve(&r, &c),
                     _ => refuse(&c.out, "say hello first"),
                 }
             }
@@ -1406,6 +1414,26 @@ impl<B: Backend> Hub<B> {
         };
         let owns = (!o.owner.is_empty()).then(|| o.file.clone());
         self.take_in(conn, c, Kind::Hosting { owns }, &ServerMsg::Hosting(Box::new(info)));
+    }
+
+    /// A join code: the file it opens and the token to join it with, then the connection closes
+    /// (it was never taken in).
+    fn resolve(&mut self, r: &Resolve, c: &Pending) {
+        if r.protocol != PROTOCOL {
+            return refuse(&c.out, &unsupported(r.protocol));
+        }
+        match self.backend.resolve(c.ip, &r.code) {
+            Ok((file, token)) => {
+                if let Some(b) = encode(&ServerMsg::Resolved { file, token }) {
+                    let _ = c.out.tx.try_send(Out::Bytes(b, None));
+                }
+                let _ = c.out.tx.try_send(Out::Close(CloseCode::Normal, String::new()));
+            }
+            Err(why) => {
+                log::info!("event=code_refused ip={} reason={why:?}", c.ip);
+                refuse(&c.out, &why);
+            }
+        }
     }
 
     fn admin(&mut self, conn: u64, req: Admin) {

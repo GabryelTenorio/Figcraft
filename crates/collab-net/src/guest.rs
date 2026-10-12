@@ -26,7 +26,7 @@ use tungstenite::{Bytes, Message};
 use crate::inbox::Inbox;
 use crate::invite::{Endpoint, Invite};
 pub use crate::join::GuestConfig;
-use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, take};
+use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, resolved, take, unresolved};
 use crate::manage;
 use crate::net::{Duplex, NetLimits, config, open, shutdown};
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
@@ -39,6 +39,8 @@ pub struct Publish {
     /// The file's name on the server.
     pub name: String,
     pub doc: Arc<Document>,
+    /// Ask the server for join codes for the file's links ([`Event::Codes`]).
+    pub codes: bool,
 }
 
 /// A joined (or joining) session. Dropping it leaves.
@@ -60,10 +62,27 @@ enum Cmd {
 
 impl Guest {
     /// Start joining (returns at once; progress arrives in `inbox`).
-    pub fn start(cfg: GuestConfig, inbox: Inbox) -> io::Result<Guest> {
+    pub fn start(mut cfg: GuestConfig, inbox: Inbox) -> io::Result<Guest> {
         let (tx, rx) = channel();
         let me = tx.clone();
-        let thread = std::thread::Builder::new().name("live-guest".into()).spawn(move || supervise(&cfg, &inbox, &rx, &me))?;
+        let thread = std::thread::Builder::new().name("live-guest".into()).spawn(move || {
+            // A join code: the server says which file it opens, then the join goes on as with a link.
+            if let Some(code) = cfg.code.clone() {
+                inbox.push(Event::Status(Status::Connecting));
+                let asked =
+                    manage::resolve(&cfg.invite.server, &code, &cfg.limits, cfg.connect_timeout).map_err(|e| match e.strip_prefix(manage::REFUSED) {
+                        Some(why) => Outcome::Refused(why.to_string()),
+                        None => Outcome::Retry(e),
+                    });
+                if let Err(o) = asked.and_then(|(file, token)| resolved(&mut cfg, file, token)) {
+                    if let Next::Stop(Some(e)) = after(unresolved(&cfg, o), &cfg, false, &mut 0, &inbox) {
+                        inbox.push(e);
+                    }
+                    return;
+                }
+            }
+            supervise(&cfg, &inbox, &rx, &me);
+        })?;
         Ok(Guest { cmd: tx, thread: Some(thread) })
     }
 
@@ -79,10 +98,16 @@ impl Guest {
                 Ok(done) => done,
                 Err(e) => return inbox.push(Event::Status(Status::Failed { reason: format!("Couldn't publish to the server: {e}") })),
             };
+            // Before anyone hears the file is there, so the codes show with it (a server from
+            // before join codes has none: the links are shown).
+            let codes = if job.codes { join_codes(&job, &cfg, &published) } else { None };
             if let Some(h) = hosting {
                 inbox.push(Event::Hosting(h));
             }
             inbox.push(Event::Published(published));
+            if let Some((edit, view)) = codes {
+                inbox.push(Event::Codes { edit, view });
+            }
             // Left while uploading: the file stays on the server, nobody joins it. Anything else
             // that came meanwhile (presence) waits for the session.
             let mut waiting = Vec::new();
@@ -179,6 +204,16 @@ fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published
     let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
     Ok((cfg, published, hosting))
+}
+
+/// The join codes of the file just published: its edit link's and its view link's.
+fn join_codes(job: &Publish, cfg: &GuestConfig, published: &Published) -> Option<(String, String)> {
+    let view = Invite::parse(&published.view).ok()?;
+    let tokens = [cfg.invite.token.as_str(), view.token.as_str()];
+    let owner = published.owner.as_deref().unwrap_or_default();
+    let codes = manage::codes(&job.server, job.key.as_deref(), &published.file, owner, &tokens, &cfg.limits, cfg.connect_timeout)?;
+    let mut codes = codes.into_iter();
+    Some((codes.next()?, codes.next()?))
 }
 
 fn connect(cfg: &GuestConfig) -> Result<Conn, String> {

@@ -6,7 +6,8 @@
 //! <data>/server.json             where the running server listens (for the command line)
 //! <data>/server.key              the server key: managing files (publish, links, removal)
 //! <data>/files/<id>/meta.json    name, created, updated, sequence number
-//! <data>/files/<id>/links.json   share links: id, access, label, created, SHA-256 of the token
+//! <data>/files/<id>/links.json   share links: id, access, label, created, SHA-256 of the token,
+//!                                and a join code's hash and wrapped token (see `codes`)
 //! <data>/files/<id>/snapshot.bin the session state at the last compaction
 //! <data>/files/<id>/log.bin      what changed since (see `disk`)
 //! <data>/files/<id>/library.bin  its team library, when one was published (a `.figcraft` archive)
@@ -28,7 +29,7 @@
 //! hashes and compared in constant time. Whatever is damaged at startup is skipped and reported,
 //! never deleted.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Cursor, Write};
 use std::net::IpAddr;
@@ -46,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::abuse::{Abuse, AbuseConfig, Action};
+use crate::codes::{self, Sealed};
 use crate::directory::{Directory, DirectoryConfig};
 use crate::disk::{self, LIBRARY, LINKS, LOG, LOG_HEADER, META, SNAPSHOT, USAGE};
 
@@ -58,6 +60,12 @@ pub const REPORTS: &str = "reports.json";
 /// Most addresses blocked, and most reports kept (the oldest go first).
 const MAX_BLOCKED: usize = 100_000;
 const MAX_REPORTS: usize = 1_000;
+/// Most join codes remembered as no longer valid.
+const MAX_GONE_CODES: usize = 10_000;
+/// What typing a join code that opens nothing is answered with, by why.
+pub const NO_CODE: &str = "No session with that code";
+pub const CODE_GONE: &str = "That code has expired or its sharing was stopped";
+pub const CODES_BUSY: &str = "Join codes are paused on this server for a while (too many wrong ones were tried): join with the invite link";
 /// Longest report reason kept (characters).
 const MAX_REASON: usize = 500;
 /// How often idle files are looked for (seconds), besides at startup.
@@ -188,6 +196,9 @@ struct Link {
     created: u64,
     /// SHA-256 of the token, hex.
     hash: String,
+    /// Its join code, when one was handed out (never the code itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code: Option<Sealed>,
 }
 
 impl Link {
@@ -245,6 +256,11 @@ pub struct Store {
     usage: BTreeMap<String, UsageCache>,
     blocked: BTreeSet<IpAddr>,
     reports: Vec<ReportInfo>,
+    /// Hashes of join codes that no longer open anything (their link was revoked, their file
+    /// removed or expired, or a newer code took their place): typing one says so.
+    // shortcut: in memory only, so after a restart such a code reads as unknown; keep them in the
+    // data directory if people ask why their code "never existed".
+    gone_codes: VecDeque<String>,
     /// When idle files are looked for next (seconds since 1970).
     next_sweep: u64,
     /// Compactions so far (tests count them).
@@ -341,6 +357,7 @@ impl Store {
             usage: BTreeMap::new(),
             blocked: BTreeSet::new(),
             reports: Vec::new(),
+            gone_codes: VecDeque::new(),
             next_sweep: 0,
             compactions: 0,
             free: None,
@@ -755,6 +772,101 @@ impl Store {
         Ok(NewLink { link: link.info(file), token })
     }
 
+    /// The link of `entry` whose token `token` is (every link is compared, in constant time, so
+    /// timing doesn't tell which one matched).
+    fn link_of(entry: &Entry, token: &str) -> Option<usize> {
+        let presented = hash(token);
+        let mut found = None;
+        for (i, l) in entry.links.iter().enumerate() {
+            if same_secret(&presented, &l.hash) {
+                found = Some(i);
+            }
+        }
+        found
+    }
+
+    /// These join codes no longer open anything: typing one says so.
+    fn forget_codes(&mut self, codes: impl IntoIterator<Item = Sealed>) {
+        self.gone_codes.extend(codes.into_iter().map(|c| c.hash));
+        let extra = self.gone_codes.len().saturating_sub(MAX_GONE_CODES);
+        self.gone_codes.drain(..extra);
+    }
+
+    /// Where the link with the join code `key` is: its file, its place among the file's links
+    /// and its token (every code is compared, so timing doesn't tell which one matched).
+    fn find_code(&self, key: &codes::Key) -> Option<(String, usize, String)> {
+        let mut found = None;
+        for (id, e) in &self.files {
+            for (i, l) in e.links.iter().enumerate() {
+                if let Some(token) = l.code.as_ref().and_then(|c| key.open(c)) {
+                    found = Some((id.clone(), i, token));
+                }
+            }
+        }
+        found
+    }
+
+    /// A new join code for the link of `file` whose token is `token` (it takes the place of the
+    /// link's earlier code): the code, shown this once.
+    pub fn set_code(&mut self, file: &str, token: &str) -> Result<String, String> {
+        let at = Self::link_of(self.entry(file)?, token).ok_or("that token isn't one of this file's links (it may have been revoked)")?;
+        // 45 random bits: one already in use is all but impossible, and never handed out twice.
+        let (code, key) = loop {
+            let code = codes::new_code()?;
+            let key = codes::Key::new(&code);
+            if self.find_code(&key).is_none() {
+                break (code, key);
+            }
+        };
+        let sealed = key.seal(token)?;
+        let path = self.dir(file).join(LINKS);
+        let entry = self.entry(file)?;
+        let link = entry.links.get_mut(at).ok_or("that file has no such link")?;
+        let before = link.code.replace(sealed);
+        let id = link.id.clone();
+        if let Err(e) = write_json(&path, &entry.links) {
+            if let Some(l) = entry.links.get_mut(at) {
+                l.code = before;
+            }
+            return Err(format!("couldn't keep the join code: {e}"));
+        }
+        self.forget_codes(before);
+        log::info!("event=code file={file} link={id}");
+        Ok(code)
+    }
+
+    /// The file a join code typed at `ip` opens, and its link's token; wrong codes count against
+    /// the address (see `abuse`), and nothing is looked up for an address that is locked out.
+    pub fn resolve_code(&mut self, ip: IpAddr, typed: &str) -> Result<(String, String), String> {
+        let now = Instant::now();
+        if let Some(left) = self.abuse.code_locked(ip, now) {
+            return Err(format!(
+                "Too many wrong codes from your address: try again in {} minutes, or join with the invite link",
+                left.as_secs() / 60 + 1
+            ));
+        }
+        if !self.abuse.allow(ip, Action::Code, now) {
+            return Err("Too many codes tried from your address: wait a minute and try again".into());
+        }
+        if !self.abuse.codes_open(now) {
+            return Err(CODES_BUSY.into());
+        }
+        // Anything that isn't a code's symbols is a wrong code too (and costs no hashing).
+        let key = figcraft_collab::code::normalize(typed).ok().filter(|c| c.len() == figcraft_collab::code::ONLINE_LEN).map(|c| codes::Key::new(&c));
+        let found = key.as_ref().and_then(|k| self.find_code(k));
+        self.abuse.code_tried(ip, found.is_some(), now);
+        match found {
+            Some((file, _, token)) => {
+                log::info!("event=code_used file={file} ip={ip}");
+                Ok((file, token))
+            }
+            None => {
+                let gone = key.is_some_and(|k| self.gone_codes.iter().any(|g| g == k.hash()));
+                Err(if gone { CODE_GONE } else { NO_CODE }.into())
+            }
+        }
+    }
+
     /// Revoke a link.
     pub fn revoke(&mut self, file: &str, link: &str) -> Result<(), String> {
         let path = self.dir(file).join(LINKS);
@@ -766,6 +878,7 @@ impl Store {
             return Err(format!("couldn't revoke the link: {e}"));
         }
         log::info!("revoked link {link} of file {file}");
+        self.forget_codes(gone.code);
         Ok(())
     }
 
@@ -774,6 +887,7 @@ impl Store {
     pub fn remove(&mut self, file: &str) -> Result<(), String> {
         // Closed first: an open log would keep the folder from being deleted on Windows.
         let entry = self.files.remove(file).ok_or("this file isn't on the server (it may have been removed)")?;
+        self.forget_codes(entry.links.iter().filter_map(|l| l.code.clone()));
         drop(entry);
         let dir = self.dir(file);
         fs::remove_dir_all(&dir)
@@ -1112,21 +1226,15 @@ fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> Result<(), Strin
 /// A new link and its token.
 fn new_link(access: Access, label: &str, created: u64) -> Result<(Link, String), String> {
     let token = token::secret()?;
-    Ok((Link { id: token::file_id()?, access, label: label.to_string(), created, hash: hash(&token) }, token))
+    Ok((Link { id: token::file_id()?, access, label: label.to_string(), created, hash: hash(&token), code: None }, token))
 }
 
 impl Backend for Store {
     fn admit(&mut self, file: &str, token: &str) -> Result<Admission, String> {
         let entry = self.entry(file)?;
-        let presented = hash(token);
-        // Every link is compared (in constant time), so timing doesn't tell which one matched.
-        let mut found = None;
-        for l in &entry.links {
-            if same_secret(&presented, &l.hash) {
-                found = Some(Admission { access: l.access, link: Some(l.id.clone()) });
-            }
-        }
-        found.ok_or_else(|| "this link isn't valid (it may have been revoked)".to_string())
+        let link = Self::link_of(entry, token).and_then(|i| entry.links.get(i));
+        link.map(|l| Admission { access: l.access, link: Some(l.id.clone()) })
+            .ok_or_else(|| "this link isn't valid (it may have been revoked)".to_string())
     }
 
     fn open(&mut self, file: &str) -> Result<Server, String> {
@@ -1261,6 +1369,7 @@ impl Backend for Store {
             | Admin::CreateLink { file, .. }
             | Admin::Revoke { file, .. }
             | Admin::Rename { file, .. }
+            | Admin::Code { file, .. }
             | Admin::Remove { file } => file,
             _ => return failed("that needs the server key"),
         };
@@ -1297,6 +1406,7 @@ impl Backend for Store {
             },
             Admin::Unblock { ip } => self.block(&ip, false).map_or_else(failed, |_| AdminReply::Done.into()),
             Admin::Blocked => AdminReply::Blocked(self.blocked()).into(),
+            Admin::Code { file, token } => self.set_code(&file, &token).map_or_else(failed, |code| AdminReply::Code { code }.into()),
             Admin::Remove { file } => {
                 if !self.files.contains_key(&file) {
                     return failed("this file isn't on the server (it may have been removed)".into());
@@ -1340,6 +1450,10 @@ impl Backend for Store {
             return PluginReply::Failed { reason: BUSY_DOWNLOADS.into() };
         }
         self.directory.handle(publisher, req)
+    }
+
+    fn resolve(&mut self, ip: IpAddr, code: &str) -> Result<(String, String), String> {
+        self.resolve_code(ip, code)
     }
 
     fn closing(&self) -> Closing {

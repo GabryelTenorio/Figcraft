@@ -266,6 +266,10 @@ pub enum Admin {
     Unblock { ip: String },
     /// The blocked addresses.
     Blocked,
+    /// A join code for the link of `file` whose token this is (the token proves the link and lets
+    /// the server give it to whoever types the code): [`AdminReply::Code`]. A link has one code:
+    /// asking again replaces it. Servers older than join codes can't read this request.
+    Code { file: String, token: String },
 }
 
 /// A file a server keeps.
@@ -336,6 +340,10 @@ pub enum AdminReply {
     Listing(Vec<FileRow>),
     Reports(Vec<ReportInfo>),
     Blocked(Vec<String>),
+    /// A link's new join code (shown this once; the server keeps only a hash).
+    Code {
+        code: String,
+    },
 }
 
 /// A file with what its operator moderates by.
@@ -378,6 +386,17 @@ pub struct OpenHosting {
     pub client_version: String,
     pub file: String,
     pub owner: String,
+}
+
+/// Asks a server which file a join code opens (the first message on a connection, instead of
+/// [`Hello`]). Answered with [`ServerMsg::Resolved`], then the connection closes; a wrong code, too
+/// many wrong ones from an address, or a server that hosts no files is `Refused`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Resolve {
+    pub protocol: u32,
+    pub client_version: String,
+    /// The code's symbols ([`crate::code::normalize`]d).
+    pub code: String,
 }
 
 /// What a server says about its hosting: whether anyone may publish, who runs it and its terms,
@@ -580,6 +599,8 @@ pub enum ClientMsg {
     Report {
         reason: String,
     },
+    /// Ask which file a join code opens (the first message on a connection, instead of `Hello`).
+    Resolve(Resolve),
 }
 
 /// Server → client.
@@ -641,6 +662,12 @@ pub enum ServerMsg {
     /// The answer to a [`ClientMsg::Report`]: kept, or why not.
     Reported {
         error: Option<String>,
+    },
+    /// The answer to [`ClientMsg::Resolve`]: the file the code opens and its link's token (what a
+    /// `Hello` joins with).
+    Resolved {
+        file: String,
+        token: String,
     },
 }
 

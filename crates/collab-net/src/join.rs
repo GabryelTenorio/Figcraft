@@ -29,6 +29,9 @@ pub(crate) const CLOSE_RESTART: u16 = 1012;
 #[derive(Clone, Debug)]
 pub struct GuestConfig {
     pub invite: Invite,
+    /// A join code to ask `invite.server` about first: its answer fills in the invite's file and
+    /// token ([`resolved`]).
+    pub code: Option<String>,
     /// Your name (empty: the host picks one).
     pub name: String,
     pub limits: NetLimits,
@@ -44,6 +47,7 @@ impl GuestConfig {
     pub fn new(invite: Invite, name: String) -> Self {
         Self {
             invite,
+            code: None,
             name,
             limits: NetLimits::default(),
             connect_timeout: Duration::from_secs(5),
@@ -67,8 +71,34 @@ pub(crate) enum Outcome {
     Refused(String),
     /// The host ended the session: final.
     Ended(String),
+    /// It can't go on, for this reason as it is shown: final.
+    Failed(String),
     /// You left.
     Left,
+}
+
+/// The server couldn't be asked about a join code, or said no: final, in words for the person who
+/// typed it (the server's own for a code it doesn't know).
+pub(crate) fn unresolved(cfg: &GuestConfig, outcome: Outcome) -> Outcome {
+    Outcome::Failed(match outcome {
+        // A server from before join codes can't read the question.
+        Outcome::Refused(why) if why.contains("couldn't be read") => {
+            format!("{} doesn't know join codes yet (it runs an older version): ask for the invite link instead", cfg.invite.server.display())
+        }
+        Outcome::Refused(why) | Outcome::Failed(why) | Outcome::Ended(why) => why,
+        Outcome::Retry(why) => format!("Couldn't reach the server ({why})"),
+        Outcome::Left => return Outcome::Left,
+    })
+}
+
+/// The server's answer to the join code: the invite is whole now.
+pub(crate) fn resolved(cfg: &mut GuestConfig, file: String, token: String) -> Result<(), Outcome> {
+    if !crate::invite::valid_id(&file, 1, 64) || !crate::invite::valid_id(&token, 16, 128) {
+        return Err(Outcome::Failed("the server answered the join code with something that isn't a file".into()));
+    }
+    cfg.code = None;
+    (cfg.invite.file, cfg.invite.token) = (file, token);
+    Ok(())
 }
 
 /// What a close frame from the host means.
@@ -97,6 +127,7 @@ pub(crate) fn after(outcome: Outcome, cfg: &GuestConfig, was_live: bool, attempt
     match outcome {
         Outcome::Left => Next::Stop(None),
         Outcome::Refused(why) => failed(format!("The host refused: {why}")),
+        Outcome::Failed(why) => failed(why),
         Outcome::Ended(reason) => Next::Stop(Some(Event::Ended { reason })),
         Outcome::Retry(why) if !was_live => failed(format!("Couldn't join the live session: {why}")),
         Outcome::Retry(why) => {
@@ -211,8 +242,8 @@ pub(crate) fn take(m: ServerMsg, cfg: &GuestConfig, inbox: &Inbox, seen: &mut Se
         ServerMsg::Signal { client_id, signal } => inbox.push(Event::Signal(client_id, signal)),
         ServerMsg::Hosting(info) => inbox.push(Event::Hosting(*info)),
         ServerMsg::Reported { error } => inbox.push(Event::Reported(error)),
-        // Answers for managing and library connections: not this one's.
-        ServerMsg::Pong | ServerMsg::Admin(_) | ServerMsg::Library(_) | ServerMsg::Plugins(_) => {}
+        // Answers for managing and library connections, and to a join code: not this one's.
+        ServerMsg::Pong | ServerMsg::Admin(_) | ServerMsg::Library(_) | ServerMsg::Plugins(_) | ServerMsg::Resolved { .. } => {}
     }
     Taken::Continue
 }

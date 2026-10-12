@@ -62,8 +62,10 @@ fn the_publish_dialog() {
     let shapes = h.frames(2);
     h.click(text_center(&shapes, "Share"));
     let shapes = h.frames(2);
-    assert!(has_text(&shapes, "Or keep the file on a FigCraft server and share links to edit or to view it."));
-    h.click(text_center(&shapes, "Publish to server…"));
+    h.click(text_center(&shapes, "Advanced"));
+    let shapes = h.frames(2);
+    assert!(has_text(&shapes, "Another server, or one that needs its key. The usual server is set in Preferences."));
+    h.click(text_center(&shapes, "Publish to another server…"));
     let shapes = h.frames(2);
     assert!(has_text(
         &shapes,

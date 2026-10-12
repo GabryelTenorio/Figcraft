@@ -292,12 +292,15 @@ pub fn specs() -> Vec<CommandSpec> {
         }),
         spec!(
             "pref.publishServer",
-            "Server to publish to",
-            "{url: ws://host:port/ or wss://host/path/ (no key; empty: none)} → {url}",
+            "Server for online sharing",
+            "{url?: ws://host:port/ or wss://host/path/ (no key; empty: online sharing off; omit: back to the built-in server)} → {url, default (the built-in server)}: where Share ▸ Online keeps files and where join codes are asked",
             false,
             |s, p| {
                 const CMD: &str = "pref.publishServer";
-                let url = req_string(CMD, p, "url")?.trim().to_string();
+                let url = match get(p, "url") {
+                    None => crate::live::DEFAULT_SERVER.to_string(),
+                    Some(_) => req_string(CMD, p, "url")?.trim().to_string(),
+                };
                 let web_socket = url.starts_with("ws://") || url.starts_with("wss://");
                 if !url.is_empty()
                     && (!web_socket || url.len() > 500 || url.contains(|c: char| c.is_whitespace() || c.is_control() || c == '?' || c == '#'))
@@ -308,7 +311,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     ));
                 }
                 s.prefs.publish_server = url;
-                Ok(json!({"url": s.prefs.publish_server}))
+                Ok(json!({"url": s.prefs.publish_server, "default": crate::live::DEFAULT_SERVER}))
             }
         ),
         spec!("pref.language", "Interface language", "{language: system|en|es|es-419|fr|de|pt-BR|ja|ko|zh-Hans|…; else English}", false, |s, p| {

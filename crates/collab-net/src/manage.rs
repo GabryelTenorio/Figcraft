@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use figcraft_collab::message::{
     self, Admin, AdminReply, ClientMsg, HostInfo, LibraryReply, LibraryReq, Manage, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL, PluginReply,
-    PluginReq, ServerMsg,
+    PluginReq, Resolve, ServerMsg,
 };
 use tungstenite::{Bytes, Message, WebSocket};
 
@@ -80,6 +80,51 @@ pub fn hosting(
     Ok((info, replies))
 }
 
+/// Ask the server at `server` which file join code `code` opens: the file's id and its link's
+/// token. Fails with the server's own words when it knows no such code (or the address tried too
+/// many: the error starts with [`REFUSED`]); a server older than join codes can't read the
+/// question ("couldn't be read").
+pub fn resolve(server: &Endpoint, code: &str, limits: &NetLimits, timeout: Duration) -> Result<(String, String), String> {
+    let ask = Resolve { protocol: PROTOCOL, client_version: message::client_version(), code: code.to_string() };
+    let mut ws = connect(server, limits, timeout)?;
+    send(&mut ws, &ClientMsg::Resolve(ask))?;
+    let answer = reply(&mut ws, limits, |m| match m {
+        ServerMsg::Resolved { file, token } => Some((file, token)),
+        _ => None,
+    })?;
+    close(ws);
+    Ok(answer)
+}
+
+/// Join codes for the links of `file` with these `tokens`, in order, asked as whoever manages the
+/// file: with the server's `key`, else with the file's `owner` token. `None` when the server
+/// doesn't hand codes out (it is older than them) or can't be asked: the links still work.
+pub fn codes(
+    server: &Endpoint,
+    key: Option<&str>,
+    file: &str,
+    owner: &str,
+    tokens: &[&str],
+    limits: &NetLimits,
+    timeout: Duration,
+) -> Option<Vec<String>> {
+    let requests = tokens.iter().map(|t| Admin::Code { file: file.to_string(), token: (*t).to_string() }).collect();
+    let replies = match key {
+        Some(key) => request(server, key, requests, limits, timeout),
+        None => hosting(server, file, owner, requests, limits, timeout).map(|(_, replies)| replies),
+    };
+    let codes: Option<Vec<String>> = replies
+        .map_err(|e| log::info!("live session: no join codes from {}: {e}", server.display()))
+        .ok()?
+        .into_iter()
+        .map(|r| match r {
+            AdminReply::Code { code } => Some(code),
+            _ => None,
+        })
+        .collect();
+    codes.filter(|c| c.len() == tokens.len())
+}
+
 /// Send one library request about the file behind share link `link`; the reply. Fails when the
 /// link isn't one, the server can't be reached or refuses the link (a request it can't do is a
 /// [`LibraryReply::Failed`] reply). Never echoes the link.
@@ -148,12 +193,15 @@ fn send(ws: &mut Ws, msg: &ClientMsg) -> Result<(), String> {
     ws.send(Message::Binary(Bytes::from(bytes))).map_err(|e| format!("the connection to the server dropped ({e})"))
 }
 
+/// How an error starts when the server said no (then its reason), rather than not answering.
+pub(crate) const REFUSED: &str = "the server refused: ";
+
 /// The next answer `pick` takes, or why there is none.
 fn reply<T>(ws: &mut Ws, limits: &NetLimits, pick: impl Fn(ServerMsg) -> Option<T>) -> Result<T, String> {
     loop {
         return match ws.read() {
             Ok(Message::Binary(b)) => match message::decode::<ServerMsg>(&b, limits.max_server_message) {
-                Ok(ServerMsg::Refused { reason }) => Err(format!("the server refused: {reason}")),
+                Ok(ServerMsg::Refused { reason }) => Err(format!("{REFUSED}{reason}")),
                 Ok(ServerMsg::Pong) => continue,
                 Ok(m) => pick(m).ok_or_else(|| "the server sent something other than an answer".into()),
                 Err(e) => Err(format!("the server sent a message this version can't read ({e})")),

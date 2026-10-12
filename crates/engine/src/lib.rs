@@ -564,9 +564,9 @@ pub struct Prefs {
     /// The plugin directory browsed last (`ws://host:port/`, never with a key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_directory: Option<String>,
-    /// The server Share ▸ Publish to server suggests (`wss://host/`, never with a key; empty:
-    /// none). There is no built-in default.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    /// The server files are shared through online (Share ▸ Online, join codes; Publish to server
+    /// suggests it too): `wss://host/`, never with a key. [`live::DEFAULT_SERVER`] unless the user
+    /// chose another; empty: online sharing is off (saved as empty, so it stays off).
     pub publish_server: String,
     /// Recently opened or saved files, newest first (File ▸ Open recent; at most
     /// [`cmd::file::MAX_RECENT`]).
@@ -591,7 +591,7 @@ impl Default for Prefs {
             plugins: Vec::new(),
             plugin_settings: BTreeMap::new(),
             plugin_directory: None,
-            publish_server: String::new(),
+            publish_server: live::DEFAULT_SERVER.into(),
             recent_files: Vec::new(),
         }
     }
@@ -1352,6 +1352,8 @@ mod library_variables_tests;
 mod live_access_tests;
 #[cfg(test)]
 mod live_docs_tests;
+#[cfg(test)]
+mod live_share_tests;
 #[cfg(test)]
 mod live_signal_tests;
 #[cfg(test)]

@@ -52,7 +52,7 @@ figcraft-server --data /srv/figcraft key
 ```
 
 prints the address to publish to, `ws://<host>:47900/?key=<server key>`. In the desktop app,
-**Share ▸ Publish to server…** (or **File ▸ Publish to server…**) asks for that address and the
+**File ▸ Publish to server…** (or **Share ▸ Advanced ▸ Publish to another server…**) asks for that address and the
 file's name. The open file is uploaded as a new file and the tab keeps syncing through the
 server; until the upload is done the tab is read-only ("Publishing…" in the toolbar). The Share
 popover then shows an **edit link** and a **view link** to copy. Agents do the same with
@@ -67,13 +67,49 @@ who runs it ("Hosted by …" and a link to its terms) and how long unopened file
 then also gives an **owner token**, shown once with the links in a **File published** window: copy
 it and keep it, it is the only way to revoke the links, rename the file or remove it later
 (`collab.manageFile` from [MCP](mcp.md#live-sessions)). The Share popover shows the server's line
-and the date the server deletes the file unless someone opens it. **Preferences ▸ Server to publish
-to** fills the address in (empty by default: the app suggests no server of its own).
+and the date the server deletes the file unless someone opens it.
+
+## Sharing with a join code
+
+**Share ▸ Online ▸ Start sharing** in the app (`collab.share`) is the short way to do all of the
+above on a server open to the public: it publishes the open file to the server in **Preferences ▸
+Server for online sharing** (the FigCraft server unless you put yours there; Reset goes back; empty
+turns online sharing off), then shows a **join code** such as `K7M-2QX-9TD` in place of the links.
+Someone else types it under **Share ▸ Join with a code** (or on the home screen, or
+`collab.join {code}`) with the same server in their Preferences, and is in the file. The popover
+switches between the code that lets people edit and the one that only lets them view, and **Stop
+sharing** removes the file from the server (with its owner token), so its codes and links stop
+working; everyone keeps the copy they have. To use **your** server for this, set its address
+(`wss://figcraft.example.com/`) in Preferences on every machine that shares or joins; a server
+that needs its key is reached under **Advanced ▸ Publish to another server…**, or with
+`collab.share {server: "wss://…/?key=…"}`, and gets codes too.
+
+- **A code is a name for one share link**: nine symbols, 45 random bits, from an alphabet without
+  look-alike characters (typing ignores case, spaces and dashes). The server hands one out when
+  whoever manages the file asks (the app does, as the file's owner, or with the server key), one
+  per link, so the view code and the edit code differ. Typing a code gives the joiner's app the
+  link's token and it joins with that: access, reconnects and revocation are the link's.
+- **Nothing readable is kept**: `links.json` gets the code's stretched hash and the link's token
+  wrapped with the code, never the code. A code goes when its link is revoked, its file is removed
+  or expires, or a newer code is asked for the same link.
+- **Guessing is limited on every server**, public or private: 10 codes a minute per address; 10
+  wrong in a row lock an address out of codes for 15 minutes ("Too many wrong codes from your
+  address…"); and 1,000 wrong an hour from everyone together pause codes for all ("Join codes are
+  paused on this server…") until the budget refills. Links are never affected. Refused codes are
+  logged as `event=code_refused ip=… reason=…`, used ones as `event=code_used file=… ip=…`, new
+  ones as `event=code file=… link=…`; the codes themselves are never logged.
+- **Upgrade note.** Join codes need a server of this version or newer, and so does everyone's app.
+  An older server still takes files and links from a newer app (the app shows the links where the
+  code would be, and says a typed code can't be asked there); a newer server serves older apps
+  unchanged. To hand out codes, upgrade the server binary and restart it: the data directory needs
+  no migration, existing files get codes the next time they are shared, and no setting turns codes
+  on or off. Behind the reverse proxy nothing changes (codes travel inside the WebSocket).
 
 ## Joining
 
-Share links look like the desktop app's invite links and join the same way (**File ▸ Join live
-session…**, opening the link, or `collab.join {link}`):
+A [join code](#sharing-with-a-join-code) is the short way in. Share links look like the desktop
+app's invite links and join the same way (the same **Join with a code** field takes them, as do
+**File ▸ Join live session…**, opening the link, and `collab.join {link}`):
 
 - `figcraft://join?host=<host:port>&file=<id>&token=<token>` for a plain `ws://` server;
 - `figcraft://join?server=wss://figcraft.example.com/&file=<id>&token=<token>` for a server behind
@@ -208,7 +244,8 @@ are errors):
 
 With `listen` on every interface (`0.0.0.0`) and no `public_url`, links name this machine's
 network address. The limits marked *open* apply only with `open_publish = true`; a private server
-behaves as before (blocked addresses and report rates apply to every server).
+behaves as before (blocked addresses, report rates and the limits on
+[join codes](#sharing-with-a-join-code) apply to every server).
 
 ## The data directory
 
@@ -217,7 +254,8 @@ behaves as before (blocked addresses and report rates apply to every server).
 <data>/server.json             where the running server listens (read by the commands)
 <data>/server.key              the server key
 <data>/files/<id>/meta.json    the file's name, when it was created and last changed
-<data>/files/<id>/links.json   its links: id, access, label, created, SHA-256 of the token
+<data>/files/<id>/links.json   its links: id, access, label, created, SHA-256 of the token, and for
+                               a link with a join code its stretched hash and the wrapped token
 <data>/files/<id>/snapshot.bin its state at the last compaction (with a checksum)
 <data>/files/<id>/log.bin      what changed since, one checksummed record per change
 <data>/files/<id>/library.bin  its team library, when one was published (a .figcraft archive)
@@ -353,10 +391,11 @@ What someone can do, by what they hold (the server is reached through TLS at the
 
 | Who | Can | Cannot |
 |---|---|---|
-| Anyone who reaches the server, with nothing | Ask about its hosting (open, operator, terms, limits); on an open server publish files within the limits per address and for everyone; list and download the plugin directory; ask `/healthz` | Join, read or list any file; see links, reports or blocked addresses; use or learn the server key or anyone's token (none are ever sent back, and all are compared in constant time against hashes); publish plugins; spoof their address through `X-Forwarded-For` (believed only from `trusted_proxy`); get past a block |
+| Anyone who reaches the server, with nothing | Ask about its hosting (open, operator, terms, limits); on an open server publish files within the limits per address and for everyone; list and download the plugin directory; ask `/healthz`; try join codes, within the limits on wrong ones | Join, read or list any file; see links, reports or blocked addresses; use or learn the server key or anyone's token (none are ever sent back, and all are compared in constant time against hashes); publish plugins; spoof their address through `X-Forwarded-For` (believed only from `trusted_proxy`); get past a block |
+| Someone with a **join code** | Exactly what its link gives (a view code: the view link's row; an edit code: the edit link's), until the code or its link is gone | Get a code for any other link; learn anything from a wrong code but that it is wrong |
 | Someone with a file's **view link** | See that file and everyone's changes and presence in it; read its team library and usage; report it | Change it (the server refuses a viewer's edits); reach any other file; manage links |
 | Someone with a file's **edit link** | Change that file, within its size cap; publish its team library (on a public server only for files published with the key); report it | Reach any other file; grow it past `max_file_mb` or its publisher's share; list, make or revoke links; rename or remove it |
-| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one), rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
+| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one), ask for join codes for links whose token they hold, rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
 | The **operator** (server key, or the machine) | Everything above for every file, reports, blocks, the plugin directory; read every file on disk | Recover a lost link or owner token (only hashes are kept) |
 
 Limits that hold against everyone: message sizes by what a connection is for, file sizes as they
@@ -574,7 +613,7 @@ sudo ufw enable
 ```
 
 **6. Publish and share.** Print the publish address (`wss://figcraft.example.com/?key=…`) and use
-it in the app's **Share ▸ Publish to server…** (see [Publishing a file](#publishing-a-file)):
+it in the app's **File ▸ Publish to server…** (see [Publishing a file](#publishing-a-file)):
 
 ```sh
 sudo -u figcraft figcraft-server --config /etc/figcraft-server/server.toml key
@@ -626,6 +665,13 @@ sudo systemctl start figcraft-server
   Tokens are stored as SHA-256 hashes and every comparison runs in constant time; revoking a link
   disconnects whoever joined with it. A view link's batches are refused by the server whatever the
   client does.
+- **Join codes** are 45 random bits naming one link: far easier to guess than a link, so every
+  server limits wrong codes per address and for everyone
+  ([Sharing with a join code](#sharing-with-a-join-code)); with those limits, finding any one of
+  20,000 live codes takes on the order of centuries, while a flood of wrong codes can pause codes
+  (never links) for a while. Codes are kept only as a stretched hash and compared in constant
+  time; the link's token is kept wrapped with the code. A copy of the data directory lets someone
+  try codes offline (10,000 hashes a guess), and it holds the files themselves anyway.
 - **Open to the public** (`open_publish`): anyone who reaches the server may ask about it, publish
   a file (within the limits above) and report a file they are in; an owner token manages only its
   own file (its links, its name, removing it). Listing files, other files' links, reports, blocking

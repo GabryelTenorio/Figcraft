@@ -94,6 +94,8 @@ mod live_join_tests;
 #[cfg(test)]
 mod live_server_tests;
 #[cfg(test)]
+mod live_share_tests;
+#[cfg(test)]
 mod live_tests;
 #[cfg(test)]
 mod live_text_tests;

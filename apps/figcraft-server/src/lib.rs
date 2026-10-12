@@ -10,6 +10,7 @@
 
 pub mod abuse;
 pub mod cli;
+pub mod codes;
 pub mod config;
 pub mod directory;
 pub mod disk;
@@ -89,6 +90,8 @@ pub fn start(cfg: &Config) -> Result<Running, String> {
 mod background_tests;
 #[cfg(test)]
 mod cli_tests;
+#[cfg(test)]
+mod codes_tests;
 #[cfg(test)]
 mod directory_tests;
 #[cfg(test)]

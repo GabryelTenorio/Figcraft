@@ -894,6 +894,20 @@ and `collab.peers` are about the **active document's** session (`doc.switch {ind
 one that is), and `sessions` in `collab.peers` lists them all. Closing a document ends its session
 only: a host stops hosting it, a guest leaves it.
 
+- `collab.share {via?, access?, server?, name?, port?, bind?}` shares the active document with a
+  **join code**, the short way to do what `collab.publish` and `collab.host` do. `via: "online"`
+  (the default) publishes it to the server in Preferences (`pref.publishServer {url?}`: the
+  FigCraft server unless changed; `{url: ""}` turns online sharing off, `{}` goes back to the
+  built-in one; `server` names another for this call, with `?key=…` when it needs its key) and
+  returns `status: "connecting"`; once `collab.peers` says `"live"`, `code` is the code to give
+  others (`K7M-2QX-9TD`) and `share` is `{via, access, editCode, viewCode}`. `access: "view"` (or
+  calling again with it while shared) makes `code` the view-only one. A server older than join
+  codes leaves `code` null: share `published.edit` / `published.view` instead. `via: "local"`
+  hosts the document for people on the same network and returns at once with a longer `code`
+  (20 symbols, carrying this machine's IPv4 address, the port and the session's secret; `bind:
+  "local"` keeps it to this machine); everyone who joins edits. **Calling it publishes the
+  document to a server other people run: do it only when asked to share.** `collab.stop {}` ends
+  it (a file shared online is removed from the server, so its codes and links stop working).
 - `collab.host {port?, bind?}` starts hosting the active document (a session that document was in
   ends; other documents' sessions go on): `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
@@ -902,13 +916,17 @@ only: a host stops hosting it, a guest leaves it.
   `collab.peers` does, with `link` (`figcraft://join?host=…&file=…&token=…`) and `url`
   (`ws://…/?file=…&token=…`): both carry the session's secret, so share them only with people you
   invite. `collab.stop {}` ends the active document's session.
-- `collab.join {link}` (any form: an app's invite, a `figcraft-server` share link, or the
-  `ws(s)://…?file=…&token=…` URL) returns at once with the new session (`session`, `status:
+- `collab.join {code}` or `collab.join {link}` (a join code of either kind: spaces, dashes and
+  case don't matter, `O` reads as `0` and `I` or `L` as `1`; or a link in any form: an app's
+  invite, a `figcraft-server` share link, or the `ws(s)://…?file=…&token=…` URL; either parameter
+  takes either) returns at once with the new session (`session`, `status:
   "connecting"`) and touches no other document's session. Its file opens as a new document, which
   becomes the active one: poll
   `collab.peers` until `status` is `"live"`. Until then the join shows on the document it was
   started from when that one isn't in a session itself, and in `sessions` either way, where it
-  becomes `"failed"` with a `reason` when it can't be joined (a wrong token, a full
+  becomes `"failed"` with a `reason` when it can't be joined ("No session with that code", "That
+  code has expired or its sharing was stopped", "Couldn't reach the server (…)", too many wrong
+  codes from your address, a wrong token, a full
   session, a revoked link, an unreachable host, a `wss://` server whose certificate isn't trusted:
   see `FIGCRAFT_CA_FILE` in [`server.md`](server.md#behind-a-reverse-proxy-tls)). `collab.leave {}`
   leaves the active document's session (or ends a join started from it that is still on its way
@@ -945,6 +963,8 @@ only: a host stops hosting it, a guest leaves it.
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
   access (edit|view), readOnly (the active document can't be edited now: view only, or being
   published), published (a file you published: {server, file, name, edit, view, owner, expires}),
+  code (the join code to give others when the document was shared with `collab.share`, else
+  null), share ({via: online|local, access, editCode, viewCode}, or null),
   hosting (what the server of the file you're in says: {open, operator, terms, idleDays, maxFileMb,
   expires}, or null),
   follow, signals (the host passes cursor chat and spotlights on), chat (your cursor chat),

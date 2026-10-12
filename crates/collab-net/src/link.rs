@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use figcraft_collab::code;
 use figcraft_collab::message::{Access, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{
     Bind, Event, HostInfo, HostOptions, LiveLink, NO_SESSION, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionId,
@@ -72,9 +73,9 @@ impl NetLink {
         self
     }
 
-    /// How this link joins `invite`.
-    fn guest_config(&self, invite: Invite, name: &str) -> GuestConfig {
-        let mut cfg = (self.guest)(GuestConfig::new(invite, name.to_string()));
+    /// How this link joins `invite` (after asking its server about `code`, if there is one).
+    fn guest_config(&self, invite: Invite, code: Option<String>, name: &str) -> GuestConfig {
+        let mut cfg = (self.guest)(GuestConfig { code, ..GuestConfig::new(invite, name.to_string()) });
         cfg.limits = self.limits;
         cfg
     }
@@ -119,7 +120,13 @@ impl LiveLink for NetLink {
             Bind::Lan => lan_ip().ok_or("this machine has no local network address (connect to a network, or share on this machine only)")?,
             Bind::Addr(ip) => ip,
         };
-        let (file, token) = (token::file_id()?, token::secret()?);
+        // A session shared with a join code: its secret is short enough to be typed with the
+        // address (see `figcraft_collab::code`); the code and the invite link name the same session.
+        let (file, token) = if o.short {
+            (code::LOCAL_FILE.to_string(), code::Local::new(Ipv4Addr::UNSPECIFIED, 0, token::random()?).token())
+        } else {
+            (token::file_id()?, token::secret()?)
+        };
         let inbox = self.sessions.inbox();
         let doc = (*o.doc).clone();
         let pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
@@ -154,8 +161,8 @@ impl LiveLink for NetLink {
     }
 
     fn join(&mut self, session: SessionId, link: &str, name: &str) -> Result<(), String> {
-        let invite = Invite::parse(link)?;
-        let cfg = self.guest_config(invite, name);
+        let (invite, code) = Invite::parse_join(link)?;
+        let cfg = self.guest_config(invite, code, name);
         let inbox = self.sessions.inbox();
         let guest = Guest::start(cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
         self.started(session, Active::Guest(guest), inbox);
@@ -167,9 +174,9 @@ impl LiveLink for NetLink {
         // Without a key: as anyone may, when the server is open to the public (it says if not).
         let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
         // Until the upload is done the invite names only the server.
-        let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, &o.me);
+        let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, None, &o.me);
         let inbox = self.sessions.inbox();
-        let job = Publish { server, key, name: o.name, doc: o.doc };
+        let job = Publish { server, key, name: o.name, doc: o.doc, codes: o.codes };
         let guest = Guest::publish(job, cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
         self.started(session, Active::Guest(guest), inbox);
         Ok(())

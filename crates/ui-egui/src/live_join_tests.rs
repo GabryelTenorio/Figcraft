@@ -33,7 +33,7 @@ fn escape_closes_the_join_dialog_and_keeps_the_selection() {
     // Escape with the field not focused (after clicking the dialog's text).
     crate::menus::invoke(&mut h.app, "collab.join");
     let shapes = h.frames(2);
-    h.click(text_center(&shapes, "Paste the invite link the host shared with you."));
+    h.click(text_center(&shapes, "Type the join code you were given, or paste an invite link."));
     h.frames(1);
     assert!(!link_focused(&h));
     escape(&mut h);
@@ -95,11 +95,10 @@ fn the_browser_joins_but_does_not_host() {
     let shapes = h.frames(3);
     h.click(text_center(&shapes, "Share"));
     let shapes = h.frames(2);
-    assert!(has_text(&shapes, "Hosting a session needs the desktop app; here you can join one."));
-    assert!(!has_text(&shapes, "Start live session") && !has_text(&shapes, "Share on the local network"));
-    h.click(text_center(&shapes, "Join a session…"));
-    let shapes = h.frames(2);
-    assert!(h.app.ui.live.join.is_some());
+    assert!(has_text(&shapes, "Sharing a file needs the desktop app; here you can join one."));
+    assert!(!has_text(&shapes, "Start sharing") && !has_text(&shapes, "Local network"));
+    // The join field is right there, with what the browser can reach.
+    assert!(has_text(&shapes, "Join with a code") && has_text(&shapes, "Join"));
     assert!(has_text(
         &shapes,
         "In the browser you can join sessions the desktop app hosts and files on a FigCraft server. A page opened over https reaches other computers only through wss:// links (a server behind TLS)."
