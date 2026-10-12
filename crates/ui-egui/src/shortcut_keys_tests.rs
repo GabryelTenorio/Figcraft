@@ -1,7 +1,8 @@
 //! The documented shortcuts the keymap table can't check by lookup alone, driven through egui
 //! headless: arrows pan with nothing selected, the keyboard box selection key and Cmd/Ctrl+arrows
 //! drawing it out, list indentation while editing text, symbols another keyboard layout types with
-//! Shift, and the presentation keys (Space and N forward, C comments, F full screen).
+//! Shift, the presentation keys (Space and N forward, C comments, F full screen), Alt+R for the
+//! rotation origin and Enter placing a shape with its tool chosen.
 
 use egui::{Event, Key, Modifiers, ViewportCommand, ViewportId};
 use figcraft_doc::NodeId;
@@ -61,6 +62,9 @@ fn keyboard_box_selection_key_and_cmd_arrows() {
     let m = if crate::shortcuts::platform() == Platform::Mac { Modifiers::ALT } else { cmd() };
     press(&mut u, Key::Space, m);
     let b = u.app.ui.key_box.expect("the box shows");
+    let toast = u.app.ui.toast.clone().map(|t| t.0).unwrap_or_default();
+    let cmd_arrows = format!("{}+arrows", crate::toolbar::pretty_shortcut("Cmd"));
+    assert!(toast.contains("Shift+arrows") && toast.contains(&cmd_arrows), "the toast names both ways to size it: {toast}");
     let zoom = view(&u).2;
     press(&mut u, Key::ArrowRight, cmd());
     let grown = u.app.ui.key_box.unwrap();
@@ -151,4 +155,37 @@ fn multiplayer_cursors_key_hides_and_shows_others_cursors() {
     h.app.run("view.multiplayerCursors", json!({}));
     h.frames(2);
     assert_eq!(h.app.ui.live.shown(), vec![1], "and shows it again");
+}
+
+#[test]
+fn alt_r_shows_the_rotation_origin_and_escape_hides_it() {
+    let mut s = Session::new();
+    let r = id(s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 40, "height": 40})).unwrap());
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    press(&mut u, Key::R, Modifiers::ALT);
+    let at = u.app.session.ds().unwrap().origin_handle().expect("Alt+R shows the origin");
+    assert!((at.x - 20.0).abs() < 1e-9 && (at.y - 20.0).abs() < 1e-9, "{at:?}");
+    assert_eq!(u.app.session.tool.tool, figcraft_engine::ToolId::Move, "R alone would pick the Rectangle tool");
+    press(&mut u, Key::Escape, Modifiers::NONE);
+    assert!(u.app.session.ds().unwrap().origin_handle().is_none());
+    assert_eq!(u.app.session.selection(), vec![r], "the first Escape only hides it");
+    press(&mut u, Key::R, Modifiers::ALT);
+    press(&mut u, Key::R, Modifiers::ALT);
+    assert!(u.app.session.ds().unwrap().origin_handle().is_none(), "Alt+R again hides it too");
+}
+
+#[test]
+fn enter_with_a_shape_tool_places_one_in_the_middle_of_the_view() {
+    let mut u = Ui::new(Session::new());
+    u.app.run("view.set", json!({"zoom": 1.0, "cx": 200, "cy": 100}));
+    press(&mut u, Key::R, Modifiers::NONE);
+    press(&mut u, Key::Enter, Modifiers::NONE);
+    let sel = u.app.session.selection();
+    assert_eq!(sel.len(), 1, "placed and selected");
+    let b = u.app.session.doc().unwrap().world_bounds(sel[0]).unwrap();
+    assert!((b.center().x - 200.0).abs() < 1e-9 && (b.center().y - 100.0).abs() < 1e-9 && (b.width() - 100.0).abs() < 1e-9, "{b:?}");
+    // With the Move tool back, Enter on the shape edits it as before.
+    press(&mut u, Key::Enter, Modifiers::NONE);
+    assert!(u.app.session.ds().unwrap().vector_edit.is_some());
 }

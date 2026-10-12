@@ -30,7 +30,8 @@ enum Ours {
     Gesture(&'static str),
     /// A tool key in vector edit mode.
     VectorTool(VTool),
-    /// No such behaviour yet.
+    /// No such behaviour yet (no row today; kept for the next documented shortcut).
+    #[allow(dead_code)]
     Missing,
 }
 use Ours::*;
@@ -111,6 +112,8 @@ static ROWS: &[Row] = &[
     doc(Tools, "Hand tool while held", &["Space"], &[], Gesture("Pan the canvas"), "held, not pressed"),
     doc(Tools, "Pan with the arrows when nothing is selected (Shift: farther)", &["ArrowRight"], &[], Gesture("Pan with nothing selected (Shift: farther)"),
         "view.pan; nudges move the selection when there is one"),
+    doc(Tools, "Place an object with the tool chosen from the toolbar", &["Enter"], &[], Gesture("Place a shape or frame (its tool chosen)"),
+        "tool.place: Enter on the toolbar's chosen tool or on the canvas; a click's size (100×100, lines 100 long, sections 400×300), selected; no crosshair to move first"),
     pin(Tools, "tool.hand", &["H"], &[]),
     pin(Tools, "tool.section", &["Shift+S"], &[]),
     pin(Tools, "tool.slice", &["S"], &[]),
@@ -244,7 +247,8 @@ static ROWS: &[Row] = &[
     doc(Transform, "Nudge (Shift: big nudge)", &["ArrowRight"], &[], Gesture("Nudge (Shift: big nudge)"), ""),
     doc(Transform, "Suspend snapping while dragging", &["Ctrl"], &[], Gesture("Suspend snapping while dragging"),
         "Control on macOS (Cmd keeps working); Ctrl elsewhere"),
-    doc(Transform, "Show the rotation origin to move it", &["Alt+R"], &[], Missing, "layers turn about their centre; no movable origin yet"),
+    doc(Transform, "Show the rotation origin to move it", &["Alt+R"], &[], Bound("transform.rotationOrigin"),
+        "drag it (snaps to the box's corners, edge middles and centre), double-click: back to the centre, Escape hides it; kept while the selection lasts, not saved (the documentation doesn't say)"),
     // Arrange
     doc(Arrange, "Bring forward", &["Cmd+]"], &[], Bound("arrange.forward"), ""),
     doc(Arrange, "Send backward", &["Cmd+["], &[], Bound("arrange.backward"), ""),
@@ -276,7 +280,6 @@ static ROWS: &[Row] = &[
     doc(Prototype, "Presenting: cycle the size options", &["Z"], &[], Gesture("Presenting: cycle the size options"), ""),
     doc(Prototype, "Presenting: comments", &["C"], &[], Gesture("Presenting: comments"), "Shift+C kept; keys the prototype uses go to it first"),
     doc(Prototype, "Presenting: full screen", &["F"], &[], Gesture("Presenting: full screen"), "new"),
-    doc(View, "Place an object with the tool chosen from the toolbar", &["Enter"], &[], Missing, "Enter picks the tool; nothing is placed until the canvas is clicked"),
 ];
 
 /// Chords the operating system takes before any app sees them; no default binding may use one.
@@ -394,7 +397,7 @@ fn counts_match_the_docs() {
     let reserved = documented.iter().filter(|r| !r.reserved.is_empty()).count();
     let pinned = ROWS.len() - documented.len();
     // docs/ui-parity.md quotes these.
-    assert_eq!((documented.len(), bound, moved, missing, reserved, pinned), (129, 126, 1, 2, 2, 48));
+    assert_eq!((documented.len(), bound, moved, missing, reserved, pinned), (129, 128, 1, 0, 2, 48));
 }
 
 #[test]

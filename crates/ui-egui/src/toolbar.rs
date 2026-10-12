@@ -89,7 +89,14 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             a11y::prefer(&mut app.ui.nav, Region::Toolbar, resp.id);
         }
         if resp.clicked() {
-            app.run("tool.set", json!({"tool": shown.id()}));
+            // Enter (a keyboard click) on the shape or frame tool already chosen places one; the
+            // canvas takes the keyboard.
+            if in_group && shown.draws_shape() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                app.run("tool.place", json!({}));
+                app.ui.nav.go(Region::Canvas);
+            } else {
+                app.run("tool.set", json!({"tool": shown.id()}));
+            }
         }
         x += cell;
         // Flyout chevron.

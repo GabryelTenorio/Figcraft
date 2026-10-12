@@ -300,6 +300,7 @@ pub static KEYS: &[Binding] = &[
     k(Transform, "object.flipV", &["Shift+V"]),
     k(Transform, "object.mask", &["Ctrl+Cmd+M"]).win(&["Ctrl+Alt+M"]),
     k(Transform, "object.resizeToFit", &["Alt+Shift+Cmd+R"]),
+    k(Transform, "transform.rotationOrigin", &["Alt+R"]),
     // Arrange
     k(Arrange, "arrange.front", &["Alt+Cmd+]"]).win(&["Shift+Cmd+]"]),
     k(Arrange, "arrange.forward", &["Cmd+]"]),
@@ -332,6 +333,7 @@ pub static KEYS: &[Binding] = &[
 pub static GESTURES: &[(Group, &str, &str, &str)] = &[
     (Tools, "Pan the canvas", "Space drag", "Space+drag"),
     (Tools, "Pan with nothing selected (Shift: farther)", "← ↑ → ↓", "← ↑ → ↓"),
+    (Tools, "Place a shape or frame (its tool chosen)", "↵", "Enter"),
     (Zoom, "Zoom tool: click to zoom in, drag an area", "Hold Z", "Hold Z"),
     (Zoom, "Zoom tool: zoom out", "Hold ⌥Z", "Hold Alt+Z"),
     (Zoom, "Zoom around the pointer", "⌘ scroll", "Ctrl+scroll"),

@@ -278,9 +278,10 @@ pub fn describe(s: &figcraft_engine::Session) -> String {
 fn describe_box([x0, y0, x1, y1]: [f64; 4]) -> String {
     let n = crate::widgets::fmt_num;
     let (w, h, x, y) = (n((x1 - x0).abs()), n((y1 - y0).abs()), n(x0.min(x1)), n(y0.min(y1)));
+    let cmd = crate::toolbar::pretty_shortcut("Cmd");
     trf(
-        "Selection box, {w} by {h} at {x}, {y}: arrows move it, Shift+arrows size it, Enter selects, Escape cancels",
-        &[("w", &w), ("h", &h), ("x", &x), ("y", &y)],
+        "Selection box, {w} by {h} at {x}, {y}: arrows move it, Shift+arrows or {cmd}+arrows size it, Enter selects, Escape cancels",
+        &[("w", &w), ("h", &h), ("x", &x), ("y", &y), ("cmd", &cmd)],
     )
 }
 
@@ -901,6 +902,17 @@ fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec<(NodeId, [
                     painter.circle_stroke(c, 4.0, stroke(col, 1.5));
                     painter.circle_filled(c, 1.5, col);
                 }
+            }
+            // The rotation origin while it shows (Alt+R): a ring with a cross through it.
+            if let Some(o) = ds.origin_handle() {
+                let c = app.to_screen(o.x, o.y);
+                painter.circle_filled(c, 5.0, Color32::WHITE);
+                painter.circle_stroke(c, 5.0, stroke(col, 1.5));
+                for d in [vec2(1.0, 0.0), vec2(0.0, 1.0)] {
+                    painter.line_segment([c - d * 10.0, c - d * 5.0], stroke(col, 1.5));
+                    painter.line_segment([c + d * 5.0, c + d * 10.0], stroke(col, 1.5));
+                }
+                painter.circle_filled(c, 1.5, col);
             }
         }
     }

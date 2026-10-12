@@ -119,7 +119,16 @@ impl ToolId {
             .unwrap_or("")
     }
 
-    fn draws_shape(self) -> bool {
+    /// The size a click (or Enter, `tool.place`) makes with a shape or frame tool.
+    pub fn click_size(self) -> (f64, f64) {
+        match self {
+            ToolId::Line | ToolId::Arrow => (100.0, 0.0),
+            ToolId::Section => (400.0, 300.0),
+            _ => (100.0, 100.0),
+        }
+    }
+
+    pub fn draws_shape(self) -> bool {
         matches!(
             self,
             ToolId::Frame
@@ -333,6 +342,8 @@ pub(crate) enum Gesture {
         id: NodeId,
         handle: ShapeHandle,
     },
+    /// Dragging the rotation origin handle (see [`crate::rotation_origin`]).
+    Origin,
     /// Shape builder: regions collected so far (handled in `shapebuilder`).
     ShapeBuild {
         picked: Vec<usize>,
@@ -828,6 +839,9 @@ impl Session {
             self.tool.last_move = Some(ev.clone());
         }
         let tool = self.tool.tool;
+        if matches!(tool, ToolId::Move | ToolId::Scale) && self.origin_pointer(ev)? {
+            return Ok(());
+        }
         if matches!(tool, ToolId::Move | ToolId::Scale) && self.ds().is_ok_and(|d| d.vector_edit.is_some()) && self.vector_pointer(ev)? {
             return Ok(());
         }
@@ -866,6 +880,25 @@ impl Session {
             PointerKind::Up => self.up(ev),
             PointerKind::DoubleClick => self.double_click(ev),
         }
+    }
+
+    /// The rotation origin handle while it shows: a press drags it, a double-click puts it back
+    /// at the centre. True when the event was the handle's.
+    fn origin_pointer(&mut self, ev: &PointerEvent) -> Result<bool> {
+        let dragging = matches!(self.tool.gesture, Gesture::Origin);
+        if !dragging && !self.ds()?.on_origin_handle(ev.p(), ev.zoom) {
+            return Ok(false);
+        }
+        match ev.kind {
+            PointerKind::Down if !dragging => self.tool.gesture = Gesture::Origin,
+            PointerKind::Move if dragging => self.drag_origin_to(ev.p(), ev.zoom)?,
+            PointerKind::Up if dragging => self.tool.gesture = Gesture::None,
+            PointerKind::DoubleClick => self.set_rotation_origin(None)?,
+            PointerKind::Hover => {}
+            _ => return Ok(false),
+        }
+        self.tool.overlay.cursor = Cursor::Move;
+        Ok(true)
     }
 
     fn hover(&mut self, ev: &PointerEvent) -> Result<()> {
@@ -968,7 +1001,10 @@ impl Session {
             let ids = roots(&doc, &sel);
             if let Handle::Rotate(_) = h {
                 let Some(b) = selection_box(&doc, &ids) else { return Ok(()) };
-                let center = Point::new(b.iter().map(|c| c.x).sum::<f64>() / 4.0, b.iter().map(|c| c.y).sum::<f64>() / 4.0);
+                let center = self
+                    .ds()?
+                    .moved_origin()
+                    .unwrap_or_else(|| Point::new(b.iter().map(|c| c.x).sum::<f64>() / 4.0, b.iter().map(|c| c.y).sum::<f64>() / 4.0));
                 self.begin_interaction("Rotate")?;
                 self.tool.gesture = Gesture::Rotate { center, start_angle: (ev.p() - center).atan2(), ids };
                 return Ok(());
@@ -1235,7 +1271,7 @@ impl Session {
                 textedit::set_caret(self, idx, true)?;
                 Ok(())
             }
-            Gesture::Vector(_) | Gesture::ShapeBuild { .. } => Ok(()),
+            Gesture::Vector(_) | Gesture::ShapeBuild { .. } | Gesture::Origin => Ok(()),
             Gesture::PenDrag { anchor } => {
                 let out = ev.p() - *anchor;
                 if let Some(pen) = self.tool.pen.as_mut()
@@ -1583,12 +1619,7 @@ impl Session {
                     // Click without drag: Figma makes a 100×100 shape (frames 100×100 too).
                     self.cancel_interaction()?;
                     self.begin_interaction(self.tool.tool.label())?;
-                    let tool = self.tool.tool;
-                    let (w, h) = match tool {
-                        ToolId::Line | ToolId::Arrow => (100.0, 0.0),
-                        ToolId::Section => (400.0, 300.0),
-                        _ => (100.0, 100.0),
-                    };
+                    let (w, h) = self.tool.tool.click_size();
                     let target = start + Vec2::new(w, h);
                     let mut fake = ev.clone();
                     fake.x = target.x;
@@ -1624,7 +1655,7 @@ impl Session {
                 self.pencil_finish(&points, &pressure)?;
             }
             Gesture::TextSelect { .. } | Gesture::Marquee { .. } | Gesture::None => {}
-            Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } => {}
+            Gesture::PenDrag { .. } | Gesture::ShapeBuild { .. } | Gesture::Origin => {}
             Gesture::Vector(_) => self.commit_interaction()?,
         }
         if let Ok(ds) = self.ds_mut() {
@@ -2022,6 +2053,29 @@ impl Session {
         }
     }
 
+    /// Enter with a shape or frame tool (`tool.place`): what a click with it makes, centred on `at`
+    /// (default the middle of the view) and selected.
+    pub fn place(&mut self, at: Option<Point>) -> Result<()> {
+        let tool = self.tool.tool;
+        let refuse = |why: &str| Err(crate::EngineError::Disabled("tool.place".into(), why.into()));
+        if !tool.draws_shape() {
+            return refuse("choose a shape or frame tool first");
+        }
+        if self.tool.busy() {
+            return refuse("finish the drag first");
+        }
+        let v = &self.ds()?.view;
+        let (c, zoom) = (at.unwrap_or(Point::new(v.cx, v.cy)), v.zoom);
+        let (w, h) = tool.click_size();
+        let ev = |kind| PointerEvent::at(kind, c.x - w / 2.0, c.y - h / 2.0, zoom);
+        let r = self.pointer(&ev(PointerKind::Down)).and_then(|()| self.pointer(&ev(PointerKind::Up)));
+        if r.is_err() {
+            self.tool.gesture = Gesture::None;
+            let _ = self.cancel_interaction();
+        }
+        r
+    }
+
     /// Keyboard Escape: cancel gestures, finish pens, leave text editing, then deselect (in the
     /// focus view, once the focused frame or nothing is selected, it ends the focus view).
     pub fn escape(&mut self) -> Result<()> {
@@ -2036,6 +2090,9 @@ impl Session {
             self.tool.gesture = Gesture::None;
             self.tool.overlay = Overlay::default();
             return self.cancel_interaction();
+        }
+        if self.end_origin_edit() {
+            return Ok(());
         }
         if self.ds()?.text_edit.is_some() {
             return textedit::end(self);

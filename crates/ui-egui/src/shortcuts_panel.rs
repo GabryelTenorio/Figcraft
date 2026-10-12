@@ -85,7 +85,12 @@ fn row(ui: &mut Ui, t: &Tokens, row: &Row, width: f32) {
         }
     }
     let label_w = (right - r.min.x - 14.0).max(20.0);
-    let label = crate::widgets::elide(ui, &row.label, label_w);
+    // Measured in the font it's painted in: a long translation ends with "…" before the keycaps and
+    // shows in full on hover.
+    let label = crate::widgets::elide_font(ui, &row.label, label_w, regular(12.0));
+    if label != row.label {
+        resp.on_hover_text(&*row.label);
+    }
     ui.painter().text(pos2(r.min.x + 6.0, cy), Align2::LEFT_CENTER, label, regular(12.0), t.text);
 }
 

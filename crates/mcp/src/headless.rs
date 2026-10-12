@@ -151,6 +151,10 @@ impl Headless {
         if let Some(bd) = lookup(platform, Context::Canvas, key, m) {
             match bd.id {
                 "select.none" => self.session.escape().map_err(|e| e.to_string())?,
+                // Enter with a shape or frame tool chosen places one in the middle of the view.
+                "select.children" if self.session.tool.tool.draws_shape() => {
+                    self.execute("tool.place", &json!({}))?;
+                }
                 // Enter on a text layer starts editing it.
                 "select.children" if self.single_text().is_some() => {
                     self.execute("text.edit.begin", &json!({"id": self.single_text()}))?;

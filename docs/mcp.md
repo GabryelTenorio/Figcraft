@@ -242,6 +242,15 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `view.pan {dx, dy, big?}`: the arrow keys with nothing selected (`key ArrowRight` does the same)
   pan the view by 20 screen pixels a step, 200 with `big` (Shift).
 - `view.multiplayerCursors {on?}` (`Alt+Cmd+\`): show or hide others' cursors in a live session.
+- `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle
+  (toggles without `on`); `transform.setRotationOrigin {x, y}` moves the origin (page coordinates),
+  `{reset: true}` puts it back at the centre. Both return `{editing, moved, x, y}`. The corner
+  rotation handles, a `rotation` set through `node.set` on the selection, Rotate 90°/180° and
+  `transform.rotate` without `cx`/`cy` turn about it. It belongs to the selection, follows the layers
+  as they move and turn, and is dropped when the selection changes; it isn't saved.
+- `tool.place {tool?, x?, y?}`: what Enter does with a shape or frame tool chosen (`key Enter` does
+  the same): makes what a click with the tool makes (100×100; lines 100 long; sections 400×300)
+  centred on `x`, `y` (default the middle of the view), selects it and returns `{ids}`. One undo step.
 - `text.listIndent` / `text.listOutdent` (`Cmd+]` / `Cmd+[` while editing text): the selected list
   items a level deeper or out, like Tab and Shift+Tab.
 - `view.nextRegion` / `view.previousRegion` (`F6` / `Shift+F6`, live while editing text too): move

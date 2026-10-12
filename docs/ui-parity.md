@@ -1,6 +1,6 @@
 # UI and interaction parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (keyboard shortcut parity suite and bindings; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (rotation origin on Alt+R and placing with Enter: no documented shortcut missing; keyboard shortcut parity suite and bindings; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and the vector edit tail; canvas navigation, guides and grids behaviour suite and fixes; shapes and vector behaviour suite and fixes; paint and effects behaviour suite and fixes; frames, groups, sections and masks behaviour suite and fixes; layers panel keyboard: F2 rename, Shift+F10 context menu, F8 box selection; selection and transform behaviour suite and fixes; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; boolean hit testing on the result, group drags, frame outlines and slices; outlines for the selection, mask outlines; arc fields, live boolean editing, shape builder on strokes, one-sided widths) · **Target:** Figma Design UI3 (desktop app 126.10.7)
 
 Fine canvas control is what Figma users feel first: handles, snapping, nudging, modifier keys,
 drag behaviour, numeric precision. This checklist covers the tools, gestures and panels. Status:
@@ -22,7 +22,7 @@ interaction feel not yet compared.
 | Actions palette (Cmd+K, Cmd+/) | done | commands; no assets search parity |
 | Context menus | done | canvas and layers; Shift+F10 opens them from the keyboard (at the focused layer row or below the canvas selection) and the menu takes the keyboard; the Menu key isn't delivered by the windowing layer (egui 0.36 has no key for it) |
 | Main menu from the logo | done | generated from `catalog.rs`; popups sized to content |
-| Keyboard shortcuts panel | done | docked, tabbed by group like the documentation, searchable, per-platform keycaps; held keys, gestures and presentation keys listed beside the bindings |
+| Keyboard shortcuts panel | done | docked, tabbed by group like the documentation, searchable, per-platform keycaps; held keys, gestures and presentation keys listed beside the bindings; a label too long for its column ends with "…" and shows in full on hover |
 | Several windows | partial | File ▸ New window, Open in new window on a tab, a tab dragged off the strip; screen-reader tree in the main window only; positions not restored |
 | Multiplayer avatars, Share button | missing | waits for multiplayer |
 | Blend mode menus: the layer's (Design panel) and each paint's (colour picker) | done | Pass through and Normal are distinct (Normal isolates a group's or frame's children); paints have no pass-through; plus darker drawn exactly on the canvas |
@@ -52,6 +52,8 @@ interaction feel not yet compared.
 | Resize handles: Shift keeps proportions, Alt from centre, constraints-aware | done | Alt shrinks too; past an edge flips (several layers mirror); groups and mixed rotations scale each layer along its own axes, keeping rotation and flip (no skew: children turned off a right angle are approximate); Cmd/Ctrl ignores a frame's constraints (`transform_behaviour_tests`) |
 | Rotate just outside a corner; Shift in 15° steps | done | rotated handle box when layers share a rotation |
 | Flip, rotate 90° | done | |
+| Rotation origin (Alt+R) | done | a handle at the selection's centre to drag (snaps to the box's corners, edge middles and centre), double-click puts it back, Escape or Alt+R hides it; the corner handles, the rotation field, Rotate 90°/180° and `transform.rotate` turn about it; it follows the layers and lasts as long as the selection, not saved (the documentation doesn't say; pinned) |
+| Enter with a shape or frame tool chosen | done | places what a click makes (100×100, lines 100 long, sections 400×300) in the middle of the view, selected (`tool.place`); from the toolbar, Enter on the chosen tool. No crosshair to move with the arrows first |
 | Alt-drag duplicate | done | |
 | Scale tool (K): handles about an anchor, live factor, panel | done | |
 | Nudge 1 / Shift 10 (preference), Cmd+arrows resize | done | arrows reorder auto layout children |
@@ -116,9 +118,9 @@ in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a look
 | | Count | Notes |
 |---|---|---|
 | Documented shortcuts (rows) | 129 | each with macOS and Windows/Linux keys |
-| Bound as documented | 126 (110 before this suite) | 107 keymap bindings, 13 held keys, gestures and presentation keys, 6 vector edit tool keys |
+| Bound as documented | 128 (110 before this suite) | 108 keymap bindings, 14 held keys, gestures and presentation keys, 6 vector edit tool keys |
 | Bound on other keys (documented conflict) | 1 | Run last plugin: the documentation also gives Ctrl+Alt+P to pixel preview on Windows; the plugin takes Ctrl+Alt+Shift+P there |
-| Missing | 2 | moving the rotation origin (Alt+R); placing an object with Enter after choosing a tool from the toolbar |
+| Missing | 0 | moving the rotation origin (Alt+R, `transform.rotationOrigin`) and placing an object with Enter after choosing its tool (`tool.place`) were the last two |
 | Documented keys a platform keeps | 2 | Ctrl+Space (Windows/Linux keyboard box selection) switches some CJK input methods; F6 goes to a browser's address bar in the web build |
 | Undocumented bindings pinned | 48 | of which Cmd/Ctrl+W, Cmd/Ctrl+N and Ctrl+Tab are taken by browsers (web build) and Ctrl+Alt+T / Ctrl+Alt+L by some Linux desktops |
 
@@ -160,6 +162,7 @@ in the table. `crates/ui-egui/src/shortcut_keys_tests.rs` drives the keys a look
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Rotation origin and placing with Enter: Alt+R shows a rotation origin handle to drag (snapping to the box's corners, edge middles and centre; double-click resets; Escape hides; kept while the selection lasts, not saved), which the corner handles, the rotation field, Rotate 90°/180° and `transform.rotate` turn about (`transform.rotationOrigin`, `transform.setRotationOrigin`); Enter with a shape or frame tool chosen, on the canvas or the toolbar's tool, places a click-sized one in the middle of the view (`tool.place`). Documented shortcuts: 128 bound, 0 missing. The keyboard box selection's toast and screen-reader text name Cmd/Ctrl+arrows too; the shortcuts panel cuts a label that doesn't fit before its keycaps with "…" (measured in the font it's drawn in; long labels ran into the keycaps) and shows it in full on hover |
 | 2026-10-12 | minor | Keyboard shortcut parity suite and bindings: a table of the 129 documented shortcuts per platform (126 bound, 1 moved for a documented conflict, 2 missing, 2 kept by a platform) plus 48 pinned undocumented bindings; 16 rows newly bound (see Keyboard shortcuts); Ctrl to suspend snapping on macOS done; keyboard box selection on Alt+Space / Ctrl+Space |
 | 2026-10-12 | minor | Multiplayer cursors, cursor chat and spotlight: missing → partial (live sessions: chat bubbles at the pointer that fade, `/` to chat, spotlight from your avatar's menu with a banner to stop or follow again) |
 | 2026-10-12 | minor | Layers and Assets panels behaviour suite and fixes: several layers dropped together land together, Collapse layers keeps the selection's rows open, dragging across eyes or padlocks sets several layers in one step, the toggles stay under the pointer, Rename layers dialog for several layers, pages dragged to reorder, dividers, "Copy of" duplicates, Assets folders by page, frame and slash names |

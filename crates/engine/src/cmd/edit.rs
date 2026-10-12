@@ -1002,9 +1002,31 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     if props.is_empty() {
         return Err(bad("node.set", "no properties given"));
     }
+    // A new rotation for the selection turns it about its moved rotation origin: each layer's
+    // point under the origin stays put.
+    let ds = s.ds()?;
+    let pivot =
+        ds.moved_origin().filter(|_| props.contains_key("rotation") && !props.contains_key("x") && !props.contains_key("y") && ds.selection == ids);
+    let pinned: Vec<(NodeId, figcraft_geom::Point)> = match pivot {
+        Some(o) => roots(&ds.doc, &ids)
+            .into_iter()
+            .map(|i| (i, ds.doc.world_transform(i)))
+            .filter(|(_, w)| w.determinant().abs() > 1e-12)
+            .map(|(i, w)| (i, w.inverse() * o))
+            .collect(),
+        None => Vec::new(),
+    };
     let doc = s.doc_mut()?;
     for i in ids {
         super::props::apply("node.set", doc, i, &props)?;
+    }
+    if let Some(o) = pivot {
+        for (i, q) in pinned {
+            let d = o - doc.world_transform(i) * q;
+            if d.hypot().is_finite() {
+                super::arrange::move_world(doc, i, d.x, d.y)?;
+            }
+        }
     }
     ok()
 }

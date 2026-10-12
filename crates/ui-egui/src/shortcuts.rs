@@ -144,6 +144,10 @@ pub fn run_binding(app: &mut FigApp, id: &str) {
         "edit.delete" if app.session.tool.pen.is_some() => {
             let _ = app.session.pen_finish();
         }
+        // Enter with a shape or frame tool chosen places one in the middle of the view.
+        "select.children" if app.session.tool.tool.draws_shape() => {
+            app.run("tool.place", json!({}));
+        }
         "select.children" if enter_text(app) => {}
         _ => crate::menus::invoke(app, id),
     }
@@ -265,7 +269,11 @@ impl FigApp {
             }
         };
         self.ui.key_box = Some([r.x0, r.y0, r.x1, r.y1]);
-        self.toast(crate::i18n::tr("Selection box: arrows move it, Shift+arrows size it, Enter selects, Escape cancels"));
+        let cmd = crate::toolbar::pretty_shortcut("Cmd");
+        self.toast(crate::i18n::trf(
+            "Selection box: arrows move it, Shift+arrows or {cmd}+arrows size it, Enter selects, Escape cancels",
+            &[("cmd", &cmd)],
+        ));
     }
 }
 

@@ -40,6 +40,7 @@ pub mod plugin_directory;
 pub mod plugins;
 pub mod proto_run;
 pub mod rename;
+pub mod rotation_origin;
 pub mod shape_handles;
 pub mod shapebuilder;
 pub mod snap;
@@ -315,6 +316,8 @@ pub struct DocState {
     pub focus: Option<NodeId>,
     /// The ruler guide clicked last: its page or frame and index (see [`Self::selected_guide`]).
     pub guide: Option<(NodeId, usize)>,
+    /// The selection's rotation origin, when moved or shown (see [`rotation_origin`]; not saved).
+    pub(crate) rotation_origin: Option<rotation_origin::RotationOrigin>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -369,6 +372,7 @@ impl DocState {
             text_preview: None,
             focus: None,
             guide: None,
+            rotation_origin: None,
         };
         st.zoom_to_fit();
         st
@@ -519,6 +523,10 @@ impl DocState {
         // Vector edit mode ends when its layer is gone (or no longer a vector, e.g. undone).
         if self.vector_edit.as_mut().is_some_and(|ve| doc.page_of(ve.id) != Some(page) || !ve.clamp_doc(&doc)) {
             self.vector_edit = None;
+        }
+        // A moved rotation origin lasts as long as its selection.
+        if self.rotation_origin.as_ref().is_some_and(|o| o.ids != self.selection) {
+            self.rotation_origin = None;
         }
     }
 }
@@ -1388,6 +1396,8 @@ mod retained_walk_tests;
 mod rotated_guides_tests;
 #[cfg(test)]
 mod rotated_select_tests;
+#[cfg(test)]
+mod rotation_origin_tests;
 #[cfg(test)]
 mod scale_tool_tests;
 #[cfg(test)]

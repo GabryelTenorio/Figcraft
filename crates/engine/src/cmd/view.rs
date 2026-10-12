@@ -320,6 +320,21 @@ pub fn specs() -> Vec<CommandSpec> {
             }
         ),
         spec!(
+            "tool.place",
+            "Place with the tool",
+            "{tool? (a shape or frame tool; default the current one), x?, y? (its centre, page coords; default the middle of the view)} — what a click with the tool makes, selected (Enter with the tool chosen)",
+            false,
+            |s, p| {
+                if let Some(t) = string(p, "tool") {
+                    let t = ToolId::from_id(&t).ok_or_else(|| bad("tool.place", format!("unknown tool `{t}`")))?;
+                    tool(s, t)?;
+                }
+                let at = num(p, "x").zip(num(p, "y")).map(|(x, y)| figcraft_geom::Point::new(x, y));
+                s.place(at)?;
+                Ok(json!({"ids": s.selection()}))
+            }
+        ),
+        spec!(
             "tool.pencilBrush",
             "Pencil brush",
             "{preset? (taper|ink|ribbon|bristle|dots|stars|confetti|leaves | null: plain), spacing?, sizeJitter?, rotationJitter?, scatter?, seed?} (the brush new Pencil strokes get; omit `preset` to read it)",

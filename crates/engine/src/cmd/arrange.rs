@@ -58,18 +58,48 @@ pub fn specs() -> Vec<CommandSpec> {
             }
             ok()
         }),
-        spec!("transform.rotate", "Rotate", "{ids?, degrees, cx?, cy? (pivot, page coords; default the selection centre)}", true, |s, p| {
-            let deg = req_num("transform.rotate", p, "degrees")?;
-            let ids = req_targets("transform.rotate", s, p)?;
-            let doc = s.doc_mut()?;
-            let ids = roots(doc, &ids);
-            let c = doc.bounds_of(&ids).map(|b| b.center()).unwrap_or_default();
-            let pivot = Point::new(num_or(p, "cx", c.x), num_or(p, "cy", c.y));
-            for i in ids {
-                rotate_world(doc, i, pivot, deg)?;
+        spec!(
+            "transform.rotate",
+            "Rotate",
+            "{ids?, degrees, cx?, cy? (pivot, page coords; default the selection's rotation origin, else its centre)}",
+            true,
+            |s, p| {
+                let deg = req_num("transform.rotate", p, "degrees")?;
+                let ids = req_targets("transform.rotate", s, p)?;
+                let c = turn_pivot(s, &ids)?.unwrap_or_default();
+                let pivot = Point::new(num_or(p, "cx", c.x), num_or(p, "cy", c.y));
+                let doc = s.doc_mut()?;
+                for i in roots(doc, &ids) {
+                    rotate_world(doc, i, pivot, deg)?;
+                }
+                ok()
             }
-            ok()
-        }),
+        ),
+        spec!(
+            "transform.rotationOrigin",
+            "Move rotation origin",
+            "{on? (default: toggles)} — shows the selection's rotation origin to drag (Escape hides it); not saved",
+            false,
+            |s, p| {
+                let on = s.edit_rotation_origin(boolean(p, "on"))?;
+                Ok(origin_json(s, on))
+            }
+        ),
+        spec!(
+            "transform.setRotationOrigin",
+            "Set rotation origin",
+            "{x, y (page coords) | reset: true} — the point the selection turns about (default its centre); kept while the selection lasts, not saved",
+            false,
+            |s, p| {
+                let at = num(p, "x").zip(num(p, "y")).map(|(x, y)| Point::new(x, y)).filter(|_| boolean(p, "reset") != Some(true));
+                if at.is_none() && boolean(p, "reset") != Some(true) {
+                    return Err(bad("transform.setRotationOrigin", "give `x` and `y`, or `reset: true`"));
+                }
+                s.set_rotation_origin(at)?;
+                let on = s.ds()?.origin_handle().is_some();
+                Ok(origin_json(s, on))
+            }
+        ),
         spec!(
             "transform.scale",
             "Scale",
@@ -89,6 +119,13 @@ enum Al {
     Top,
     VCenter,
     Bottom,
+}
+
+/// The selection's rotation origin as `{editing, moved, x, y}` (the centre when not moved).
+fn origin_json(s: &Session, editing: bool) -> Value {
+    let Ok(ds) = s.ds() else { return json!({}) };
+    let at = ds.origin_point().unwrap_or_default();
+    json!({"editing": editing, "moved": ds.moved_origin().is_some(), "x": at.x, "y": at.y})
 }
 
 /// Move a node by `(dx, dy)` in page units.
@@ -321,13 +358,19 @@ fn rotate_by(s: &mut Session, p: &Value, deg: f64) -> Result<Value> {
         return r;
     }
     let ids = req_targets("rotate", s, p)?;
+    let Some(pivot) = turn_pivot(s, &ids)? else { return ok() };
     let doc = s.doc_mut()?;
-    let ids = roots(doc, &ids);
-    let Some(b) = doc.bounds_of(&ids) else { return ok() };
-    for i in ids {
-        rotate_world(doc, i, b.center(), deg)?;
+    for i in roots(doc, &ids) {
+        rotate_world(doc, i, pivot, deg)?;
     }
     ok()
+}
+
+/// Where `ids` turn: the selection's moved rotation origin when they are the selection, else the
+/// centre of their bounds.
+fn turn_pivot(s: &Session, ids: &[NodeId]) -> Result<Option<Point>> {
+    let ds = s.ds()?;
+    Ok(ds.moved_origin().filter(|_| ds.selection == ids).or_else(|| ds.doc.bounds_of(&roots(&ds.doc, ids)).map(|b| b.center())))
 }
 
 /// Scale a node and everything in it uniformly (the Scale tool): sizes and positions (whatever
