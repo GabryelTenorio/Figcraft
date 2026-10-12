@@ -103,6 +103,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::plugin_directory::specs());
         list.extend(crate::widgets::specs());
         list.extend(crate::live::specs());
+        list.extend(crate::online::specs());
         list.extend(crate::invite_links::specs());
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {

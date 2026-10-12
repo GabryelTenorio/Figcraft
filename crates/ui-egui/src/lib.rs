@@ -38,6 +38,7 @@ pub mod live;
 pub mod live_text;
 pub mod measure_overlay;
 pub mod menus;
+pub mod online;
 pub mod plugins_ui;
 pub mod present;
 pub mod proto_canvas;
@@ -105,6 +106,8 @@ mod live_share_tests;
 mod live_tests;
 #[cfg(test)]
 mod live_text_tests;
+#[cfg(test)]
+mod online_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
@@ -371,6 +374,8 @@ pub struct UiState {
     pub plugin_form: Option<plugins_ui::PluginForm>,
     /// Live sessions: remote cursors as drawn, the Join dialog.
     pub live: live::LiveUi,
+    /// Home ▸ Online.
+    pub online: online::OnlineUi,
     /// The window was asked to close with unsaved changes: the question shows.
     pub confirm_close: bool,
 }
@@ -446,6 +451,7 @@ impl Default for UiState {
             plugins_manage: plugins_ui::PluginsWindow::default(),
             plugin_form: None,
             live: live::LiveUi::default(),
+            online: online::OnlineUi::default(),
             confirm_close: false,
         }
     }
@@ -921,7 +927,8 @@ impl FigApp {
         }
         windows::show(self, &ctx);
         // Plugins installed, removed or set up are kept at once: a crash doesn't lose them.
-        if std::mem::take(&mut self.session.plugins.unsaved) {
+        // So are the owner tokens of files put online.
+        if std::mem::take(&mut self.session.plugins.unsaved) | std::mem::take(&mut self.session.live.unsaved) {
             self.services.save_prefs(&self.session.prefs);
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -964,6 +971,7 @@ impl FigApp {
             home::show(self, ui);
             dialogs::keys(self, &ctx);
             dialogs::show(self, &ctx);
+            self.toast_ui(&ctx);
             windows::requests(self, &ctx);
             return;
         }
@@ -1106,6 +1114,8 @@ impl FigApp {
             "rightTab": self.ui.right_tab,
             "leftTab": self.ui.left_tab,
             "home": self.ui.home,
+            "online": online::inspect(self),
+            "tabs": self.session.docs.iter().map(|d| json!({"name": d.doc.name, "live": tabs::live_mark(self, d.uid).map(|shared| if shared { "shared" } else { "private" })})).collect::<Vec<_>>(),
             "dark": self.ui.dark,
             "focus": {"region": self.ui.nav.region.id(), "keyboard": self.ui.nav.keyboard},
             "reduceMotion": self.reduce_motion(),

@@ -99,6 +99,8 @@ mod hardening_tests;
 #[cfg(test)]
 mod library_tests;
 #[cfg(test)]
+mod owned_tests;
+#[cfg(test)]
 mod public_tests;
 #[cfg(test)]
 mod server_tests;

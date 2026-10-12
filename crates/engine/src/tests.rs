@@ -279,6 +279,9 @@ fn every_command_survives_junk_params() {
         json!({"via": 7, "access": [1], "code": {"x": 1}, "link": -1, "server": 5, "port": -1, "bind": 3, "name": [1]}),
         json!({"via": "carrier pigeon", "access": "admin", "code": "K7M-2QX-9T\u{0}", "server": "wss://\u{0}", "port": 1e308, "bind": "::::"}),
         json!({"via": "local", "access": "view", "code": "\u{1F4A5}".repeat(64), "port": 70000, "bind": "lan"}),
+        // Online files: ids, servers, refreshes, actions and names as junk.
+        json!({"file": [1], "server": 7, "refresh": "maybe", "action": "share", "name": {"x": 1}}),
+        json!({"file": "../x", "server": "wss://\u{0}", "refresh": true, "action": "unshare", "name": 5}),
         // Rotation origins and placing with a tool as junk.
         json!({"tool": [1], "x": 1e308, "y": "NaN", "reset": "maybe", "on": {"x": 1}}),
         json!({"tool": "frame", "x": -1e308, "y": 1e308, "reset": true, "on": "yes"}),

@@ -927,8 +927,9 @@ only: a host stops hosting it, a guest leaves it.
   shared: false}`: the others' links and codes are revoked and they are disconnected at once (with
   their copy), while you stay in the file, which stays on the server, open only to you
   (`share.shared` is false, `code` null); `collab.share {}` then shares the same file again with
-  new codes, `collab.leave {}` leaves it there, and `collab.manageFile {action: "remove"}` with
-  `published.owner` takes it off the server.
+  new codes, `collab.leave {}` leaves it there, and `collab.manageFile {file, action: "remove"}`
+  takes it off the server (the file is recorded with your online files: see `collab.files`
+  below).
 - `collab.host {port?, bind?}` starts hosting the active document (a session that document was in
   ends; other documents' sessions go on): `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
@@ -969,11 +970,43 @@ only: a host stops hosting it, a guest leaves it.
   server says about its hosting, before publishing (`open`: no key needed; `idleDays`: how long
   files published without the key are kept unopened, null when they are kept). A server older
   than open hosting is reported as taking files only with its key.
-- `collab.manageFile {server, file, owner, action, …}` manages a file published without the key,
-  with its owner token: `links` → `{links: [{id, access, label, created}]}`; `createLink {access?:
-  view|edit, label?}` → `{id, access, link}` (a new share link, shown once); `revoke {link}`
-  (whoever joined with it is disconnected), `rename {name}` (its name on the server) and `remove`
-  (whoever is in it is disconnected) → `{done}`. A wrong token, or another file's, is refused.
+- `collab.files {refresh?}` → `{files: [{server, host, file, name, created, opened, shared, code,
+  viewCode, state, expires, session, document, hasOwnerToken}], problems: [{server, host, state,
+  reason}], max}`: **your online files**, the files this session (or, attached, the app with its
+  saved preferences) put on a server without the server's key, most recently opened first. `file`
+  is the id the other commands take; `shared` says whether others get in now, with `code` /
+  `viewCode` to hand out; `session` and `document` name the session and open document a file is
+  in, or are null. Without `refresh` nothing is asked of any server and `state` is what was last
+  heard (`"unknown"` until asked). `refresh: true` asks each server once what became of its files:
+  `"online"`, or `"gone"` (removed, or expired unopened); a name changed elsewhere and links
+  revoked elsewhere are taken over. A server that can't be reached, or is older than the request,
+  is listed in `problems` (`state: "offline"` with the `reason`, or `"unsupported"`) and its
+  files stay as they were. **Owner tokens and your own links are never in the result**
+  (`hasOwnerToken: true` stands for the token); they are kept with the preferences. The headless
+  session keeps its list only while it runs: note `published.owner` from `collab.peers` if a file
+  must be managed after it ends.
+- `collab.openFile {file, server?}` joins one of your online files again as its owner →
+  `{session, status: "connecting", document, alreadyOpen, file, server, name}`; it opens as a new
+  document (poll `collab.peers` until `"live"`), where `collab.stop {}` and `collab.share {}` stop
+  and start its sharing. A file that is open already becomes the active document instead
+  (`alreadyOpen: true`, `document` its index). `server` is needed only when files on several
+  servers share an id. A file whose `state` is `"gone"` is refused.
+- `collab.forgetFile {file, server?}` → `{forgotten, file, server, onServer}` drops a file from
+  the list **on this computer only**: the file stays on its server (`onServer`) until it expires,
+  and can't be managed from here again. To take it off the server use `collab.manageFile {file,
+  action: "remove"}` instead.
+- `collab.manageFile {file, action, server?, owner?, …}` manages a file published without the key,
+  with its owner token. `server` and `owner` default to what is recorded for one of your online
+  files (`collab.files`); give both for a file that isn't recorded here. `links` → `{links: [{id,
+  access, label, created}]}`; `createLink {access?: view|edit, label?}` → `{id, access, link}` (a
+  new share link, shown once); `revoke {link}` (whoever joined with it is disconnected); `share`
+  → `{shared: true, code, viewCode, editLink, viewLink}` (new links and join codes for others; the
+  same ones when it is shared already) and `unshare` → `{shared: false, …}` (the recorded links
+  and codes are revoked and whoever joined with them is disconnected; the file stays yours on the
+  server); `rename {name}` (its name on the server and in your list) and `remove` (the file is
+  deleted from the server, whoever is in it is disconnected, it leaves your list and a session
+  open on it here ends, its document staying open as a copy) → `{done}`. A wrong token, or
+  another file's, is refused.
 - `collab.report {reason}` (at most 500 characters) reports the file you joined on a server to its
   operator → `{sent}`; the session's message says when the server kept it, or why not (ten an hour
   per address). Servers older than this version don't take reports (`hosting` is null).

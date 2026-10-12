@@ -15,7 +15,9 @@ standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](
 many files with persistence and compaction, and share links that let people edit or only view;
 the app publishes to it, and a file's team library lives there for other files to use. Files are
 shared with **join codes** (see *Sharing with a join code*): online through a server that names
-its links with short codes, or on the local network with a code that carries the host's address. Sessions
+its links with short codes, or on the local network with a code that carries the host's address.
+A file put on a server stays its owner's: the app records it with its owner token and lists
+**your online files** (see *Your online files*), which open again as their owner. Sessions
 are per document: an app hosts, joins and publishes several files at once (see Hosting and
 joining). The rest is the plan the next implementation PRs follow and update;
 sections say what is built.
@@ -191,6 +193,13 @@ before join codes can't read either message and refuses the connection ("that me
 read"): the app then says the server doesn't know join codes (joining) or shows the invite links in
 place of a code (sharing). An older app never sends them and joins by link as before.
 
+**Owned files** came later within version 2 the same way: `Admin owned` on an open hosting
+connection asks what became of the files a list of `(file id, owner token)` pairs owns, in one
+request. It is a new variant at the end of `Admin`, and its answer one at the end of the replies,
+so everything an older peer reads is unchanged. A server from before it can't read the request and
+refuses the connection ("that message couldn't be read"): the app then shows the files it has
+recorded as they are, without their state on the server. An older app never sends it.
+
 **Encoding (decided):** a binary message is a 1-byte wire version followed by **postcard** (serde),
 which is compact and needs no schema files. Property values inside are compact JSON text: the
 document types use tagged and flattened serde forms that only self-describing formats can read
@@ -222,6 +231,7 @@ Client → server:
 | `Plugins {list {query} \| fetch {id, version?} \| publish {bundle} \| unpublish {id, version?}}` | A request on a plugin directory connection; each gets one `Plugins` reply, in order. `bundle` is a plugin bundle's bytes (`figcraft_plugin::bundle`). |
 | `Resolve {protocol, client_version, code}` | Instead of `Hello`: ask which file a join code opens (the code's nine symbols). Answered with `Resolved`, then the server closes the connection; a code it doesn't know, too many wrong ones from the address, or a session hosted by an app is `Refused` with the reason. |
 | `Admin {code {file, token}}` | A later managing request (with the server key, or the file's owner token on an open hosting connection): a new join code for the link of `file` whose token this is. A link has one code; asking again replaces it. |
+| `Admin {owned {files: [[file, owner]]}}` | A later request, on any open hosting connection (also one that named no file when it opened): what became of the files these `(file id, owner token)` pairs own, at most 200 a request. Answered with `Admin owned`. |
 
 Server → client:
 
@@ -242,6 +252,7 @@ Server → client:
 | `Plugins {ready {publisher} \| list [entry] \| bundle {entry, bundle} \| published entry \| removed [version] \| failed {reason}}` | A plugin directory connection's answer: opened (with the key or not), the latest version of each plugin with the versions kept, a bundle and its entry (its SHA-256 among them), kept, unpublished, or why not. |
 | `Resolved {file, token}` | The answer to `Resolve`: the file the code opens and its link's token, which the client then joins with in an ordinary `Hello` on a new connection (so reconnects, access and revocation are the link's). |
 | `Admin {code {code}}` | The answer to `Admin code`: the link's new join code, shown this once (the server keeps only what it needs to recognise it). |
+| `Admin {owned [{name, links, expires?} \| null]}` | The answer to `Admin owned`, one entry per pair asked about, in order: the file's name on the server, the ids of its share links (the owner's own and the ones made for others) and its expiry; `null` when that token manages no file of that id (removed, expired, never there, or a wrong token: they read the same). |
 
 `Change` is one of: `Create {id, type, props}`, `Set {id, prop, value}`, `Delete {id}` (deleting a
 node deletes its subtree; ids are never allocated twice), plus the document-level `SetDoc`, `Put`
@@ -544,6 +555,50 @@ resuming with its offline edits, and leaving the session going back to snapshot 
 - **In the browser** a code joins like a link (the page asks the server over its own WebSocket,
   then opens the session's); sharing needs the desktop app.
 
+*Built* (your online files; `figcraft_engine::online`, `collab.files`, `collab.openFile`,
+`collab.forgetFile`, `collab.manageFile`):
+
+- **What is recorded, and where.** When a file reaches a server without the server's key
+  (`collab.share` online, `collab.publish` on a server open to the public), the server's `hosted`
+  answer carries its owner token, once. The app records the file with the preferences, per user
+  and never in a document: the server's address (without a query), the file's id and name, the
+  owner token, the owner's own edit and view links, when it was put there and last opened here,
+  and the links and codes others join with while it is shared. At most 200 files, most recently
+  opened first; recording another drops the one opened longest ago. The preferences are saved at
+  once when the list changes, so a crash doesn't lose a token. A file published with the server's
+  key has no owner token and is the operator's to manage: it isn't recorded.
+- **The token is a password.** It is stored on this computer only (the desktop app's preferences
+  file; the browser build keeps no preferences and can't publish), is never logged, and no
+  command result, summary or `ui.inspect` carries it or the owner's own links: `collab.files`
+  says `hasOwnerToken: true`. The record's debug output leaves the secrets out. A session opened
+  from a record holds no token either (`published.owner` is null there): requests that need it
+  read it from the record. What is read back from the preferences file is validated entry by
+  entry (addresses, ids, links, lengths, control characters); junk is dropped without costing
+  the other preferences.
+- **Opening one again** (`collab.openFile {file, server?}`): the app joins with the owner's edit
+  link in an ordinary `Hello`, so reconnects and sync are a guest's, and the session is marked as
+  the owner's of that server file: `collab.stop` and `collab.share` there stop and start its
+  sharing with the recorded token, exactly as in the session that published it. A file that is
+  open already comes to the front instead. After a crash, the desktop app reopens a recorded file
+  that was open and in step with its server this way instead of from its recovery copy (the copy
+  is kept only as a fallback when the record is gone).
+- **What became of them** (`collab.files {refresh: true}`): one `OpenHosting` connection per
+  server that names no file, then one `Admin owned` with every file recorded on that server.
+  A file the server answers `null` for shows as gone (removed or expired) and can be cleared; a
+  name changed elsewhere is taken over; share links that are no longer among the file's links
+  mark it as not shared. Nothing is asked until the list is opened (Home ▸ Online) or refreshed
+  by a command. A server that can't be reached, or is older than the request, leaves the records
+  as they are and is reported beside them (`problems`).
+- **Managing from the list.** `collab.manageFile {file, action}` takes the server and the token
+  from the record when they aren't given: `share` makes new links and codes for others, `unshare`
+  revokes the recorded ones (as `collab.stop` does in a session), `rename` renames the file on the
+  server and in the record, `remove` deletes it from the server, drops the record and ends a
+  session open on it (the copy stays open). `collab.forgetFile` drops the record only: the file
+  stays on its server until it expires, and can't be managed from this computer again.
+- **Asking opens nothing.** `Admin owned` reads the files' descriptions only: it doesn't count as
+  opening a file, so looking at the list never postpones a file's expiry. Each pair is checked
+  like an owner token on `OpenHosting` (its SHA-256 against the stored hash, in constant time).
+
 *Built* (document sync between apps):
 
 - The host's session runs the core's `Server`, seeded with the document it shared; the host's
@@ -786,8 +841,9 @@ saved state.
 ## Agents, MCP and the CLI
 
 Everything stays a command: `collab.share`, `collab.host`, `collab.join`, `collab.publish`,
-`collab.leave`, `collab.peers`, `collab.follow` are ordinary commands, so the CLI, the control channel and MCP can
-host, publish and join sessions; an agent can be a participant with its own cursor.
+`collab.leave`, `collab.peers`, `collab.follow`, `collab.files`, `collab.openFile`,
+`collab.forgetFile` and `collab.manageFile` are ordinary commands, so the CLI, the control channel and MCP can
+host, publish and join sessions and manage the files they put online; an agent can be a participant with its own cursor.
 
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
@@ -854,7 +910,10 @@ chooses to share on the network; the default is the invite link with a random to
   everyone; refusals say which. Spoofing `X-Forwarded-For` does nothing unless the connection comes
   from the trusted proxy.
 - **Open hosting** gives anyone who reaches the server the right to publish (within those limits),
-  to report a file they are in, and with an owner token to manage that one file. Everything else
+  to report a file they are in, and with an owner token to manage that one file and to ask what
+  became of it (`Admin owned`: a wrong token and a missing file are answered alike, so the request
+  tells nothing about files someone doesn't own; it counts against the address's message limit
+  like any other). Everything else
   (listing files, other files' links, reports, blocks, the plugin directory's publishing) needs the
   server key. Files are not end-to-end encrypted: the server reads what it keeps, and so can its
   operator.
@@ -893,6 +952,7 @@ chooses to share on the network; the default is the invite link with a random to
 5. **Standalone `figcraft-server`** with persistence, compaction, share links and permissions.
    **Done** (`apps/figcraft-server` on the shared hub; edit and view links, the server key,
    publishing from the app; see [`server.md`](server.md)), followed by open hosting for a public
-   server (owner tokens, limits per address, idle expiry, reports and blocks) and by sharing with
-   join codes (online through the server, or carrying the host's address on the local network).
+   server (owner tokens, limits per address, idle expiry, reports and blocks), by sharing with
+   join codes (online through the server, or carrying the host's address on the local network)
+   and by your online files (the app remembers what it owns and opens it again as its owner).
 6. **Accounts**: people signing in, per-person permissions, teams and projects.

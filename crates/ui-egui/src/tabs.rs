@@ -54,7 +54,13 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         for (i, d) in app.session.docs.iter().enumerate().filter(|(_, d)| app.shows(d.uid)) {
             let active = i == app.session.active && !app.ui.home;
             let name = d.doc.name.clone();
-            let w = (regular(12.0).size * 0.6 * name.chars().count() as f32 + 64.0).clamp(120.0, 220.0);
+            // In a live session: a mark after the name says whether others get in.
+            let live = live_mark(app, d.uid);
+            let mark_w = if live.is_some() { 18.0 } else { 0.0 };
+            // (A file in a session is rarely saved here: its unsaved dot gets room beside the mark.)
+            let dirty = d.is_dirty();
+            let dot_w = if dirty && live.is_some() { 12.0 } else { 0.0 };
+            let w = (regular(12.0).size * 0.6 * name.chars().count() as f32 + 64.0 + mark_w + dot_w).clamp(120.0, 220.0);
             let r = Rect::from_min_size(pos2(x, rect.min.y), vec2(w, HEIGHT));
             let resp = ui.interact(r, ui.id().with(("tab", d.uid)), if several { Sense::click_and_drag() } else { Sense::click() });
             if resp.drag_stopped()
@@ -72,7 +78,12 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                     }
                 });
             }
-            crate::a11y::tab(&resp, &name, active);
+            let label = match live {
+                Some(true) => trf("{name}, in a live session", &[("name", &name)]),
+                Some(false) => trf("{name}, online, open only to you", &[("name", &name)]),
+                None => name.clone(),
+            };
+            crate::a11y::tab(&resp, &label, active);
             if active {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.tab_active);
             } else if resp.hovered() {
@@ -85,15 +96,18 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 crate::theme::ACCENT,
             );
             // The unsaved-changes dot follows the name on screen, whichever way the name reads.
-            let dirty = d.is_dirty();
             let shown = crate::bidi::paint_name(
                 ui.painter(),
                 pos2(r.min.x + 32.0, r.center().y),
                 &name,
                 regular(12.0),
                 t.text,
-                w - if dirty { 72.0 } else { 60.0 },
+                w - mark_w - if dirty { 72.0 } else { 60.0 },
             );
+            if let Some(shared) = live {
+                let at = Rect::from_center_size(pos2(r.max.x - 38.0, r.center().y), vec2(14.0, 14.0));
+                icons::paint(ui.painter(), at, crate::online::mark(shared), if shared { t.success } else { t.icon_secondary });
+            }
             if dirty {
                 ui.painter().text(pos2(shown.max.x + 4.0, r.center().y), Align2::LEFT_CENTER, "•", regular(12.0), t.text);
             }
@@ -169,6 +183,14 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
         let _ = Color32::TRANSPARENT;
         let _ = Align2::LEFT_TOP;
     });
+}
+
+/// What the tab of document `uid` says about its live session: others get in (`true`: a session
+/// this app hosts or joined, a file shared online), only you do (`false`: a file of yours on a
+/// server, not shared now), or it has none.
+pub fn live_mark(app: &FigApp, uid: u64) -> Option<bool> {
+    let live = app.session.live_of(uid);
+    live.shared().filter(|_| live.doc_uid == Some(uid))
 }
 
 /// Minimise, maximise/restore and close at the right end of the title bar; returns their width.

@@ -137,7 +137,7 @@ fn a_server_open_to_the_public_takes_a_file_without_a_key() {
     assert!(has_text(&shapes, "File published") && has_text(&shapes, "Owner token") && has_text(&shapes, owner));
     assert!(has_text(
         &shapes,
-        "Copy the owner token and keep it somewhere safe: it is the only way to revoke these links, rename the file or delete it from the server, and it won't be shown again."
+        "This computer remembers the owner token, so the file can be managed from the home screen's Online list. Copy it to manage the file from somewhere else: it is a password for this file and won't be shown again."
     ));
     assert!(has_text(&shapes, "The server deletes this file if nobody opens it before 2027-01-15 08:00 UTC."));
     h.click(text_center(&shapes, "Done"));

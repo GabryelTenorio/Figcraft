@@ -15,7 +15,7 @@
 //!   for the frames that follow (all false: released); `gamepad` presses a controller button in the
 //!   prototype playing (presenter or preview pane)
 //! - `ui.menu.invoke {id}` — a menu item exactly like clicking it (may open a dialog)
-//! - `ui.set {rightTab?, leftTab?, theme?, home?, palette?, focusRegion?, preview?, presentScroll?, …}`
+//! - `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
 //! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
@@ -343,6 +343,9 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             }
             if let Some(h) = p.get("home").and_then(Value::as_bool) {
                 app.ui.home = h;
+            }
+            if let Some(s) = p.get("homeSection").and_then(Value::as_str) {
+                app.ui.online.open = s == "online";
             }
             if let Some(h) = p.get("palette").and_then(Value::as_bool) {
                 app.ui.palette = if h { Some(String::new()) } else { None };

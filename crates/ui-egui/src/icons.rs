@@ -174,6 +174,12 @@ icons! {
     ArcRatio,
     /// A colour outside the screen's gamut: a triangle with an exclamation mark.
     GamutWarning,
+    /// Online: a globe (a circle with its equator and a meridian).
+    Online,
+    /// In a live session others get into: a point sending waves to both sides.
+    LiveShared,
+    /// A file of yours on a server that only you get into: a point inside a closed ring.
+    LivePrivate,
 }
 
 /// Points along a circular arc from angle `a0` to `a1` (radians, y down: increasing is clockwise).
@@ -867,6 +873,23 @@ fn draw(p: &P, icon: Icon) {
         PaddingV => {
             p.rect(3.5, 2.5, 12.5, 13.5, 1.0);
             p.fill_rect(6.0, 5.0, 10.0, 11.0, 0.0);
+        }
+        Online => {
+            p.circle(8.0, 8.0, 5.5);
+            p.line(2.5, 8.0, 13.5, 8.0);
+            let meridian: Vec<(f32, f32)> = arc_pts(0.0, 0.0, 1.0, 0.0, TAU).map(|(x, y)| (8.0 + 2.4 * x, 8.0 + 5.5 * y)).collect();
+            p.path(&meridian, true);
+        }
+        LiveShared => {
+            p.dot(8.0, 8.0, 1.6);
+            for r in [3.6, 6.0] {
+                p.arc(8.0, 8.0, r, -FRAC_PI_4, FRAC_PI_4);
+                p.arc(8.0, 8.0, r, PI - FRAC_PI_4, PI + FRAC_PI_4);
+            }
+        }
+        LivePrivate => {
+            p.dot(8.0, 8.0, 1.6);
+            p.circle(8.0, 8.0, 5.0);
         }
         Clock => {
             p.circle(7.5, 7.5, 5.5);

@@ -111,7 +111,14 @@ document can't be edited now (`readOnly`: the "View only" or "Publishing" reason
 session itself is `engine.execute {command: "collab.peers"}` (sharing with a join code, hosting,
 joining and publishing are `collab.share`, `collab.host`, `collab.join` and `collab.publish`, opening invite links `collab.registerLinks`,
 see [mcp.md](mcp.md#live-sessions)). The app also joins the invite link it
-was started with (`figcraft "figcraft://join?…"`).
+was started with (`figcraft "figcraft://join?…"`). `online` is the home screen's Online section:
+whether it shows (`open`), your online files as its rows read (`files: [{file, name, detail,
+shared, state, hasOwnerToken}]`; never a token or a link of yours), whether the servers are being
+asked (`checking`), how many couldn't say (`problems`), and the file whose removal is being
+confirmed or renamed (`confirmRemove`, `rename`; Escape closes them); the list itself is
+`engine.execute {command: "collab.files"}`. `tabs` lists the open files as the tab strip shows
+them: `[{name, live}]`, `live` being `"shared"` (in a live session others get into), `"private"`
+(a file of yours on a server, open only to you) or null.
 
 ### `ui.pointer {kind, x, y | sx, sy, to?, steps?, shift?, alt?, cmd?, ctrl?, pressure?, pressureTo?}`
 
@@ -169,10 +176,11 @@ separate calls. Returns `{queued}`.
 
 Invoke a menu item exactly like clicking it (this may open a dialog). Returns `{ok, lastError}`.
 
-### `ui.set {rightTab?, leftTab?, theme?, home?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?}`
+### `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, palette?, mainMenu?, focusRegion?, colorPicker?, variables?, layerFilter?, collapseLayers?, exportPreview?, preview?, presentScroll?, colorProfileDialog?, stylePicker?, stylePickerEdit?, stylePickerView?, iconGallery?, protoEditor?, contextMenu?, contextSelectLayer?, commentOpen?, commentDraft?, commentFilter?, commentSort?, commentSearch?, commentReply?, commentEdit?, presentComments?, devCompare?, devCompareMode?, devCompareSplit?, annotationFilter?, resetFrameStats?, pluginsWindow?, pluginsTab?, pluginConfirm?, pluginForm?}`
 
 Switch panels and modes: `rightTab` `design|prototype|inspect`, `leftTab` `file|assets`, `theme`,
-`home` (bool), `palette` (bool: the Actions palette), `mainMenu` (bool, or a top-level menu such
+`home` (bool), `homeSection` (`recents` or `online`: which section the home screen shows; opening
+`online` asks each server once what became of your online files), `palette` (bool: the Actions palette), `mainMenu` (bool, or a top-level menu such
 as `"Plugins"` to open the main menu with it open), `pluginsWindow` (bool: Plugins ▸ Manage
 plugins…), `pluginsTab` (`installed|browse`: that window's tab), `pluginConfirm` (a plugin id of the
 directory listed last: its install confirmation shows, as its Install button would; `null` closes

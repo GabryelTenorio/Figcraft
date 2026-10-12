@@ -64,9 +64,11 @@ people you trust.
 On a server [open to the public](#running-a-public-server) the address alone is enough
 (`wss://figcraft.example.com/`): the dialog asks the server first and shows that no key is needed,
 who runs it ("Hosted by …" and a link to its terms) and how long unopened files are kept. Publishing
-then also gives an **owner token**, shown once with the links in a **File published** window: copy
-it and keep it, it is the only way to revoke the links, rename the file or remove it later
-(`collab.manageFile` from [MCP](mcp.md#live-sessions)). The Share popover shows the server's line
+then also gives an **owner token**, shown once with the links in a **File published** window. The
+app keeps it with your preferences and lists the file under [Home ▸ Online](#your-online-files),
+where it can be opened, shared, renamed and removed later without the token in hand; copy it if
+you want to manage the file from another computer or a script (`collab.manageFile` from
+[MCP](mcp.md#live-sessions)). The Share popover shows the server's line
 and the date the server deletes the file unless someone opens it.
 
 ## Sharing with a join code
@@ -86,7 +88,8 @@ working at once, whoever joined with them is disconnected ("Sharing was stopped�
 copy they have), and the owner stays in the file, which stays on the server, open only to them.
 **Start sharing** again gives the same file new links and codes. **Share ▸ Advanced ▸ Remove from
 server…** (it asks first) takes the file off the server; closing the tab or quitting changes
-nothing on the server. To use **your** server for this, set its address
+nothing on the server, and the file is still yours afterwards: see
+[Your online files](#your-online-files). To use **your** server for this, set its address
 (`wss://figcraft.example.com/`) in Preferences on every machine that shares or joins; a server
 that needs its key is reached under **Advanced ▸ Publish to another server…**, or with
 `collab.share {server: "wss://…/?key=…"}`, and gets codes too.
@@ -111,6 +114,54 @@ that needs its key is reached under **Advanced ▸ Publish to another server…*
   unchanged. To hand out codes, upgrade the server binary and restart it: the data directory needs
   no migration, existing files get codes the next time they are shared, and no setting turns codes
   on or off. Behind the reverse proxy nothing changes (codes travel inside the WebSocket).
+
+## Your online files
+
+A file you put on a server without its key is yours, and stays where it is when its tab closes or
+the app quits. The app remembers each one **with your preferences on this computer** (never in the
+document): the server, the file's id and name, its owner token, your own links to it, when you put
+it there and last opened it, and the code and links others join with while it is shared. The home
+screen lists them under **Online**:
+
+- **A row** shows the file's name, the server, **Shared** or **Not shared**, and when you last
+  opened it. Clicking it opens the file as its owner, in step with the server, in a tab of its
+  own (or brings its tab to the front when it is open already). In that tab **Stop sharing** and
+  **Start sharing** work as in the session that first shared it.
+- **Its menu** (the button at the row's end): **Open**; **Stop sharing** / **Start sharing**
+  (others lose their links and codes, or get new ones; the file itself stays); **Copy code** and
+  **Copy link** while it is shared; **Rename on the server…**; **Remove from server…** (it asks
+  first: the file is deleted there for everyone and can't be brought back); **Forget on this
+  computer** (the row goes, **the file stays on the server** until it expires, and without its
+  token this computer can't manage it again).
+- **Nothing is asked of a server until you open Online** (or act on a file). Then each server is
+  asked once, in the background, what became of your files there. A file the server no longer has
+  (removed, or expired unopened) reads **No longer on the server** and can be cleared from the
+  list. A server that can't be reached says so above the list, with **Try again**; the rows still
+  show what this computer remembers.
+- **Tabs** of files in a live session carry a small mark after the name: waves for a session
+  others get into (a file you share or joined), a closed ring for a file of yours on a server that
+  only you get into now. Messages about a file that isn't in front name it ("Ada joined
+  Homepage").
+- **After a crash**, a file of yours that was open and in step with its server opens again from
+  the server as its owner, rather than as an unsaved recovery copy.
+
+The owner token is a password for that one file: it is kept only in the preferences file of your
+user account (`state.json` in FigCraft's settings folder), is never logged, and never appears in
+what commands return (`collab.files` says `hasOwnerToken: true`). Whoever can read that file can
+manage your online files; a list of at most 200 files is kept (the one opened longest ago makes
+room). The files are the ones published **from this computer**: another computer of yours doesn't
+know them unless you manage them there with the token. A file published with the server's key has
+no owner token and belongs to the server's operator: it isn't listed.
+
+Scripts and agents use `collab.files {refresh?}`, `collab.openFile {file}`,
+`collab.forgetFile {file}` and `collab.manageFile {file, action}` ([MCP](mcp.md#live-sessions)).
+
+- **Upgrade note.** Asking what became of the files needs a server of this version or newer. An
+  older server still works for everything else: the list shows what the computer remembers, says
+  that the server can't tell what became of the files, and opening, sharing, renaming and removing
+  go on as before (they use requests the server already knows). To get the state of the files,
+  upgrade the server binary and restart it: the data directory needs no migration and there is no
+  setting to turn on.
 
 ## Joining
 
@@ -350,7 +401,9 @@ keeps the key for everything else.
   runs it (`operator_contact`), its terms (`terms_url`) and how long unopened files are kept. A file
   published without the key gets its edit and view links and an **owner token** (128 random bits,
   shown once, kept only as its SHA-256): with it, whoever published the file lists, makes and
-  revokes its links, renames it on the server or removes it (`collab.manageFile`), and nothing else.
+  revokes its links, renames it on the server or removes it (`collab.manageFile`), asks whether
+  it is still there (what the app's [Online list](#your-online-files) does, for all its files in
+  one request), and nothing else.
   An app older than open hosting is told the server is open when it tries a key.
 - **Limits per address** (only when open): connections at once (`max_connections_per_ip`), new
   connections a minute (`connects_per_minute`), files published an hour (`publishes_per_hour`),
@@ -402,7 +455,7 @@ What someone can do, by what they hold (the server is reached through TLS at the
 | Someone with a **join code** | Exactly what its link gives (a view code: the view link's row; an edit code: the edit link's), until the code or its link is gone | Get a code for any other link; learn anything from a wrong code but that it is wrong |
 | Someone with a file's **view link** | See that file and everyone's changes and presence in it; read its team library and usage; report it | Change it (the server refuses a viewer's edits); reach any other file; manage links |
 | Someone with a file's **edit link** | Change that file, within its size cap; publish its team library (on a public server only for files published with the key); report it | Reach any other file; grow it past `max_file_mb` or its publisher's share; list, make or revoke links; rename or remove it |
-| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one, which is how the app stops sharing), ask for join codes for links whose token they hold, rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
+| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one, which is how the app stops sharing), ask for join codes for links whose token they hold, rename it on the server, remove it; ask whether it is still there, its name, link ids and expiry (asking doesn't count as opening it) | Touch any other file, even with its id; tell a file that doesn't exist from one they don't own; list files; read reports; block; anything of the plugin directory |
 | The **operator** (server key, or the machine) | Everything above for every file, reports, blocks, the plugin directory; read every file on disk | Recover a lost link or owner token (only hashes are kept) |
 
 Limits that hold against everyone: message sizes by what a connection is for, file sizes as they

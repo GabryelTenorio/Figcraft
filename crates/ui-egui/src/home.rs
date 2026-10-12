@@ -1,13 +1,39 @@
-//! The home screen: new file, open, join with a code, recent files, templates.
+//! The home screen: new file, open, join with a code, recent files, and your online files.
 
-use egui::{Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::{Align2, Color32, CornerRadius, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::FigApp;
+use crate::a11y;
 use crate::i18n::{tr, tr_noop};
 use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
+
+/// A row of the home screen's file lists.
+pub(crate) struct FileRow<'a> {
+    /// The mark before the name, and its colour.
+    pub mark: Option<(Icon, Color32)>,
+    pub name: &'a str,
+    pub ink: Color32,
+    /// What its right end says (a path, where the file is), with its size and colour.
+    pub detail: &'a str,
+    pub detail_size: f32,
+    pub detail_ink: Color32,
+}
+
+/// Paint `row` in `r` (highlighted while `resp` is hovered): the name gives way to the detail.
+pub(crate) fn file_row(ui: &Ui, t: &Tokens, r: Rect, resp: &Response, row: &FileRow) {
+    if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+    }
+    if let Some((icon, tint)) = row.mark {
+        icons::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 8.0, r.center().y - 8.0), vec2(16.0, 16.0)), icon, tint);
+    }
+    let detail = ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, row.detail, regular(row.detail_size), row.detail_ink);
+    let name = widgets::elide_font(ui, row.name, (detail.min.x - r.min.x - 44.0).max(40.0), regular(12.0));
+    ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, regular(12.0), row.ink);
+}
 
 pub fn show(app: &mut FigApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -20,9 +46,26 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         icons::paint(ui.painter(), Rect::from_min_size(pos2(left.min.x + 16.0, y), vec2(20.0, 20.0)), Icon::Logo, ACCENT);
         ui.painter().text(pos2(left.min.x + 44.0, y + 10.0), Align2::LEFT_CENTER, "FigCraft", semibold(14.0), t.text);
         y += 48.0;
-        for (icon, label) in [(Icon::Home, tr_noop("Recents")), (Icon::Page, tr_noop("Drafts")), (Icon::Assets, tr_noop("Community"))] {
+        // Recents and Online are the sections there are; the others are placeholders.
+        for (icon, label, section) in [
+            (Icon::Home, tr_noop("Recents"), Some(false)),
+            (Icon::Online, tr_noop("Online"), Some(true)),
+            (Icon::Page, tr_noop("Drafts"), None),
+            (Icon::Assets, tr_noop("Community"), None),
+        ] {
             let r = Rect::from_min_size(pos2(left.min.x + 8.0, y), vec2(224.0, 32.0));
-            if label == "Recents" {
+            let selected = section == Some(app.ui.online.open);
+            if let Some(online) = section {
+                let resp = ui.interact(r, ui.id().with(("home_section", label)), Sense::click());
+                a11y::tab(&resp, tr(label), selected);
+                if resp.clicked() {
+                    app.ui.online.open = online;
+                }
+                if resp.hovered() && !selected {
+                    ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
+                }
+            }
+            if selected {
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.selected_row);
             }
             icons::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 10.0, r.center().y - 8.0), vec2(16.0, 16.0)), icon, t.icon);
@@ -30,6 +73,11 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             y += 34.0;
         }
         let main = Rect::from_min_max(pos2(left.max.x + 40.0, rect.min.y + 24.0), rect.max - vec2(40.0, 24.0));
+        if app.ui.online.open {
+            crate::online::section(app, ui, main, &t);
+            opened_join(app);
+            return;
+        }
         ui.painter().text(main.min, Align2::LEFT_TOP, tr("Recents"), semibold(18.0), t.text);
         // Action cards.
         let mut x = main.min.x;
@@ -83,15 +131,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
                 crate::live::join_status(app, ui, &t, session);
             }
         });
-        // The shared file opened in a tab of its own: show it. (A join that was left is forgotten.)
-        match app.ui.live.home_join.map(|id| app.session.live.get(id).map(figcraft_engine::live::Live::syncing)) {
-            Some(Some(true)) => {
-                app.ui.live.home_join = None;
-                app.ui.home = false;
-            }
-            Some(None) => app.ui.live.home_join = None,
-            _ => {}
-        }
+        opened_join(app);
         // Open documents and recent files.
         let mut y = join.max.y + 22.0;
         ui.painter().text(pos2(main.min.x, y), Align2::LEFT_TOP, tr("Open files"), semibold(12.0), t.text_secondary);
@@ -100,14 +140,10 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
         for (i, d) in app.session.docs.iter().enumerate() {
             let r = Rect::from_min_size(pos2(main.min.x, y), vec2(main.width().min(640.0), 36.0));
             let resp = ui.interact(r, ui.id().with(("open", d.uid)), Sense::click());
-            if resp.hovered() {
-                ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-            }
-            icons::paint(ui.painter(), Rect::from_min_size(pos2(r.min.x + 8.0, r.center().y - 8.0), vec2(16.0, 16.0)), Icon::Logo, ACCENT);
-            ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, &d.doc.name, regular(12.0), t.text);
-            if let Some(p) = &d.path {
-                ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, p, regular(11.0), t.text_secondary);
-            }
+            let detail = d.path.as_deref().unwrap_or_default();
+            let row =
+                FileRow { mark: Some((Icon::Logo, ACCENT)), name: &d.doc.name, ink: t.text, detail, detail_size: 11.0, detail_ink: t.text_secondary };
+            file_row(ui, &t, r, &resp, &row);
             if resp.clicked() {
                 switch = Some(i);
             }
@@ -126,12 +162,14 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             for p in recents.iter().take(12) {
                 let r = Rect::from_min_size(pos2(main.min.x, y), vec2(main.width().min(640.0), 32.0));
                 let resp = ui.interact(r, ui.id().with(("recent", p.as_str())), Sense::click());
-                if resp.hovered() {
-                    ui.painter().rect_filled(r, CornerRadius::same(5), t.hover);
-                }
                 let name = std::path::Path::new(p).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| p.clone());
-                ui.painter().text(pos2(r.min.x + 32.0, r.center().y), Align2::LEFT_CENTER, name, regular(12.0), t.text);
-                ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, p, regular(10.0), t.text_tertiary);
+                file_row(
+                    ui,
+                    &t,
+                    r,
+                    &resp,
+                    &FileRow { mark: None, name: &name, ink: t.text, detail: p, detail_size: 10.0, detail_ink: t.text_tertiary },
+                );
                 if resp.clicked() {
                     open_path = Some(p.clone());
                 }
@@ -144,4 +182,17 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// The file joined from the home screen (a code, or one of your online files) opened in a tab of
+/// its own: show it. (A join that was left is forgotten.)
+fn opened_join(app: &mut FigApp) {
+    match app.ui.live.home_join.map(|id| app.session.live.get(id).map(figcraft_engine::live::Live::syncing)) {
+        Some(Some(true)) => {
+            app.ui.live.home_join = None;
+            app.ui.home = false;
+        }
+        Some(None) => app.ui.live.home_join = None,
+        _ => {}
+    }
 }

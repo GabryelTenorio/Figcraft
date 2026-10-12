@@ -37,8 +37,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use figcraft_collab::message::{
-    Access, Admin, AdminReply, ClientMsg, FileInfo, FileRow, FileUsage, HostInfo, LibraryReply, LibraryReq, LinkInfo, NewLink, PluginReply,
-    PluginReq, ReportInfo, Usage,
+    Access, Admin, AdminReply, ClientMsg, FileInfo, FileRow, FileUsage, HostInfo, LibraryReply, LibraryReq, LinkInfo, MAX_OWNED, NewLink, OwnedFile,
+    PluginReply, PluginReq, ReportInfo, Usage,
 };
 use figcraft_collab::{Change, Replica, Server, same_secret};
 use figcraft_collab_net::hub::{Admission, Backend, Closing, Handled, OpenFile, ip_key};
@@ -619,6 +619,26 @@ impl Store {
                 reports: u32::try_from(self.reports.iter().filter(|r| r.file == *id).count()).unwrap_or(u32::MAX),
             })
             .collect()
+    }
+
+    /// Owner token `owner` manages file `file` (one published without the key).
+    fn owns(&self, file: &str, owner: &str) -> bool {
+        let presented = hash(owner);
+        self.files.get(file).and_then(|e| e.meta.owner.as_deref()).is_some_and(|h| same_secret(&presented, h))
+    }
+
+    /// What became of the files these `(file id, owner token)` pairs own: each one's name, links
+    /// and expiry, or `None` when that token manages no file of that id here (which doesn't say
+    /// whether the id exists). Asking opens nothing: it doesn't count as using a file.
+    pub fn owned(&self, files: &[(String, String)]) -> AdminReply {
+        if files.len() > MAX_OWNED {
+            return AdminReply::Failed { reason: format!("ask about at most {MAX_OWNED} files at a time") };
+        }
+        let one = |(file, owner): &(String, String)| {
+            let e = self.files.get(file).filter(|_| self.owns(file, owner))?;
+            Some(OwnedFile { name: e.meta.name.clone(), links: e.links.iter().map(|l| l.id.clone()).collect(), expires: self.expires(&e.meta) })
+        };
+        AdminReply::Owned(files.iter().map(one).collect())
     }
 
     /// Rename a file (its listing; the document inside keeps its own name).
@@ -1342,9 +1362,7 @@ impl Backend for Store {
         if file.is_empty() && owner.is_empty() {
             return Ok(self.host_info(None));
         }
-        let presented = hash(owner);
-        let owns = self.files.get(file).and_then(|e| e.meta.owner.as_deref()).is_some_and(|h| same_secret(&presented, h));
-        if !owns {
+        if !self.owns(file, owner) {
             return Err("that owner token doesn't manage a file of that id here (it may have been removed or expired)".into());
         }
         Ok(self.host_info(Some(file)))
@@ -1365,6 +1383,7 @@ impl Backend for Store {
                     }
                 };
             }
+            Admin::Owned { files } => return self.owned(files).into(),
             Admin::Links { file }
             | Admin::CreateLink { file, .. }
             | Admin::Revoke { file, .. }
@@ -1407,6 +1426,7 @@ impl Backend for Store {
             Admin::Unblock { ip } => self.block(&ip, false).map_or_else(failed, |_| AdminReply::Done.into()),
             Admin::Blocked => AdminReply::Blocked(self.blocked()).into(),
             Admin::Code { file, token } => self.set_code(&file, &token).map_or_else(failed, |code| AdminReply::Code { code }.into()),
+            Admin::Owned { files } => self.owned(&files).into(),
             Admin::Remove { file } => {
                 if !self.files.contains_key(&file) {
                     return failed("this file isn't on the server (it may have been removed)".into());

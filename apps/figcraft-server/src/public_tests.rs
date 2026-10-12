@@ -98,9 +98,9 @@ fn anyone_publishes_and_the_owner_token_manages_the_file() {
     assert!(matches!(raw.next(), ServerMsg::Admin(r) if matches!(*r, AdminReply::Failed { ref reason } if reason.contains("only its own"))));
     raw.send(&ClientMsg::Admin(Admin::Listing));
     assert!(matches!(raw.next(), ServerMsg::Admin(r) if matches!(*r, AdminReply::Failed { ref reason } if reason.contains("server key"))));
-    // Removing it disconnects everyone in it.
+    // Removing it disconnects everyone in it (whoever removed it just leaves: no failure there).
     assert_eq!(manage(&mut a, json!({"action": "remove"})).unwrap()["done"], true);
-    pump(&mut [&mut a, &mut b], "everyone told", |s| s.iter().all(|x| x.live_summary()["status"] == "failed"));
+    pump(&mut [&mut a, &mut b], "everyone told", |s| s[0].live_summary()["status"] == "off" && s[1].live_summary()["status"] == "failed");
     assert!(b.message.as_deref().unwrap_or_default().contains("removed"), "{:?}", b.message);
     assert!(!dir.path().join("files").join(&p.file).exists());
     server.stop();

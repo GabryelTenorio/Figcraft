@@ -18,6 +18,8 @@ mod services;
 #[cfg(test)]
 mod args_tests;
 #[cfg(test)]
+mod recovery_online_tests;
+#[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]
 mod services_tests;
@@ -129,12 +131,14 @@ fn main() -> eframe::Result {
     }
     // Documents a crashed or killed run left unsaved come back; this run keeps its own copies.
     let recovery_root = services::config_dir().map(|d| d.join("Recovery"));
-    let recovered = recovery_root.as_deref().map_or(0, |r| recovery::recover(r, &mut session));
-    let recovery: recovery::Shared = Arc::new(Mutex::new(recovery_root.as_deref().and_then(recovery::Recovery::start)));
+    // The preferences first: they hold the online files a recovered document may be one of.
+    let recovery = recovery::Shared::default();
     let svc = services::Desktop::load(recovery.clone());
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
+    let recovered = recovery_root.as_deref().map_or(0, |r| recovery::recover(r, &mut session));
+    *recovery::lock(&recovery) = recovery_root.as_deref().and_then(recovery::Recovery::start);
     // Plugins installed from a server's plugin directory live with the user's settings.
     session.plugins.install_dir = services::config_dir().map(|d| d.join("Plugins"));
     // Invite links open this app (Windows registers per user at run time; installed builds by

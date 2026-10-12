@@ -270,6 +270,24 @@ pub enum Admin {
     /// the server give it to whoever types the code): [`AdminReply::Code`]. A link has one code:
     /// asking again replaces it. Servers older than join codes can't read this request.
     Code { file: String, token: String },
+    /// On an open hosting connection (no file named in its opening): what became of the files
+    /// these `(file id, owner token)` pairs own, at most [`MAX_OWNED`] of them:
+    /// [`AdminReply::Owned`]. Servers older than this request can't read it.
+    Owned { files: Vec<(String, String)> },
+}
+
+/// The most files one [`Admin::Owned`] asks about.
+pub const MAX_OWNED: usize = 200;
+
+/// A file its owner asked about ([`Admin::Owned`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedFile {
+    /// Its name on the server.
+    pub name: String,
+    /// The ids of its share links (the owner's own and the ones made for others).
+    pub links: Vec<String>,
+    /// When it is deleted if nobody opens it (seconds since 1970).
+    pub expires: Option<u64>,
 }
 
 /// A file a server keeps.
@@ -344,6 +362,9 @@ pub enum AdminReply {
     Code {
         code: String,
     },
+    /// The answer to [`Admin::Owned`], one per pair asked about, in order. `None`: no file of that
+    /// id is managed by that token here (removed, expired, or never there).
+    Owned(Vec<Option<OwnedFile>>),
 }
 
 /// A file with what its operator moderates by.

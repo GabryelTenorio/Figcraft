@@ -196,7 +196,8 @@ pub enum Via {
 }
 
 /// One way into a shared file: an invite link, and the join code that stands for it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SharedLink {
     /// The link's id on its server (what revokes it; empty for a session this app hosts).
     pub id: String,
@@ -208,7 +209,8 @@ pub struct SharedLink {
 }
 
 /// What others join a shared file with: to edit it and, on a server, to only view it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Shared {
     pub edit: SharedLink,
     pub view: Option<SharedLink>,
@@ -554,7 +556,11 @@ pub struct Live {
     deferred: Vec<ServerMsg>,
     /// Nesting of [`Session::grouped`] on the session document: its edits sync once, at the end.
     hold: u32,
-    /// The file you published to a server in this session, with its links.
+    /// The address of the server this session's file was published to, or is yours on (empty
+    /// otherwise; it may carry the server's key: never shown).
+    pub server: String,
+    /// The file you published to a server in this session, or one of yours you opened again
+    /// (`collab.openFile`: without its owner token, which stays in the record), with its links.
     pub published: Option<Published>,
     /// The session was started by sharing with a join code (`collab.share`): how, and its codes.
     pub share: Option<Share>,
@@ -599,6 +605,19 @@ impl Live {
     pub fn syncing(&self) -> bool {
         self.client.is_some()
     }
+
+    /// What the file's tab says about its session: `Some(true)` others get in (a session this app
+    /// hosts, one you joined, a file of yours shared with a code or links), `Some(false)` a file of
+    /// yours on a server that only you get into now, `None` no session (or one still on its way).
+    pub fn shared(&self) -> Option<bool> {
+        let there = matches!(self.status, Status::Live | Status::Reconnecting { .. });
+        there.then(|| self.share.as_ref().is_none_or(|s| s.links.is_some()))
+    }
+
+    /// The name of the session's file, once known.
+    fn file_name(&self) -> Option<&str> {
+        self.info.as_ref().map(|i| i.file_name.as_str()).or(self.published.as_ref().map(|p| p.name.as_str())).filter(|n| !n.is_empty())
+    }
 }
 
 /// The app's live sessions, one per document at most, and what they share: the networking and
@@ -614,6 +633,11 @@ pub struct Lives {
     /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
     /// installs one; see [`crate::invite_links`]).
     pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
+    /// The recorded online files changed since the app last saved the preferences (it saves them
+    /// at once: a crash must not lose an owner token).
+    pub unsaved: bool,
+    /// Servers that couldn't say what became of your files at the last `collab.files {refresh}`.
+    pub servers: crate::online::Problems,
 }
 
 impl Lives {
@@ -645,6 +669,10 @@ impl Lives {
     /// Every session, oldest first.
     pub fn iter(&self) -> impl Iterator<Item = &Live> {
         self.sessions.values()
+    }
+
+    pub(crate) fn sessions_mut(&mut self) -> impl Iterator<Item = &mut Live> {
+        self.sessions.values_mut()
     }
 
     /// The session the tab of document `tab` shows (`None`: no document is open): the one that
@@ -691,7 +719,7 @@ impl Lives {
     }
 
     /// End session `id` (stop hosting or leave) and forget it.
-    fn end(&mut self, id: SessionId) -> Option<Live> {
+    pub(crate) fn end(&mut self, id: SessionId) -> Option<Live> {
         self.leave(id);
         self.sessions.remove(&id)
     }
@@ -898,7 +926,11 @@ impl Session {
             e => e,
         };
         // A session left meanwhile: what was still on its way is dropped.
+        let front = self.tab();
         let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        // What happens in a file that isn't in front says which file (by its tab's name).
+        let open = self.docs.iter().find(|d| Some(d.uid) == live.doc_uid).map(|d| d.doc.name.as_str());
+        let behind = open.or(live.file_name()).filter(|_| live.tab != front).map(|n| format!(" {n}")).unwrap_or_default();
         match e {
             Event::Status(Status::Failed { reason }) => self.live_fail(id, reason),
             Event::Status(Status::Off) => {
@@ -939,7 +971,7 @@ impl Session {
                 live.sent = None;
             }
             Event::PeerJoined(p) => {
-                self.message = Some(format!("{} joined", p.name));
+                self.message = Some(format!("{} joined{behind}", p.name));
                 live.peers.insert(p.client_id, p);
             }
             Event::PeerLeft(peer) => {
@@ -949,7 +981,7 @@ impl Session {
                     live.spotlight = None;
                 }
                 if let Some(p) = live.peers.remove(&peer) {
-                    self.message = Some(format!("{} left", p.name));
+                    self.message = Some(format!("{} left{behind}", p.name));
                 }
                 if live.follow == Some(peer) {
                     live.unfollow();
@@ -966,7 +998,7 @@ impl Session {
             // order.
             Event::Sync(msg) => live.deferred.push(msg),
             Event::Ended { reason } => {
-                self.message = Some(reason);
+                self.message = Some(if behind.is_empty() { reason } else { format!("{}: {reason}", behind.trim_start()) });
                 self.live.end(id);
             }
             Event::Published(p) => {
@@ -974,11 +1006,19 @@ impl Session {
                 if live.share.is_none() {
                     self.message = Some(format!("Published {} to the server", p.name));
                 }
-                live.published = Some(p);
+                let server = live.server.clone();
+                live.published = Some(p.clone());
+                self.online_published(&server, &p);
             }
             Event::Shared(Ok(links)) => {
-                if let Some(share) = live.share.as_mut() {
-                    share.links = Some(clean_shared(links));
+                let links = clean_shared(links);
+                match live.server_file() {
+                    Some((server, file)) => self.online_shared(&server, &file, Some(links)),
+                    None => {
+                        if let Some(share) = live.share.as_mut() {
+                            share.links = Some(links);
+                        }
+                    }
                 }
             }
             Event::Shared(Err(why)) => self.message = Some(format!("The file is on the server, but couldn't be shared: {why}")),
@@ -1569,7 +1609,7 @@ fn start_publish(s: &mut Session, cmd: &str, server: &str, p: &Value, share: boo
     let opts = PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me, doc, share };
     let (id, ()) = s.live.start(cmd, |l, id| l.publish(id, opts).map_err(|e| bad(cmd, e)))?;
     // This tab becomes the server file's synced document once it is there.
-    s.live.open(Live { id, status: Status::Connecting, doc_uid: Some(uid), tab: Some(uid), ..Live::default() });
+    s.live.open(Live { id, status: Status::Connecting, doc_uid: Some(uid), tab: Some(uid), server: server.trim().to_string(), ..Live::default() });
     Ok(id)
 }
 
@@ -1600,11 +1640,9 @@ fn share(s: &mut Session, p: &Value) -> Result<Value> {
         if access == Some(Access::View) && shared == Via::Local {
             return Err(bad(CMD, LOCAL_EDITS));
         }
-        if let Some(req) = share_request(s.live(), Vec::new(), true).filter(|_| s.live().share.as_ref().is_some_and(|sh| sh.links.is_none())) {
+        if let Some(req) = share_request(s, Vec::new(), true).filter(|_| s.live().share.as_ref().is_some_and(|sh| sh.links.is_none())) {
             let links = share_answer(s, req)?.ok_or_else(|| EngineError::Other("the server made no links".into()))?;
-            if let Some(sh) = s.live_mut().and_then(|l| l.share.as_mut()) {
-                sh.links = Some(clean_shared(links));
-            }
+            shared_now(s, Some(clean_shared(links)));
         }
         if let (Some(a), Some(sh)) = (access, s.live_mut().and_then(|l| l.share.as_mut())) {
             sh.access = a;
@@ -1636,27 +1674,36 @@ fn share(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(s.live_summary())
 }
 
+/// What others join the open file's server file with changed: in its session and its record.
+fn shared_now(s: &mut Session, links: Option<Shared>) {
+    if let Some((server, file)) = s.live().server_file() {
+        s.online_shared(&server, &file, links);
+    }
+}
+
 /// Links and codes as a server gave them, with only codes that are codes (nine symbols).
-fn clean_shared(mut links: Shared) -> Shared {
+pub(crate) fn clean_shared(mut links: Shared) -> Shared {
     let clean = |l: &mut SharedLink| l.code = l.code.take().and_then(|c| code::normalize(&c).ok()).filter(|c| c.len() == code::ONLINE_LEN);
     clean(&mut links.edit);
     links.view.as_mut().map(clean);
     links
 }
 
-/// The request that changes who else gets into the server file `live` is its owner's session of
-/// (`None`: it isn't one, or the file isn't there yet).
-fn share_request(live: &Live, revoke: Vec<String>, create: bool) -> Option<NetRequest> {
+/// The request that changes who else gets into the server file the open file's session is its
+/// owner's session of (`None`: it isn't one, or the file isn't there yet).
+fn share_request(s: &Session, revoke: Vec<String>, create: bool) -> Option<NetRequest> {
+    let live = s.live();
     let (share, published) = (live.share.as_ref().filter(|s| s.via == Via::Online)?, live.published.as_ref()?);
     if live.status != Status::Live {
         return None;
     }
-    let owner = published.owner.clone().unwrap_or_default();
+    // The token this session got when it published the file, else the recorded one.
+    let owner = published.owner.clone().or_else(|| s.online_owner(&share.server, &published.file)).unwrap_or_default();
     Some(NetRequest::Share { server: share.server.clone(), file: published.file.clone(), owner, revoke, create })
 }
 
 /// Send `req` ([`NetRequest::Share`]): the new links, if it made any.
-fn share_answer(s: &mut Session, req: NetRequest) -> Result<Option<Shared>> {
+pub(crate) fn share_answer(s: &mut Session, req: NetRequest) -> Result<Option<Shared>> {
     match s.net(req)?.0 {
         NetReply::Share(Ok(links)) => Ok(links),
         NetReply::Share(Err(why)) => Err(EngineError::Other(why)),
@@ -1685,10 +1732,13 @@ fn server_info(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn manage_file(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.manageFile";
-    let (server, file, owner) = (req_string(CMD, p, "server")?, req_string(CMD, p, "file")?, req_string(CMD, p, "owner")?);
-    let (file, owner) = (file.trim().to_string(), owner.trim().to_string());
+    let file = req_string(CMD, p, "file")?.trim().to_string();
+    let (server, owner) = crate::online::manager(s, CMD, p, &file)?;
     let action = req_string(CMD, p, "action")?;
+    let mut renamed = None;
     let req = match action.trim() {
+        "share" => return crate::online::set_shared(s, CMD, &server, &file, &owner, true),
+        "unshare" => return crate::online::set_shared(s, CMD, &server, &file, &owner, false),
         "links" => Admin::Links { file: file.clone() },
         "createLink" => {
             let access = match string(p, "access").as_deref().map(str::trim) {
@@ -1699,11 +1749,24 @@ fn manage_file(s: &mut Session, p: &Value) -> Result<Value> {
             Admin::CreateLink { file: file.clone(), access, label: string(p, "label").unwrap_or_default() }
         }
         "revoke" => Admin::Revoke { file: file.clone(), link: req_string(CMD, p, "link")?.trim().to_string() },
-        "rename" => Admin::Rename { file: file.clone(), name: req_string(CMD, p, "name")? },
+        "rename" => {
+            let name = req_string(CMD, p, "name")?;
+            renamed = Some(name.clone());
+            Admin::Rename { file: file.clone(), name }
+        }
         "remove" => Admin::Remove { file: file.clone() },
-        _ => return Err(bad(CMD, "`action` must be links, createLink, revoke, rename or remove")),
+        _ => return Err(bad(CMD, "`action` must be links, createLink, revoke, share, unshare, rename or remove")),
     };
-    match hosting_request(s, CMD, server.trim(), &file, &owner, Some(req))?.1 {
+    let changes = matches!(req, Admin::Rename { .. } | Admin::Remove { .. });
+    let reply = hosting_request(s, CMD, &server, &file, &owner, Some(req))?.1;
+    // The record follows what the server did.
+    if changes && reply == Some(AdminReply::Done) {
+        crate::online::managed(s, &server, &file, renamed.as_deref());
+        if renamed.is_none() {
+            crate::online::removed(s, &server, &file);
+        }
+    }
+    match reply {
         Some(AdminReply::Links(links)) => Ok(json!({"links": links.iter().map(|l| json!({
             "id": l.id, "access": l.access.id(), "label": l.label, "created": l.created
         })).collect::<Vec<_>>()})),
@@ -1742,11 +1805,19 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
         None => req_string(CMD, p, "link").map_err(|_| bad(CMD, "give the join `code` you were told, or the invite `link`"))?,
     };
     let link = join_target(&s.prefs.publish_server, &typed).map_err(|e| bad(CMD, e))?;
-    let (name, tab) = (display_name(&s.prefs), s.tab());
-    let (id, ()) = s.live.start(CMD, |l, id| l.join(id, &link, &name).map_err(|e| bad(CMD, e)))?;
-    // The session's file opens in a tab of its own; until then the join shows on this one.
-    s.live.open(Live { id, status: Status::Connecting, tab, ..Live::default() });
+    let id = start_join(s, CMD, &link, None, None)?;
     Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
+}
+
+/// Start joining the session behind `link` for command `cmd`: the new session. `published` and
+/// `share`: the file is yours on a server (`collab.openFile`), with what others join it with.
+pub(crate) fn start_join(s: &mut Session, cmd: &str, link: &str, published: Option<Published>, share: Option<Share>) -> Result<SessionId> {
+    let (name, tab) = (display_name(&s.prefs), s.tab());
+    let (id, ()) = s.live.start(cmd, |l, id| l.join(id, link, &name).map_err(|e| bad(cmd, e)))?;
+    let server = share.as_ref().map(|s| s.server.clone()).unwrap_or_default();
+    // The session's file opens in a tab of its own; until then the join shows on this one.
+    s.live.open(Live { id, status: Status::Connecting, tab, server, published, share, ..Live::default() });
+    Ok(id)
 }
 
 fn leave(s: &mut Session, _: &Value) -> Result<Value> {
@@ -1763,11 +1834,9 @@ fn stop(s: &mut Session, p: &Value) -> Result<Value> {
     // file. Anything else (a session this app hosts, one it joined, a file not shared now) ends.
     let shared = s.live().share.as_ref().and_then(|sh| sh.links.as_ref());
     let ids: Vec<String> = shared.into_iter().flat_map(|l| [Some(&l.edit), l.view.as_ref()]).flatten().map(|l| l.id.clone()).collect();
-    let Some(req) = share_request(s.live(), ids, false).filter(|_| shared.is_some()) else { return leave(s, p) };
+    let Some(req) = share_request(s, ids, false).filter(|_| shared.is_some()) else { return leave(s, p) };
     share_answer(s, req).map_err(|e| EngineError::Other(format!("couldn't stop sharing (the others can still get in): {e}")))?;
-    if let Some(sh) = s.live_mut().and_then(|l| l.share.as_mut()) {
-        sh.links = None;
-    }
+    shared_now(s, None);
     s.message = Some("Sharing stopped: the file stays on the server, open only to you".into());
     Ok(json!({"ended": false, "shared": false}))
 }
@@ -1874,7 +1943,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.manageFile",
             "Manage published file",
-            "{server, file (its id), owner (the owner token you got when you published it without the key), action: links | createLink {access?: view (default) | edit, label?} | revoke {link (a link's id)} | rename {name} | remove} → {links: [{id, access, label, created}]} | {id, access, link (a new share link, shown once)} | {done}",
+            "{file (its id), server?, owner? (the server's address and the owner token you got when you published the file without the key; each defaults to what is recorded for one of your online files, see `collab.files`), action: links | createLink {access?: view (default) | edit, label?} | revoke {link (a link's id)} | share (others get new links and join codes) | unshare (the links and codes others got are revoked; the file stays yours on the server) | rename {name} | remove (the file is deleted from the server and leaves your online files)} → {links: [{id, access, label, created}]} | {id, access, link (a new share link, shown once)} | {shared, code, viewCode, editLink, viewLink} | {done}",
             false,
             manage_file
         ),

@@ -35,6 +35,7 @@ pub mod library_server;
 pub mod library_swap;
 pub mod live;
 pub mod measure;
+pub mod online;
 pub mod params;
 pub mod plugin_directory;
 pub mod plugins;
@@ -580,6 +581,10 @@ pub struct Prefs {
     /// Recently opened or saved files, newest first (File ▸ Open recent; at most
     /// [`cmd::file::MAX_RECENT`]).
     pub recent_files: Vec<String>,
+    /// The files you put on a server without its key, with their owner tokens (passwords: see
+    /// [`online`]), most recently opened first, at most [`online::MAX_ONLINE_FILES`].
+    #[serde(skip_serializing_if = "Vec::is_empty", deserialize_with = "online::read")]
+    pub online_files: Vec<online::OnlineFile>,
 }
 
 impl Default for Prefs {
@@ -603,6 +608,7 @@ impl Default for Prefs {
             plugin_directory: None,
             publish_server: live::DEFAULT_SERVER.into(),
             recent_files: Vec::new(),
+            online_files: Vec::new(),
         }
     }
 }
@@ -1424,6 +1430,8 @@ mod measure_tests;
 mod menu_gaps_tests;
 #[cfg(test)]
 mod nested_override_tests;
+#[cfg(test)]
+mod online_tests;
 #[cfg(test)]
 mod outline_options_tests;
 #[cfg(test)]

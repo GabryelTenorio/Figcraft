@@ -43,9 +43,9 @@ const PUBLISHED_NOTE: &str = tr_noop(
     "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them.",
 );
 
-/// Why the owner token matters (shown once, when a file is published without the server key).
+/// What the owner token is for (shown once, when a file is published without the server key).
 const OWNER_NOTE: &str = tr_noop(
-    "Copy the owner token and keep it somewhere safe: it is the only way to revoke these links, rename the file or delete it from the server, and it won't be shown again.",
+    "This computer remembers the owner token, so the file can be managed from the home screen's Online list. Copy it to manage the file from somewhere else: it is a password for this file and won't be shown again.",
 );
 
 /// What a server open to the public can see.
@@ -780,14 +780,17 @@ fn private_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens, share: &Share) {
     } else if widgets::button(ui, tr("Start sharing"), true, true).clicked() {
         app.run_background(&ui.ctx().clone(), SHARE, json!({"via": "online"}), Box::new(|_, _, _| {}));
     }
-    // Whoever published it without the server's key holds its owner token: they can remove it.
-    let published = app.session.live().published.clone();
-    let removable = published.and_then(|p| Some((share.server.clone(), p.file, p.owner?)));
+    // Whoever published it without the server's key holds its owner token (in this session, or
+    // recorded with their online files): they can remove it.
+    let removable = app.session.live().published.clone().map(|p| (share.server.clone(), p.file)).filter(|(server, file)| {
+        app.session.live().published.as_ref().is_some_and(|p| p.owner.is_some())
+            || app.session.prefs.online_files.iter().any(|f| f.file == *file && figcraft_engine::online::same_server(&f.server, server))
+    });
     join_and_advanced(app, ui, t, |app, ui, t| {
         if widgets::button(ui, tr("Leave session"), false, true).on_hover_text(tr("Your copy stays open; the file stays on the server")).clicked() {
             app.run("collab.leave", json!({}));
         }
-        let Some((server, file, owner)) = removable else { return };
+        let Some((server, file)) = removable else { return };
         if !std::mem::take(&mut app.ui.live.confirm_remove) {
             if widgets::button(ui, tr("Remove from server…"), false, true).clicked() {
                 app.ui.live.confirm_remove = true;
@@ -801,9 +804,13 @@ fn private_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens, share: &Share) {
         );
         ui.horizontal(|ui| {
             if widgets::button(ui, tr("Remove"), true, true).clicked() {
-                // Out of the file first, so its removal isn't this session's failure.
-                app.run("collab.leave", json!({}));
-                let params = json!({"server": server, "file": file, "owner": owner, "action": "remove"});
+                // The owner token comes from the session or the record; the session ends with the
+                // file.
+                let owner = app.session.live().published.as_ref().and_then(|p| p.owner.clone());
+                let mut params = json!({"server": server, "file": file, "action": "remove"});
+                if let Some(owner) = owner {
+                    params["owner"] = json!(owner);
+                }
                 app.run_background(&ui.ctx().clone(), "collab.manageFile", params, Box::new(|app, _, _| app.toast(tr("Removed from the server"))));
             } else if !widgets::button(ui, tr("Cancel"), false, true).clicked() {
                 app.ui.live.confirm_remove = true;

@@ -85,7 +85,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   styles, variables and comments that several people create at once all kept; sessions are per
   document (each open file has its own or none, several at once, closing a file ends only its
   own); files are shared with a short join code (online through the server in Preferences, or on
-  the local network with a code that carries the host's address) and joined by typing it; a standalone
+  the local network with a code that carries the host's address) and joined by typing it; the app
+  remembers the files it put online and lists them on the home screen (open again as owner, stop
+  and start sharing, rename, remove, forget), per computer; a standalone
   `figcraft-server` keeps many files (snapshot plus log, compacted; restarts lose nothing
   confirmed), takes files published from the app and hands out share links that let people edit
   or only view; the desktop app and the browser reach it over `wss://` through a TLS reverse
@@ -390,6 +392,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Gap 2: your online files landed (the app records the files it put on a server with their owner tokens, Home ▸ Online lists them and opens them again as their owner, with sharing, rename, removal and forget from the list; one request per server tells which are still there; tabs mark files in a live session). What is left is unchanged: accounts, teams and per-person permissions, shared comments and versions. Hours unchanged |
 | 2026-10-12 | minor | Gap 2: sharing with a join code (Share ▸ Online or Local network, one Start sharing button, a short code to give others, one join field for a code or a link; the server names links with codes and limits wrong ones) added to the landed list; usability, so the estimate and ranking are unchanged |
 | 2026-10-12 | minor | Gap 3: first measured fidelity data. Text box sizes and auto layout results of our example documents were compared with the same documents re-saved by other software; three text rules (whole-pixel line heights, advances on a 1024-per-em grid, letter spacing between glyphs only) were found and applied, and all 230 self-sizing text boxes in 7 documents now match to the pixel (one font family). Real files are still unchecked: hours and the ranking unchanged |
 | 2026-10-12 | minor | Gap 2: live sessions are per document (each open file has its own session or none, several run at once, the window and the `collab.*` commands follow the file in front, closing a file ends its session only) added to the landed list; a fix, so the estimate and ranking are unchanged |

@@ -138,6 +138,8 @@ mod merge_list_tests;
 #[cfg(test)]
 mod merge_tests;
 #[cfg(test)]
+mod owned_tests;
+#[cfg(test)]
 mod reconnect_tests;
 #[cfg(test)]
 mod server_tests;
