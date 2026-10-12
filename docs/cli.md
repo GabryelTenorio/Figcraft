@@ -111,6 +111,15 @@ Script formats: a JSON array of `{"command": id, "params": {...}}`, an object
 Ids are assigned in order (a new document's first page is 1, so the first layer is 2), which lets a
 script refer to layers it created.
 
+A script can start from a starter template instead of an empty document: `template.list` names
+them and `file.newFromTemplate` opens one as the document the following steps (and `--out`) act on.
+
+```sh
+echo '[{"command": "file.newFromTemplate", "params": {"template": "dashboard"}}]' > start.json
+figcraft-cli run start.json --out dashboard.figcraft
+figcraft-cli export dashboard.figcraft -o dashboard.png
+```
+
 ### `commands [--json] [--filter TEXT]`
 
 Every command with its label, shortcut, undoable flag (`*`) and parameter docs; `--json` for
