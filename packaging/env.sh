@@ -62,6 +62,17 @@ smoke_bin() {
 }
 
 # Emit a GitHub Actions warning (plain stderr outside Actions).
+# Run a command up to five times, 15 s apart: for steps that ask a remote service (Apple's
+# notarization ticket service drops connections now and then).
+retry() {
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    "$@" && return 0
+    [ "$attempt" = 5 ] || { echo "retrying ($attempt/5): $*" >&2; sleep 15; }
+  done
+  return 1
+}
+
 warn() {
   if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::warning::$*"; else echo "warning: $*" >&2; fi
 }
