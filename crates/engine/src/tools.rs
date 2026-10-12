@@ -200,14 +200,52 @@ pub enum Cursor {
     Move,
     /// Resize along an angle (degrees, 0 = horizontal).
     Resize(f64),
-    Rotate,
+    /// Rotate, turned to the corner it is near: the direction from the box's centre to the corner
+    /// (while rotating: to the pointer), in degrees, 0 = right and 90 = down.
+    Rotate(f64),
     Grab,
     Grabbing,
     Text,
-    Pen,
+    Pen(PenCursor),
+    /// A drag here makes a copy (Alt).
     Copy,
     /// Over a clickable part of a widget.
     Pointer,
+    Eyedropper,
+    Comment,
+    /// What the gesture is doing will be undone when it ends (an edit only a main component can
+    /// make).
+    NotAllowed,
+}
+
+/// What a click with the pen would do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Default)]
+pub enum PenCursor {
+    /// A new point.
+    #[default]
+    New,
+    /// On a point: closes the path, connects to the point or goes on from it.
+    Close,
+    /// On a segment: adds a point there.
+    Add,
+    /// Bends the segment or the point's handles (the Bend tool; Cmd/Ctrl in vector edit mode).
+    Bend,
+}
+
+impl ToolId {
+    /// The tool's cursor over empty canvas.
+    pub fn cursor(self) -> Cursor {
+        match self {
+            ToolId::Hand => Cursor::Grab,
+            ToolId::Pen => Cursor::Pen(PenCursor::New),
+            ToolId::Comment => Cursor::Comment,
+            ToolId::Eyedropper => Cursor::Eyedropper,
+            ToolId::Move | ToolId::Scale => Cursor::Default,
+            // The other tools make something where they are pressed: shapes, frames, slices, pencil
+            // strokes, a new text (over a text the Text tool shows the I-beam instead).
+            _ => Cursor::Crosshair,
+        }
+    }
 }
 
 /// Selection handle kinds: corners (0 tl, 1 tr, 2 br, 3 bl), edges (0 t, 1 r, 2 b, 3 l) and the
@@ -646,7 +684,10 @@ pub(crate) fn handle_cursor(c: &[Point; 4], h: Handle) -> Cursor {
             let b = c.get((i as usize + 1) % 4).copied().unwrap_or_default();
             Cursor::Resize(angle(a, b) + 90.0)
         }
-        Handle::Rotate(_) => Cursor::Rotate,
+        Handle::Rotate(i) => {
+            let centre = Point::new(c.iter().map(|p| p.x).sum::<f64>() / 4.0, c.iter().map(|p| p.y).sum::<f64>() / 4.0);
+            Cursor::Rotate(angle(centre, c.get(i as usize).copied().unwrap_or_default()))
+        }
     }
 }
 
@@ -820,7 +861,9 @@ impl Session {
         }
         self.tool.tool = t;
         self.tool.gesture = Gesture::None;
-        self.tool.overlay = Overlay { builder_remove: self.tool.builder_remove && t == ToolId::ShapeBuilder, ..Overlay::default() };
+        // The tool's cursor shows before the pointer moves.
+        self.tool.overlay =
+            Overlay { builder_remove: self.tool.builder_remove && t == ToolId::ShapeBuilder, cursor: t.cursor(), ..Overlay::default() };
         self.tool.shape_builder = None;
         if t == ToolId::ShapeBuilder {
             // Regions show straight away, before the pointer moves.
@@ -914,13 +957,18 @@ impl Session {
         let tool = self.tool.tool;
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
-        let mut cursor = match tool {
-            ToolId::Hand => Cursor::Grab,
-            ToolId::Text => Cursor::Text,
-            ToolId::Pen | ToolId::Pencil => Cursor::Pen,
-            t if t.draws_shape() => Cursor::Crosshair,
-            _ => Cursor::Default,
-        };
+        let mut cursor = tool.cursor();
+        // The text being edited, and with the Text tool any text, takes the I-beam: a click there
+        // puts the caret.
+        let on_edited = ds
+            .text_edit
+            .as_ref()
+            .is_some_and(|te| doc.world_bounds(te.id).is_some_and(|b| b.inflate(ev.tol() * 4.0, ev.tol() * 4.0).contains(ev.p())));
+        let on_text =
+            |s: &Self| s.hit(&doc, page, ev.p(), ev.tol() * 2.0).and_then(|l| doc.node(l)).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)));
+        if tool == ToolId::Text && (on_edited || on_text(self)) {
+            cursor = Cursor::Text;
+        }
         let mut hover = None;
         let mut guides = Vec::new();
         let mut measure_box = None;
@@ -928,7 +976,9 @@ impl Session {
         self.tool.overlay.arc_hover = arc_hover;
         let shape_hover = if self.arc_handles_shown() { crate::shape_handles::hit(&doc, &sel, ev.p(), ev.zoom).map(|(_, h)| h) } else { None };
         self.tool.overlay.shape_hover = shape_hover;
-        if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() {
+        if matches!(tool, ToolId::Move | ToolId::Scale) && on_edited {
+            cursor = Cursor::Text;
+        } else if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {
@@ -937,6 +987,10 @@ impl Session {
                     cursor = Cursor::Pointer;
                 }
                 hover = label_at(&doc, page, &self.tool.labels, ev.p()).or_else(|| leaf.map(|leaf| select_target(&doc, leaf, &sel, ev.cmd)));
+                // Alt over a selected layer: a drag from here duplicates it.
+                if ev.alt && tool == ToolId::Move && hover.is_some_and(|h| sel.contains(&h) && !locked_in(&doc, h)) {
+                    cursor = Cursor::Copy;
+                }
                 if ev.alt || self.tool.redlines {
                     use crate::distance::{Hover, guide_at, hover_lines, padding_frame, parent_of};
                     // Shift+Alt over an auto layout frame: its padding and gaps. Otherwise from the
@@ -963,6 +1017,7 @@ impl Session {
             // Where a click would land (snapped), with its guides.
             let (to, g) = if ev.shift { (ev.p(), Vec::new()) } else { self.snap_pen_tool(ev)? };
             guides = g;
+            self.tool.overlay.cursor = Cursor::Pen(self.pen_cursor(&doc, &sel, to, ev.zoom));
             if let Some((last, _, _)) = self.tool.pen.as_ref().and_then(|pen| pen.points.last()) {
                 self.tool.overlay.rubber = Some([last.x, last.y, to.x, to.y]);
             }
@@ -974,6 +1029,34 @@ impl Session {
             ds.revision += 1;
         }
         Ok(())
+    }
+
+    /// What a click with the Pen tool at `p` (where it snaps) would do: close the path on its first
+    /// point, connect to another of its points, go on from a selected open path's end, or add a
+    /// new point (the same tests as [`Self::pen_down`]).
+    fn pen_cursor(&self, doc: &Document, sel: &[NodeId], p: Point, zoom: f64) -> PenCursor {
+        let near = |q: &Point| (*q - p).hypot() * zoom < 8.0;
+        let on_point = match &self.tool.pen {
+            None => selected_end_at(doc, sel, p, 8.0 / zoom.max(1e-6)).is_some(),
+            Some(pen) => {
+                let n = pen.points.len();
+                (n > 2 && pen.points.first().is_some_and(|(q, _, _)| near(q)))
+                    || (1..n.saturating_sub(1)).any(|k| pen.points.get(k).is_some_and(|(q, _, _)| near(q)))
+            }
+        };
+        if on_point { PenCursor::Close } else { PenCursor::New }
+    }
+
+    /// Whether what the gesture did to `ids` so far is an edit only a main component can make
+    /// (`moved`: their place among the layers counts too): it is undone when the gesture ends.
+    fn refused(&self, ids: &[NodeId], moved: bool) -> bool {
+        let Ok(ds) = self.ds() else { return false };
+        ds.interaction.as_ref().is_some_and(|it| {
+            ids.iter().any(|m| {
+                (moved && !crate::components::move_allowed(&it.doc, &ds.doc, *m))
+                    || crate::components::refused_override(&it.doc, &ds.doc, *m).is_some()
+            })
+        })
     }
 
     fn move_down(&mut self, ev: &PointerEvent) -> Result<()> {
@@ -1213,6 +1296,13 @@ impl Session {
                 });
                 self.tool.overlay.drop_cell = drop_cell;
                 self.tool.overlay.drop_target = drop_target;
+                self.tool.overlay.cursor = if self.refused(&placed, true) {
+                    Cursor::NotAllowed
+                } else if dup {
+                    Cursor::Copy
+                } else {
+                    Cursor::Default
+                };
                 self.tool.gesture = g.clone();
                 if let Gesture::Move { moved, .. } = &mut self.tool.gesture {
                     *moved = true;
@@ -1222,6 +1312,9 @@ impl Session {
             Gesture::Resize { start, r, scale_tool, .. } => {
                 let res = self.resize_drag(ev, *start, r, *scale_tool);
                 self.tool.gesture = Gesture::Resize { start: *start, r: r.clone(), scale_tool: *scale_tool, moved: true };
+                if self.refused(&self.selection(), false) {
+                    self.tool.overlay.cursor = Cursor::NotAllowed;
+                }
                 return res;
             }
             Gesture::Rotate { center, start_angle, ids } => {
@@ -1236,7 +1329,9 @@ impl Session {
                     }
                     Ok(())
                 })?;
-                self.tool.overlay.cursor = Cursor::Rotate;
+                // The cursor turns with the pointer about the centre.
+                self.tool.overlay.cursor =
+                    if self.refused(&ids, false) { Cursor::NotAllowed } else { Cursor::Rotate((ev.p() - c).atan2().to_degrees()) };
                 Ok(())
             }
             Gesture::Draw { start, id, parent, targets } => {
@@ -1596,17 +1691,10 @@ impl Session {
                     // Reordering or dragging layers out of an instance (outside its slots), or
                     // moving layers inside one, are edits only its main can make: the gesture is
                     // undone.
-                    let ds = self.ds()?;
-                    let allowed = ds.interaction.as_ref().is_none_or(|it| {
-                        moving.iter().all(|m| {
-                            crate::components::move_allowed(&it.doc, &ds.doc, *m)
-                                && crate::components::refused_override(&it.doc, &ds.doc, *m).is_none()
-                        })
-                    });
-                    if allowed {
-                        self.commit_interaction()?;
-                    } else {
+                    if self.refused(&moving, true) {
                         self.cancel_interaction()?;
+                    } else {
+                        self.commit_interaction()?;
                     }
                 } else {
                     self.cancel_interaction()?;
@@ -1617,12 +1705,7 @@ impl Session {
             }
             Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } | Gesture::Shape { .. } => {
                 // Layers inside an instance keep their main's size and rotation.
-                let ds = self.ds()?;
-                let refused = ds
-                    .interaction
-                    .as_ref()
-                    .is_some_and(|it| ds.selection.iter().any(|m| crate::components::refused_override(&it.doc, &ds.doc, *m).is_some()));
-                if refused {
+                if self.refused(&self.selection(), false) {
                     self.cancel_interaction()?;
                 } else {
                     self.commit_interaction()?;
@@ -1787,6 +1870,10 @@ impl Session {
         let at = Point::new(ev.x.round(), (ev.y - 7.0).round());
         n.transform = pw.inverse() * Affine::translate(at.to_vec2());
         n.name = String::new();
+        // Readable where it is drawn: white on a dark page (black otherwise, the model's default).
+        if matches!(d.node(page).map(|p| &p.kind), Some(NodeKind::Page { background, .. }) if background.is_dark()) {
+            n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)];
+        }
         if let Some((w, h)) = figcraft_text::auto_size(&n) {
             n.width = w.max(1.0);
             n.height = h;
@@ -2070,8 +2157,10 @@ impl Session {
         let result = crate::booleans::result_outline(doc, &sel);
         let focus = self.ds().ok().and_then(crate::DocState::focused);
         // Outline mode draws no fills: shapes are clicked on their outlines, reaching what's behind.
-        if self.ds().is_ok_and(|d| d.view.outlines) {
-            return figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result));
+        if let Some(v) = self.ds().ok().map(|d| &d.view).filter(|v| v.outlines) {
+            // What it draws besides the shapes can be clicked too.
+            let also = figcraft_doc::geometry::OutlineHits { hidden: v.outline_hidden, bounds: v.outline_bounds };
+            return figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result), also);
         }
         match focus {
             Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol, Some(&result)),

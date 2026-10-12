@@ -661,6 +661,8 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
     // A layer can't go into itself or its own descendants.
     let blocked = |id: NodeId| moving.contains(&id) || doc.ancestors(id).iter().any(|a| moving.contains(a));
     let mut drop: Option<(NodeId, i8)> = None;
+    // The drag is over a row that takes no drop: the not-allowed cursor shows.
+    let mut refused = false;
     // Only the rows in view are laid out and drawn; the rest is empty scroll space.
     egui::ScrollArea::vertical().auto_shrink([false, false]).show_viewport(ui, |ui, viewport| {
         let pitch = ROW + ui.spacing().item_spacing.y;
@@ -847,6 +849,11 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
             if resp.drag_started() {
                 ui.data_mut(|d| d.insert_temp(drag_id, row.id));
             }
+            let over = dragging.is_some() && ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p));
+            // What is inside the dragged layers, and inside an instance, takes no drop.
+            refused |= over
+                && (doc.ancestors(row.id).iter().any(|a| moving.contains(a))
+                    || n.parent.is_some_and(|p| figcraft_engine::components::structure_locked(&doc, p)));
             if dragging.is_some()
                 && !blocked(row.id)
                 && let Some(p) = ui.input(|i| i.pointer.hover_pos())
@@ -917,6 +924,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
         };
         let galley = crate::bidi::name_galley(ui.painter(), &label, regular(11.0), t.text, 240.0);
         crate::widgets::drag_ghost(ui.ctx(), p, galley);
+        // Over a row that takes no drop (the dragged layers themselves and what is in them).
+        if refused {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+        }
     }
     if let Some(sw) = sweep {
         let (released, down) = ui.input(|i| (i.pointer.any_released(), i.pointer.primary_down()));

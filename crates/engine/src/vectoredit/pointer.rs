@@ -12,7 +12,7 @@ use super::point_snap;
 use super::transform::{self, BoxHit, PointBox};
 use super::{EditPart, VHit, VTool, VectorEdit, edit, editing, hit, hit_any, local_offset, network, ops, points_of, set_state};
 use crate::snap::Targets;
-use crate::tools::{Cursor, Gesture, Handle, PointerEvent, PointerKind};
+use crate::tools::{Cursor, Gesture, Handle, PenCursor, PointerEvent, PointerKind};
 use crate::{Result, Session};
 
 /// An in-progress edit-mode gesture (cheap to clone: snap targets are shared).
@@ -344,10 +344,16 @@ impl Session {
         ov.rubber = None;
         ov.guides.clear();
         ov.brush = (ve.tool == VTool::Eraser).then(|| [ev.x, ev.y, ERASER_PX / ev.zoom.max(1e-6)]);
-        ov.cursor = match ve.tool {
-            VTool::Move if ev.cmd => Cursor::Crosshair,
-            VTool::Move => Cursor::Default,
-            VTool::Pen => Cursor::Pen,
+        // What a press here would do (see `vector_down`).
+        ov.cursor = match (ve.tool, h) {
+            (VTool::Bend, _) => Cursor::Pen(PenCursor::Bend),
+            (VTool::Move, Some(_)) if ev.cmd => Cursor::Pen(PenCursor::Bend),
+            (VTool::Move, _) if ev.cmd => Cursor::Crosshair,
+            (VTool::Move, Some(VHit::Segment { .. })) if ev.alt => Cursor::Pen(PenCursor::Add),
+            (VTool::Move, _) => Cursor::Default,
+            (VTool::Pen, Some(VHit::Vertex { .. })) => Cursor::Pen(PenCursor::Close),
+            (VTool::Pen, Some(VHit::Segment { .. })) => Cursor::Pen(PenCursor::Add),
+            (VTool::Pen, _) => Cursor::Pen(PenCursor::New),
             _ => Cursor::Crosshair,
         };
         let w = doc.world_transform(ve.id);
@@ -779,7 +785,7 @@ impl Session {
                 }
                 let m = figcraft_geom::rotate_about(Affine::IDENTITY, c, -angle);
                 self.preview(|doc, _| transform::transform_points(doc, id, &b.points, m))?;
-                self.tool.overlay.cursor = Cursor::Rotate;
+                self.tool.overlay.cursor = Cursor::Rotate((ev.p() - c).atan2().to_degrees());
                 self.vgesture(VGesture::BoxRotate { b, start_angle, angle });
             }
             VGesture::BendSegment { seg, t } => {

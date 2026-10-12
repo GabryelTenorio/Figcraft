@@ -106,7 +106,7 @@ fn near_path(path: &BezPath, p: Point, dist: f64) -> bool {
 /// boolean groups are hit where their `result` is.
 pub fn hit_leaf(doc: &Document, page: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
     let p = doc.node(page)?;
-    p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, false).filter(|_| !masked_out(doc, p, *c, pt)))
+    p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, None).filter(|_| !masked_out(doc, p, *c, pt)))
 }
 
 /// Whether child `c` of `parent` is masked at `pt`: a visible mask below it (the nearest mask
@@ -129,24 +129,42 @@ fn covers(doc: &Document, id: NodeId, n: &Node, pt: Point, depth: usize) -> bool
 
 /// Like [`hit_leaf`], but only within layer `root` (it included).
 pub fn hit_in(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
-    hit_rec(doc, root, pt, tol, 0, result, false)
+    hit_rec(doc, root, pt, tol, 0, result, None)
 }
 
 /// [`hit_leaf`] (or [`hit_in`] for a `root` that isn't a page) in outline mode: shapes are hit
 /// where their outlines are, so a click inside one reaches the layers drawn behind it.
-pub fn hit_outlines(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult) -> Option<NodeId> {
+///
+/// `also` is what outline mode draws besides the shapes: hidden layers are hit like the others
+/// when it shows them, and every layer on the edge of its box when it shows object bounds.
+pub fn hit_outlines(doc: &Document, root: NodeId, pt: Point, tol: f64, result: BoolResult, also: OutlineHits) -> Option<NodeId> {
     match doc.node(root) {
-        Some(p) if p.is_page() => p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, true)),
-        _ => hit_rec(doc, root, pt, tol, 0, result, true),
+        Some(p) if p.is_page() => p.children.iter().rev().find_map(|c| hit_rec(doc, *c, pt, tol, 0, result, Some(also))),
+        _ => hit_rec(doc, root, pt, tol, 0, result, Some(also)),
     }
 }
 
-fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult, outline: bool) -> Option<NodeId> {
+/// What outline mode shows besides the shapes' outlines (see [`hit_outlines`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OutlineHits {
+    pub hidden: bool,
+    pub bounds: bool,
+}
+
+/// Whether `pt` is within `tol` of the edge of `n`'s box.
+fn on_box_edge(doc: &Document, id: NodeId, n: &Node, pt: Point, tol: f64) -> bool {
+    let lp = doc.world_transform(id).inverse() * pt;
+    let r = n.local_rect();
+    r.inflate(tol, tol).contains(lp) && !(r.width() > 2.0 * tol && r.height() > 2.0 * tol && r.inflate(-tol, -tol).contains(lp))
+}
+
+fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result: BoolResult, also: Option<OutlineHits>) -> Option<NodeId> {
     if depth > 512 {
         return None;
     }
     let n = doc.node(id)?;
-    if !n.visible || n.locked {
+    let outline = also.is_some();
+    if (!n.visible && !also.is_some_and(|a| a.hidden)) || n.locked {
         return None;
     }
     if let NodeKind::Section { contents_hidden: true } = n.kind {
@@ -164,11 +182,12 @@ fn hit_rec(doc: &Document, id: NodeId, pt: Point, tol: f64, depth: usize, result
         return None;
     }
     for c in n.paint_order().rev() {
-        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result, outline).filter(|_| !masked_out(doc, n, c, pt)) {
+        if let Some(h) = hit_rec(doc, c, pt, tol, depth + 1, result, also).filter(|_| !masked_out(doc, n, c, pt)) {
             return Some(h);
         }
     }
-    if in_result == Some(true) || hits_node_itself(doc, id, n, pt, tol, outline) {
+    if in_result == Some(true) || hits_node_itself(doc, id, n, pt, tol, outline) || also.is_some_and(|a| a.bounds) && on_box_edge(doc, id, n, pt, tol)
+    {
         return Some(id);
     }
     None
@@ -191,7 +210,7 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
         let at = out.len();
         let whole = matches!(n.kind, NodeKind::BooleanOp { .. } | NodeKind::Section { contents_hidden: true });
         if whole {
-            if hit_rec(doc, id, pt, tol, depth, result, false).is_some() {
+            if hit_rec(doc, id, pt, tol, depth, result, None).is_some() {
                 out.push((id, depth));
             }
             return;

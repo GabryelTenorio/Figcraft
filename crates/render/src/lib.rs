@@ -49,11 +49,24 @@ impl View {
     }
 }
 
+/// Outline mode's options: what it draws besides the shapes' outlines.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Outline {
+    /// Hidden layers are outlined too.
+    pub hidden: bool,
+    /// Every layer's box is drawn (groups, text, vectors: where their outline isn't the box).
+    pub bounds: bool,
+    /// Light lines, for a dark page (set by the renderer from the page's colour).
+    pub light: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     /// Fill the background (None = transparent, e.g. export without page colour).
     pub background: Option<Color>,
     pub outline_mode: bool,
+    /// What outline mode draws besides the shapes' outlines.
+    pub outline: Outline,
     /// Layers drawn in outline mode (with their contents) whatever `outline_mode` says.
     pub outlined: Vec<NodeId>,
     /// Nodes to leave out (an editor drawing them itself).
@@ -159,6 +172,7 @@ pub fn render_view_single(doc: &Document, page: NodeId, view: &View, opts: &Opti
         doc,
         scale: view.scale,
         outline_mode: opts.outline_mode,
+        outline: Outline { light: bg.is_some_and(Color::is_dark), ..opts.outline },
         outlined: &opts.outlined,
         skip: &opts.skip,
         lod,
@@ -185,7 +199,17 @@ pub fn render_nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut 
 
 /// [`render_nodes_into`] `time` seconds into animated GIFs.
 fn nodes_into(doc: &Document, ids: &[NodeId], view: &View, pix: &mut Pixmap, time: f64) {
-    let ctx = draw::Ctx { doc, scale: view.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None, time };
+    let ctx = draw::Ctx {
+        doc,
+        scale: view.scale,
+        outline_mode: false,
+        outline: Outline::default(),
+        outlined: &[],
+        skip: &[],
+        lod: false,
+        under: None,
+        time,
+    };
     for id in ids {
         draw::draw_node(&ctx, pix, *id, view.transform() * parent_transform(doc, *id), 0);
     }

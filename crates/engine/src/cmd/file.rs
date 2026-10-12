@@ -15,7 +15,15 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!("file.new", "New design file", "{name?}", false, |s, p| {
             let name = string(p, "name").unwrap_or_else(|| "Untitled".into());
-            s.docs.push(DocState::new(Document::new(name), None));
+            let mut doc = Document::new(name);
+            // A property of the page from here on: a later change of theme leaves it alone.
+            let background = s.new_page_background();
+            for page in doc.pages.clone() {
+                if let Some(NodeKind::Page { background: b, .. }) = doc.node_mut(page).map(|n| &mut n.kind) {
+                    *b = background;
+                }
+            }
+            s.docs.push(DocState::new(doc, None));
             s.active = s.docs.len() - 1;
             Ok(json!({"index": s.active}))
         }),

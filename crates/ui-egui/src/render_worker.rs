@@ -16,6 +16,8 @@ pub struct Job {
     pub page: NodeId,
     pub view: View,
     pub outline: bool,
+    /// Outline mode's options (hidden layers, object bounds).
+    pub outline_extras: figcraft_render::Outline,
     /// Layers drawn as outlines (outlines for the selection).
     pub outlined: Vec<NodeId>,
     pub skip: Vec<NodeId>,
@@ -62,6 +64,7 @@ fn run(job: &Job, retained: &mut Retained) -> Option<Done> {
     // The canvas is a preview: what's too small to see in detail at this zoom is approximated.
     let opts = figcraft_render::Options {
         outline_mode: job.outline,
+        outline: job.outline_extras,
         outlined: job.outlined.clone(),
         skip: job.skip.clone(),
         solo: job.solo,

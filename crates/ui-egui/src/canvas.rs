@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use figcraft_engine::Preedit;
-use figcraft_engine::tools::{Cursor, PointerEvent, PointerKind, ToolId, selection_box, selection_frame};
+use figcraft_engine::tools::{PointerEvent, PointerKind, ToolId, selection_box, selection_frame};
 use figcraft_geom::Point;
 use serde_json::json;
 
@@ -28,6 +28,9 @@ pub struct CanvasState {
     zoom_tool: Option<bool>,
     zoom_drag: Option<Pos2>,
     pub last_pointer: Option<Point>,
+    /// What the pointer shows over the canvas (`ui.inspect`); none while it is elsewhere or
+    /// something on the canvas with a cursor of its own has it (a ruler guide, a gradient handle).
+    pub cursor: Option<crate::cursors::Shown>,
     preedit: Option<PreeditView>,
     /// The pen pressure last reported during the current press (pen and stylus touches; the
     /// winit backends and browsers that report it).
@@ -45,6 +48,7 @@ impl Default for CanvasState {
             dragging: false,
             space_pan: false,
             middle_pan: None,
+            cursor: None,
             zoom_tool: None,
             zoom_drag: None,
             last_pointer: None,
@@ -99,6 +103,7 @@ struct JobKey {
     scale: i64,
     size: (u32, u32),
     outline: bool,
+    outline_extras: figcraft_render::Outline,
     outlined: Vec<NodeId>,
     skip: Vec<NodeId>,
     solo: Option<NodeId>,
@@ -158,7 +163,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
             ds.zoom_to_fit();
         }
     }
-    input(app, ui, &resp);
+    let own_cursor = input(app, ui, &resp);
     crate::live::track_pointer(app, &ctx);
     app.sync_preedit();
     request_render(app, worker, ppp);
@@ -220,38 +225,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui, worker: &mut Worker) {
     crate::versions::preview_banner(app, &ctx, rect);
     crate::branch_ui::banner(app, &ctx, rect);
     crate::dev_mode::focus_bar(app, &ctx, rect);
-    // Cursor.
-    if resp.hovered() {
-        let c = if app.canvas.space_pan || app.canvas.middle_pan.is_some() {
-            if ctx.input(|i| i.pointer.any_down()) { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab }
-        } else if let Some(out) = app.canvas.zoom_tool {
-            if out { egui::CursorIcon::ZoomOut } else { egui::CursorIcon::ZoomIn }
-        } else {
-            match app.session.tool.overlay.cursor {
-                Cursor::Default => egui::CursorIcon::Default,
-                Cursor::Crosshair | Cursor::Pen => egui::CursorIcon::Crosshair,
-                Cursor::Move => egui::CursorIcon::Move,
-                Cursor::Resize(a) => {
-                    let a = ((a % 180.0) + 180.0) % 180.0;
-                    if !(22.5..157.5).contains(&a) {
-                        egui::CursorIcon::ResizeHorizontal
-                    } else if a < 67.5 {
-                        egui::CursorIcon::ResizeNwSe
-                    } else if a < 112.5 {
-                        egui::CursorIcon::ResizeVertical
-                    } else {
-                        egui::CursorIcon::ResizeNeSw
-                    }
-                }
-                Cursor::Rotate => egui::CursorIcon::Alias,
-                Cursor::Grab => egui::CursorIcon::Grab,
-                Cursor::Grabbing => egui::CursorIcon::Grabbing,
-                Cursor::Text => egui::CursorIcon::Text,
-                Cursor::Copy => egui::CursorIcon::Copy,
-                Cursor::Pointer => egui::CursorIcon::PointingHand,
-            }
-        };
-        ctx.set_cursor_icon(c);
+    // The cursor: the tool's, unless something on the canvas with its own has the pointer.
+    app.canvas.cursor = None;
+    if let (true, Some(at)) = (own_cursor && resp.hovered(), ctx.input(|i| i.pointer.hover_pos())) {
+        let panning = app.canvas.space_pan || app.canvas.middle_pan.is_some();
+        let shown = crate::cursors::on_canvas(panning, ctx.input(|i| i.pointer.any_down()), app.canvas.zoom_tool, app.session.tool.overlay.cursor);
+        shown.show(&ctx, at);
+        app.canvas.cursor = Some(shown);
     }
 }
 
@@ -302,6 +282,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
     let doc = app.preedit_view().map(|p| p.doc.clone()).unwrap_or_else(|| ds.doc.clone());
     let outlined = if ds.view.outlines_selection { ds.selection.clone() } else { vec![] };
     let proof = ds.view.proof_srgb && !doc.color_profile.is_srgb();
+    let outline_extras = figcraft_render::Outline { hidden: ds.view.outline_hidden, bounds: ds.view.outline_bounds, light: false };
     let key = JobKey {
         doc: Arc::as_ptr(&doc) as usize,
         page: ds.page,
@@ -309,6 +290,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         scale: (scale * 10000.0) as i64,
         size: (w, h),
         outline: ds.view.outlines,
+        outline_extras,
         outlined: outlined.clone(),
         skip: vec![],
         solo: ds.focused(),
@@ -323,6 +305,7 @@ fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32) {
         page: ds.page,
         view: figcraft_render::View { origin: (ox, oy), scale, width: w.min(16384), height: h.min(16384) },
         outline: ds.view.outlines,
+        outline_extras,
         outlined,
         skip: vec![],
         solo: key.solo,
@@ -357,9 +340,12 @@ fn zoom_tool(app: &mut FigApp, ui: &Ui, resp: &egui::Response, pos: Pos2, mods: 
     true
 }
 
-fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
+/// The pointer and keys on the canvas. False when something on it with a cursor of its own has
+/// the pointer (a comment pin, a ruler guide, a gradient or padding handle): the tool's cursor
+/// then doesn't show.
+fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> bool {
     if crate::proto_canvas::input(app, ui, resp) {
-        return;
+        return true;
     }
     let ctx = ui.ctx().clone();
     let (mods, scroll, zoom_delta, hover_pos, space) =
@@ -382,7 +368,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
     }
     let Some(pos) = hover_pos.filter(|p| app.canvas.rect.contains(*p)) else {
-        return;
+        return true;
     };
     // A press on the canvas gives the keyboard back to it (arrows nudge again).
     if resp.hovered() && ctx.input(|i| i.pointer.any_pressed()) {
@@ -406,7 +392,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
     }
     if zoom_tool(app, ui, resp, pos, mods, editing_text || typing_elsewhere) {
-        return;
+        return true;
     }
     // Middle-button / space panning.
     let middle_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle));
@@ -425,20 +411,20 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         if !middle_down && !ctx.input(|i| i.pointer.primary_down()) {
             app.canvas.middle_pan = None;
         }
-        return;
+        return true;
     }
     if !app.canvas.dragging && (resp.hovered() || app.ui.comments.dragging()) && crate::comments::input(app, &ctx, pos) {
-        return;
+        return false;
     }
     if !app.canvas.dragging && resp.hovered() && crate::guides::input(app, &ctx, pos) {
-        return;
+        return false;
     }
     if !app.canvas.dragging && resp.hovered() && crate::handles::input(app, &ctx, pos) {
-        return;
+        return false;
     }
     if resp.secondary_clicked() {
         open_context_menu(app, pos, mods.command);
-        return;
+        return true;
     }
     if resp.double_clicked() {
         let ev = pointer_event(app, PointerKind::DoubleClick, pos, &mods);
@@ -446,7 +432,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
             app.toast(e.to_string());
         }
         app.canvas.dragging = false;
-        return;
+        return true;
     }
     let primary_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
     let primary_down = ctx.input(|i| i.pointer.primary_down());
@@ -494,6 +480,7 @@ fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) {
         }
         app.handle_ui_requests();
     }
+    true
 }
 
 /// Right-click at screen `pos`: select what's under the pointer (`deep`: the nested layer), then

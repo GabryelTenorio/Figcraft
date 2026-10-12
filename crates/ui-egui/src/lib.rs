@@ -16,6 +16,7 @@ pub mod comments;
 pub mod component_panel;
 pub mod control;
 pub mod credits;
+pub mod cursors;
 pub mod dev_compare;
 pub mod dev_mode;
 pub mod dialogs;
@@ -70,6 +71,8 @@ mod canvas_fixes_tests;
 #[cfg(test)]
 mod comments_tests;
 #[cfg(test)]
+mod cursors_tests;
+#[cfg(test)]
 mod dev_mode_tests;
 #[cfg(test)]
 mod frame_label_tests;
@@ -102,6 +105,8 @@ mod live_text_tests;
 #[cfg(test)]
 mod panel_reorder_tests;
 #[cfg(test)]
+mod panel_width_tests;
+#[cfg(test)]
 mod perf_tests;
 #[cfg(test)]
 mod plugin_panel_tests;
@@ -123,6 +128,8 @@ mod proto_responsive_tests;
 mod shortcut_keys_tests;
 #[cfg(test)]
 mod shortcuts_tests;
+#[cfg(test)]
+mod text_enter_tests;
 #[cfg(test)]
 mod titlebar_tests;
 #[cfg(test)]
@@ -228,8 +235,30 @@ pub(crate) fn repaint_in(ctx: &egui::Context, secs: f64) {
     }
 }
 
+/// The side panels' widths: the least and most a drag of their edge gives, what a double-click on
+/// the edge puts back, and how much of the window they leave the canvas.
+pub const LEFT_PANEL: std::ops::RangeInclusive<f32> = 200.0..=480.0;
+pub const RIGHT_PANEL: std::ops::RangeInclusive<f32> = 240.0..=480.0;
+pub const PANEL_DEFAULT: f32 = 240.0;
+pub const CANVAS_MIN: f32 = 160.0;
+
+/// The widths the side panels are drawn at in `avail` points (the window less the icon rail), from
+/// the widths asked for (`left`: none while it is closed): each within its limits, and narrower
+/// in a small window so the canvas keeps [`CANVAS_MIN`] (the right panel gives way last).
+pub fn fit_panels(avail: f32, left: Option<f32>, right: f32) -> (f32, f32) {
+    let fit = |w: f32, range: &std::ops::RangeInclusive<f32>, room: f32| {
+        let w = if w.is_finite() { w } else { PANEL_DEFAULT };
+        w.clamp(*range.start(), room.clamp(*range.start(), *range.end()))
+    };
+    let left_min = left.map_or(0.0, |_| *LEFT_PANEL.start());
+    let right = fit(right, &RIGHT_PANEL, avail - left_min - CANVAS_MIN);
+    (left.map_or(0.0, |l| fit(l, &LEFT_PANEL, avail - right - CANVAS_MIN)), right)
+}
+
 /// UI-only state (serialisable for `ui.inspect`).
 pub struct UiState {
+    /// The widths asked for the side panels (a drag of their edge; [`fit_panels`] gives what a
+    /// small window draws).
     pub left_width: f32,
     pub right_width: f32,
     pub right_tab: RightTab,
@@ -346,8 +375,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            left_width: 240.0,
-            right_width: 240.0,
+            left_width: PANEL_DEFAULT,
+            right_width: PANEL_DEFAULT,
             right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,
@@ -436,6 +465,8 @@ pub struct FigApp {
     language: Option<String>,
     /// A field had the keyboard when the last frame ended.
     field_focus: bool,
+    /// A panel's width changed and isn't kept in the preferences yet (its edge is being dragged).
+    panels_unsaved: bool,
     /// Control-channel requests waiting for the next frame.
     pub control_queue: Vec<ControlRequest>,
     /// Input events from the control channel (`ui.input`) for the next frame's raw input.
@@ -455,9 +486,11 @@ pub type Done = Box<dyn FnOnce(&mut FigApp, &egui::Context, Value)>;
 
 impl FigApp {
     pub fn new(session: Session, services: Box<dyn Services>) -> Self {
+        // The main window's panels open as wide as they were left.
+        let (left_width, right_width) = session.prefs.panel_widths;
         Self {
+            ui: UiState { left_width, right_width, ..UiState::default() },
             session,
-            ui: UiState::default(),
             canvas: canvas::CanvasState::default(),
             services,
             worker: None,
@@ -466,6 +499,7 @@ impl FigApp {
             cjk_checked: None,
             language: None,
             field_focus: false,
+            panels_unsaved: false,
             control_queue: Vec::new(),
             control_input: Vec::new(),
             frame_stats: frame_stats::FrameStats::default(),
@@ -591,6 +625,16 @@ impl FigApp {
                     self.ui.right_tab = if self.ui.right_tab == RightTab::Inspect { RightTab::Design } else { RightTab::Inspect };
                 }
                 "panel.leftSidebar" => self.ui.left_collapsed = !self.ui.left_collapsed,
+                "panel.widths" => {
+                    let width = |k: &str| r.data.get(k).and_then(Value::as_f64).map(|w| w as f32);
+                    let (left, right) = (width("left"), width("right"));
+                    let reset = left.is_none() && right.is_none();
+                    self.set_panel_widths(
+                        left.unwrap_or(if reset { PANEL_DEFAULT } else { self.ui.left_width }),
+                        right.unwrap_or(if reset { PANEL_DEFAULT } else { self.ui.right_width }),
+                    );
+                    self.services.save_prefs(&self.session.prefs);
+                }
                 "focus.region" => self.ui.nav.step(r.data.get("step").and_then(Value::as_i64).unwrap_or(1).clamp(-4, 4) as i32),
                 "panel.layers" => self.ui.left_tab = LeftTab::File,
                 "panel.assets" => self.ui.left_tab = LeftTab::Assets,
@@ -673,6 +717,42 @@ impl FigApp {
         if let Some(m) = self.session.message.take() {
             self.toast(m);
         }
+    }
+
+    /// Set the widths asked for this window's side panels (within their limits); the main
+    /// window's are kept in the preferences.
+    pub fn set_panel_widths(&mut self, left: f32, right: f32) {
+        let within = |w: f32, range: std::ops::RangeInclusive<f32>| if w.is_finite() { w.clamp(*range.start(), *range.end()) } else { PANEL_DEFAULT };
+        (self.ui.left_width, self.ui.right_width) = (within(left, LEFT_PANEL), within(right, RIGHT_PANEL));
+        if self.windows.current == 0 {
+            self.session.prefs.panel_widths = (self.ui.left_width, self.ui.right_width);
+        }
+    }
+
+    /// The edge between a side panel and the canvas, at `x` down `rows`: dragging it sizes the
+    /// panel (`grows`: +1 for the left panel, whose edge is on its right, −1 for the right one), a
+    /// double-click puts back the default width. Returns the width asked for, when it changed.
+    fn panel_edge(ui: &mut egui::Ui, name: &str, x: f32, rows: egui::Rangef, width: f32, grows: f32) -> Option<f32> {
+        let grab = ui.style().interaction.resize_grab_radius_side;
+        let rect = egui::Rect::from_x_y_ranges(x - grab..=x + grab, rows);
+        let id = egui::Id::new(("panel_edge", name));
+        let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            ui.painter().vline(x, rows, egui::Stroke::new(2.0, theme::Tokens::get(ui.ctx()).accent));
+        }
+        if resp.double_clicked() {
+            return Some(PANEL_DEFAULT);
+        }
+        // The edge stays under the pointer where it was grabbed (also back from past a limit).
+        let at = resp.interact_pointer_pos().filter(|_| resp.dragged())?;
+        if resp.drag_started() {
+            let pressed = ui.input(|i| i.pointer.press_origin()).unwrap_or(at);
+            ui.data_mut(|d| d.insert_temp(id, pressed.x - x));
+        }
+        let grabbed: f32 = ui.data(|d| d.get_temp(id)).unwrap_or(0.0);
+        let w = width + (at.x - grabbed - x) * grows;
+        (w != width).then_some(w)
     }
 
     pub fn save_as_dialog(&mut self) {
@@ -779,6 +859,8 @@ impl FigApp {
             _ => false,
         };
         self.ui.dark = dark;
+        // New files and pages take the theme's page colour (existing pages keep theirs).
+        self.session.set_ui_dark(dark);
         theme::apply_with(ctx, if dark { theme::Tokens::dark() } else { theme::Tokens::light() }, self.reduce_motion());
         if self.worker.is_none() {
             self.worker = Some(render_worker::Worker::new(ctx.clone()));
@@ -893,11 +975,16 @@ impl FigApp {
                     layers::rail(self, ui)
                 });
         }
-        if !hidden && !self.ui.left_collapsed {
+        // The panels are as wide as asked, less in a window too small for them and the canvas.
+        let left_open = !hidden && !self.ui.left_collapsed;
+        let (left_w, right_w) = fit_panels(ui.available_width(), left_open.then_some(self.ui.left_width), self.ui.right_width);
+        let rows = ui.available_rect_before_wrap().y_range();
+        let mut edges: Vec<(&str, f32, f32, f32)> = Vec::new();
+        if left_open {
+            edges.push(("left", ui.available_rect_before_wrap().min.x + left_w, left_w, 1.0));
             egui::Panel::left("left_panel")
-                .resizable(true)
-                .default_size(self.ui.left_width)
-                .size_range(200.0..=480.0)
+                .resizable(false)
+                .exact_size(left_w)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     let label = match self.ui.left_tab {
@@ -910,10 +997,10 @@ impl FigApp {
                 });
         }
         if !hidden {
+            edges.push(("right", ui.available_rect_before_wrap().max.x - right_w, right_w, -1.0));
             egui::Panel::right("right_panel")
-                .resizable(true)
-                .default_size(self.ui.right_width)
-                .size_range(240.0..=480.0)
+                .resizable(false)
+                .exact_size(right_w)
                 .frame(egui::Frame::NONE.fill(t.panel).stroke(egui::Stroke::new(1.0, t.border)))
                 .show(ui, |ui| {
                     let label = match self.ui.right_tab {
@@ -937,6 +1024,19 @@ impl FigApp {
                 });
             }
         });
+        // The panels' edges, over the canvas and the panels (drawn after them: they take the press).
+        for (name, x, shown, grows) in edges {
+            if let Some(w) = Self::panel_edge(ui, name, x, rows, shown, grows) {
+                let (l, r) = if name == "left" { (w, self.ui.right_width) } else { (self.ui.left_width, w) };
+                self.set_panel_widths(l, r);
+                self.panels_unsaved = true;
+            }
+        }
+        // Kept once the drag is over (not on every pointer move).
+        if self.panels_unsaved && !ctx.input(|i| i.pointer.any_down()) {
+            self.panels_unsaved = false;
+            self.services.save_prefs(&self.session.prefs);
+        }
         // Before the shortcuts: keys the hovered pane's prototype uses don't reach the editor, and
         // the arrows step through comment threads with the Comment tool.
         present::show_pane(self, &ctx);
@@ -1046,6 +1146,8 @@ impl FigApp {
             "window": self.windows.current,
             "windows": windows::list(self),
             "tool": self.session.tool_info(),
+            "cursor": self.canvas.cursor.map(cursors::Shown::name),
+            "panels": {"left": self.ui.left_width, "right": self.ui.right_width, "leftCollapsed": self.ui.left_collapsed},
             "status": self.session.status(),
             "lastError": self.ui.last_error,
         })

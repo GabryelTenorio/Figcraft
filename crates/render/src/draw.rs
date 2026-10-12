@@ -21,6 +21,8 @@ pub struct Ctx<'a> {
     /// Device pixels per document unit (for effect radii).
     pub scale: f64,
     pub outline_mode: bool,
+    /// What outline mode draws besides shapes, and its line colour.
+    pub outline: crate::Outline,
     /// Layers drawn in outline mode with their contents (outlines for the selection).
     pub outlined: &'a [NodeId],
     /// Nodes not to draw (e.g. text being edited draws through the editor).
@@ -361,7 +363,16 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         return;
     }
     let Some(n) = ctx.doc.node(id) else { return };
-    if !n.visible || n.opacity <= 0.0 || n.is_mask {
+    let outline = ctx.outline_mode || ctx.outlined.contains(&id);
+    if n.is_mask || n.opacity <= 0.0 && n.visible {
+        return;
+    }
+    if !n.visible {
+        // Outline mode can show hidden layers too (nothing of them is culled: a hidden layer
+        // isn't counted in its parent's bounds).
+        if outline && ctx.outline.hidden {
+            draw_outline(&Ctx { outline_mode: true, ..*ctx }, pix, n, parent_xf * n.transform, depth);
+        }
         return;
     }
     let xf = parent_xf * n.transform;
@@ -375,7 +386,7 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     if dev.intersect(view).is_zero_area() && !(dev.width() == 0.0 || dev.height() == 0.0) {
         return;
     }
-    if ctx.outline_mode || ctx.outlined.contains(&id) {
+    if outline {
         draw_outline(&Ctx { outline_mode: true, ..*ctx }, pix, n, xf, depth);
         return;
     }
@@ -455,12 +466,21 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
 }
 
 fn draw_outline(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, depth: usize) {
+    let color = if ctx.outline.light { tiny_skia::Color::WHITE } else { tiny_skia::Color::BLACK };
+    let paint = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(color), anti_alias: true, ..Default::default() };
+    let stroke = tiny_skia::Stroke { width: 1.0 / ctx.scale.max(1e-6) as f32, ..Default::default() };
     if let Some((path, _)) = node_outline(ctx.doc, n)
         && !matches!(n.kind, NodeKind::Group)
         && let Some(tp) = ts_path(&path)
     {
-        let paint = tiny_skia::Paint { shader: tiny_skia::Shader::SolidColor(tiny_skia::Color::BLACK), anti_alias: true, ..Default::default() };
-        let stroke = tiny_skia::Stroke { width: 1.0 / ctx.scale.max(1e-6) as f32, ..Default::default() };
+        pix.stroke_path(&tp, &paint, &stroke, ts_transform(xf), None);
+    }
+    // Object bounds: the box of every layer whose outline isn't its box already.
+    let boxed = matches!(n.kind, NodeKind::Rectangle) && n.corners.uniform() == Some(0.0) || n.kind.is_frame_like();
+    if ctx.outline.bounds
+        && !boxed
+        && let Some(tp) = ts_path(&figcraft_geom::kurbo::Shape::to_path(&n.local_rect(), 0.1))
+    {
         pix.stroke_path(&tp, &paint, &stroke, ts_transform(xf), None);
     }
     if !matches!(n.kind, NodeKind::BooleanOp { .. }) && !n.hides_contents() {

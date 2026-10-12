@@ -42,6 +42,7 @@ struct Frame {
     doc: Arc<Document>,
     page: NodeId,
     outline: bool,
+    outline_extras: crate::Outline,
     outlined: Vec<NodeId>,
     lod: bool,
     skip: Vec<NodeId>,
@@ -150,6 +151,9 @@ impl Retained {
         if let Some(last) = self.last.take()
             && last.page == page
             && last.outline == opts.outline_mode
+            && last.outline_extras == opts.outline
+            // Hidden layers drawn as outlines aren't in the bounds patches are cut from.
+            && !opts.outline.hidden
             && last.outlined == opts.outlined
             && last.lod == opts.lod
             && last.skip == opts.skip
@@ -193,6 +197,7 @@ impl Retained {
             doc: doc.clone(),
             page,
             outline: opts.outline_mode,
+            outline_extras: opts.outline,
             outlined: opts.outlined.clone(),
             lod: opts.lod,
             skip: opts.skip.clone(),

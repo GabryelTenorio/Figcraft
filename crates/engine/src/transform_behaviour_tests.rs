@@ -360,7 +360,7 @@ fn the_transform_box_and_its_handles() {
     for (h, angle) in [(Handle::Corner(0), 45.0), (Handle::Corner(1), 135.0), (Handle::Edge(0), 90.0), (Handle::Edge(1), 180.0)] {
         assert!(matches!(handle_cursor(&q, h), Cursor::Resize(a) if near(a, angle)), "{h:?}");
     }
-    assert_eq!(handle_cursor(&q, Handle::Rotate(1)), Cursor::Rotate);
+    assert!(matches!(handle_cursor(&q, Handle::Rotate(1)), Cursor::Rotate(a) if near(a, -45.0)), "turned to the top right corner");
     assert_eq!(handle_at(&doc, &[r], Point::new(110.0, -10.0), z), Some(Handle::Rotate(1)));
     set(&mut s, &[r], json!({"rotation": 30}));
     let doc = s.doc().unwrap().clone();

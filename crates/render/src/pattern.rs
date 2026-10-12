@@ -46,7 +46,17 @@ pub fn cell_pixmap(doc: &Document, pt: &PatternPaint, w: f64, h: f64, scale: f64
     let (pw, ph) = ((cell.size.0 * k).ceil().clamp(1.0, MAX_CELL_PX), (cell.size.1 * k).ceil().clamp(1.0, MAX_CELL_PX));
     let (kx, ky) = (pw / cell.size.0, ph / cell.size.1);
     let mut pix = Pixmap::new(pw as u32, ph as u32)?;
-    let ctx = Ctx { doc, scale: kx.max(ky) * cell.scale, outline_mode: false, outlined: &[], skip: &[], lod: false, under: None, time };
+    let ctx = Ctx {
+        doc,
+        scale: kx.max(ky) * cell.scale,
+        outline_mode: false,
+        outline: crate::Outline::default(),
+        outlined: &[],
+        skip: &[],
+        lod: false,
+        under: None,
+        time,
+    };
     let unrotated = src.transform.inverse();
     nested(|| {
         for (tx, ty) in &cell.tiles {

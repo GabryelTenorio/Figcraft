@@ -77,6 +77,8 @@ impl Color {
     pub const DEFAULT_SHAPE: Color = Color::from_rgb8_const(0xD9, 0xD9, 0xD9);
     /// Default page background (#F5F5F5).
     pub const DEFAULT_PAGE: Color = Color::from_rgb8_const(0xF5, 0xF5, 0xF5);
+    /// The background of a page made while the interface shows its dark theme (#1E1E1E).
+    pub const DARK_PAGE: Color = Color::from_rgb8_const(0x1E, 0x1E, 0x1E);
 
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r: clamp01(r), g: clamp01(g), b: clamp01(b), a: clamp01(a) }
@@ -197,6 +199,11 @@ impl Color {
     pub fn luminance(self) -> f32 {
         let lin = |c: f32| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
         0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
+    }
+
+    /// Whether black on this colour reads worse than white (a dark page: new text is white).
+    pub fn is_dark(self) -> bool {
+        self.contrast(Color::WHITE) > self.contrast(Color::BLACK)
     }
 
     /// WCAG contrast ratio between two opaque colours.

@@ -57,6 +57,7 @@ fn big_job(doc: &Arc<figcraft_doc::Document>, page: figcraft_doc::NodeId, scale:
         page,
         view: figcraft_render::View { origin: (0.0, 0.0), scale, width: 2400, height: 2400 },
         outline: false,
+        outline_extras: Default::default(),
         outlined: vec![],
         skip: vec![],
         solo: None,

@@ -19,6 +19,32 @@ fn flag(s: &mut Session, p: &Value, f: fn(&mut ViewState) -> &mut bool) -> Resul
     Ok(json!({"on": *slot}))
 }
 
+/// Whether the View menu's toggle `id` is on (the menus show a check mark); `None` for a command
+/// that isn't one.
+pub fn checked(s: &Session, id: &str) -> Option<bool> {
+    let v = &s.ds().ok()?.view;
+    Some(match id {
+        "view.pixelGrid" => v.pixel_grid,
+        "view.layoutGrids" => v.layout_grids,
+        "view.rulers" => v.rulers,
+        "view.slices" => v.show_slices,
+        "view.comments" => v.comments,
+        "view.multiplayerCursors" => v.multiplayer_cursors,
+        "view.outlines" => v.outlines,
+        "view.outlinesSelection" => v.outlines_selection,
+        "view.outlinesHiddenLayers" => v.outline_hidden,
+        "view.outlinesObjectBounds" => v.outline_bounds,
+        "view.maskOutlines" => v.mask_outlines,
+        "view.pixelPreview" => v.pixel_preview,
+        "view.frameOutlines" => v.frame_outlines,
+        "view.proofSrgb" => v.proof_srgb,
+        "view.snapGeometry" => v.snap_geometry,
+        "view.snapObjects" => v.snap_objects,
+        "view.snapPixel" => v.snap_pixel,
+        _ => return None,
+    })
+}
+
 /// Pixel preview: toggles, or turns on at a resolution of 1x or 2x.
 fn pixel_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let scale = match p.get("scale") {
@@ -214,6 +240,20 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.outlinesSelection", "Outlines for selection", "{on?}  outline mode for the selected layers only", false, |s, p| {
             flag(s, p, |v| &mut v.outlines_selection)
         }),
+        spec!(
+            "view.outlinesHiddenLayers",
+            "Include hidden layers in outlines",
+            "{on?}  outline mode (and outlines for the selection) outlines hidden layers too; they can be clicked there",
+            false,
+            |s, p| { flag(s, p, |v| &mut v.outline_hidden) }
+        ),
+        spec!(
+            "view.outlinesObjectBounds",
+            "Include object bounds in outlines",
+            "{on?}  outline mode also draws each layer's box (groups, text, vectors); a click on a box's edge picks its layer",
+            false,
+            |s, p| { flag(s, p, |v| &mut v.outline_bounds) }
+        ),
         spec!("view.maskOutlines", "Mask outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.mask_outlines)),
         spec!("view.pixelPreview", "Pixel preview", "{on?, scale? (1|2: rendered pixels per page pixel; turns it on)}", false, pixel_preview),
         spec!("view.frameOutlines", "Frame outlines", "{on?}", false, |s, p| flag(s, p, |v| &mut v.frame_outlines)),
@@ -235,6 +275,17 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.designPrototype", "Switch between Design and Prototype", "{}", false, |s, _| ui(s, "panel.designPrototype")),
         spec!("view.devMode", "Dev Mode", "{}", false, |s, _| ui(s, "panel.devMode")),
         spec!("view.leftSidebar", "Show/Hide left sidebar", "{}", false, |s, _| ui(s, "panel.leftSidebar")),
+        spec!(
+            "view.panelWidths",
+            "Reset panel widths",
+            "{left?, right? (the panels' widths in pixels, kept within their limits)}  without either, both go back to their default width (a double-click on a panel's edge does it for that panel)",
+            false,
+            |s, p| {
+                let width = |k| num(p, k).filter(|w| w.is_finite()).map(|w| w.clamp(0.0, 10_000.0));
+                s.request_ui("panel.widths", json!({"left": width("left"), "right": width("right")}));
+                ok()
+            }
+        ),
         // Several windows: the desktop app opens and focuses them (no-ops headless and in the browser).
         spec!(
             "window.new",

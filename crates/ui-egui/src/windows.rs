@@ -208,7 +208,15 @@ pub fn open(app: &mut FigApp, ctx: &Context, index: Option<usize>, path: Option<
         docs: vec![uid],
         active: Some(uid),
         pane: Pane {
-            ui: UiState { title_bar: app.ui.title_bar, right_tab: app.ui.right_tab, left_tab: app.ui.left_tab, ..UiState::default() },
+            // A new window opens like the one it comes from: the same tabs and panel widths.
+            ui: UiState {
+                title_bar: app.ui.title_bar,
+                right_tab: app.ui.right_tab,
+                left_tab: app.ui.left_tab,
+                left_width: app.ui.left_width,
+                right_width: app.ui.right_width,
+                ..UiState::default()
+            },
             ..Pane::default()
         },
         pos: at.or_else(|| outer.map(|r| r.min + Vec2::splat(32.0))),

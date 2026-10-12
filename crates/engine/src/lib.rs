@@ -137,6 +137,10 @@ pub struct ViewState {
     pub outlines: bool,
     /// Outline mode for the selected layers only (the rest draws normally).
     pub outlines_selection: bool,
+    /// Outline mode also outlines hidden layers (View ▸ Outlines ▸ Include hidden layers).
+    pub outline_hidden: bool,
+    /// Outline mode also draws every layer's box (View ▸ Outlines ▸ Include object bounds).
+    pub outline_bounds: bool,
     /// Outline the masks (they don't draw themselves).
     pub mask_outlines: bool,
     pub pixel_preview: bool,
@@ -168,6 +172,8 @@ impl Default for ViewState {
             rulers: false,
             outlines: false,
             outlines_selection: false,
+            outline_hidden: false,
+            outline_bounds: false,
             mask_outlines: false,
             pixel_preview: false,
             pixel_scale: 1,
@@ -543,6 +549,9 @@ pub struct Prefs {
     pub number_keys_opacity: bool,
     pub show_dimensions: bool,
     pub theme: String,
+    /// The widths of the main window's left and right panels (the interface keeps them within its
+    /// limits; other windows have their own while they are open).
+    pub panel_widths: (f32, f32),
     /// The interface language: a language code ("en", "es", "pt-BR") or "system" (the OS or browser
     /// language). Languages without a catalog show English.
     pub language: String,
@@ -584,6 +593,7 @@ impl Default for Prefs {
             number_keys_opacity: true,
             show_dimensions: true,
             theme: "light".into(),
+            panel_widths: (240.0, 240.0),
             language: "system".into(),
             user_name: cmd::comment::DEFAULT_AUTHOR.into(),
             reduce_motion: false,
@@ -629,6 +639,10 @@ pub struct Session {
     pub prefs: Prefs,
     pub tool: tools::ToolState,
     pub ui_requests: Vec<UiRequest>,
+    /// The interface's theme once the UI knows it ([`Session::set_ui_dark`]): new files and pages
+    /// get the dark page colour while it is dark. Headless sessions (CLI, MCP, exports) have no
+    /// theme, so what scripts make is the same everywhere.
+    pub ui_dark: Option<bool>,
     /// Command log (id + params) for actions/automation.
     pub journal: Vec<(String, Value)>,
     /// Recently used colours.
@@ -671,6 +685,7 @@ impl Session {
             prefs: Prefs::default(),
             tool: tools::ToolState::default(),
             ui_requests: Vec::new(),
+            ui_dark: None,
             journal: Vec::new(),
             recent_colors: Vec::new(),
             last_command: None,
@@ -679,6 +694,43 @@ impl Session {
             plugins: plugins::Runtime::default(),
             live: live::Lives::default(),
             background: background::Background::default(),
+        }
+    }
+
+    /// The background new pages get: the dark page colour while the interface is dark.
+    pub fn new_page_background(&self) -> figcraft_color::Color {
+        if self.ui_dark == Some(true) { figcraft_color::Color::DARK_PAGE } else { figcraft_color::Color::DEFAULT_PAGE }
+    }
+
+    /// Tell the engine the interface's theme (the UI does, every frame). The first time, a new
+    /// file nothing was done to yet (the one the app opened with, made before the theme was
+    /// known) takes the theme's page colour; later changes of theme leave existing pages alone.
+    pub fn set_ui_dark(&mut self, dark: bool) {
+        if self.ui_dark.replace(dark).is_some() || !dark {
+            return;
+        }
+        for ds in &mut self.docs {
+            let untouched = ds.path.is_none() && ds.history.undo.is_empty() && ds.history.redo.is_empty() && !ds.is_dirty() && ds.versions.is_empty();
+            let pages = ds.doc.pages.clone();
+            let blank = pages.iter().all(|p| {
+                ds.doc.node(*p).is_some_and(|n| {
+                    n.children.is_empty()
+                        && matches!(n.kind, figcraft_doc::NodeKind::Page { background, .. } if background == figcraft_color::Color::DEFAULT_PAGE)
+                })
+            });
+            if !(untouched && blank) {
+                continue;
+            }
+            let mut doc = (*ds.doc).clone();
+            for p in pages {
+                if let Some(figcraft_doc::NodeKind::Page { background, .. }) = doc.node_mut(p).map(|n| &mut n.kind) {
+                    *background = figcraft_color::Color::DARK_PAGE;
+                }
+            }
+            // Still a file without changes.
+            ds.doc = Arc::new(doc);
+            ds.saved_doc = ds.doc.clone();
+            ds.revision += 1;
         }
     }
 
@@ -1301,6 +1353,8 @@ mod components_behaviour_tests;
 #[cfg(test)]
 mod components_scale_tests;
 #[cfg(test)]
+mod cursor_tests;
+#[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;
@@ -1368,6 +1422,8 @@ mod measure_tests;
 mod menu_gaps_tests;
 #[cfg(test)]
 mod nested_override_tests;
+#[cfg(test)]
+mod outline_options_tests;
 #[cfg(test)]
 mod paint_reorder_tests;
 #[cfg(test)]
@@ -1456,6 +1512,8 @@ mod text_motion_tests;
 mod text_style_picker_tests;
 #[cfg(test)]
 mod text_tail_tests;
+#[cfg(test)]
+mod theme_pages_tests;
 #[cfg(test)]
 mod tiff_tests;
 #[cfg(test)]
