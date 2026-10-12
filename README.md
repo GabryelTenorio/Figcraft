@@ -282,6 +282,8 @@ know what sharing does:
 - **No guarantees.** The public server is offered as is, without backups or uptime promises, and
   files on it can be removed. Keep your own saved copy of anything you share.
 
+The default server's terms are in [`docs/online-sharing-terms.md`](docs/online-sharing-terms.md).
+
 ## The Crafting Apps
 
 FigCraft is one of the **Crafting Apps**: free, open-source creative tools from the

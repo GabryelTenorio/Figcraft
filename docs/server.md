@@ -671,7 +671,8 @@ sudo systemctl start figcraft-server
   the server; on the server they are stored unencrypted, so the operator and anyone who can read
   the data directory can read every file. Tell the people who publish to your server so (the
   README's [Privacy and online sharing](../README.md#privacy-and-online-sharing) says it for the
-  default public server), and set `operator_contact` and `terms_url` on a public one.
+  default public server, whose terms are [online-sharing-terms.md](online-sharing-terms.md): a
+  starting point for your own), and set `operator_contact` and `terms_url` on a public one.
 - **Access** is a share link (128-bit random token) per file and access level, an owner token
   (128-bit) per file published without the key, or the server key (128-bit) for managing files.
   Tokens are stored as SHA-256 hashes and every comparison runs in constant time; revoking a link
