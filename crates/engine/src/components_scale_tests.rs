@@ -23,6 +23,8 @@ fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
 }
 
 fn session() -> (Session, DesignSystem, Vec<NodeId>) {
+    // Other tests scan the system fonts; text measured before and after that scan would differ.
+    figcraft_text::scan_system_fonts();
     let (doc, ds, inst) = design_system_with_instances(&DsSpec::SMALL, COUNT).unwrap();
     (Session::with_document(doc), ds, inst)
 }

@@ -14,6 +14,15 @@ The server lives in `crates/mcp` (`figcraft-mcp`) and is started by the CLI:
 
 `--attach` also takes `host:port`. The control channel only listens on 127.0.0.1.
 
+### Fonts
+
+The headless server lays text out with the same fonts as the app: the fonts built into FigCraft
+plus the installed system fonts, indexed once, the first time text is laid out (a session that
+never touches text never pays for it). So text sizes, auto layout and exports match what users see
+in the app. For renders that come out the same on every machine (CI), start it with
+`figcraft-cli mcp --no-system-fonts` or set `FIGCRAFT_NO_SYSTEM_FONTS=1`: text then uses only the
+built-in fonts. Attached, the app's own fonts apply. The browser build has no system fonts.
+
 ## Configure a client
 
 Build the CLI first (`cargo build --release -p figcraft-cli`) and use the absolute path to

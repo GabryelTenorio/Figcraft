@@ -1,7 +1,7 @@
 //! The font database: embedded craft-fonts faces plus (on desktop) the system's fonts.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use figcraft_geom::BezPath;
@@ -410,9 +410,24 @@ pub struct FontDb {
 }
 
 static DB: OnceLock<RwLock<FontDb>> = OnceLock::new();
+/// Set by [`scan_system_fonts_on_demand`].
+static ON_DEMAND: AtomicBool = AtomicBool::new(false);
+/// Done once per process: concurrent callers wait for the one scan.
+static SCANNED: OnceLock<()> = OnceLock::new();
+/// Directory walks done (at most one).
+#[cfg(not(target_arch = "wasm32"))]
+static SCANS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// The process-wide font database (embedded fonts loaded on first use).
+/// The process-wide font database (embedded fonts loaded on first use; system fonts indexed first
+/// when [`scan_system_fonts_on_demand`] was called).
 pub fn db() -> &'static RwLock<FontDb> {
+    if ON_DEMAND.load(Ordering::Relaxed) {
+        scan_system_fonts();
+    }
+    raw_db()
+}
+
+fn raw_db() -> &'static RwLock<FontDb> {
     DB.get_or_init(|| {
         let mut db = FontDb::default();
         for f in CRAFT_FONTS {
@@ -670,7 +685,13 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        // The listing's own metadata (free on Windows); a symlink's target needs a lookup.
+        let meta = match entry.file_type() {
+            Ok(t) if !t.is_symlink() => entry.metadata(),
+            _ => std::fs::metadata(&path),
+        };
+        let Ok(meta) = meta else { continue };
+        if meta.is_dir() {
             scan_dir(&path, depth + 1, out);
             continue;
         }
@@ -679,29 +700,65 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
             continue;
         }
         // Skip very large files (colour emoji); they are not outline fonts we can draw anyway.
-        if std::fs::metadata(&path).map(|m| m.len() > 64 * 1024 * 1024).unwrap_or(true) {
-            continue;
-        }
-        let Ok(bytes) = std::fs::read(&path) else { continue };
-        let count = match FileRef::new(bytes.as_slice()) {
-            Ok(FileRef::Collection(c)) => c.len(),
-            Ok(FileRef::Font(_)) => 1,
-            Err(_) => 0,
-        };
-        for i in 0..count.min(64) {
-            let Ok(f) = skrifa::FontRef::from_index(bytes.as_slice(), i) else { continue };
-            // Only outline fonts we can draw.
-            if f.glyf().is_err() && f.cff().is_err() && f.cff2().is_err() {
-                continue;
-            }
-            let (Some(family), style) = names(&f) else { continue };
-            if family.starts_with('.') {
-                continue;
-            }
-            let style = style.unwrap_or_else(|| "Regular".into());
-            out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index: i, style });
+        let Some(bytes) = usize::try_from(meta.len()).ok().filter(|l| *l <= 64 * 1024 * 1024).and_then(|l| index_bytes(&path, l)) else { continue };
+        for (index, family, style) in faces_in(&bytes) {
+            out.entry(family.to_lowercase()).or_insert_with(|| (family.clone(), Vec::new())).1.push(Pending { path: path.clone(), index, style });
         }
     }
+}
+
+/// The parts of a font file the scan reads: headers, table directories and `name` tables, at their
+/// offsets in a zeroed buffer of the file's length (reading whole files was most of the scan).
+fn index_bytes(path: &std::path::Path, len: usize) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut buf = vec![0u8; len];
+    let mut fill = |buf: &mut Vec<u8>, at: usize, n: usize| -> Option<()> {
+        let dst = buf.get_mut(at..at.checked_add(n)?)?;
+        file.seek(SeekFrom::Start(u64::try_from(at).ok()?)).ok()?;
+        file.read_exact(dst).ok()
+    };
+    let be = |b: &[u8], at: usize, n: usize| b.get(at..at.checked_add(n)?).map(|s| s.iter().fold(0usize, |v, x| v << 8 | usize::from(*x)));
+    fill(&mut buf, 0, 12)?;
+    let fonts: Vec<usize> = if buf.get(..4) == Some(b"ttcf") {
+        let n = be(&buf, 8, 4)?.min(64);
+        fill(&mut buf, 12, 4 * n)?;
+        (0..n).filter_map(|i| be(&buf, 12 + 4 * i, 4)).collect()
+    } else {
+        vec![0]
+    };
+    for at in fonts {
+        let Some(tables) = fill(&mut buf, at, 12).and_then(|()| be(&buf, at + 4, 2)) else { continue };
+        if fill(&mut buf, at + 12, 16 * tables).is_none() {
+            continue;
+        }
+        for rec in (0..tables).map(|t| at + 12 + 16 * t) {
+            if buf.get(rec..rec + 4) == Some(b"name")
+                && let (Some(off), Some(n)) = (be(&buf, rec + 8, 4), be(&buf, rec + 12, 4))
+            {
+                let _ = fill(&mut buf, off, n);
+            }
+        }
+    }
+    Some(buf)
+}
+
+/// (index, family, style) of each outline face (one we can draw) in a font file.
+fn faces_in(bytes: &[u8]) -> Vec<(u32, String, String)> {
+    let count = match FileRef::new(bytes) {
+        Ok(FileRef::Collection(c)) => c.len(),
+        Ok(FileRef::Font(_)) => 1,
+        Err(_) => 0,
+    };
+    (0..count.min(64))
+        .filter_map(|i| {
+            let f = skrifa::FontRef::from_index(bytes, i).ok()?;
+            [b"glyf", b"CFF ", b"CFF2"].iter().any(|t| f.data_for_tag(skrifa::Tag::new(t)).is_some()).then_some(())?;
+            let (family, style) = names(&f);
+            let family = family.filter(|f| !f.starts_with('.'))?;
+            Some((i, family, style.unwrap_or_else(|| "Regular".into())))
+        })
+        .collect()
 }
 
 /// Convenience: find a face with the global db.
@@ -720,36 +777,46 @@ pub fn family_styles(family: &str) -> Vec<String> {
     db().write().unwrap_or_else(std::sync::PoisonError::into_inner).styles(family)
 }
 
-/// Scan system fonts into the global db (desktop; a no-op on the web). The directory walk runs
-/// without holding the database lock; results are merged in one short write.
+/// Scan system fonts into the global db (desktop; a no-op on the web, or with
+/// `FIGCRAFT_NO_SYSTEM_FONTS` set). Runs once per process: a concurrent caller waits for that scan.
+/// The directory walk runs without holding the database lock; results are merged in one short write.
 pub fn scan_system_fonts() {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if db().read().unwrap_or_else(std::sync::PoisonError::into_inner).system_scanned {
-            return;
-        }
-        let mut found: BTreeMap<String, (String, Vec<Pending>)> = BTreeMap::new();
-        for dir in system_font_dirs() {
-            scan_dir(&dir, 0, &mut found);
-        }
-        let mut w = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if w.system_scanned {
-            return;
-        }
-        w.system_scanned = true;
-        for (k, v) in found {
-            if !w.families.contains_key(&k) {
-                w.pending.entry(k).or_insert(v);
+    SCANNED.get_or_init(|| {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !system_fonts_opted_out() {
+            SCANS.fetch_add(1, Ordering::Relaxed);
+            let mut found: BTreeMap<String, (String, Vec<Pending>)> = BTreeMap::new();
+            for dir in system_font_dirs() {
+                scan_dir(&dir, 0, &mut found);
             }
+            let mut w = raw_db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            w.system_scanned = true;
+            for (k, v) in found {
+                if !w.families.contains_key(&k) {
+                    w.pending.entry(k).or_insert(v);
+                }
+            }
+            drop(w);
+            crate::clear_layout_cache();
         }
-        drop(w);
-        crate::clear_layout_cache();
-    }
+    });
+}
+
+/// `FIGCRAFT_NO_SYSTEM_FONTS` is set (and not `0`): renders use only the embedded fonts.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_fonts_opted_out() -> bool {
+    std::env::var_os("FIGCRAFT_NO_SYSTEM_FONTS").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Index the system fonts the first time the font database is used (headless apps: a run that
+/// lays out no text never pays for the scan). The desktop app scans in the background instead.
+pub fn scan_system_fonts_on_demand() {
+    ON_DEMAND.store(true, Ordering::Relaxed);
 }
 
 /// Whether the system fonts were indexed ([`scan_system_fonts`] finished; always false on the web).
 pub fn system_fonts_scanned() -> bool {
-    db().read().unwrap_or_else(std::sync::PoisonError::into_inner).system_scanned
+    raw_db().read().unwrap_or_else(std::sync::PoisonError::into_inner).system_scanned
 }
 
 /// The first of `families` (embedded or system) whose regular face draws `c`, for a UI toolkit

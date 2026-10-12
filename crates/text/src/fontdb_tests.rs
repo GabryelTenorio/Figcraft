@@ -29,3 +29,41 @@ fn find_one_reads_only_the_nearest_style() {
     assert_eq!(pending_weight("SemiBold"), 600);
     assert_eq!(pending_weight("W12"), 400);
 }
+
+#[test]
+fn system_fonts_are_scanned_once() {
+    // Racing callers (the desktop's background scan, on-demand lookups, tests) share one walk.
+    let threads: Vec<_> = (0..4).map(|_| std::thread::spawn(scan_system_fonts)).collect();
+    for t in threads {
+        t.join().unwrap();
+    }
+    scan_system_fonts_on_demand();
+    let _ = db();
+    scan_system_fonts();
+    let walked = !system_fonts_opted_out();
+    assert_eq!(SCANS.load(Ordering::Relaxed), usize::from(walked));
+    assert_eq!(system_fonts_scanned(), walked);
+}
+
+#[test]
+fn the_scan_reads_names_like_a_whole_file_read() {
+    // Every installed font file (none on CI): the partial read finds the same faces and names.
+    let mut files = Vec::new();
+    for dir in system_font_dirs() {
+        let mut stack = vec![dir];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|x| ["ttf", "otf", "ttc", "otc"].contains(&x.to_ascii_lowercase().to_str().unwrap_or(""))) {
+                    files.push(p);
+                }
+            }
+        }
+    }
+    for p in files {
+        let Ok(whole) = std::fs::read(&p) else { continue };
+        assert_eq!(faces_in(&index_bytes(&p, whole.len()).unwrap()), faces_in(&whole), "{}", p.display());
+    }
+}

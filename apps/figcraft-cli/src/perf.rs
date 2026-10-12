@@ -292,9 +292,11 @@ fn measure_boolean_drag(table: &mut Table, col: usize) {
 
 /// Time the hot paths for each document size in `sizes` (layers) and, with the synthetic design
 /// system, for each instance count in `instances`; print the tables.
-pub fn run(sizes: &[usize], instances: &[usize]) -> CliResult<ExitCode> {
-    // Text renders with system fonts too, like the desktop app.
-    figcraft_text::scan_system_fonts();
+pub fn run(sizes: &[usize], instances: &[usize], system_fonts: bool) -> CliResult<ExitCode> {
+    // Text renders with system fonts too, like the desktop app; scanned up front, outside the timings.
+    if system_fonts {
+        figcraft_text::scan_system_fonts();
+    }
     let mut table = Table { rows: Vec::new() };
     for (col, n) in sizes.iter().enumerate() {
         eprintln!("measuring {n} layers…");

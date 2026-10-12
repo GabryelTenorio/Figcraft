@@ -6,6 +6,15 @@ commands, serve MCP and measure performance. Build it with
 
 Bad arguments print usage and exit with code 2; failures exit with 1. The CLI never panics on input.
 
+## Fonts
+
+Text lays out and renders with the same fonts as the desktop app: the fonts built into FigCraft
+plus the installed system fonts. The system fonts are indexed once per run, the first time text is
+laid out (about 60 ms warm on a Windows machine with ~900 font files; a run without text skips it).
+Every subcommand takes `--no-system-fonts` (or set `FIGCRAFT_NO_SYSTEM_FONTS=1`, which the desktop
+app honours too) to use only the built-in fonts, for renders that come out the same on every
+machine, e.g. in CI.
+
 The collaboration server is a binary of its own, `figcraft-server` (`cargo build --release -p
 figcraft-server`): it keeps files with share links and serves their live sessions, and its
 `key`, `files` and `links` subcommands manage them. See [server.md](server.md).

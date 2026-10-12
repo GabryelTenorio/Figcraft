@@ -28,6 +28,10 @@ USAGE:
   figcraft-cli perf [--layers N[,N...]] [--instances N[,N...]]
   figcraft-cli help | --help | --version
 
+Every subcommand takes --no-system-fonts (or set FIGCRAFT_NO_SYSTEM_FONTS=1): text uses only the
+fonts built into FigCraft, for renders that match on every machine. Otherwise installed fonts are
+indexed the first time text is laid out, as in the app.
+
 Files: .figcraft (native), .json (FigCraft or REST API file JSON), .fig (best effort; `info` lists what
 wasn't imported), .svg, .png/.jpg/.webp/.gif/.bmp (open as an image layer). `export` writes one file
 per top-level frame into the <out> directory, or one file when <out> has an image extension or --node
@@ -72,6 +76,13 @@ impl From<String> for CliError {
 pub type CliResult<T> = Result<T, CliError>;
 
 fn run(argv: &[String]) -> CliResult<ExitCode> {
+    let system_fonts = !argv.iter().any(|a| a == "--no-system-fonts");
+    let argv: Vec<String> = argv.iter().filter(|a| *a != "--no-system-fonts").cloned().collect();
+    if system_fonts {
+        // Text lays out with the installed fonts, like the desktop app, so headless renders and
+        // auto layout sizes match what users see.
+        figcraft_text::scan_system_fonts_on_demand();
+    }
     let Some((cmd, rest)) = argv.split_first() else { return Err(CliError::Usage("missing subcommand".into())) };
     match cmd.as_str() {
         "help" | "--help" | "-h" => {
@@ -142,7 +153,7 @@ fn run(argv: &[String]) -> CliResult<ExitCode> {
             let a = Args::parse(rest, &["layers", "instances"], &[])?;
             let sizes: Vec<usize> = a.usizes("layers", &[1000, 10_000])?.into_iter().map(|n| n.clamp(10, 2_000_000)).collect();
             let instances: Vec<usize> = a.usizes("instances", &[2000])?.into_iter().filter(|n| *n > 0).map(|n| n.min(100_000)).collect();
-            perf::run(&sizes, &instances)
+            perf::run(&sizes, &instances, system_fonts)
         }
         other => Err(CliError::Usage(format!("unknown subcommand `{other}`"))),
     }
