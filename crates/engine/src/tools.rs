@@ -1706,9 +1706,15 @@ impl Session {
         if doc.node(target).is_some_and(|n| matches!(n.kind, NodeKind::Text(_)))
             && (sel.contains(&target) || select_target(&doc, leaf, &sel, false) == target)
         {
+            // Entering a text selects all of it; in the text being edited, the word.
+            let editing = self.ds()?.text_edit.as_ref().is_some_and(|te| te.id == target);
             let idx = self.text_index_at(target, ev.p())?;
             textedit::begin(self, target, Some(idx), false)?;
-            textedit::select_word(self, idx)?;
+            if editing {
+                textedit::select_word(self, idx)?;
+            } else {
+                textedit::key(self, "SelectAll", false, false, false)?;
+            }
             return Ok(());
         }
         // Shapes and vectors: enter vector edit mode (every selected shape, the clicked one active).

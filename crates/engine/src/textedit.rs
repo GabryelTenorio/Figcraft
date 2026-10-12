@@ -582,11 +582,16 @@ mod tests {
         }
         let y = l.lines[0].top + l.lines[0].height / 2.0;
         let x_of = |i: usize| l.caret(i).0;
-        // Double-click inside "world" edits and selects the word.
+        // Double-click inside "world" edits with all the text selected; another one there
+        // selects the word.
         let mid = (x_of(7) + x_of(8)) / 2.0;
         s.pointer(&ev(PointerKind::Down, mid, y, false)).unwrap();
         s.pointer(&ev(PointerKind::Up, mid, y, false)).unwrap();
         s.pointer(&ev(PointerKind::DoubleClick, mid, y, false)).unwrap();
+        assert_eq!(sel(&s), (0, 11));
+        s.pointer(&ev(PointerKind::Down, mid, y, false)).unwrap();
+        s.pointer(&ev(PointerKind::DoubleClick, mid, y, false)).unwrap();
+        s.pointer(&ev(PointerKind::Up, mid, y, false)).unwrap();
         assert_eq!(sel(&s), (6, 11));
         // Drag-select from the start of "Hello" to the middle.
         s.pointer(&ev(PointerKind::Down, x_of(0) + 0.5, y, false)).unwrap();
