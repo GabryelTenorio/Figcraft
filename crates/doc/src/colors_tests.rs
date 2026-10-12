@@ -22,10 +22,17 @@ fn colourful() -> (Document, NodeId) {
         n.grids = vec![LayoutGrid { color: RED, ..LayoutGrid::default() }];
         n.interactions = vec![proto::Interaction {
             trigger: Default::default(),
-            actions: vec![proto::Action::OpenOverlay { dest: p, position: Default::default(), close_on_outside: false, background: Some(RED) }],
+            actions: vec![proto::Action::OpenOverlay {
+                dest: p,
+                position: Default::default(),
+                close_on_outside: false,
+                background: Some(RED),
+                offset: None,
+            }],
             transition: Default::default(),
             duration_ms: 300,
             easing: Default::default(),
+            delay_ms: 0,
         }];
     }
     if let Some(NodeKind::Text(td)) = d.node_mut(t).map(|n| &mut n.kind) {

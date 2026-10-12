@@ -97,6 +97,7 @@ fn duplicate_remaps_ids_and_interactions() {
         transition: proto::Transition::Instant,
         duration_ms: 300,
         easing: proto::Easing::EaseOut,
+        delay_ms: 0,
     });
     let f2 = d.duplicate_into(f, p, None).unwrap();
     let kids = d.node(f2).unwrap().children.clone();

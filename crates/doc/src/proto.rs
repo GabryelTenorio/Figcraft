@@ -534,6 +534,10 @@ pub enum Action {
         /// Colour drawn behind the overlay (over the frame underneath); None = no background.
         #[serde(default)]
         background: Option<figcraft_color::Color>,
+        /// Manual position: where the overlay's top-left sits from the top-left of the layer that
+        /// opened it (x, y). None = right below that layer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<[f64; 2]>,
     },
     SwapOverlay {
         dest: NodeId,
@@ -709,10 +713,31 @@ pub struct Interaction {
     pub duration_ms: u32,
     #[serde(default)]
     pub easing: Easing,
+    /// Mouse enter, leave, down and up: how long after the gesture the actions run (ms).
+    #[serde(default, alias = "delayMs", skip_serializing_if = "is_zero")]
+    pub delay_ms: u32,
 }
+
+impl Interaction {
+    /// Seconds between the gesture and the actions: the delay of a mouse enter, leave, down or up
+    /// trigger (other triggers have none; "after delay" times itself).
+    pub fn delay_secs(&self) -> f64 {
+        match self.trigger {
+            Trigger::MouseEnter | Trigger::MouseLeave | Trigger::MouseDown | Trigger::MouseUp => f64::from(self.delay_ms.min(MAX_DELAY_MS)) / 1000.0,
+            _ => 0.0,
+        }
+    }
+}
+
+/// Longest delay a trigger waits (ms).
+pub const MAX_DELAY_MS: u32 = 600_000;
 
 fn default_duration() -> u32 {
     300
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 fn is_false(b: &bool) -> bool {

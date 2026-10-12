@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.add",
             "Add interaction",
-            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key (a key or a combination: Shift+K, Ctrl+Alt+Delete; or a controller button: Gamepad A|B|X|Y|LB|RB|LT|RT|View|Menu|LS|RS|Up|Down|Left|Right|Home)}}, action {type: navigate {preserveScroll?}|back|scrollTo {offset? [x, y] (where the layer ends up from the top-left)}|openOverlay {position?, close_on_outside? (default true), background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}} — or {id, dest} for a click-navigate. Returns {index}",
+            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key (a key or a combination: Shift+K, Ctrl+Alt+Delete; or a controller button: Gamepad A|B|X|Y|LB|RB|LT|RT|View|Menu|LS|RS|Up|Down|Left|Right|Home)}}, action {type: navigate {preserveScroll?}|back|scrollTo {offset? [x, y] (where the layer ends up from the top-left)}|openOverlay {position?, offset? [x, y] (position manual: the overlay's top-left from the top-left of the layer that opens it; without it, right below that layer), close_on_outside? (default true), background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}}, delayMs? (mouse enter, leave, down and up: how long after the gesture the actions run, up to 600000)} — or {id, dest} for a click-navigate. Returns {index}",
             true,
             add
         ),
@@ -48,7 +48,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.set",
             "Edit interaction",
-            "{id?, index, interaction {..}} replaces it; or patch fields: {id?, index, trigger?, action? (first action), actions?, transition?, durationMs?, easing?}",
+            "{id?, index, interaction {..}} replaces it; or patch fields: {id?, index, trigger?, action? (first action), actions?, transition?, durationMs?, easing?, delayMs?}",
             true,
             set
         ),
@@ -358,6 +358,32 @@ fn duration(p: &Value) -> Option<u32> {
     num(p, "durationMs").or_else(|| num(p, "duration_ms")).map(|d| d.clamp(0.0, 60_000.0) as u32)
 }
 
+/// The delay of a mouse enter, leave, down or up trigger (`delayMs`), capped.
+fn delay(cmd: &str, p: &Value) -> Result<Option<u32>> {
+    match get(p, "delayMs").or_else(|| get(p, "delay_ms")) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => match f64_of(v).filter(|d| d.is_finite() && *d >= 0.0) {
+            Some(d) => Ok(Some(d.min(f64::from(MAX_DELAY_MS)).round() as u32)),
+            None => Err(bad(cmd, "delayMs: milliseconds, 0 or more")),
+        },
+    }
+}
+
+/// A delay only where it applies (mouse enter, leave, down and up), and a manual offset only on a
+/// manual overlay, within what the player places.
+fn settle(it: &mut Interaction) {
+    if it.delay_secs() == 0.0 {
+        it.delay_ms = 0;
+    }
+    it.delay_ms = it.delay_ms.min(MAX_DELAY_MS);
+    walk_mut(&mut it.actions, &mut |a| {
+        if let Action::OpenOverlay { position, offset, .. } = a {
+            *offset =
+                offset.filter(|o| *position == OverlayPosition::Manual && o.iter().all(|c| c.is_finite())).map(|o| o.map(|c| c.clamp(-1e5, 1e5)));
+        }
+    });
+}
+
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "proto.interaction.add";
     let p = &super::proto_actions::with_expressions(cmd, &s.doc()?.variables, p)?;
@@ -370,6 +396,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
             transition: parse(cmd, p, "transition")?.unwrap_or_default(),
             duration_ms: duration(p).unwrap_or(300),
             easing: parse(cmd, p, "easing")?.unwrap_or_default(),
+            delay_ms: 0,
         }
     } else {
         let trigger: Trigger = parse(cmd, p, "trigger")?.unwrap_or_default();
@@ -379,9 +406,11 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         };
         let transition: Transition = parse(cmd, p, "transition")?.unwrap_or_default();
         let easing: Easing = parse(cmd, p, "easing")?.unwrap_or_default();
-        Interaction { trigger, actions, transition, duration_ms: duration(p).unwrap_or(300), easing }
+        Interaction { trigger, actions, transition, duration_ms: duration(p).unwrap_or(300), easing, delay_ms: 0 }
     };
     let mut it = it;
+    it.delay_ms = delay(cmd, p)?.unwrap_or(0);
+    settle(&mut it);
     canonical_ids(s.doc()?, &mut it);
     check_dests(cmd, s, &it)?;
     let mut index = 0;
@@ -408,6 +437,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let transition: Option<Transition> = parse(cmd, p, "transition")?;
     let easing: Option<Easing> = parse(cmd, p, "easing")?;
     let dur = duration(p);
+    let wait = delay(cmd, p)?;
     let mut hit = false;
     for i in req_targets(cmd, s, p)? {
         let Some(cur) = s.doc()?.get(i)?.interactions.get(k).cloned() else { continue };
@@ -433,6 +463,10 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(d) = dur {
             it.duration_ms = d;
         }
+        if let Some(d) = wait {
+            it.delay_ms = d;
+        }
+        settle(&mut it);
         if it.actions.is_empty() {
             return Err(bad(cmd, "an interaction needs an action"));
         }

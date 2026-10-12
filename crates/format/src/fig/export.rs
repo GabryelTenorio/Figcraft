@@ -162,7 +162,7 @@ message VariableDataValuesEntry GUID modeID=1, VariableData variableData=2
 message VariableDataValues VariableDataValuesEntry[] entries=1
 message KeyTrigger int[] keyCodes=1, TriggerDevice triggerDevice=2
 message PrototypeEvent InteractionType interactionType=1, float transitionTimeout=6, KeyTrigger keyTrigger=4
-message PrototypeAction GUID transitionNodeID=1, TransitionType transitionType=2, float transitionDuration=3, EasingType easingType=4, float[] easingFunction=12, ConnectionType connectionType=7, NavigationType navigationType=10, string connectionURL=8, bool transitionPreserveScroll=11
+message PrototypeAction GUID transitionNodeID=1, TransitionType transitionType=2, float transitionDuration=3, EasingType easingType=4, float[] easingFunction=12, ConnectionType connectionType=7, Vector overlayRelativePosition=9, NavigationType navigationType=10, string connectionURL=8, bool transitionPreserveScroll=11
 message PrototypeInteraction PrototypeEvent event=2, PrototypeAction[] actions=3
 message PrototypeStartingPoint string name=1, string position=3
 message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
@@ -538,7 +538,7 @@ impl<'d> Exporter<'d> {
                 _ => {}
             }
             for a in n.interactions.iter().flat_map(|it| figcraft_doc::proto::walk(&it.actions)) {
-                if let Action::OpenOverlay { dest, position, close_on_outside, background } = a {
+                if let Action::OpenOverlay { dest, position, close_on_outside, background, .. } = a {
                     let o = Overlay { position: *position, close_on_outside: *close_on_outside, background: *background };
                     match self.overlays.get(dest) {
                         Some(old) if (old.position, old.close_on_outside, old.background) != (o.position, o.close_on_outside, o.background) => {
@@ -2055,6 +2055,10 @@ impl<'d> Exporter<'d> {
                 "ON_KEY_DOWN"
             }
         };
+        // A mouse trigger's delay is the event's timeout.
+        if it.delay_secs() > 0.0 {
+            event.push(("transitionTimeout", fl(it.delay_secs())));
+        }
         event.insert(0, ("interactionType", e(ty)));
         let actions: Vec<Kv> = it.actions.iter().filter_map(|a| self.action(a, it)).collect();
         (!actions.is_empty()).then(|| o(vec![("event", o(event)), ("actions", arr(actions))]))
@@ -2079,7 +2083,13 @@ impl<'d> Exporter<'d> {
                 }
                 Some(act)
             }
-            Action::OpenOverlay { dest, .. } => node(self, dest, "OVERLAY"),
+            Action::OpenOverlay { dest, position, offset, .. } => {
+                let mut act = node(self, dest, "OVERLAY")?;
+                if let (Kv::Object(f), OverlayPosition::Manual, Some([x, y])) = (&mut act, position, offset) {
+                    f.push(("overlayRelativePosition", o(vec![("x", fl(*x)), ("y", fl(*y))])));
+                }
+                Some(act)
+            }
             Action::SwapOverlay { dest } => node(self, dest, "SWAP"),
             Action::ChangeTo { dest } => node(self, dest, "SWAP_STATE"),
             Action::ScrollTo { dest, offset } => {

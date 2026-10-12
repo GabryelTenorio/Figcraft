@@ -38,6 +38,17 @@ use crate::icons::{self, Icon};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
 use crate::widgets;
 
+/// A mouse trigger waiting out its delay: interaction `k` of `node`, hit at `rect` while `root`
+/// (the screen or the top overlay) showed; due at `due` on the player's clock.
+#[derive(Clone, Copy, Debug)]
+struct Waiting {
+    node: NodeId,
+    k: usize,
+    rect: Option<Rect>,
+    root: NodeId,
+    due: f64,
+}
+
 /// A page in the player's history (what Back returns to, and how).
 #[derive(Clone, Debug)]
 pub struct Visit {
@@ -56,6 +67,8 @@ pub struct OverlayState {
     pub background: Option<Color>,
     /// Screen rect of the layer that opened it (manual position).
     pub anchor: Option<Rect>,
+    /// Manual position: the overlay's top-left from the anchor's (page units).
+    pub offset: Option<[f64; 2]>,
     opened: f64,
     transition: Transition,
     dur: f64,
@@ -259,6 +272,8 @@ pub struct Presenter {
     textures: HashMap<NodeId, FrameTex>,
     arrived: f64,
     delays_fired: HashSet<(NodeId, usize)>,
+    /// Mouse triggers waiting out their delay.
+    waiting: Vec<Waiting>,
     hovered: Vec<NodeId>,
     press: Option<Pos2>,
     dragged: bool,
@@ -335,6 +350,7 @@ impl Presenter {
             textures: HashMap::new(),
             arrived: -1.0,
             delays_fired: HashSet::new(),
+            waiting: Vec::new(),
             hovered: Vec::new(),
             press: None,
             dragged: false,
@@ -572,6 +588,7 @@ impl Presenter {
             "hotspotHints": self.view.hotspot_hints,
             "hotspots": self.hot.iter().map(|(id, r)| json!({"id": id, "rect": [r.min.x, r.min.y, r.max.x, r.max.y]})).collect::<Vec<_>>(),
             "hotspotFlash": self.flash_until > self.clock,
+            "waiting": self.waiting.len(),
             "inspect": self.view.inspect,
             "inspected": self.inspected,
             "deviceColor": doc.and_then(|d| page_settings(d, self.current).device_color()).map(|c| c.name),
@@ -612,6 +629,7 @@ impl Presenter {
         }
         self.arrived = now;
         self.delays_fired.clear();
+        self.waiting.clear();
         self.hovered.clear();
         self.rev += 1;
     }
@@ -671,6 +689,34 @@ impl Presenter {
         self.stop_scrolling();
         self.hovered.clear();
         self.rev += 1;
+    }
+
+    /// A mouse enter, leave, down or up on `node` (shown on `root`) met its interaction `k`: its
+    /// actions run now, or after its delay while `root` is still what shows (again once only
+    /// while it waits).
+    fn gesture(&mut self, node: NodeId, k: usize, rect: Option<Rect>, now: f64, root: NodeId) -> bool {
+        let delay = self.doc.as_ref().and_then(|d| d.node(node)).and_then(|n| n.interactions.get(k)).map_or(0.0, |it| it.delay_secs());
+        if delay <= 0.0 {
+            return self.fire(node, k, rect, now);
+        }
+        if !self.waiting.iter().any(|w| (w.node, w.k) == (node, k)) {
+            self.waiting.push(Waiting { node, k, rect, root, due: now + delay });
+        }
+        false
+    }
+
+    /// Run the delayed mouse triggers that are due (those whose screen or overlay went away are
+    /// dropped). True when one changed what shows.
+    fn fire_waiting(&mut self, root: NodeId, now: f64) -> bool {
+        let (due, later): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.waiting).into_iter().partition(|w| w.due <= now);
+        self.waiting = later;
+        self.waiting.retain(|w| w.root == root);
+        let mut did = false;
+        for w in due.into_iter().filter(|w| w.root == root) {
+            // An earlier one may have left the screen: the rest are dropped with it.
+            did = did || self.fire(w.node, w.k, w.rect, now);
+        }
+        did
     }
 
     /// Run the actions of interaction `k` on `node`. `rect` is the layer's screen rect.
@@ -753,7 +799,7 @@ impl Presenter {
                 }
                 true
             }
-            Action::OpenOverlay { dest, position, close_on_outside, background } => {
+            Action::OpenOverlay { dest, position, close_on_outside, background, offset } => {
                 if !doc.contains(*dest) {
                     return false;
                 }
@@ -764,6 +810,7 @@ impl Presenter {
                     close_on_outside: *close_on_outside,
                     background: *background,
                     anchor: rect,
+                    offset: *offset,
                     opened: now,
                     transition: tr,
                     dur,
@@ -791,6 +838,7 @@ impl Presenter {
                         close_on_outside: true,
                         background: None,
                         anchor: rect,
+                        offset: None,
                         opened: now,
                         transition: tr,
                         dur,
@@ -1351,8 +1399,10 @@ pub fn transition_frames(tr: Transition, t: f32) -> FramePlacement {
     }
 }
 
-/// Screen rect of an overlay of `size` over the frame drawn at `base`.
-pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option<Rect>) -> Rect {
+/// Screen rect of an overlay of `size` over the frame drawn at `base`. A manual one sits `offset`
+/// (screen points) from the top-left of `anchor`, the layer that opened it; without an offset,
+/// right below it.
+pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option<Rect>, offset: Option<Vec2>) -> Rect {
     let cx = base.center().x - size.x / 2.0;
     let cy = base.center().y - size.y / 2.0;
     let (x, y) = match pos {
@@ -1363,7 +1413,11 @@ pub fn overlay_rect(pos: OverlayPosition, base: Rect, size: Vec2, anchor: Option
         OverlayPosition::BottomLeft => (base.min.x, base.max.y - size.y),
         OverlayPosition::BottomCenter => (cx, base.max.y - size.y),
         OverlayPosition::BottomRight => (base.max.x - size.x, base.max.y - size.y),
-        OverlayPosition::Manual => anchor.map(|a| (a.min.x, a.max.y)).unwrap_or((cx, cy)),
+        OverlayPosition::Manual => match (anchor, offset) {
+            (Some(a), Some(o)) => (a.min.x + o.x, a.min.y + o.y),
+            (Some(a), None) => (a.min.x, a.max.y),
+            (None, _) => (cx, cy),
+        },
     };
     Rect::from_min_size(pos2(x, y), size)
 }
@@ -1527,7 +1581,8 @@ fn layout(p: &mut Presenter, area: Rect, chrome: Chrome) -> Option<Layout> {
     let place_overlay = |o: &OverlayState| {
         let ob = disp.world_bounds(o.id)?;
         let size = vec2((ob.width() * scale) as f32, (ob.height() * scale) as f32);
-        let r = overlay_rect(o.position, screen, size, o.anchor);
+        let offset = o.offset.map(|[x, y]| vec2((x * scale) as f32, (y * scale) as f32));
+        let r = overlay_rect(o.position, screen, size, o.anchor, offset);
         Some((o.id, Place { page_min: (ob.x0, ob.y0), origin: r.min, scale }, r))
     };
     let overlays = p.overlays.iter().filter_map(place_overlay).collect();
@@ -1964,6 +2019,10 @@ fn player(p: &mut Presenter, ui: &mut Ui, rect: Rect, now: f64, chrome: Chrome) 
     {
         crate::repaint_in(&ctx, due.min(60.0));
     }
+    // And for the soonest mouse trigger waiting out its delay.
+    if let Some(due) = p.waiting.iter().map(|w| w.due - now).reduce(f64::min) {
+        crate::repaint_in(&ctx, due.clamp(0.0, 60.0));
+    }
     action
 }
 
@@ -2222,6 +2281,9 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     let doc = &l.disp;
     let hot = hotspots(doc, root, &place, clip);
     p.hot.clone_from(&hot);
+    if p.fire_waiting(root, now) {
+        return;
+    }
     // "While hovering / pressing" reverts.
     if let Some(tmp) = &p.temp {
         let leave = if tmp.press { released || !down } else { pos.is_none_or(|q| !tmp.rect.contains(q)) };
@@ -2280,14 +2342,14 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
     p.hovered = ids;
     for id in left {
         if let Some(k) = find_trigger(doc, id, |t| *t == Trigger::MouseLeave)
-            && p.fire(id, k, None, now)
+            && p.gesture(id, k, None, now, root)
         {
             return;
         }
     }
     for (id, r) in &entered {
         if let Some(k) = find_trigger(doc, *id, |t| *t == Trigger::MouseEnter)
-            && p.fire(*id, k, Some(*r), now)
+            && p.gesture(*id, k, Some(*r), now, root)
         {
             return;
         }
@@ -2319,7 +2381,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
             return;
         }
         if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseDown)
-            && p.fire(id, k, Some(r), now)
+            && p.gesture(id, k, Some(r), now, root)
         {
             return;
         }
@@ -2389,7 +2451,7 @@ fn input(p: &mut Presenter, ctx: &egui::Context, l: &Layout, over_area: bool, ke
         p.dragged = false;
         p.drag_scroll = None;
         if let Some((id, k, r)) = pick(&|t| *t == Trigger::MouseUp)
-            && p.fire(id, k, Some(r), now)
+            && p.gesture(id, k, Some(r), now, root)
         {
             return;
         }
@@ -2615,6 +2677,10 @@ mod behaviour_tests;
 mod tail_tests;
 
 #[cfg(test)]
+#[path = "present_delay_tests.rs"]
+mod delay_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use figcraft_doc::NodeKind;
@@ -2637,6 +2703,7 @@ mod tests {
             close_on_outside: true,
             background: None,
             anchor: None,
+            offset: None,
             opened,
             transition,
             dur: 0.3,
@@ -2906,11 +2973,11 @@ mod tests {
     fn overlay_positions() {
         let base = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 800.0));
         let size = vec2(200.0, 100.0);
-        assert_eq!(overlay_rect(OverlayPosition::Center, base, size, None).min, pos2(100.0, 350.0));
-        assert_eq!(overlay_rect(OverlayPosition::BottomCenter, base, size, None).min, pos2(100.0, 700.0));
-        assert_eq!(overlay_rect(OverlayPosition::TopRight, base, size, None).min, pos2(200.0, 0.0));
+        assert_eq!(overlay_rect(OverlayPosition::Center, base, size, None, None).min, pos2(100.0, 350.0));
+        assert_eq!(overlay_rect(OverlayPosition::BottomCenter, base, size, None, None).min, pos2(100.0, 700.0));
+        assert_eq!(overlay_rect(OverlayPosition::TopRight, base, size, None, None).min, pos2(200.0, 0.0));
         let anchor = Rect::from_min_size(pos2(30.0, 40.0), vec2(50.0, 20.0));
-        assert_eq!(overlay_rect(OverlayPosition::Manual, base, size, Some(anchor)).min, pos2(30.0, 60.0));
+        assert_eq!(overlay_rect(OverlayPosition::Manual, base, size, Some(anchor), None).min, pos2(30.0, 60.0));
     }
 
     /// Smart animate renders a temporary document per animation frame; keep that cheap.

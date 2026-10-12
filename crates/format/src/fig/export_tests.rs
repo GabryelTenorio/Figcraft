@@ -510,6 +510,7 @@ impl Gen {
                         [(dest.0 % 4) as usize],
                     close_on_outside: true,
                     background: Some(Color::new(0.0, 0.0, 0.0, 0.5)),
+                    offset: None,
                 },
                 3 => Action::SwapOverlay { dest },
                 4 => Action::ChangeTo { dest },
@@ -539,7 +540,8 @@ impl Gen {
                 Easing::Gentle,
                 Easing::CustomBezier { x1: 0.25, y1: 0.125, x2: 0.5, y2: 1.0 },
             ]);
-            let it = Interaction { trigger, actions: vec![action], transition, duration_ms: 10 * (1 + self.r.below(100) as u32), easing };
+            let it =
+                Interaction { trigger, actions: vec![action], transition, duration_ms: 10 * (1 + self.r.below(100) as u32), easing, delay_ms: 0 };
             let fixed = self.r.chance(20);
             let n = self.doc.node_mut(id).unwrap();
             n.interactions.push(it);
@@ -984,6 +986,7 @@ fn junk_documents_never_panic() {
                 transition: Transition::Instant,
                 duration_ms: u32::MAX,
                 easing: Easing::default(),
+                delay_ms: u32::MAX,
             });
             match &mut n.kind {
                 NodeKind::Vector { network } => {

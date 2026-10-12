@@ -1017,6 +1017,9 @@ impl<'a> Mapper<'a> {
                 if let Some(b) = a.get("transitionPreserveScroll").and_then(Kv::bool) {
                     act["preserveScrollPosition"] = json!(b);
                 }
+                if let Some(p) = a.get("overlayRelativePosition") {
+                    act["overlayRelativePosition"] = json!({"x": num(p, "x"), "y": num(p, "y")});
+                }
                 act
             }
             Some("URL") => json!({"type": "URL", "url": a.get("connectionURL").and_then(Kv::str)?}),

@@ -27,7 +27,8 @@ fn setup() -> (Document, NodeId, NodeId, NodeId) {
 }
 
 fn on_click(doc: &mut Document, node: NodeId, actions: Vec<Action>) {
-    let it = Interaction { trigger: Trigger::OnClick, actions, transition: Default::default(), duration_ms: 0, easing: Default::default() };
+    let it =
+        Interaction { trigger: Trigger::OnClick, actions, transition: Default::default(), duration_ms: 0, easing: Default::default(), delay_ms: 0 };
     doc.get_mut(node).unwrap().interactions.push(it);
 }
 

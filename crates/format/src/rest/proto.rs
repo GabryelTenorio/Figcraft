@@ -13,6 +13,8 @@ use super::Ctx;
 use super::props::{color, flag, list, num, text};
 use super::variables;
 
+/// Farthest a manual overlay sits from the layer that opens it (page units, each way).
+const MAX_OFFSET: f64 = 100_000.0;
 /// Longest transition or delay kept (ms).
 const MAX_MS: f64 = 60_000.0;
 /// Most blocks of one conditional and arguments of one expression function read.
@@ -135,11 +137,15 @@ impl Ctx<'_> {
             transition: if ms > 0 { Transition::Dissolve } else { Transition::Instant },
             duration_ms: if ms > 0 { ms } else { DEFAULT_MS },
             easing: easing_type(text(j, "transitionEasing"), None),
+            delay_ms: 0,
         })
     }
 
     fn interaction(&mut self, it: &Value) -> Option<Interaction> {
-        let trigger = self.trigger(it.get("trigger").filter(|t| t.is_object())?)?;
+        let t = it.get("trigger").filter(|t| t.is_object())?;
+        let trigger = self.trigger(t)?;
+        // Mouse enter, leave, down and up wait before they act (`.fig` files name it `timeout`).
+        let delay_ms = num(t, "delay").or_else(|| num(t, "timeout")).filter(|d| d.is_finite()).map_or(0, |d| d.clamp(0.0, MAX_MS) as u32);
         let mut actions = Vec::new();
         let mut transition: Option<&Value> = None;
         for a in list(it, "actions") {
@@ -153,26 +159,24 @@ impl Ctx<'_> {
             Some(t) => self.transition(t),
             None => (Transition::Instant, DEFAULT_MS, Easing::default()),
         };
-        Some(Interaction { trigger, actions, transition, duration_ms, easing })
+        let mut it = Interaction { trigger, actions, transition, duration_ms, easing, delay_ms };
+        if it.delay_secs() == 0.0 {
+            it.delay_ms = 0;
+        }
+        Some(it)
     }
 
     fn trigger(&mut self, t: &Value) -> Option<Trigger> {
-        let mouse = |cx: &mut Self, tr: Trigger| {
-            if num(t, "delay").is_some_and(|d| d > 0.0) {
-                cx.warn("delays on mouse enter/leave/down/up triggers are not supported and were dropped");
-            }
-            Some(tr)
-        };
         match text(t, "type") {
             Some("ON_CLICK") => Some(Trigger::OnClick),
             Some("ON_HOVER") => Some(Trigger::OnHover),
             Some("ON_PRESS") => Some(Trigger::OnPress),
             Some("ON_DRAG") => Some(Trigger::OnDrag),
             Some("AFTER_TIMEOUT") => Some(Trigger::AfterDelay { ms: num(t, "timeout").unwrap_or(0.0).clamp(0.0, MAX_MS) as u32 }),
-            Some("MOUSE_ENTER") => mouse(self, Trigger::MouseEnter),
-            Some("MOUSE_LEAVE") => mouse(self, Trigger::MouseLeave),
-            Some("MOUSE_DOWN") => mouse(self, Trigger::MouseDown),
-            Some("MOUSE_UP") => mouse(self, Trigger::MouseUp),
+            Some("MOUSE_ENTER") => Some(Trigger::MouseEnter),
+            Some("MOUSE_LEAVE") => Some(Trigger::MouseLeave),
+            Some("MOUSE_DOWN") => Some(Trigger::MouseDown),
+            Some("MOUSE_UP") => Some(Trigger::MouseUp),
             Some(ty @ ("ON_KEY_DOWN" | "ON_KEY_UP")) => {
                 let codes: Vec<f64> = list(t, "keyCodes").iter().filter_map(Value::as_f64).collect();
                 // Controllers: their codes read as standard-layout button indices; one button each.
@@ -311,7 +315,14 @@ impl Ctx<'_> {
                     .filter(|b| text(b, "type") == Some("SOLID_COLOR"))
                     .and_then(|b| b.get("color"))
                     .and_then(color);
-                Action::OpenOverlay { dest, position, close_on_outside, background }
+                // A manual overlay sits that far from the top-left of the layer that opens it.
+                let offset = a
+                    .get("overlayRelativePosition")
+                    .filter(|_| position == OverlayPosition::Manual)
+                    .and_then(|v| Some([num(v, "x")?, num(v, "y")?]))
+                    .filter(|o| o.iter().all(|c| c.is_finite()))
+                    .map(|o| o.map(|c| c.clamp(-MAX_OFFSET, MAX_OFFSET)));
+                Action::OpenOverlay { dest, position, close_on_outside, background, offset }
             }
             Some(_) => {
                 self.warn("prototype navigations of unknown types were skipped");

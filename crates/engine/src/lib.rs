@@ -1466,6 +1466,8 @@ mod proto_behaviour_tests;
 #[cfg(test)]
 mod proto_conditional_tests;
 #[cfg(test)]
+mod proto_delay_tests;
+#[cfg(test)]
 mod proto_multi_tests;
 #[cfg(test)]
 mod proto_polish_tests;

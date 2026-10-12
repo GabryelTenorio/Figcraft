@@ -222,7 +222,7 @@ fn interactions_triggers_actions_and_transitions() {
     assert_eq!(its[1].trigger, Trigger::AfterDelay { ms: 800 });
     assert_eq!(its[1].transition, Transition::MoveIn { direction: Direction::Right });
     assert_eq!(its[1].easing, Easing::CustomSpring { mass: 1.0, stiffness: 200.0, damping: 20.0 });
-    let Action::OpenOverlay { dest, position, close_on_outside, background } = &its[1].actions[0] else { panic!("{:?}", its[1]) };
+    let Action::OpenOverlay { dest, position, close_on_outside, background, .. } = &its[1].actions[0] else { panic!("{:?}", its[1]) };
     assert_eq!((*dest, *position, *close_on_outside), (id("Menu"), OverlayPosition::TopRight, false));
     assert!(background.is_some_and(|b| (b.a - 0.4).abs() < 1e-3));
 
