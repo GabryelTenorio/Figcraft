@@ -279,7 +279,7 @@ pub static KEYS: &[Binding] = &[
     // Alt+Space opens the window menu on Windows; the documented Windows key is Ctrl+Space.
     k(Selection, "select.area", &["Alt+Space", "F8"])
         .win(&["Ctrl+Space", "F8"])
-        .label("Select with a box from the keyboard (arrows move it, Shift+arrows size it, Enter selects)"),
+        .label("Select with a box from the keyboard (arrows move it, Shift or Cmd/Ctrl+arrows size it, Enter selects)"),
     // Edit
     k(Edit, "edit.undo", &["Cmd+Z"]),
     k(Edit, "edit.redo", &["Shift+Cmd+Z"]),

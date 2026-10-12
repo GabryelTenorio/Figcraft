@@ -129,7 +129,7 @@ Breadth: does it exist. Ready: depth, correctness and fidelity for real projects
 | Stability | 8 | 55% | 20–40 | Never-crash lints, command guard with rollback, recovery copies, 963 tests incl. junk-parameter sweeps and a seeded retained-render walk; but two days old, one release (v0.2.0), no field reports, QA mostly on macOS | [gaps](gaps.md) |
 | Performance | 6 | 60% | 30–60 | `cargo xtask bench`: 50k-layer page ~8 ms zoomed out, 10k-layer edits ~0.2 ms, 2,000-instance design system edits 4–64 ms; CPU (tiny-skia) canvas where Figma renders on the GPU; nothing timed against Figma on the same file | [hardware-parity](hardware-parity.md) |
 | Hardware | 3 | 60% | 10–21 | Trackpad pinch and HiDPI yes; pen pressure on Windows and from browser styluses (none from macOS/Linux tablets); several windows (screen-reader tree in the main one only); no GPU canvas, no P3 on screen | [hardware-parity](hardware-parity.md) |
-| Localization | 3 | 39% | 29–51 | The layer, an English catalog and machine drafts of Spanish (with a Latin American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese (none reviewed by a native speaker; five lack the 25 newest strings), CJK UI text in installed faces loaded on demand (web: only the craft-fonts CJK build); engine messages stay English | [localization-parity](localization-parity.md) |
+| Localization | 3 | 39% | 29–51 | The layer, an English catalog and machine drafts of Spanish (with a Latin American overlay), French, German, Brazilian Portuguese, Japanese, Korean and Simplified Chinese (none reviewed by a native speaker; every draft covers all current strings), CJK UI text in installed faces loaded on demand (web: only the craft-fonts CJK build); engine messages stay English | [localization-parity](localization-parity.md) |
 | Platforms | 3 | 75% | 10–20 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web all packaged (v0.2.0); Figma also has iOS/Android apps; non-macOS QA thin | [hardware-parity](hardware-parity.md) |
 | Ecosystem/plugins | 3 | 38% | 8–26 | Own WASM plugins with a Rust SDK and three examples (#101), plugin panels and settings (ABI v2), widgets that take clicks (API 3), a self-hosted plugin directory on `figcraft-server`; no Figma plugin compatibility, no public catalogue or community files; the CLI, control channel and MCP server are ahead of Figma for agents | [gaps](gaps.md) |
 | AI features | 2 | 0% | 30–60 | None | [gaps](gaps.md) |
@@ -450,8 +450,8 @@ Hours in this narrative are the builders' estimates; the tables above supersede 
    (Alt+/, Shift+/), outlines on Shift+Cmd+O, pixel grid on Shift+' (and Cmd+'), Shift+E / Shift+D and the other panel keys, Ctrl+Tab between files, Shift+B (and B) for the paint bucket in vector edit mode; the Keyboard
    shortcuts panel docks at the bottom with a tab per group and search, keycaps per platform.
    A shortcut parity suite (`shortcut_parity_tests.rs`) checks every documented shortcut on both
-   platforms (129 rows: 126 bound, 1 moved off a documented conflict, 2 missing: moving the
-   rotation origin and placing an object with Enter from the toolbar) and pins the 48 undocumented
+   platforms (129 rows: 128 bound, including moving the rotation origin with Alt+R and placing an
+   object with Enter from the toolbar; 1 moved off a documented conflict) and pins the 48 undocumented
    bindings; others' cursors (`Alt+Cmd+\`), list levels while editing (Cmd/Ctrl+] and [), the
    keyboard box selection on Alt+Space / Ctrl+Space, arrows that pan with nothing selected,
    Control to suspend snapping on macOS and Space/N/C/F while presenting landed with it
