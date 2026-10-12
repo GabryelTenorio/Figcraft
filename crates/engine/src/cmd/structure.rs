@@ -17,6 +17,20 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("object.frameSelection", "Frame selection", "{ids?, name?}", true, |s, p| wrap(s, p, Wrap::Frame)),
         spec!("object.removeFrame", "Remove frame", "{ids?}", true, ungroup),
         spec!(
+            "object.convertToGroup",
+            "Convert to group",
+            "{ids?} (frames become groups in place, their layers staying where they are; what only a frame has goes: auto layout, fills, strokes, corner radius, clipping, layout grids, guides and scrolling. Groups are left alone; instances, main components, layers inside instances and empty frames are refused)",
+            true,
+            |s, p| convert(s, p, "object.convertToGroup", false)
+        ),
+        spec!(
+            "object.convertToFrame",
+            "Convert to frame",
+            "{ids?} (groups become frames of the same box in place, their layers staying where they are: no fill, not clipping. Frames are left alone; instances, main components and layers inside instances are refused)",
+            true,
+            |s, p| convert(s, p, "object.convertToFrame", true)
+        ),
+        spec!(
             "object.wrapInSection",
             "Wrap in new section",
             "{ids?, name?} (layers on the page or in a section; the section wraps them with some room)",
@@ -172,6 +186,60 @@ fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
     }
     s.set_selection(vec![gid]);
     Ok(json!({"id": gid}))
+}
+
+/// Turn frames into groups or groups into frames in place (same id, name, layers, effects,
+/// opacity, exports and interactions), the layers inside staying where they are on the page.
+/// Nothing changes unless every layer can convert.
+fn convert(s: &mut Session, p: &Value, cmd: &'static str, to_frame: bool) -> Result<Value> {
+    let ids = req_targets(cmd, s, p)?;
+    let doc = s.doc_mut()?;
+    let mut todo = Vec::new();
+    for i in ids {
+        let n = doc.get(i)?;
+        let refuse = |why: &str| Err(bad(cmd, format!("\"{}\" {why}", n.name)));
+        match (&n.kind, to_frame) {
+            (NodeKind::Instance { .. }, _) => return refuse("is an instance: its layers come from its main component (detach it first)"),
+            (NodeKind::Component { .. }, _) => return refuse("is a main component, which stays a frame"),
+            (NodeKind::Frame | NodeKind::Group, _) if crate::components::owning_instance(doc, i).is_some() => {
+                return refuse("is inside an instance: edit its main component, or detach the instance");
+            }
+            (NodeKind::Frame, false) if n.children.is_empty() => return refuse("is empty: a group needs layers"),
+            (NodeKind::Frame, false) | (NodeKind::Group, true) => todo.push(i),
+            (NodeKind::Frame | NodeKind::Group, _) => {}
+            _ => return refuse("is neither a frame nor a group"),
+        }
+    }
+    for i in &todo {
+        if to_frame {
+            // The group's box as it is; nothing painted or clipped, so the look stays.
+            let n = doc.get_mut(*i)?;
+            n.kind = NodeKind::Frame;
+            n.clip = false;
+            n.fills.clear();
+            n.strokes.clear();
+            continue;
+        }
+        let n = doc.get_mut(*i)?;
+        n.kind = NodeKind::Group;
+        (n.layout, n.clip, n.overflow) = (None, false, proto::Overflow::None);
+        n.fills.clear();
+        n.strokes.clear();
+        n.grids.clear();
+        n.guides.clear();
+        n.corners = Corners::default();
+        (n.styles.fill, n.styles.stroke, n.styles.grid) = (None, None, None);
+        // Variables bound to what went would bring it back.
+        n.bound.retain(|k, _| matches!(k.as_str(), "opacity" | "visible"));
+        let kids = n.children.clone();
+        for k in kids {
+            // Out of the flow there is nothing to fill or to be absolute against.
+            doc.get_mut(k)?.child_layout.absolute = false;
+        }
+        figcraft_layout::coherent_sizing(doc, *i);
+        doc.fit_to_children(*i)?;
+    }
+    Ok(json!({"ids": todo}))
 }
 
 fn ungroup(s: &mut Session, p: &Value) -> Result<Value> {

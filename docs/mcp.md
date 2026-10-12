@@ -97,6 +97,8 @@ Or in a project's `.mcp.json`:
     align to the top; nested auto layout frames use their first child's baseline).
   - `wrap` with `crossGap` (alias `rowGap`) for the gap between wrapped rows (horizontal) or
     columns (vertical layouts wrap top to bottom into new columns).
+  - `object.convertToGroup` / `object.convertToFrame` turn a frame into a group or back in place
+    (layers stay put; a group has no auto layout, fill, stroke, corner radius, clipping or grids).
   - `contentAlign` (wrapping layouts): `auto` (default) packs the lines `crossGap` apart at the
     start, centre or end `crossAlign` names (lines of nothing but fill children stretch instead);
     `spaceBetween` puts the free space between the lines (one line, or no free space: like `auto`).

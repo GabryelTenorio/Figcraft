@@ -458,6 +458,18 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         None => tr("Mixed").into(),
     };
     let is_frame = sel.len() == 1 && sel.first().and_then(|i| doc.node(*i)).is_some_and(|n| matches!(n.kind, NodeKind::Frame));
+    // Frames and groups convert into each other from the type menu.
+    let is_group = !sel.is_empty() && sel.iter().all(|i| doc.node(*i).is_some_and(|n| matches!(n.kind, NodeKind::Group)));
+    let kind_items = |app: &mut FigApp, ui: &mut Ui, frame: bool| {
+        for (to_frame, label, cmd) in [(true, tr("Frame"), "object.convertToFrame"), (false, tr("Group"), "object.convertToGroup")] {
+            if menu_check(ui, to_frame == frame, label, "") {
+                if to_frame != frame {
+                    app.run(cmd, json!({"ids": sel}));
+                }
+                ui.close();
+            }
+        }
+    };
     let w = ui.available_width();
     let (r, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     let lr = Rect::from_min_size(pos2(r.min.x + 8.0, r.center().y - 12.0), vec2(120.0, 24.0));
@@ -466,13 +478,18 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         ui.painter().rect_filled(lr, CornerRadius::same(5), t.hover);
     }
     ui.painter().text(pos2(lr.min.x + 8.0, lr.center().y), Align2::LEFT_CENTER, &label, semibold(13.0), t.text);
-    if is_frame {
+    if is_frame || is_group {
         icons::paint(
             ui.painter(),
             Rect::from_center_size(pos2(lr.min.x + 18.0 + label.len() as f32 * 6.5, lr.center().y), vec2(10.0, 10.0)),
             Icon::Chevron,
             t.icon_secondary,
         );
+    }
+    if is_group {
+        menu_popup(&resp).width(180.0).show(|ui| kind_items(app, ui, false));
+    }
+    if is_frame {
         let sr = Rect::from_min_size(pos2(lr.max.x + 4.0, r.center().y - 12.0), vec2(24.0, 24.0));
         let sresp = ui.interact(sr, ui.id().with("swap_orient"), Sense::click()).tip(tr("Swap orientation"));
         if sresp.hovered() {
@@ -485,6 +502,8 @@ fn header(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
         let ids: Vec<NodeId> = sel.to_vec();
         menu_popup(&resp).width(260.0).show(|ui| {
             egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                kind_items(app, ui, true);
+                ui.separator();
                 let mut cat = "";
                 for (c, name, pw, ph) in figcraft_engine::cmd::create::FRAME_PRESETS {
                     if *c != cat {
