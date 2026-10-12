@@ -221,7 +221,7 @@ fn connect(cfg: &GuestConfig) -> Result<Conn, String> {
 }
 
 fn supervise(cfg: &GuestConfig, inbox: &Inbox, rx: &Receiver<Cmd>, me: &Sender<Cmd>) {
-    let resume: Arc<Resuming> = Arc::default();
+    let resume: Arc<Resuming> = Arc::new(std::sync::Mutex::new(cfg.resume));
     let mut attempt = 0u32;
     let mut was_live = false;
     let mut pending: Option<Presence> = None;

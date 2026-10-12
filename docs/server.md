@@ -142,8 +142,12 @@ screen lists them under **Online**:
   others get into (a file you share or joined), a closed ring for a file of yours on a server that
   only you get into now. Messages about a file that isn't in front name it ("Ada joined
   Homepage").
-- **After a crash**, a file of yours that was open and in step with its server opens again from
-  the server as its owner, rather than as an unsaved recovery copy.
+- **After a crash**, a file of yours that was open opens again from the server as its owner, and
+  the recovery copy of it is kept until it is known that nothing in it is missing there: changes
+  of yours that never reached the server (it was unreachable, or the app died first) are put back
+  on top and sent to everyone ("Recovered your changes to …"); if others changed the file in the
+  meantime the copy opens beside it as "… (recovered copy)" for you to compare; if the server
+  can't be reached the copy opens as an unsaved document, as before.
 
 The owner token is a password for that one file: it is kept only in the preferences file of your
 user account (`state.json` in FigCraft's settings folder), is never logged, and never appears in

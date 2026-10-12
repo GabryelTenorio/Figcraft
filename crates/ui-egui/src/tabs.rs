@@ -83,6 +83,7 @@ pub fn tab_bar(app: &mut FigApp, ui: &mut Ui) {
                 Some(false) => trf("{name}, online, open only to you", &[("name", &name)]),
                 None => name.clone(),
             };
+            let resp = if live.is_some() { resp.on_hover_text(&label) } else { resp };
             crate::a11y::tab(&resp, &label, active);
             if active {
                 ui.painter().rect_filled(r, CornerRadius::ZERO, t.tab_active);

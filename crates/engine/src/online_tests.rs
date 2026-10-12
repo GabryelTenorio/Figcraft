@@ -335,7 +335,11 @@ fn a_recorded_file_opens_again_as_its_owner_after_a_restart() {
         (&json!("live"), &json!(true), &json!("NEW-ED1-T00"), &json!(true))
     );
     assert!(!peers.to_string().contains(OWNER), "the token stays in the record: {peers}");
-    assert_eq!(s.online_of(s.docs[1].uid), Some((SERVER.to_string(), "f1".to_string())), "what a crash recovery reopens it by");
+    assert_eq!(
+        s.online_of(s.docs[1].uid).map(|(server, file, _)| (server, file)),
+        Some((SERVER.to_string(), "f1".to_string())),
+        "what a crash recovery finds it by"
+    );
     assert_eq!(s.online_of(s.docs[0].uid), None);
     assert_eq!(ex(&mut s, "collab.files", json!({}))["files"][0]["document"], 1);
     // Stop sharing as the owner: the recorded token, the recorded links.

@@ -15,15 +15,16 @@
 
 use std::collections::BTreeMap;
 
+use figcraft_collab::Change;
 use figcraft_collab::code;
-use figcraft_collab::message::{Admin, AdminReply, OwnedFile};
+use figcraft_collab::message::{Admin, AdminReply, OwnedFile, Resume};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 
 use crate::cmd::CommandSpec;
 use crate::live::{Access, Live, NetReply, NetRequest, Published, Share, Shared, SharedLink, Status, Via, clean_shared};
 use crate::params::{req_string, string};
-use crate::{Result, Session, bad, spec};
+use crate::{DocState, Result, Session, bad, spec};
 
 /// Most files remembered: recording another drops the one opened longest ago.
 pub const MAX_ONLINE_FILES: usize = 200;
@@ -91,6 +92,17 @@ pub enum ServerProblem {
 
 /// Servers whose files couldn't be asked about at the last refresh, by address.
 pub type Problems = BTreeMap<String, ServerProblem>;
+
+/// A recovery copy of one of your online files (`collab.recoverFile`): the file is being joined
+/// again as session `session`, and the copy waits to be compared with what arrives.
+pub struct Recovering {
+    pub session: u64,
+    /// The copy, as the unsaved document it opens as when it can't be merged.
+    copy: Box<DocState>,
+    /// Who the app was in the file when the copy was written, and the last change of the server's
+    /// it had then: the copy is that state with the app's own unconfirmed changes on top.
+    at: Resume,
+}
 
 /// A name as shown: no control characters, at most 256 characters.
 fn clean_name(s: &str) -> String {
@@ -253,12 +265,65 @@ impl Session {
         }
     }
 
-    /// The recorded file document `uid` is open on as its owner, in step with the server:
-    /// `(server, file id)` (what reopening it after a crash takes).
-    pub fn online_of(&self, uid: u64) -> Option<(String, String)> {
+    /// The recorded file document `uid` is open on as its owner and syncs with (connected or
+    /// trying again): `(server, file id)` and who the app is there with the last change of the
+    /// server's it has. A copy of the document made now is that state plus the app's own changes
+    /// the server hasn't confirmed: what recovering it after a crash takes (`collab.recoverFile`).
+    pub fn online_of(&self, uid: u64) -> Option<(String, String, Resume)> {
         let live = self.live_of(uid);
-        let (server, file) = live.server_file().filter(|_| live.status == Status::Live && live.doc_uid == Some(uid) && live.syncing())?;
-        self.online_index(&server, &file).map(|_| (plain_server(&server), file))
+        let there = matches!(live.status, Status::Live | Status::Reconnecting { .. }) && live.doc_uid == Some(uid);
+        let at = live.client().filter(|_| there)?.resume();
+        let (server, file) = live.server_file()?;
+        self.online_index(&server, &file).map(|_| (plain_server(&server), file, at))
+    }
+
+    /// Settle the recovery copies whose file arrived from its server, or won't (see
+    /// [`recover_file`]). Called when something happened in a session.
+    pub(crate) fn online_recoveries(&mut self) {
+        for r in std::mem::take(&mut self.live.recovering) {
+            match self.live.get(r.session).map(|l| (l.syncing(), l.status.active())) {
+                Some((true, _)) => self.online_merge(r),
+                // Still on its way.
+                Some((false, true)) => self.live.recovering.push(r),
+                // It couldn't be joined, or was left: the copy is what there is.
+                _ => {
+                    let name = r.copy.doc.name.clone();
+                    self.docs.push(*r.copy);
+                    self.active = self.docs.len() - 1;
+                    self.message = Some(format!("{name} couldn't be opened from its server: your recovered copy is open, with its unsaved changes"));
+                }
+            }
+        }
+    }
+
+    /// The file of recovery copy `r` arrived: nothing to do when the server has everything the
+    /// copy has; the copy's changes go on top as one edit when they are provably only the app's
+    /// own unconfirmed ones (the same client, and nothing changed on the server since the copy);
+    /// otherwise the copy opens beside the file.
+    fn online_merge(&mut self, r: Recovering) {
+        let Some(live) = self.live.get(r.session) else { return };
+        let (Some(client), Some(uid)) = (live.client(), live.doc_uid) else { return };
+        let name = r.copy.doc.name.clone();
+        let me = client.resume();
+        let ahead = figcraft_collab::diff(client.view(), &r.copy.doc).map(|d| d.changes);
+        if ahead.as_ref().is_ok_and(Vec::is_empty) {
+            return;
+        }
+        // New layers must be this client's to create (the server refuses anyone else's ids).
+        let own = |changes: &[Change]| changes.iter().all(|c| !matches!(c, Change::Create { id, .. } if id.0 >> 32 != u64::from(me.client_id)));
+        if me == r.at && client.access() == Access::Edit && ahead.as_deref().is_ok_and(own) {
+            let mut doc = (*r.copy.doc).clone();
+            doc.set_client_id(me.client_id);
+            self.apply_remote(uid, std::sync::Arc::new(doc));
+            self.live_edit(uid, Some("Recovered changes"));
+            self.message = Some(format!("Recovered your changes to {name} that hadn't reached the server"));
+            return;
+        }
+        let mut copy = *r.copy;
+        std::sync::Arc::make_mut(&mut copy.doc).name = format!("{name} (recovered copy)");
+        self.docs.push(copy);
+        self.message =
+            Some(format!("{name} changed on the server before your last changes reached it: they are open beside it as “{name} (recovered copy)”"));
     }
 
     /// The session open on recorded file `f`, if one is.
@@ -412,6 +477,14 @@ fn open_file(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(brief(id, status, document, true));
     }
+    let id = join_recorded(s, CMD, i, None)?;
+    Ok(brief(id, "connecting", None, false))
+}
+
+/// Join recorded file `i` as its owner for command `cmd` (`resume`: as the client the app was
+/// there): the new session. The file leads the list.
+fn join_recorded(s: &mut Session, cmd: &str, i: usize, resume: Option<Resume>) -> Result<u64> {
+    let Some(f) = s.prefs.online_files.get(i).cloned() else { return Err(bad(cmd, "no such file")) };
     // Yours on the server: its sharing is this session's to start and stop. The token stays in
     // the record.
     let published = Published {
@@ -424,13 +497,35 @@ fn open_file(s: &mut Session, p: &Value) -> Result<Value> {
         expires: f.expires,
     };
     let share = Share { via: Via::Online, server: f.server.clone(), access: Access::Edit, links: f.shared.clone() };
-    let id = crate::live::start_join(s, CMD, &f.edit, Some(published), Some(share))?;
+    let id = crate::live::start_join(s, cmd, &f.edit, Some(published), Some(share), resume)?;
     // Most recently opened first.
     let mut record = s.prefs.online_files.remove(i);
     record.opened = now();
     s.prefs.online_files.insert(0, record);
     s.online_changed();
-    Ok(brief(id, "connecting", None, false))
+    Ok(id)
+}
+
+/// `collab.recoverFile`: a recovery copy of one of your online files, written while the app was
+/// the client `session`/`client` in it with the server's changes up to `seq`. The file is joined
+/// again as its owner (as that client, when the server still knows it); the copy is kept until
+/// what arrives is compared with it ([`Session::online_recoveries`]), so nothing in it is lost.
+fn recover_file(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "collab.recoverFile";
+    let path = req_string(CMD, p, "path")?;
+    let i = named(s, CMD, p)?;
+    let num = |key: &str| p.get(key).and_then(Value::as_u64).ok_or_else(|| bad(CMD, format!("`{key}` must be a whole number")));
+    let client_id = u32::try_from(num("client")?).map_err(|_| bad(CMD, "`client` must be a client id"))?;
+    let at = Resume { session: num("session")?, client_id, seq: num("seq")? };
+    if s.prefs.online_files.get(i).is_some_and(|f| s.online_session(f).is_some()) {
+        return Err(bad(CMD, "this file is open already"));
+    }
+    let copy = Box::new(crate::cmd::file::recovered(&path)?);
+    // The whole document is asked for (no change is "after" this number): the app has no state
+    // of its own to catch up from.
+    let session = join_recorded(s, CMD, i, Some(Resume { seq: u64::MAX, ..at }))?;
+    s.live.recovering.push(Recovering { session, copy, at });
+    Ok(json!({"session": session, "status": "connecting"}))
 }
 
 fn forget_file(s: &mut Session, p: &Value) -> Result<Value> {
@@ -538,6 +633,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{file, server?} → {forgotten, file, server, onServer}: drops the file from the list on this computer only. The file stays on its server until it expires, and without its owner token it can't be managed from here again (`collab.manageFile {action: \"remove\"}` takes it off the server instead)",
             false,
             forget_file
+        ),
+        spec!(
+            "collab.recoverFile",
+            "Recover online file",
+            "{path (a recovery copy of one of your online files), file, server?, session, client, seq (who the app was in the file when the copy was written, and the server's last change it had: from the note beside the copy)} → {session, status: \"connecting\"}: joins the file again as its owner and keeps the copy until the file arrives. Then: the server has everything in the copy → nothing more; the copy has changes of yours the server never confirmed and nothing else changed there → they are applied on top as one edit (\"Recovered changes\", synced to everyone); anything else changed meanwhile → the copy opens beside the file as “<name> (recovered copy)”; the file can't be joined → the copy opens as an unsaved document. The session's message says which",
+            false,
+            recover_file
         ),
     ]
 }

@@ -84,7 +84,7 @@ impl Client {
 
     /// Start from the server's `Welcome` (which must carry a snapshot).
     pub fn join(welcome: ServerMsg) -> Result<Client, Error> {
-        let ServerMsg::Welcome { session, client_id, seq, catch_up: CatchUp::Snapshot(snapshot), peers, access, .. } = welcome else {
+        let ServerMsg::Welcome { session, client_id, seq, catch_up: CatchUp::Snapshot(snapshot), processed, peers, access } = welcome else {
             return Err(Error::Protocol("expected a welcome with the document".into()));
         };
         let mut confirmed = Replica::from_snapshot(&snapshot)?;
@@ -97,7 +97,9 @@ impl Client {
             confirmed,
             seq,
             pending: VecDeque::new(),
-            next_batch: 1,
+            // After the batches the server already processed for this id (a client that starts
+            // over under the id it had, e.g. after its app crashed: lower ids would be ignored).
+            next_batch: processed.last_batch.saturating_add(1),
             next_id,
             peers: peers.into_iter().map(|p| (p.client_id, p)).collect(),
             presence: BTreeMap::new(),

@@ -137,8 +137,13 @@ fn main() -> eframe::Result {
     if let Some(prefs) = svc.prefs.clone() {
         session.prefs = prefs;
     }
-    let recovered = recovery_root.as_deref().map_or(0, |r| recovery::recover(r, &mut session));
-    *recovery::lock(&recovery) = recovery_root.as_deref().and_then(recovery::Recovery::start);
+    let recovered = recovery_root.as_deref().map(|r| recovery::recover_all(r, &mut session)).unwrap_or_default();
+    let mut copies = recovery_root.as_deref().and_then(recovery::Recovery::start);
+    // Copies of online files stay until their files arrive from their servers.
+    if let Some(r) = copies.as_mut() {
+        r.adopt(recovered.waiting);
+    }
+    *recovery::lock(&recovery) = copies;
     // Plugins installed from a server's plugin directory live with the user's settings.
     session.plugins.install_dir = services::config_dir().map(|d| d.join("Plugins"));
     // Invite links open this app (Windows registers per user at run time; installed builds by
@@ -150,7 +155,7 @@ fn main() -> eframe::Result {
     }
     let mut fig = FigApp::new(session, Box::new(svc));
     fig.ui.home = false;
-    fig.note_recovered(recovered);
+    fig.note_recovered(recovered.copies);
     if let Some(link) = &args.join {
         figcraft_ui_egui::live::open_invite(&mut fig, link);
     }

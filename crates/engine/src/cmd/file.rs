@@ -87,9 +87,7 @@ pub fn specs() -> Vec<CommandSpec> {
             false,
             |s, p| {
                 let path = req_string("file.recover", p, "path")?;
-                let loaded =
-                    read(&path).and_then(|b| figcraft_format::load_bytes_with_versions(&b).map_err(|e| EngineError::Other(e.to_string())))?;
-                s.docs.push(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches).unsaved());
+                s.docs.push(recovered(&path)?);
                 s.active = s.docs.len() - 1;
                 Ok(json!({"index": s.active}))
             }
@@ -412,6 +410,12 @@ fn restore_version(s: &mut Session, p: &Value) -> Result<Value> {
     // The restored design is in the history already: restoring it again keeps nothing new.
     ds.mark_checkpoint();
     Ok(out)
+}
+
+/// The recovery copy at `path` as a document with unsaved changes and no path.
+pub(crate) fn recovered(path: &str) -> Result<DocState> {
+    let loaded = read(path).and_then(|b| figcraft_format::load_bytes_with_versions(&b).map_err(|e| EngineError::Other(e.to_string())))?;
+    Ok(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches).unsaved())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

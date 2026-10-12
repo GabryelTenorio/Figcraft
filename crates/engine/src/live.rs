@@ -46,7 +46,7 @@ use figcraft_collab::code::{self, Code};
 pub use figcraft_collab::message::Signal;
 use figcraft_collab::message::{Admin, AdminReply, ClientMsg, EditingText, LibraryReply, LibraryReq, PluginReply, PluginReq, ServerMsg};
 
-pub use figcraft_collab::message::{Access, HostInfo, utc_date};
+pub use figcraft_collab::message::{Access, HostInfo, Resume, utc_date};
 use figcraft_doc::{Document, NodeId};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -446,6 +446,12 @@ pub trait LiveLink: Send {
     /// Start joining the session behind an invite link, as session `session`. Errors are for
     /// links that can't be used; they never echo the link (it holds the token).
     fn join(&mut self, session: SessionId, link: &str, name: &str) -> std::result::Result<(), String>;
+    /// [`join`](Self::join) as the client `resume` names, when the server still knows it (an app
+    /// that starts over after a crash keeps its id, so what it made before is its own to send).
+    /// A link that can't resume joins as someone new.
+    fn join_resuming(&mut self, session: SessionId, link: &str, name: &str, _resume: Option<Resume>) -> std::result::Result<(), String> {
+        self.join(session, link, name)
+    }
     /// Start uploading `opts.doc` to a server as a new file, then join it with its edit link, as
     /// session `session`: [`Event::Published`] with its links, then the welcome. Errors are for
     /// addresses that can't be used; they never echo the key.
@@ -638,6 +644,9 @@ pub struct Lives {
     pub unsaved: bool,
     /// Servers that couldn't say what became of your files at the last `collab.files {refresh}`.
     pub servers: crate::online::Problems,
+    /// Recovery copies of your online files waiting for their file to arrive from its server
+    /// (`collab.recoverFile`).
+    pub(crate) recovering: Vec<crate::online::Recovering>,
 }
 
 impl Lives {
@@ -664,6 +673,12 @@ impl Lives {
     /// Session `id`, while it runs or shows why it failed.
     pub fn get(&self, id: SessionId) -> Option<&Live> {
         self.sessions.get(&id)
+    }
+
+    /// A recovery copy started with session `id` still waits for its outcome (the app keeps the
+    /// copy's file until it doesn't).
+    pub fn recovering(&self, id: SessionId) -> bool {
+        self.recovering.iter().any(|r| r.session == id)
     }
 
     /// Every session, oldest first.
@@ -916,6 +931,7 @@ impl Session {
             self.live_deferred(id);
             self.live_follow_apply(id);
         }
+        self.online_recoveries();
         true
     }
 
@@ -1381,6 +1397,10 @@ impl Session {
     /// `mine` picks: a window calls it every frame it draws, after input, for the documents it
     /// holds.
     pub fn live_sync_in(&mut self, mine: impl Fn(Option<u64>) -> bool) {
+        // A recovery copy whose session was left has its outcome too.
+        if !self.live.recovering.is_empty() {
+            self.online_recoveries();
+        }
         if self.live.sessions.is_empty() {
             return;
         }
@@ -1805,15 +1825,23 @@ fn join(s: &mut Session, p: &Value) -> Result<Value> {
         None => req_string(CMD, p, "link").map_err(|_| bad(CMD, "give the join `code` you were told, or the invite `link`"))?,
     };
     let link = join_target(&s.prefs.publish_server, &typed).map_err(|e| bad(CMD, e))?;
-    let id = start_join(s, CMD, &link, None, None)?;
+    let id = start_join(s, CMD, &link, None, None, None)?;
     Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
 }
 
 /// Start joining the session behind `link` for command `cmd`: the new session. `published` and
-/// `share`: the file is yours on a server (`collab.openFile`), with what others join it with.
-pub(crate) fn start_join(s: &mut Session, cmd: &str, link: &str, published: Option<Published>, share: Option<Share>) -> Result<SessionId> {
+/// `share`: the file is yours on a server (`collab.openFile`), with what others join it with;
+/// `resume`: as the client you were there.
+pub(crate) fn start_join(
+    s: &mut Session,
+    cmd: &str,
+    link: &str,
+    published: Option<Published>,
+    share: Option<Share>,
+    resume: Option<Resume>,
+) -> Result<SessionId> {
     let (name, tab) = (display_name(&s.prefs), s.tab());
-    let (id, ()) = s.live.start(cmd, |l, id| l.join(id, link, &name).map_err(|e| bad(cmd, e)))?;
+    let (id, ()) = s.live.start(cmd, |l, id| l.join_resuming(id, link, &name, resume).map_err(|e| bad(cmd, e)))?;
     let server = share.as_ref().map(|s| s.server.clone()).unwrap_or_default();
     // The session's file opens in a tab of its own; until then the join shows on this one.
     s.live.open(Live { id, status: Status::Connecting, tab, server, published, share, ..Live::default() });

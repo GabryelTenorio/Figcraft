@@ -8,8 +8,8 @@ use std::time::Duration;
 use figcraft_collab::code;
 use figcraft_collab::message::{Access, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{
-    Bind, Event, HostInfo, HostOptions, LiveLink, NO_SESSION, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionId,
-    SessionInfo, Shared,
+    Bind, Event, HostInfo, HostOptions, LiveLink, NO_SESSION, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Resume, Role,
+    SessionId, SessionInfo, Shared,
 };
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
@@ -161,8 +161,12 @@ impl LiveLink for NetLink {
     }
 
     fn join(&mut self, session: SessionId, link: &str, name: &str) -> Result<(), String> {
+        self.join_resuming(session, link, name, None)
+    }
+
+    fn join_resuming(&mut self, session: SessionId, link: &str, name: &str, resume: Option<Resume>) -> Result<(), String> {
         let (invite, code) = Invite::parse_join(link)?;
-        let cfg = self.guest_config(invite, code, name);
+        let cfg = GuestConfig { resume, ..self.guest_config(invite, code, name) };
         let inbox = self.sessions.inbox();
         let guest = Guest::start(cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
         self.started(session, Active::Guest(guest), inbox);

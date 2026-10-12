@@ -41,6 +41,9 @@ pub struct GuestConfig {
     pub max_backoff: Duration,
     /// Reconnect attempts before giving up.
     pub attempts: u32,
+    /// Join as the client you were (an app that starts over after a crash): the first hello
+    /// carries it, and a server that still knows the id gives it back.
+    pub resume: Option<Resume>,
 }
 
 impl GuestConfig {
@@ -54,6 +57,7 @@ impl GuestConfig {
             backoff: Duration::from_millis(500),
             max_backoff: Duration::from_secs(10),
             attempts: 12,
+            resume: None,
         }
     }
 

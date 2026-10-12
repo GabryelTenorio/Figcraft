@@ -579,9 +579,26 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   link in an ordinary `Hello`, so reconnects and sync are a guest's, and the session is marked as
   the owner's of that server file: `collab.stop` and `collab.share` there stop and start its
   sharing with the recorded token, exactly as in the session that published it. A file that is
-  open already comes to the front instead. After a crash, the desktop app reopens a recorded file
-  that was open and in step with its server this way instead of from its recovery copy (the copy
-  is kept only as a fallback when the record is gone).
+  open already comes to the front instead.
+- **After a crash, nothing is lost** (`collab.recoverFile`, the desktop app's recovery). The
+  recovery copy of a recorded file has a note written after it: the server, the file, and the
+  app's `resume` there when the copy was made (session, client id, the last sequence number it
+  had); so the copy is that confirmed state plus the app's own unconfirmed changes. The next start
+  joins the file as its owner with that `resume`, its `seq` set past any real one so the welcome
+  carries the whole document, and keeps the copy until the file arrives. A server that still
+  knows the client gives it its id back, and the new sync client numbers its batches after the
+  last one the server processed for that id (`Welcome.processed`), so they aren't taken for
+  repeats. Then the copy is compared with the server's document (the same diff an edit syncs as):
+  nothing differs: the copy goes; it differs, the app is the same client and the server's
+  sequence number is the one in the note (nothing else changed there, so the difference is exactly
+  what never arrived): it is applied on top as one edit, "Recovered changes", sent to everyone and
+  undoable; anything else (others changed the file meanwhile, the server no longer knows the
+  client and would refuse its layer ids, a view link): the copy opens beside the file as
+  "<name> (recovered copy)", untouched, and a message says so. A file that can't be joined
+  (offline, refused) opens its copy as an unsaved document, as any recovery copy; the record
+  stays. The old copy is removed only after the outcome, once the new run has made its own copy
+  of what it became. Recovery copies are written at most every ten seconds, so the last seconds
+  before a crash are covered only when the server confirmed them.
 - **What became of them** (`collab.files {refresh: true}`): one `OpenHosting` connection per
   server that names no file, then one `Admin owned` with every file recorded on that server.
   A file the server answers `null` for shows as gone (removed or expired) and can be cleared; a

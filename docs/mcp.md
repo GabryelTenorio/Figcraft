@@ -995,6 +995,12 @@ only: a host stops hosting it, a guest leaves it.
   the list **on this computer only**: the file stays on its server (`onServer`) until it expires,
   and can't be managed from here again. To take it off the server use `collab.manageFile {file,
   action: "remove"}` instead.
+- `collab.recoverFile {path, file, server?, session, client, seq}` is what the desktop app's crash
+  recovery runs for the copy of an online file (the last three come from the note beside the
+  copy): it joins the file as its owner and keeps the copy until the file arrives, then discards
+  it (the server has everything), applies its unconfirmed changes on top as one synced edit, or
+  opens it beside the file as "<name> (recovered copy)"; a file that can't be joined opens the
+  copy as an unsaved document. Returns `{session, status: "connecting"}`.
 - `collab.manageFile {file, action, server?, owner?, …}` manages a file published without the key,
   with its owner token. `server` and `owner` default to what is recorded for one of your online
   files (`collab.files`); give both for a file that isn't recorded here. `links` → `{links: [{id,
