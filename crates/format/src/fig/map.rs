@@ -1243,19 +1243,18 @@ fn stroke(o: &mut Obj, v: &View) {
     if let Some(cap) = v.str("strokeCap") {
         o.insert("strokeCap".into(), json!(cap_name(cap)));
     }
-    // A variable width: each point's reach on the two sides of the path, as `[t, scale, bias]`
-    // (`strokeWidthProfile`, our extension of the file JSON).
-    let weight = v.num("strokeWeight").unwrap_or(0.0);
+    // A variable width: each point's reach on the two sides of the path (shares of the stroke
+    // weight), as `[t, scale, bias]` (`strokeWidthProfile`, our extension of the file JSON).
     let profile: Vec<Value> = v
         .list("variableWidthPoints")
         .iter()
         .filter_map(|p| {
             let (left, right) = (num(p, "ascent")?.max(0.0), num(p, "descent")?.max(0.0));
             let bias = if left + right > 0.0 { (right - left) / (left + right) } else { 0.0 };
-            Some(json!([num(p, "position")?, (left + right) / weight, bias]))
+            Some(json!([num(p, "position")?, left + right, bias]))
         })
         .collect();
-    if weight > 0.0 && !profile.is_empty() {
+    if !profile.is_empty() {
         o.insert("strokeWidthProfile".into(), Value::Array(profile));
     }
     let dashes: Vec<f64> = v.list("dashPattern").iter().filter_map(Kv::f64).collect();

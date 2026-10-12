@@ -662,9 +662,9 @@ fn variable_width_strokes_say_their_reach_on_each_side() {
     let line = named(&nodes, "Tapered");
     let points = line["variableWidthPoints"].as_array().unwrap();
     assert_eq!(points.len(), 3);
-    assert_eq!(points[0], json!({"position": 0.0, "ascent": 1.0, "descent": 1.0}));
-    // Wider on the right: half the width is 6, a quarter of it on the left.
-    assert_eq!(points[1], json!({"position": 0.5, "ascent": 3.0, "descent": 9.0}));
+    assert_eq!(points[0], json!({"position": 0.0, "ascent": 0.125, "descent": 0.125}));
+    // Wider on the right: one and a half times the weight, a quarter of it on the left.
+    assert_eq!(points[1], json!({"position": 0.5, "ascent": 0.375, "descent": 1.125}));
     // The outline is left to the reader: it follows from the points.
     assert!(line.get("strokeGeometry").is_none());
     let warnings = same_after_round_trip(&doc, "widths");

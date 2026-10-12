@@ -1233,10 +1233,10 @@ impl<'d> Exporter<'d> {
             ]);
         }
         // A variable width: how far the stroke reaches on each side of the path (left first, looking
-        // along it) at positions along its length.
+        // along it) at positions along its length, as a share of the stroke weight.
         if let Some(p) = sp.profile().filter(|_| sp.weight.is_finite() && sp.weight > 0.0) {
             let point = |q: &figcraft_doc::WidthPoint| {
-                let half = sp.weight * q.scale / 2.0;
+                let half = q.scale / 2.0;
                 o(vec![("position", fl(q.t)), ("ascent", fl(half * (1.0 - q.bias))), ("descent", fl(half * (1.0 + q.bias)))])
             };
             f.push(("variableWidthPoints", arr(p.sanitized().points.iter().map(point).collect())));
