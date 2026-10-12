@@ -420,8 +420,11 @@ fn path_map(doc: &Document, root: NodeId, src_names: bool) -> BTreeMap<NodeId, S
         let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
         for c in &n.children {
             let Some(cn) = doc.node(*c) else { continue };
-            let name =
-                if src_names { cn.source.and_then(|s| doc.node(s)).map(|s| s.name.as_str()).unwrap_or(cn.name.as_str()) } else { cn.name.as_str() };
+            // A nested instance linked only to its own component so far (an imported one) mirrors no
+            // layer yet: it goes by its own name, like the main's layer it will be matched with.
+            let unplaced = matches!(&cn.kind, NodeKind::Instance { component, .. } if cn.source == Some(*component));
+            let mirrored = cn.source.filter(|_| src_names && !unplaced).and_then(|s| doc.node(s));
+            let name = mirrored.map_or(cn.name.as_str(), |s| s.name.as_str());
             let k = seen.entry(name).or_insert(0);
             let seg = if *k == 0 { name.to_string() } else { format!("{name}#{k}") };
             *k += 1;

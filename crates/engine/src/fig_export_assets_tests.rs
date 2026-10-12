@@ -151,3 +151,58 @@ fn every_example_keeps_its_variables_and_styles() {
         }
     }
 }
+
+/// A component holding an instance of a variant, under a name of its own: opened from a `.fig`
+/// file, instances of that component link every layer to the main's, the nested instance and its
+/// layers included (a nested instance is first linked to its own component, whose name is not the
+/// layer's).
+#[test]
+fn nested_instances_of_variants_link_to_their_mains_layers() {
+    let mut s = Session::new();
+    let variant = |s: &mut Session, y: i64, fill: &str| {
+        let f = id(&run(s, "frame.create", json!({"x": 0, "y": y, "width": 120, "height": 80, "name": "Scene"})));
+        run(s, "node.set", json!({"ids": [f], "fill": fill}));
+        run(s, "shape.ellipse", json!({"x": 70, "y": 10, "width": 30, "height": 30, "parent": f, "props": {"name": "Sun"}}));
+        id(&run(s, "component.create", json!({"ids": [f]})))
+    };
+    let (day, dusk) = (variant(&mut s, 0, "#8FCDF2"), variant(&mut s, 120, "#4A3A8E"));
+    run(&mut s, "node.set", json!({"ids": [day], "name": "Time=Day"}));
+    run(&mut s, "node.set", json!({"ids": [dusk], "name": "Time=Dusk"}));
+    run(&mut s, "component.combineVariants", json!({"ids": [day, dusk]}));
+    let card = id(&run(&mut s, "frame.create", json!({"x": 300, "y": 0, "width": 200, "height": 140, "name": "Card"})));
+    let photo = id(&run(&mut s, "instance.create", json!({"component": day, "parent": card, "x": 10, "y": 10})));
+    run(&mut s, "node.set", json!({"ids": [photo], "name": "Photo", "width": 180, "height": 120}));
+    let card = id(&run(&mut s, "component.create", json!({"ids": [card]})));
+    let first = id(&run(&mut s, "instance.create", json!({"component": card, "x": 300, "y": 200})));
+    let second = id(&run(&mut s, "instance.create", json!({"component": card, "x": 600, "y": 200})));
+    run(&mut s, "node.set", json!({"ids": [first], "name": "First"}));
+    run(&mut s, "node.set", json!({"ids": [second], "name": "Second"}));
+    // The second one shows the other variant.
+    let nested = s.doc().unwrap().node(figcraft_doc::NodeId(second)).unwrap().children[0].0;
+    run(&mut s, "instance.swap", json!({"ids": [nested], "component": dusk}));
+    let before = outline(s.doc().unwrap());
+    let path = std::env::temp_dir().join(format!("figcraft-fig-nested-{}.fig", std::process::id()));
+    run(&mut s, "file.export", json!({"format": "fig", "path": path.to_string_lossy()}));
+    let r = run(&mut s, "file.open", json!({"path": path.to_string_lossy()}));
+    assert_eq!(r["warnings"], json!([]));
+    let doc = s.doc().unwrap();
+    assert_eq!(outline(doc), before);
+    let mut nested = 0;
+    for inst in doc.nodes().filter(|n| matches!(n.kind, NodeKind::Instance { .. })) {
+        let inside = doc.ancestors(inst.id).iter().any(|a| doc.node(*a).is_some_and(|x| matches!(x.kind, NodeKind::Instance { .. })));
+        nested += usize::from(inside);
+        for layer in doc.subtree(inst.id).into_iter().skip(1).filter_map(|i| doc.node(i)) {
+            assert!(layer.source.is_some(), "{} in {}", layer.name, inst.name);
+        }
+        // Inside another instance, a nested instance mirrors the main's layer, not its component.
+        if let (true, NodeKind::Instance { component, .. }) = (inside, &inst.kind) {
+            assert_ne!(inst.source, Some(*component), "{}", inst.name);
+        }
+    }
+    assert_eq!(nested, 2);
+    // Exported and opened once more, nothing moves: the links were what the export needed.
+    run(&mut s, "file.export", json!({"format": "fig", "path": path.to_string_lossy()}));
+    run(&mut s, "file.open", json!({"path": path.to_string_lossy()}));
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(outline(s.doc().unwrap()), before);
+}
