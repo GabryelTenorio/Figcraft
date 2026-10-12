@@ -129,9 +129,9 @@ fn two_files_are_hosted_and_joined_independently() {
     host.execute("doc.switch", &json!({"index": 1})).unwrap();
     let in_b = rect(&mut host);
     host.execute("node.set", &json!({"ids": [in_b], "props": {"name": "Only in B"}})).unwrap();
-    pump(&mut [&mut host, &mut guest], "the edits at the guest", |s| has(&*s[1], ga, in_a) && has(&*s[1], gb, in_b));
     let name = |s: &Session, uid: u64, node: u64| s.docs.iter().find(|d| d.uid == uid).and_then(|d| d.doc.node(NodeId(node))).map(|n| n.name.clone());
-    assert_eq!(name(&guest, gb, in_b).as_deref(), Some("Only in B"));
+    // The rename is its own batch, behind the one that creates the layer: wait for it too.
+    pump(&mut [&mut host, &mut guest], "the edits at the guest", |s| has(&*s[1], ga, in_a) && name(&*s[1], gb, in_b).as_deref() == Some("Only in B"));
     assert_ne!(name(&guest, ga, in_b).as_deref(), Some("Only in B"), "B's edit never reaches A");
     assert_ne!(name(&host, ha, in_b).as_deref(), Some("Only in B"));
     // And back: the guest edits its copy of A in the background tab's session.
