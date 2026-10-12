@@ -81,6 +81,8 @@ mod field_tests;
 #[cfg(test)]
 mod frame_label_tests;
 #[cfg(test)]
+mod gap_handle_tests;
+#[cfg(test)]
 mod home_tests;
 #[cfg(test)]
 mod idle_tests;

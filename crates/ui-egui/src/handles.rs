@@ -6,7 +6,7 @@
 
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Shape, Stroke, StrokeKind, pos2, vec2};
 use figcraft_color::{ImagePaint, ImageScaleMode, Paint, PaintKind};
-use figcraft_doc::{Blur, Effect, LayoutMode, NodeId};
+use figcraft_doc::{Blur, ContentAlign, Effect, LayoutMode, NodeId};
 use figcraft_geom::Point;
 use serde_json::json;
 
@@ -196,8 +196,13 @@ fn al_zones(app: &FigApp) -> Option<Zones> {
         (2, band(0.0, fh - pb.max(4.0), fw, fh), pb),
         (3, band(0.0, 0.0, pl.max(4.0), fh), pl),
     ];
-    let main = |rect: Rect, vertical: bool| GapZone { rect, key: "gap", value: al.gap, vertical };
-    let cross = |rect: Rect, vertical: bool| GapZone { rect, key: "crossGap", value: al.cross_gap, vertical };
+    // An auto gap shows (and is dragged from) the distance the layout gives it; the drag makes it a
+    // fixed gap again, as typing one does.
+    let (auto_main, auto_cross) =
+        (al.main_align.is_auto_gap() && al.mode != LayoutMode::Grid, al.wrap && al.content_align == ContentAlign::SpaceBetween);
+    let main = |rect: Rect, vertical: bool, dist: f64| GapZone { rect, key: "gap", value: if auto_main { dist } else { al.gap }, vertical };
+    let cross =
+        |rect: Rect, vertical: bool, dist: f64| GapZone { rect, key: "crossGap", value: if auto_cross { dist } else { al.cross_gap }, vertical };
     let mut gaps = Vec::new();
     let mut tracks = Vec::new();
     if let Some(g) = figcraft_layout::grid_geometry(doc, id) {
@@ -206,12 +211,12 @@ fn al_zones(app: &FigApp) -> Option<Zones> {
         let (left, right) = (g.columns.first().map(|c| c.0).unwrap_or(pl), g.columns.last().map(|c| c.1).unwrap_or(fw - pr));
         for pair in g.columns.windows(2) {
             if let [a, b] = pair {
-                gaps.push(main(band(a.1, top, b.0, bottom), false));
+                gaps.push(main(band(a.1, top, b.0, bottom), false, al.gap));
             }
         }
         for pair in g.rows.windows(2) {
             if let [a, b] = pair {
-                gaps.push(cross(band(left, a.1, right, b.0), true));
+                gaps.push(cross(band(left, a.1, right, b.0), true, al.cross_gap));
             }
         }
         for c in &g.columns {
@@ -248,13 +253,13 @@ fn al_zones(app: &FigApp) -> Option<Zones> {
             let (y0, y1) = if al.wrap { span(line) } else { (cp0, cw - cp1) };
             for pair in line.windows(2) {
                 if let [ra, rb] = pair {
-                    gaps.push(main(fband(ra.x1, y0, rb.x0, y1), vertical));
+                    gaps.push(main(fband(ra.x1, y0, rb.x0, y1), vertical, rb.x0 - ra.x1));
                 }
             }
         }
         for pair in lines.windows(2) {
             if let [a, b] = pair {
-                gaps.push(cross(fband(mp0, span(a).1, mw - mp1, span(b).0), !vertical));
+                gaps.push(cross(fband(mp0, span(a).1, mw - mp1, span(b).0), !vertical, span(b).0 - span(a).1));
             }
         }
     }
@@ -584,7 +589,14 @@ fn apply(app: &mut FigApp, drag: &Drag, pos: Pos2, shift: bool) {
         Drag::Gap { id, start, value, vertical, key } => {
             let d = f64::from(if *vertical { pos.y - start.y } else { pos.x - start.x }) / zoom;
             let v = (value + d).round().max(0.0);
-            let _ = app.session.execute("node.set", &json!({"ids": [id], "props": { *key: v }}));
+            // Dragging an auto gap fixes it at what the drag makes of the distance it had.
+            let mut props = json!({ *key: v });
+            match (*key, app.session.doc().ok().and_then(|d| d.node(*id)).and_then(|n| n.layout.as_ref())) {
+                ("crossGap", Some(l)) if l.content_align == ContentAlign::SpaceBetween => props["contentAlign"] = json!("auto"),
+                ("gap", Some(l)) if l.main_align.is_auto_gap() && l.mode != LayoutMode::Grid => props["mainAlign"] = json!("min"),
+                _ => {}
+            }
+            let _ = app.session.execute("node.set", &json!({"ids": [id], "props": props}));
         }
     }
 }
