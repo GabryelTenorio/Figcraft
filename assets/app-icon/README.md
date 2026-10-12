@@ -16,8 +16,8 @@ Exactly three colours:
 ## Geometry
 
 A 512-unit tile (`viewBox="0 0 512 512"`), rounded square with `rx=112`, no border. The macOS
-renders pad it onto Apple's 824/1024 icon grid; the Windows and Linux renders crop 22 units off
-each side so the figure reads at 16–48 px.
+renders pad it onto Apple's 824/1024 icon grid; Windows and Linux use the tile edge to edge, with
+its rounded corners, like the other Crafting Apps.
 
 ## Provenance
 

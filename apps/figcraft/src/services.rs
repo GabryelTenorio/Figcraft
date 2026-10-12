@@ -210,7 +210,7 @@ impl Services for Desktop {
 
 /// The window icon from the bundled app icon (if present).
 pub fn window_icon() -> Option<egui::IconData> {
-    // macOS wants Apple's padded grid; the other platforms the tile edge to edge.
+    // macOS wants Apple's padded grid; the other platforms the rounded tile edge to edge.
     #[cfg(target_os = "macos")]
     let bytes = include_bytes!("../../../assets/app-icon/figcraft-256.png");
     #[cfg(not(target_os = "macos"))]

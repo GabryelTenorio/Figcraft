@@ -9,8 +9,6 @@ use std::process::Command;
 const VIEW_BOX: &str = r#"viewBox="0 0 512 512""#;
 /// macOS: the 512-unit tile padded onto Apple's 824/1024 icon grid (transparent margin).
 const MAC_VIEW_BOX: &str = r#"viewBox="-62 -62 636 636""#;
-/// Windows and Linux: 22 units cropped off each side so the portrait reads at 16-48 px.
-const TIGHT_VIEW_BOX: &str = r#"viewBox="22 22 468 468""#;
 
 fn render(svg: &Path, size: u32, out: &Path) -> bool {
     let s = size.to_string();
@@ -32,10 +30,9 @@ pub fn generate(root: &Path) -> bool {
         return false;
     }
     let tmp = root.join("target/icon");
-    let (mac, tight) = (tmp.join("mac.svg"), tmp.join("tight.svg"));
-    let mut ok = std::fs::create_dir_all(&tmp).is_ok()
-        && std::fs::write(&mac, master.replacen(VIEW_BOX, MAC_VIEW_BOX, 1)).is_ok()
-        && std::fs::write(&tight, master.replacen(VIEW_BOX, TIGHT_VIEW_BOX, 1)).is_ok();
+    // Windows and Linux show the tile edge to edge, rounded corners and all: the master as it is.
+    let (mac, tile) = (tmp.join("mac.svg"), dir.join("figcraft.svg"));
+    let mut ok = std::fs::create_dir_all(&tmp).is_ok() && std::fs::write(&mac, master.replacen(VIEW_BOX, MAC_VIEW_BOX, 1)).is_ok();
     if !ok {
         eprintln!("icon: cannot write {}", tmp.display());
         return false;
@@ -45,7 +42,7 @@ pub fn generate(root: &Path) -> bool {
         if size <= 512 {
             let hd = dir.join(format!("hicolor/{size}x{size}/apps"));
             let _ = std::fs::create_dir_all(&hd);
-            ok &= render(&tight, size, &hd.join("ai.storyteller.figcraft.png"));
+            ok &= render(&tile, size, &hd.join("ai.storyteller.figcraft.png"));
         }
     }
     // Windows .ico (PNG-compressed entries).
@@ -54,7 +51,7 @@ pub fn generate(root: &Path) -> bool {
         .iter()
         .filter_map(|s| {
             let png = tmp.join(format!("ico-{s}.png"));
-            render(&tight, *s, &png).then(|| std::fs::read(png).ok()).flatten()
+            render(&tile, *s, &png).then(|| std::fs::read(png).ok()).flatten()
         })
         .collect();
     ok &= pngs.len() == sizes.len();
