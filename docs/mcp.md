@@ -1260,6 +1260,10 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
 
 ### Effects
 
+`component.playground {id?, properties? {name: value}, language?, path?, scale?}` tries a component
+with other variant, boolean, text (and instance-swap) property values on a copy and returns its
+properties with their values, its code and, with `path`, a PNG of it. The document doesn't change.
+
 `style.bind {style, field, variable?}` binds a variable inside a shared style (no `variable`:
 unbinds): `fill` or `fills/<i>/color` and `fills/<i>/stops/<j>/color` on a paint style,
 `effects/<i>/<color|radius|spread|offsetX|offsetY|startRadius>` on an effect style,

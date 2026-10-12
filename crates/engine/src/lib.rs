@@ -37,6 +37,7 @@ pub mod live;
 pub mod measure;
 pub mod online;
 pub mod params;
+pub mod playground;
 pub mod plugin_directory;
 pub mod plugins;
 pub mod proto_run;
@@ -1463,6 +1464,8 @@ mod panels_behaviour_tests;
 mod pdf_print_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
+#[cfg(test)]
+mod playground_tests;
 #[cfg(test)]
 mod plugin_directory_tests;
 #[cfg(test)]

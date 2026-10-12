@@ -1383,7 +1383,7 @@ fn def_json(name: &str, d: &PropDef) -> Value {
 }
 
 /// Properties of a component, set or instance as JSON (`component.properties`).
-fn describe_props(doc: &Document, id: NodeId) -> Value {
+pub(crate) fn describe_props(doc: &Document, id: NodeId) -> Value {
     let Some(n) = doc.node(id) else { return Value::Null };
     let (owner_comp, values) = match &n.kind {
         NodeKind::Instance { component, props } => (Some(*component), Some(props.clone())),

@@ -96,6 +96,24 @@ pub struct DevUi {
     focus_list: Vec<NodeId>,
     focus_key: Option<(u64, u64)>,
     code: Option<((u64, u64, NodeId, CodeLang), String)>,
+    playground: Playground,
+}
+
+/// The component playground of the Inspect tab: the layer it is for, the property values tried
+/// there, and what they gave (for the document, layer, values and language it was made from).
+#[derive(Default)]
+struct Playground {
+    target: Option<NodeId>,
+    values: serde_json::Map<String, serde_json::Value>,
+    shown: Option<(PlayKey, Played)>,
+}
+
+type PlayKey = (u64, u64, NodeId, String, CodeLang);
+
+struct Played {
+    preview: Option<egui::TextureHandle>,
+    properties: Vec<serde_json::Value>,
+    code: String,
 }
 
 /// Whether Dev Mode extras show: the Inspect tab is open and nothing is presented.
@@ -260,6 +278,99 @@ pub fn code(app: &mut FigApp, ui: &Ui, id: NodeId, lang: CodeLang) -> String {
             c
         }
     }
+}
+
+/// The component playground, for a selected instance, component or component set: a preview of the
+/// component and a control for each variant, boolean and text property. The values tried here
+/// change the preview and the code only (returned when any is set: the Code section shows it),
+/// never the document.
+pub fn playground_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, id: NodeId, lang: CodeLang) -> Option<String> {
+    figcraft_engine::playground::component_of(doc, id)?;
+    let t = Tokens::get(ui.ctx());
+    let Ok((uid, revision)) = app.session.ds().map(|d| (d.uid, d.revision)) else { return None };
+    let play = &mut app.ui.dev.playground;
+    if play.target != Some(id) {
+        *play = Playground { target: Some(id), ..Playground::default() };
+    }
+    let key: PlayKey = (uid, revision, id, serde_json::Value::Object(play.values.clone()).to_string(), lang);
+    if play.shown.as_ref().is_none_or(|(k, _)| *k != key) {
+        // Values the component no longer takes (a property renamed or removed) are dropped.
+        let built = figcraft_engine::playground::build(doc, id, &play.values).or_else(|_| {
+            play.values.clear();
+            figcraft_engine::playground::build(doc, id, &play.values)
+        });
+        let played = built.ok().map(|(copy, inst)| Played {
+            preview: crate::assets_panel::thumbnail(ui.ctx(), &copy, inst, 416.0),
+            properties: figcraft_engine::playground::properties(&copy, inst)["properties"].as_array().cloned().unwrap_or_default(),
+            code: code_for(&copy, inst, lang),
+        });
+        let key = (uid, revision, id, serde_json::Value::Object(play.values.clone()).to_string(), lang);
+        play.shown = played.map(|p| (key, p));
+    }
+    let Some((_, shown)) = &play.shown else { return None };
+    let tried = !play.values.is_empty();
+    widgets::separator(ui);
+    let buttons = [(Icon::Rotate, tr("Reset"))];
+    let reset = widgets::section_header(ui, tr("Playground"), if tried { &buttons } else { &[] }, false).is_some();
+    // The preview, fitted into its box with some room around it.
+    egui::Frame::NONE.fill(t.field).corner_radius(CornerRadius::same(6)).outer_margin(egui::Margin::symmetric(16, 0)).show(ui, |ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 136.0), Sense::hover());
+        if let Some(tex) = &shown.preview {
+            let size = tex.size_vec2();
+            let k = ((r.width() - 16.0) / size.x).min((r.height() - 16.0) / size.y).clamp(0.0, 1.0);
+            let image = Rect::from_center_size(r.center(), size * k);
+            ui.painter().image(tex.id(), image, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
+    });
+    ui.add_space(4.0);
+    let mut set: Option<(String, serde_json::Value)> = None;
+    for p in &shown.properties {
+        let (Some(name), Some(kind)) = (p["name"].as_str(), p["type"].as_str()) else { continue };
+        let value = &p["value"];
+        match kind {
+            "variant" => row(ui, 32.0, |ui| {
+                widgets::label(ui, name, t.text_secondary);
+                let resp = widgets::dropdown(ui, value.as_str().unwrap_or(""), ui.available_width().max(60.0), None);
+                crate::a11y::combo(&resp, name, value.as_str().unwrap_or(""), crate::a11y::menu_open(&resp));
+                menu_popup(&resp).show(|ui| {
+                    for o in p["options"].as_array().into_iter().flatten().filter_map(|o| o.as_str()) {
+                        if crate::right::menu_item(ui, o, "") {
+                            set = Some((name.to_string(), json!(o)));
+                            ui.close();
+                        }
+                    }
+                });
+            }),
+            "boolean" => row(ui, 28.0, |ui| {
+                let on = value.as_bool().unwrap_or(false);
+                if widgets::checkbox(ui, on, name) {
+                    set = Some((name.to_string(), json!(!on)));
+                }
+            }),
+            "text" => row(ui, 32.0, |ui| {
+                widgets::label(ui, name, t.text_secondary);
+                let cur = value.as_str().unwrap_or("");
+                let field = Id::new(("playground_text", id, name));
+                if let Some(new) = widgets::text_field_named(ui, field, cur, ui.available_width().max(60.0), name)
+                    && new != cur
+                {
+                    set = Some((name.to_string(), json!(new.chars().take(10_000).collect::<String>())));
+                }
+            }),
+            // Instance swaps and slots show as the component has them.
+            _ => {}
+        }
+    }
+    widgets::note(ui, tr("What you try here changes this preview and the code below, not the file"), t.text_secondary);
+    let code = tried.then(|| shown.code.clone());
+    let play = &mut app.ui.dev.playground;
+    if reset {
+        play.values.clear();
+    }
+    if let Some((k, v)) = set {
+        play.values.insert(k, v);
+    }
+    code
 }
 
 /// Connect to code for the selected component, set or instance (its main), in the Code section's

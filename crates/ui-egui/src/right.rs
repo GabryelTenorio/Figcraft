@@ -2232,6 +2232,8 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
     use figcraft_engine::codegen::CodeLang;
     let lang_id = Id::new("inspect_lang");
     let lang = ui.data(|d| d.get_temp::<usize>(lang_id)).and_then(|i| CodeLang::ALL.get(i).copied()).unwrap_or_default();
+    // A component tried with other property values: its code replaces the layer's below.
+    let played = crate::dev_mode::playground_section(app, ui, &doc, first, lang);
     widgets::separator(ui);
     let copy = widgets::section_header(ui, tr("Code"), &[(Icon::Export, tr("Copy"))], false).is_some();
     // Pixels or rem (of a 16 px root) for the web languages.
@@ -2260,7 +2262,7 @@ fn inspect(app: &mut FigApp, ui: &mut Ui) {
             });
         }
     });
-    let code = crate::dev_mode::code(app, ui, first, lang);
+    let code = played.unwrap_or_else(|| crate::dev_mode::code(app, ui, first, lang));
     let code = if rem { figcraft_engine::codegen::px_to_rem(&code, 16.0) } else { code };
     egui::Frame::NONE
         .fill(t.field)
