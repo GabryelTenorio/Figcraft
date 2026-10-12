@@ -28,8 +28,6 @@ const ROW: f32 = 36.0;
 /// UI-only state of the Online section.
 #[derive(Default)]
 pub struct OnlineUi {
-    /// The Online section shows on the home screen (else Recents).
-    pub open: bool,
     /// The frame the section last drew in: it asks the servers when it shows again after a gap.
     drawn: Option<u64>,
     /// Remove from server… was chosen for this file (server, id, name): its confirmation shows.
@@ -318,7 +316,7 @@ pub fn inspect(app: &FigApp) -> Value {
         .map(|f| json!({"file": f.file, "name": f.name, "detail": detail(f), "shared": f.shared.is_some(), "state": f.state, "hasOwnerToken": true}))
         .collect();
     json!({
-        "open": app.ui.online.open,
+        "open": app.ui.home_view.section == crate::home::Section::Online,
         "files": files,
         "checking": app.session.waiting_for(FILES),
         "problems": app.session.live.servers.len(),

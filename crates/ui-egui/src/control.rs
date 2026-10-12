@@ -344,8 +344,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(h) = p.get("home").and_then(Value::as_bool) {
                 app.ui.home = h;
             }
-            if let Some(s) = p.get("homeSection").and_then(Value::as_str) {
-                app.ui.online.open = s == "online";
+            if let Some(section) = p.get("homeSection").and_then(Value::as_str).and_then(crate::home::Section::parse) {
+                app.ui.home_view.section = section;
             }
             if let Some(h) = p.get("palette").and_then(Value::as_bool) {
                 app.ui.palette = if h { Some(String::new()) } else { None };

@@ -81,6 +81,8 @@ mod field_tests;
 #[cfg(test)]
 mod frame_label_tests;
 #[cfg(test)]
+mod home_tests;
+#[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
 mod layers_behaviour_tests;
@@ -289,6 +291,8 @@ pub struct UiState {
     /// An opacity digit just typed and when (a second one soon after makes an exact percentage).
     pub opacity_digit: Option<(u32, f64)>,
     pub home: bool,
+    /// The home screen's section, and the Templates search and filter.
+    pub home_view: home::Home,
     /// How the window's title bar is drawn (the desktop app sets it when it opens the window).
     pub title_bar: TitleBar,
     /// Every icon on one screen, for reviewing the set (control channel `ui.set {iconGallery}`).
@@ -402,6 +406,7 @@ impl Default for UiState {
             shortcuts_query: String::new(),
             opacity_digit: None,
             home: false,
+            home_view: home::Home::default(),
             title_bar: TitleBar::Native,
             icon_gallery: false,
             toast: None,
@@ -657,6 +662,15 @@ impl FigApp {
                     self.ui.libraries = true;
                 }
                 "home" => self.ui.home = true,
+                "home.templates" => {
+                    self.ui.home = true;
+                    self.ui.home_view.section = home::Section::Templates;
+                }
+                "home.gettingStarted" => {
+                    self.ui.home = true;
+                    self.ui.home_view.section = home::Section::Recents;
+                    self.services.save_prefs(&self.session.prefs);
+                }
                 "dialog.saveAs" => self.save_as_dialog(),
                 "dialog.colorProfile" => self.ui.color_profile = self.session.doc().ok().map(|d| d.color_profile),
                 "present" => {
@@ -1116,6 +1130,7 @@ impl FigApp {
             "home": self.ui.home,
             "online": online::inspect(self),
             "tabs": self.session.docs.iter().map(|d| json!({"name": d.doc.name, "live": tabs::live_mark(self, d.uid).map(|shared| if shared { "shared" } else { "private" })})).collect::<Vec<_>>(),
+            "homeSection": self.ui.home_view.section.id(),
             "dark": self.ui.dark,
             "focus": {"region": self.ui.nav.region.id(), "keyboard": self.ui.nav.keyboard},
             "reduceMotion": self.reduce_motion(),

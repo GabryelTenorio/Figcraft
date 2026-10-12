@@ -190,7 +190,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     ui.painter().circle_filled(hr.center(), 16.0, t.panel);
     ui.painter().text(hr.center(), Align2::CENTER_CENTER, "?", crate::theme::regular(15.0), t.text);
     crate::right::menu_popup(&hresp).show(|ui| {
-        for (l, c) in [(tr("Keyboard shortcuts"), "help.shortcuts"), (tr("Help page"), "help.page"), (tr("About FigCraft"), "help.about")] {
+        for (l, c) in [
+            (tr("Getting started"), "help.gettingStarted"),
+            (tr("Keyboard shortcuts"), "help.shortcuts"),
+            (tr("Help page"), "help.page"),
+            (tr("About FigCraft"), "help.about"),
+        ] {
             if crate::right::menu_item(ui, l, crate::shortcuts::shortcut(c).unwrap_or("")) {
                 app.run(c, json!({}));
                 ui.close();
