@@ -1,5 +1,7 @@
 //! Join codes on the server: sharing online from one app and joining by code from another (real
-//! links over loopback), codes kept only hashed, revoked with their link and gone with their file,
+//! links over loopback; stopping revokes the others' links and codes and disconnects them while
+//! the owner stays in the file, and sharing again makes new ones for the same file), codes kept
+//! only hashed, revoked with their link and gone with their file,
 //! the limits on wrong codes, junk requests, and clients from before join codes.
 
 use std::net::IpAddr;
@@ -78,6 +80,15 @@ fn a_file_shared_online_is_joined_by_its_codes() {
     assert_eq!(shared["code"], edit.as_str(), "the code shown lets people edit unless asked otherwise");
     let p = a.live().published.clone().unwrap();
     assert!(p.owner.is_some(), "the owner token is kept as before");
+    // Others get links of their own (the owner keeps the file's first ones): four in all.
+    let edit_link = shared["share"]["editLink"].as_str().unwrap().to_string();
+    assert!(edit_link != p.edit && shared["share"]["viewLink"] != p.view.as_str() && shared["share"]["shared"] == true);
+    let ids = |dir: &std::path::Path| -> Vec<String> {
+        let links: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("files").join(&p.file).join("links.json")).unwrap()).unwrap();
+        links.as_array().unwrap().iter().map(|l| l["id"].as_str().unwrap().to_string()).collect()
+    };
+    let before_stop = ids(dir.path());
+    assert_eq!(before_stop.len(), 4);
     // On disk: hashes only, of the codes as of the links' tokens.
     let links = std::fs::read_to_string(dir.path().join("files").join(&p.file).join("links.json")).unwrap();
     for secret in [edit.as_str(), view.as_str(), &edit.replace('-', ""), &view.replace('-', "")] {
@@ -90,7 +101,7 @@ fn a_file_shared_online_is_joined_by_its_codes() {
     assert_eq!(ex(&mut b, "collab.join", json!({"code": edit.to_lowercase().replace('-', " ")}))["status"], "connecting");
     pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]) && s[0].live().peers.len() == 1);
     assert_eq!(b.live_summary()["access"], "edit");
-    assert_eq!(b.live_summary()["link"], p.edit.as_str(), "joined as with the link: reconnects need no code");
+    assert_eq!(b.live_summary()["link"], edit_link.as_str(), "joined as with the shared link: reconnects need no code");
     let before = layers(&a);
     ex(&mut a, "shape.rectangle", json!({"x": 10, "y": 10, "width": 40, "height": 30}));
     pump(&mut [&mut a, &mut b], "Ada's edit", |s| layers(s[1]) == before + 1);
@@ -108,21 +119,49 @@ fn a_file_shared_online_is_joined_by_its_codes() {
     ex(&mut d, "collab.join", json!({"code": "000-000-000"}));
     pump(&mut [&mut d], "the refusal", |s| failed(s[0]).is_some());
     assert_eq!(failed(&d).unwrap(), NO_CODE);
-    // Stop sharing: the file leaves the server, everyone is told, and the code no longer joins.
-    assert_eq!(ex(&mut a, "collab.stop", json!({}))["ended"], true);
-    let folder = dir.path().join("files").join(&p.file);
-    pump(&mut [&mut a, &mut b, &mut c], "the file gone", |s| !folder.exists() && failed(s[1]).is_some() && failed(s[2]).is_some());
-    assert!(failed(&b).unwrap().contains("removed"), "{:?}", failed(&b));
+    // Stop sharing: the others are out at once and told why; the file and its owner stay.
+    assert_eq!(ex(&mut a, "collab.stop", json!({})), json!({"ended": false, "shared": false}));
+    pump(&mut [&mut a, &mut b, &mut c], "the others out", |s| {
+        !s[1].live().status.active() && !s[2].live().status.active() && s[0].live().peers.is_empty()
+    });
+    for guest in [&b, &c] {
+        assert!(guest.message.as_deref().unwrap_or_default().contains("Sharing was stopped"), "{:?}", guest.message);
+        assert_eq!(guest.live().status, Status::Off, "over, not failed: nothing retries");
+    }
     assert_eq!(layers(&b), before + 2, "Bo keeps the copy");
+    let folder = dir.path().join("files").join(&p.file);
+    assert!(folder.exists() && live(&a), "the file stays on the server and Ada stays in it");
+    let stopped = a.live_summary();
+    assert_eq!((&stopped["share"]["shared"], &stopped["code"], &stopped["published"]["file"]), (&json!(false), &Value::Null, &json!(p.file)));
+    assert_eq!(ids(dir.path()), before_stop[..2], "the owner's links are left, the shared ones are gone");
+    // Neither the codes nor the links get anyone in any more.
     let mut e = app("Ed", &url);
+    for old in [&edit, &view] {
+        ex(&mut e, "collab.join", json!({"code": old}));
+        pump(&mut [&mut e], "the stopped code", |s| failed(s[0]).is_some());
+        assert_eq!(failed(&e).unwrap(), CODE_GONE);
+    }
+    ex(&mut e, "collab.join", json!({"link": edit_link}));
+    pump(&mut [&mut e], "the stopped link", |s| failed(s[0]).is_some_and(|why| why.contains("isn't valid")));
+    // The owner still edits the server's file.
+    ex(&mut a, "shape.rectangle", json!({"x": 200, "y": 10, "width": 40, "height": 30}));
+    pump(&mut [&mut a], "the owner's edit confirmed", |s| layers(s[0]) == before + 3 && s[0].live().client().is_some_and(|c| c.pending() == 0));
+    // Sharing again: new codes and links for the same file (nothing is published twice).
+    let again = ex(&mut a, "collab.share", json!({}));
+    let (edit2, link2) = (again["code"].as_str().unwrap().to_string(), again["share"]["editLink"].as_str().unwrap().to_string());
+    assert!(is_code(&edit2) && edit2 != edit && link2 != edit_link && again["published"]["file"] == p.file.as_str(), "{again}");
+    assert_eq!(dir.path().join("files").read_dir().unwrap().count(), 1, "still one file on the server");
+    assert_eq!(ids(dir.path()).len(), 4);
+    ex(&mut b, "collab.join", json!({"code": edit2}));
+    pump(&mut [&mut a, &mut b], "Bo back in", |s| live(s[1]) && layers(s[1]) == before + 3 && s[0].live().peers.len() == 1);
+    // The old code is still gone.
     ex(&mut e, "collab.join", json!({"code": edit}));
-    pump(&mut [&mut e], "the stopped code", |s| failed(s[0]).is_some());
-    assert_eq!(failed(&e).unwrap(), CODE_GONE);
+    pump(&mut [&mut e], "the old code", |s| failed(s[0]).is_some_and(|why| why == CODE_GONE));
     server.stop();
 }
 
 #[test]
-fn a_keyed_share_gets_codes_too_and_leaving_keeps_the_file() {
+fn a_keyed_share_gets_codes_and_stops_with_the_key() {
     let dir = TempDir::new("codes-keyed");
     let mut server = crate::start(&config(dir.path())).unwrap();
     let url = format!("ws://{}/", server.addr());
@@ -132,11 +171,18 @@ fn a_keyed_share_gets_codes_too_and_leaving_keeps_the_file() {
     let shown = a.live_summary()["code"].as_str().unwrap().to_string();
     assert!(is_code(&shown));
     assert!(!a.live_summary().to_string().contains("key="), "the key is nowhere in the summary");
-    // No owner token: stopping leaves the session, the operator's file stays, and so does its code.
-    ex(&mut a, "collab.stop", json!({}));
     let mut b = app("Bo", &url);
     ex(&mut b, "collab.join", json!({"code": shown}));
-    pump(&mut [&mut b], "Bo in", |s| live(s[0]));
+    pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]));
+    // No owner token: the key the address carried stops the sharing (the file is the operator's).
+    assert_eq!(ex(&mut a, "collab.stop", json!({}))["shared"], false);
+    pump(&mut [&mut a, &mut b], "Bo out", |s| !s[1].live().status.active());
+    assert!(live(&a) && !a.live_summary().to_string().contains("key="));
+    ex(&mut b, "collab.join", json!({"code": shown}));
+    pump(&mut [&mut b], "the stopped code", |s| failed(s[0]).is_some_and(|why| why == CODE_GONE));
+    // Leaving keeps the file there.
+    ex(&mut a, "collab.leave", json!({}));
+    assert_eq!(dir.path().join("files").read_dir().unwrap().count(), 1);
     server.stop();
 }
 

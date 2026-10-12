@@ -499,9 +499,21 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   for a code for the edit link and one for the view link (`Admin code`, as the file's owner) and
   shows the edit code, `K7M-2QX-9TD`: **nine symbols, 45 random bits**, a different code per link.
   A joiner's app sends `Resolve {code}` to its own server in Preferences, gets the file and the
-  link's token, and joins with them as with the link. **Stop sharing** (`collab.stop`) leaves and
-  has the server remove the file (`Admin remove` with the owner token): codes and links stop
-  working and everyone keeps the copy they have. `collab.leave` keeps the file on the server.
+  link's token, and joins with them as with the link.
+- **The file is its owner's.** Publishing gives the file its first edit and view link and its
+  owner token; those stay with the owner, whose app joins with that edit link. Sharing makes two
+  more links for others (`Admin createLink`, labelled "Shared (edit)" and "Shared (view)") and
+  asks for their codes; those are what the popover shows and copies. **Stop sharing**
+  (`collab.stop`) revokes these two links (`Admin revoke`, as the owner): their codes stop
+  resolving ("That code has expired or its sharing was stopped"), the links stop joining, and
+  everyone who joined with them is disconnected at once with close code 1001 and "Sharing was
+  stopped: the link you joined with no longer works. Your copy stays open", which apps take as
+  the session's end (no retries; older apps too). The owner stays connected, the file stays on
+  the server, open only to its owner, and the popover offers Start sharing again: new links and
+  codes for the same file, nothing published twice. If the server can't be reached, nothing is
+  stopped and the app says so. Taking the file off the server is a separate, confirmed step
+  (Share ▸ Advanced ▸ Remove from server…, or `collab.manageFile {action: "remove"}`). Closing
+  the tab, quitting or `collab.leave` leave the file and its sharing as they are.
 - **What the server keeps of a code.** Never the code. It is stretched (SHA-256 of the code under
   a fixed label, then 10,000 more rounds); a hash of the result finds the link, and another is the
   pad the link's token is wrapped with (XOR), so only the code gives the token back. Lookups
@@ -593,6 +605,7 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   the file and a link's token; the server joins it with that link's access (`Server::join_as`). A
   viewer gets every change and everyone's presence and sends its own presence; each batch it
   sends is refused (`Reject`, "you can only view this file") and rolled back. Revoking a link
+  (people in the file are told as when a host stops: close code 1001 with the reason, final)
   (or removing a file) disconnects whoever joined with it, with the reason; the link no longer
   joins.
 - **Links** name the server's endpoint: `figcraft://join?host=<host:port>&file=…&token=…` for a

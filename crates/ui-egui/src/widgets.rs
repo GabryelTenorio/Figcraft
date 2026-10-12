@@ -428,14 +428,7 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
     let mut out = None;
     match editing {
         Some(mut text) => {
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))));
-            let r = child.add(
-                egui::TextEdit::singleline(&mut text)
-                    .id(id.with("te"))
-                    .frame(egui::Frame::NONE)
-                    .font(regular(11.0))
-                    .desired_width(rect.width() - 16.0),
-            );
+            let r = field_editor(ui, rect, id.with("te"), &mut text, "");
             a11y::own_focus(&r);
             keep_focus(&r, started);
             let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -457,6 +450,37 @@ fn text_field_in(ui: &mut Ui, id: Id, value: &str, rect: Rect, placeholder: &str
         }
     }
     out
+}
+
+/// The editor inside a field's `rect`: one line of text in the field's font, without a frame of
+/// its own (the field draws it), showing `hint` while empty.
+fn field_editor(ui: &mut Ui, rect: Rect, id: Id, text: &mut String, hint: &str) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 4.0))));
+    child.add(
+        egui::TextEdit::singleline(text)
+            .id(id)
+            .frame(egui::Frame::NONE)
+            .font(regular(11.0))
+            .hint_text(egui::RichText::new(hint).font(regular(11.0)).color(t.text_tertiary))
+            .desired_width(rect.width() - 16.0),
+    )
+}
+
+/// A text field that is typed into in place: `text` changes as it is typed (the caller decides
+/// what Enter does). As tall as a button and drawn like [`text_field`], so the two line up in a
+/// row. Returns the editor's response (name it for screen readers with `a11y::text`).
+pub fn text_input(ui: &mut Ui, id: Id, text: &mut String, width: f32, hint: &str) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    let r = field_editor(ui, rect, id, text, hint);
+    if r.has_focus() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.accent), StrokeKind::Inside);
+    } else if ui.rect_contains_pointer(rect) {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    r
 }
 
 /// Focus for a field's editor that appears on the click that starts editing: egui takes focus

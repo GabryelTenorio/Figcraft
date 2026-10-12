@@ -139,11 +139,45 @@ fn old_server() -> (Endpoint, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let at = Endpoint::plain(listener.local_addr().unwrap().to_string());
     let t = std::thread::spawn(move || {
-        for stream in listener.incoming().take(3).flatten() {
+        for stream in listener.incoming().take(2).flatten() {
             let Ok(mut ws) = tungstenite::accept(stream) else { continue };
             let _ = ws.read();
             let refused = ServerMsg::Refused { reason: "that message couldn't be read".into() };
             let _ = ws.send(Message::Binary(Bytes::from(message::encode(&refused).unwrap())));
+            let _ = ws.close(None);
+            while ws.read().is_ok() {}
+        }
+    });
+    (at, t)
+}
+
+/// A server from before join codes that manages a file's links as it always did: two connections,
+/// the first makes links, the second (asked for codes) can't read the request.
+fn old_server_with_links() -> (Endpoint, std::thread::JoinHandle<()>) {
+    use figcraft_collab::message::{Admin, AdminReply, LinkInfo, NewLink};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let at = Endpoint::plain(listener.local_addr().unwrap().to_string());
+    let t = std::thread::spawn(move || {
+        let mut made = 0;
+        for stream in listener.incoming().take(2).flatten() {
+            let Ok(mut ws) = tungstenite::accept(stream) else { continue };
+            let say = |ws: &mut tungstenite::WebSocket<std::net::TcpStream>, m: ServerMsg| {
+                let _ = ws.send(Message::Binary(Bytes::from(message::encode(&m).unwrap())));
+            };
+            while let Ok(Message::Binary(b)) = ws.read() {
+                match message::decode::<ClientMsg>(&b, usize::MAX) {
+                    Ok(ClientMsg::OpenHosting(_)) => say(&mut ws, ServerMsg::Hosting(Box::default())),
+                    Ok(ClientMsg::Admin(Admin::CreateLink { file, access, label })) => {
+                        made += 1;
+                        let link = LinkInfo { id: format!("link{made}"), file, access, label, created: 0 };
+                        say(&mut ws, ServerMsg::Admin(Box::new(AdminReply::Link(NewLink { link, token: format!("TokenTokenTokenToken0{made}") }))));
+                    }
+                    _ => {
+                        say(&mut ws, ServerMsg::Refused { reason: "that message couldn't be read".into() });
+                        break;
+                    }
+                }
+            }
             let _ = ws.close(None);
             while ws.read().is_ok() {}
         }
@@ -164,11 +198,14 @@ fn a_server_older_than_join_codes_says_so_and_the_links_still_work() {
     pump(&mut [&mut guest], "the answer", |s| matches!(s[0].live().status, Status::Failed { .. }));
     let why = guest.live().status.label();
     assert!(why.contains("doesn't know join codes yet") && why.contains("invite link"), "{why}");
-    // Asking it for codes: none, without an error (the app shows the links).
-    assert_eq!(
-        manage::codes(&server, None, "0123456789abcdef", "AbCdEfGhIjKlMnOpQrStUv", &["AbCdEfGhIjKlMnOpQrStUv"], &limits, Duration::from_secs(5)),
-        None
-    );
+    thread.join().unwrap();
+    // Sharing a file there: it makes the links (it always could) but no codes, without an error:
+    // the app shows the links.
+    let (server, thread) = old_server_with_links();
+    let shared =
+        manage::share(&server, None, "0123456789abcdef", "AbCdEfGhIjKlMnOpQrStUv", &[], true, &limits, Duration::from_secs(5)).unwrap().unwrap();
+    assert!(shared.edit.code.is_none() && shared.view.as_ref().is_some_and(|v| v.code.is_none()));
+    assert!(shared.edit.link.contains("&file=0123456789abcdef&token=TokenTokenTokenToken01") && shared.edit.id == "link1");
     thread.join().unwrap();
 }
 

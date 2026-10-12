@@ -900,14 +900,21 @@ only: a host stops hosting it, a guest leaves it.
   FigCraft server unless changed; `{url: ""}` turns online sharing off, `{}` goes back to the
   built-in one; `server` names another for this call, with `?key=…` when it needs its key) and
   returns `status: "connecting"`; once `collab.peers` says `"live"`, `code` is the code to give
-  others (`K7M-2QX-9TD`) and `share` is `{via, access, editCode, viewCode}`. `access: "view"` (or
-  calling again with it while shared) makes `code` the view-only one. A server older than join
-  codes leaves `code` null: share `published.edit` / `published.view` instead. `via: "local"`
+  others (`K7M-2QX-9TD`) and `share` is `{via, access, shared, editCode, viewCode, editLink,
+  viewLink}`: links and codes made for others (`published.edit` / `published.view` and `link` are
+  your own way in; keep them). `access: "view"` (or calling again with it while shared) makes
+  `code` the view-only one. A server older than join codes leaves `code` null: give
+  `share.editLink` / `share.viewLink` instead. `via: "local"`
   hosts the document for people on the same network and returns at once with a longer `code`
   (20 symbols, carrying this machine's IPv4 address, the port and the session's secret; `bind:
   "local"` keeps it to this machine); everyone who joins edits. **Calling it publishes the
-  document to a server other people run: do it only when asked to share.** `collab.stop {}` ends
-  it (a file shared online is removed from the server, so its codes and links stop working).
+  document to a server other people run: do it only when asked to share.** `collab.stop {}` stops
+  the sharing. Local: the session ends for everyone (`{ended: true}`). Online: `{ended: false,
+  shared: false}`: the others' links and codes are revoked and they are disconnected at once (with
+  their copy), while you stay in the file, which stays on the server, open only to you
+  (`share.shared` is false, `code` null); `collab.share {}` then shares the same file again with
+  new codes, `collab.leave {}` leaves it there, and `collab.manageFile {action: "remove"}` with
+  `published.owner` takes it off the server.
 - `collab.host {port?, bind?}` starts hosting the active document (a session that document was in
   ends; other documents' sessions go on): `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
@@ -964,7 +971,8 @@ only: a host stops hosting it, a guest leaves it.
   access (edit|view), readOnly (the active document can't be edited now: view only, or being
   published), published (a file you published: {server, file, name, edit, view, owner, expires}),
   code (the join code to give others when the document was shared with `collab.share`, else
-  null), share ({via: online|local, access, editCode, viewCode}, or null),
+  null), share ({via: online|local, access, shared, editCode, viewCode, editLink, viewLink}, or
+  null; `shared: false`: your file on a server, not shared now),
   hosting (what the server of the file you're in says: {open, operator, terms, idleDays, maxFileMb,
   expires}, or null),
   follow, signals (the host passes cursor chat and spotlights on), chat (your cursor chat),

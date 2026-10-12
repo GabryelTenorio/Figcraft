@@ -7,9 +7,10 @@
 use std::time::Duration;
 
 use figcraft_collab::message::{
-    self, Admin, AdminReply, ClientMsg, HostInfo, LibraryReply, LibraryReq, Manage, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL, PluginReply,
-    PluginReq, Resolve, ServerMsg,
+    self, Access, Admin, AdminReply, ClientMsg, HostInfo, LibraryReply, LibraryReq, Manage, NewLink, OpenHosting, OpenLibrary, OpenPlugins, PROTOCOL,
+    PluginReply, PluginReq, Resolve, ServerMsg,
 };
+use figcraft_engine::live::{Shared, SharedLink};
 use tungstenite::{Bytes, Message, WebSocket};
 
 use crate::invite::{Endpoint, Invite};
@@ -96,33 +97,56 @@ pub fn resolve(server: &Endpoint, code: &str, limits: &NetLimits, timeout: Durat
     Ok(answer)
 }
 
-/// Join codes for the links of `file` with these `tokens`, in order, asked as whoever manages the
-/// file: with the server's `key`, else with the file's `owner` token. `None` when the server
-/// doesn't hand codes out (it is older than them) or can't be asked: the links still work.
-pub fn codes(
+/// Change who else gets into `file`, as whoever manages it (with the server's `key`, else with the
+/// file's `owner` token): revoke the links with the ids in `revoke` (whoever joined with them is
+/// disconnected, and their join codes stop working; one already gone is fine), then, to `create`,
+/// make a new edit link and a new view link and ask for their join codes: what others join with.
+/// A server older than join codes makes the links without codes.
+pub fn share(
     server: &Endpoint,
     key: Option<&str>,
     file: &str,
     owner: &str,
-    tokens: &[&str],
+    revoke: &[String],
+    create: bool,
     limits: &NetLimits,
     timeout: Duration,
-) -> Option<Vec<String>> {
-    let requests = tokens.iter().map(|t| Admin::Code { file: file.to_string(), token: (*t).to_string() }).collect();
-    let replies = match key {
+) -> Result<Option<Shared>, String> {
+    let ask = |requests: Vec<Admin>| match key {
         Some(key) => request(server, key, requests, limits, timeout),
         None => hosting(server, file, owner, requests, limits, timeout).map(|(_, replies)| replies),
     };
-    let codes: Option<Vec<String>> = replies
+    let link = |access: Access| Admin::CreateLink { file: file.to_string(), access, label: format!("Shared ({})", access.id()) };
+    let mut requests: Vec<Admin> = revoke.iter().map(|id| Admin::Revoke { file: file.to_string(), link: id.clone() }).collect();
+    requests.extend(create.then(|| [link(Access::Edit), link(Access::View)]).into_iter().flatten());
+    let mut made = Vec::new();
+    for reply in ask(requests)? {
+        match reply {
+            AdminReply::Link(l) => made.push(l),
+            // A link that is gone already is as revoked as it gets.
+            AdminReply::Failed { reason } if made.is_empty() && reason.contains("no such link") => {}
+            AdminReply::Failed { reason } => return Err(reason),
+            _ => {}
+        }
+    }
+    let (Some(view), Some(edit)) = (made.pop(), made.pop()) else {
+        return if create { Err("the server didn't make the links".into()) } else { Ok(None) };
+    };
+    // Their codes, on a connection of its own: a server from before join codes can't read the
+    // request and closes it (the links are shared without codes then).
+    let code = |token: &str| Admin::Code { file: file.to_string(), token: token.to_string() };
+    let mut codes = ask(vec![code(&edit.token), code(&view.token)])
         .map_err(|e| log::info!("live session: no join codes from {}: {e}", server.display()))
-        .ok()?
+        .unwrap_or_default()
         .into_iter()
-        .map(|r| match r {
-            AdminReply::Code { code } => Some(code),
-            _ => None,
-        })
-        .collect();
-    codes.filter(|c| c.len() == tokens.len())
+        .map(|r| if let AdminReply::Code { code } = r { Some(code) } else { None });
+    let mut shared = |l: NewLink| SharedLink {
+        link: Invite { server: server.clone(), file: file.to_string(), token: l.token }.link(),
+        id: l.link.id,
+        code: codes.next().flatten(),
+    };
+    let edit = shared(edit);
+    Ok(Some(Shared { edit, view: Some(shared(view)) }))
 }
 
 /// Send one library request about the file behind share link `link`; the reply. Fails when the

@@ -77,9 +77,16 @@ Server for online sharing** (the FigCraft server unless you put yours there; Res
 turns online sharing off), then shows a **join code** such as `K7M-2QX-9TD` in place of the links.
 Someone else types it under **Share ▸ Join with a code** (or on the home screen, or
 `collab.join {code}`) with the same server in their Preferences, and is in the file. The popover
-switches between the code that lets people edit and the one that only lets them view, and **Stop
-sharing** removes the file from the server (with its owner token), so its codes and links stop
-working; everyone keeps the copy they have. To use **your** server for this, set its address
+switches between the code that lets people edit and the one that only lets them view.
+
+The file is its owner's: the app keeps the file's first links and its owner token for itself and
+makes two more links ("Shared (edit)", "Shared (view)" in `figcraft-server links list`) for
+everyone else, with their codes. **Stop sharing** revokes those two: their codes and links stop
+working at once, whoever joined with them is disconnected ("Sharing was stopped…"; they keep the
+copy they have), and the owner stays in the file, which stays on the server, open only to them.
+**Start sharing** again gives the same file new links and codes. **Share ▸ Advanced ▸ Remove from
+server…** (it asks first) takes the file off the server; closing the tab or quitting changes
+nothing on the server. To use **your** server for this, set its address
 (`wss://figcraft.example.com/`) in Preferences on every machine that shares or joins; a server
 that needs its key is reached under **Advanced ▸ Publish to another server…**, or with
 `collab.share {server: "wss://…/?key=…"}`, and gets codes too.
@@ -395,7 +402,7 @@ What someone can do, by what they hold (the server is reached through TLS at the
 | Someone with a **join code** | Exactly what its link gives (a view code: the view link's row; an edit code: the edit link's), until the code or its link is gone | Get a code for any other link; learn anything from a wrong code but that it is wrong |
 | Someone with a file's **view link** | See that file and everyone's changes and presence in it; read its team library and usage; report it | Change it (the server refuses a viewer's edits); reach any other file; manage links |
 | Someone with a file's **edit link** | Change that file, within its size cap; publish its team library (on a public server only for files published with the key); report it | Reach any other file; grow it past `max_file_mb` or its publisher's share; list, make or revoke links; rename or remove it |
-| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one), ask for join codes for links whose token they hold, rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
+| Whoever holds a file's **owner token** (published without the key) | List, make and revoke that file's links (disconnecting whoever joined with a revoked one, which is how the app stops sharing), ask for join codes for links whose token they hold, rename it on the server, remove it | Touch any other file, even with its id; list files; read reports; block; anything of the plugin directory |
 | The **operator** (server key, or the machine) | Everything above for every file, reports, blocks, the plugin directory; read every file on disk | Recover a lost link or owner token (only hashes are kept) |
 
 Limits that hold against everyone: message sizes by what a connection is for, file sizes as they

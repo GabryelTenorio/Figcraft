@@ -1,6 +1,7 @@
 //! Sharing with a join code in the window: the Share popover not sharing (online or the local
 //! network, one Start button, the rest under Advanced), sharing online (the code large, copying,
-//! what it lets people do, who is here, stop), sharing on the local network, a server without
+//! what it lets people do, who is here, stop: the file stays on the server, not shared, and can
+//! be shared again or removed), sharing on the local network, a server without
 //! codes, joining with the one join field (the popover, the home screen, the Join dialog), its
 //! errors, the server preference, and an idle popover asking for no frames.
 
@@ -11,7 +12,8 @@ use egui::{Event, Key, Shape};
 use figcraft_engine::figcraft_collab::code::{self, Local};
 use figcraft_engine::figcraft_collab::message::ClientMsg;
 use figcraft_engine::live::{
-    Access, DEFAULT_SERVER, Event as LiveEvent, HostOptions, LiveLink, Peer, Presence, PublishOptions, Published, Role, SessionInfo, Status,
+    Access, DEFAULT_SERVER, Event as LiveEvent, HostOptions, LiveLink, NetReply, NetRequest, Peer, Presence, PublishOptions, Published, Role,
+    SessionInfo, Shared as SharedLinks, SharedLink, Status,
 };
 use serde_json::json;
 
@@ -27,6 +29,22 @@ struct Script {
     events: Vec<LiveEvent>,
     session: u64,
     copied: Vec<String>,
+    /// Link ids the server was asked to revoke, how often it was asked for new links, the files
+    /// it was asked to remove, and its answers on their way.
+    revoked: Vec<String>,
+    shares: usize,
+    removed: Vec<String>,
+    answers: Vec<LiveEvent>,
+}
+
+/// The links a server makes for others the `n`th time a file is shared, with their codes.
+fn links(n: usize, codes: Option<(&str, &str)>) -> SharedLinks {
+    let link = |what: &str, code: Option<&str>| SharedLink {
+        id: format!("{what}{n}"),
+        link: format!("figcraft://join?server=wss://share.example:443/&file=f1&token=Share{what}Share{what}0{n}"),
+        code: code.map(str::to_string),
+    };
+    SharedLinks { edit: link("edit", codes.map(|c| c.0)), view: Some(link("view", codes.map(|c| c.1))) }
 }
 
 type Shared = Arc<Mutex<Script>>;
@@ -74,6 +92,32 @@ impl LiveLink for Link {
         s.published.push(opts);
         Ok(())
     }
+    fn share(&mut self, _: &str, _: &str, _: &str, revoke: &[String], create: bool) -> Result<Option<SharedLinks>, String> {
+        let mut s = self.0.lock().unwrap();
+        s.revoked.extend(revoke.iter().cloned());
+        s.shares += usize::from(create);
+        let n = s.shares;
+        Ok(create.then(|| links(n, Some((&format!("NEWED1T0{n}"), &format!("NEWV1EW0{n}"))))))
+    }
+    fn hosting(
+        &mut self,
+        _: &str,
+        file: &str,
+        _: &str,
+        req: Option<figcraft_engine::figcraft_collab::message::Admin>,
+    ) -> Result<(figcraft_engine::live::HostInfo, Option<figcraft_engine::figcraft_collab::message::AdminReply>), String> {
+        use figcraft_engine::figcraft_collab::message::{Admin, AdminReply};
+        if matches!(req, Some(Admin::Remove { .. })) {
+            self.0.lock().unwrap().removed.push(file.to_string());
+        }
+        Ok((Default::default(), Some(AdminReply::Done)))
+    }
+    fn background(&mut self, job: u64, req: NetRequest) -> bool {
+        // Answered at the next poll, as the network would.
+        let reply: NetReply = self.request(req);
+        self.0.lock().unwrap().answers.push(LiveEvent::Net { job, reply: Box::new(reply) });
+        true
+    }
     fn leave(&mut self, _: u64) {
         self.0.lock().unwrap().left += 1;
     }
@@ -82,7 +126,8 @@ impl LiveLink for Link {
     fn poll(&mut self) -> Vec<(u64, LiveEvent)> {
         let mut s = self.0.lock().unwrap();
         let session = s.session;
-        std::mem::take(&mut s.events).into_iter().map(|e| (session, e)).collect()
+        let answers: Vec<(u64, LiveEvent)> = std::mem::take(&mut s.answers).into_iter().map(|e| (0, e)).collect();
+        answers.into_iter().chain(std::mem::take(&mut s.events).into_iter().map(|e| (session, e))).collect()
     }
 }
 
@@ -141,10 +186,8 @@ fn on_the_server(h: &mut Harness, script: &Shared, codes: Option<(&str, &str)>) 
         owner: Some("OwnerOwnerOwnerOwner00".into()),
         expires: None,
     };
-    let mut events = vec![LiveEvent::Published(published.clone())];
-    events.extend(codes.map(|(edit, view)| LiveEvent::Codes { edit: edit.into(), view: view.into() }));
-    events.push(LiveEvent::Welcome { info: info(Role::Guest, &published.edit), peers: vec![] });
-    script.lock().unwrap().events.extend(events);
+    let welcome = LiveEvent::Welcome { info: info(Role::Guest, &published.edit), peers: vec![] };
+    script.lock().unwrap().events.extend([LiveEvent::Published(published), LiveEvent::Shared(Ok(links(0, codes))), welcome]);
     h.frames(3)
 }
 
@@ -197,7 +240,7 @@ fn sharing_online_shows_the_code_copies_it_and_stops() {
     {
         let s = script.lock().unwrap();
         let [p] = s.published.as_slice() else { panic!("published {}", s.published.len()) };
-        assert!(p.server == "wss://share.example/" && p.key.is_none() && p.codes, "the server in Preferences, asked for codes");
+        assert!(p.server == "wss://share.example/" && p.key.is_none() && p.share, "the server in Preferences, shared once there");
     }
     assert!(has_text(&shapes, "Starting to share…") && has_text(&shapes, "Stop sharing"));
     assert!(!has_text(&shapes, "Start sharing"));
@@ -218,10 +261,8 @@ fn sharing_online_shows_the_code_copies_it_and_stops() {
     // Copying.
     let shapes = click(&mut h, &shapes, "Copy code");
     let shapes = click(&mut h, &shapes, "Copy link");
-    assert_eq!(
-        script.lock().unwrap().copied,
-        ["K7M-2QX-9TD", "figcraft://join?server=wss://share.example:443/&file=f1&token=EditEditEditEditEdit00"]
-    );
+    // The link is one made for others, not the owner's own.
+    assert_eq!(script.lock().unwrap().copied, ["K7M-2QX-9TD", "figcraft://join?server=wss://share.example:443/&file=f1&token=ShareeditShareedit00"]);
     // Someone joins: they are listed.
     script.lock().unwrap().events.push(LiveEvent::PeerJoined(Peer { client_id: 2, name: "Hana".into(), color: "#9747FF".into() }));
     let shapes_now = h.frames(2);
@@ -231,13 +272,57 @@ fn sharing_online_shows_the_code_copies_it_and_stops() {
     assert!(has_text(&shapes, "4FH-J8R-2WN") && !has_text(&shapes, "K7M-2QX-9TD"));
     assert!(has_text(&shapes, "Anyone with this code can look at the file, not change it."));
     let shapes = click(&mut h, &shapes, "Copy link");
-    assert!(script.lock().unwrap().copied.last().unwrap().ends_with("token=ViewViewViewViewView00"));
+    assert!(script.lock().unwrap().copied.last().unwrap().ends_with("token=ShareviewShareview00"));
     let shapes = click(&mut h, &shapes, "Can edit");
     assert!(has_text(&shapes, "K7M-2QX-9TD"));
-    // Stop: back to the start, the session left.
-    let shapes = click(&mut h, &shapes, "Stop sharing");
-    assert!(has_text(&shapes, "Start sharing") && has_text(&shapes, "Share this file") && !has_text(&shapes, "K7M-2QX-9TD"));
-    assert_eq!((h.app.session.live().status.clone(), script.lock().unwrap().left), (Status::Off, 1));
+    // Stop: the others' links are revoked; the file stays on the server and you stay in it.
+    click(&mut h, &shapes, "Stop sharing");
+    let shapes = h.frames(3);
+    assert_eq!(script.lock().unwrap().revoked, ["edit0", "view0"]);
+    assert_eq!((h.app.session.live().status.clone(), script.lock().unwrap().left), (Status::Live, 0));
+    for t in
+        ["Not shared", "This file is on share.example, open only to you. Share it to let others in with a new code.", "Start sharing", "Advanced"]
+    {
+        assert!(has_text(&shapes, t), "not shared shows {t:?}");
+    }
+    assert!(
+        !has_text(&shapes, "K7M-2QX-9TD")
+            && !has_text(&shapes, "Stop sharing")
+            && !has_text(&shapes, "Edit link")
+            && !has_text(&shapes, "Local network")
+    );
+    assert_eq!(crate::live::inspect(&h.app)["share"]["shared"], false);
+    // Share again: a new code for the same file, nothing published twice.
+    click(&mut h, &shapes, "Start sharing");
+    let shapes = h.frames(3);
+    assert!(has_text(&shapes, "NEW-ED1-T01") && has_text(&shapes, "Stop sharing") && !has_text(&shapes, "K7M-2QX-9TD"));
+    let s = script.lock().unwrap();
+    assert_eq!((s.published.len(), s.shares), (1, 1));
+}
+
+#[test]
+fn a_file_that_is_not_shared_can_be_removed_from_the_server_after_asking() {
+    let (mut h, script) = harness();
+    let shapes = open(&mut h);
+    click(&mut h, &shapes, "Start sharing");
+    let shapes = on_the_server(&mut h, &script, Some(("K7M2QX9TD", "4FHJ8R2WN")));
+    click(&mut h, &shapes, "Stop sharing");
+    let shapes = h.frames(3);
+    // Removing is its own step under Advanced, and asks first.
+    assert!(!has_text(&shapes, "Remove from server…"));
+    let shapes = click(&mut h, &shapes, "Advanced");
+    assert!(has_text(&shapes, "Remove from server…") && has_text(&shapes, "Leave session"));
+    let shapes = click(&mut h, &shapes, "Remove from server…");
+    assert!(has_text(&shapes, "Remove this file from the server? It can't be shared or opened from there again. Your copy stays open here."));
+    assert!(script.lock().unwrap().removed.is_empty(), "nothing yet");
+    let shapes = click(&mut h, &shapes, "Cancel");
+    assert!(has_text(&shapes, "Remove from server…") && script.lock().unwrap().removed.is_empty());
+    let shapes = click(&mut h, &shapes, "Remove from server…");
+    click(&mut h, &shapes, "Remove");
+    let shapes = h.frames(3);
+    assert_eq!(script.lock().unwrap().removed, ["f1"]);
+    assert_eq!(h.app.session.live().status, Status::Off);
+    assert!(has_text(&shapes, "Share this file") && has_text(&shapes, "Removed from the server"));
 }
 
 #[test]
@@ -284,9 +369,14 @@ fn without_a_code_the_link_is_shared_instead() {
     ));
     assert!(!has_text(&shapes, "Copy code"));
     let shapes = click(&mut h, &shapes, "Copy");
-    assert!(script.lock().unwrap().copied[0].ends_with("token=EditEditEditEditEdit00"));
+    assert!(script.lock().unwrap().copied[0].ends_with("token=ShareeditShareedit00"));
+    // Stopping works without codes too (links are older than codes).
+    click(&mut h, &shapes, "Stop sharing");
+    let shapes = h.frames(3);
+    assert!(has_text(&shapes, "Not shared") && script.lock().unwrap().revoked == ["edit0", "view0"]);
     // A host whose address a code can't carry.
-    let shapes = click(&mut h, &shapes, "Stop sharing");
+    h.app.session.execute("collab.leave", &json!({})).unwrap();
+    let shapes = h.frames(2);
     let shapes = click(&mut h, &shapes, "Local network");
     h.app.ui.live.port = "6".into();
     let shapes = click(&mut h, &shapes, "Start sharing");

@@ -39,8 +39,8 @@ pub struct Publish {
     /// The file's name on the server.
     pub name: String,
     pub doc: Arc<Document>,
-    /// Ask the server for join codes for the file's links ([`Event::Codes`]).
-    pub codes: bool,
+    /// Share the file once it is there: links and join codes for others ([`Event::Shared`]).
+    pub share: bool,
 }
 
 /// A joined (or joining) session. Dropping it leaves.
@@ -98,15 +98,20 @@ impl Guest {
                 Ok(done) => done,
                 Err(e) => return inbox.push(Event::Status(Status::Failed { reason: format!("Couldn't publish to the server: {e}") })),
             };
-            // Before anyone hears the file is there, so the codes show with it (a server from
-            // before join codes has none: the links are shown).
-            let codes = if job.codes { join_codes(&job, &cfg, &published) } else { None };
+            // Before anyone hears the file is there, so what others join with shows with it. The
+            // file's first links stay its owner's (this app joins with one): others get their own,
+            // which stopping takes away again.
+            let shared = job.share.then(|| {
+                let owner = published.owner.as_deref().unwrap_or_default();
+                let made = manage::share(&job.server, job.key.as_deref(), &published.file, owner, &[], true, &cfg.limits, cfg.connect_timeout);
+                made.and_then(|s| s.ok_or_else(|| "the server didn't make the links".to_string()))
+            });
             if let Some(h) = hosting {
                 inbox.push(Event::Hosting(h));
             }
             inbox.push(Event::Published(published));
-            if let Some((edit, view)) = codes {
-                inbox.push(Event::Codes { edit, view });
+            if let Some(shared) = shared {
+                inbox.push(Event::Shared(shared));
             }
             // Left while uploading: the file stays on the server, nobody joins it. Anything else
             // that came meanwhile (presence) waits for the session.
@@ -204,16 +209,6 @@ fn upload(job: &Publish, mut cfg: GuestConfig) -> Result<(GuestConfig, Published
     let (edit, published, hosting) = upload_file(&job.server, job.key.as_deref(), &job.name, &job.doc, &cfg.limits, cfg.connect_timeout)?;
     cfg.invite = edit;
     Ok((cfg, published, hosting))
-}
-
-/// The join codes of the file just published: its edit link's and its view link's.
-fn join_codes(job: &Publish, cfg: &GuestConfig, published: &Published) -> Option<(String, String)> {
-    let view = Invite::parse(&published.view).ok()?;
-    let tokens = [cfg.invite.token.as_str(), view.token.as_str()];
-    let owner = published.owner.as_deref().unwrap_or_default();
-    let codes = manage::codes(&job.server, job.key.as_deref(), &published.file, owner, &tokens, &cfg.limits, cfg.connect_timeout)?;
-    let mut codes = codes.into_iter();
-    Some((codes.next()?, codes.next()?))
 }
 
 fn connect(cfg: &GuestConfig) -> Result<Conn, String> {

@@ -1,5 +1,6 @@
 //! Sharing with a join code against a scripted link: `collab.share` online and on the local
-//! network, the codes in `collab.peers`, switching what the code lets people do, stopping, and
+//! network, the codes in `collab.peers`, switching what the code lets people do, stopping (online:
+//! the others' links go, the file and its owner stay; sharing again makes new ones), and
 //! `collab.join` with a code of either kind or a link (what typing tolerates, and what it says
 //! when it can't be a code).
 
@@ -7,11 +8,11 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
 use figcraft_collab::code::{self, Local};
-use figcraft_collab::message::{Admin, ClientMsg};
+use figcraft_collab::message::ClientMsg;
 use serde_json::{Value, json};
 
 use crate::live::{
-    Access, Bind, DEFAULT_SERVER, Event, HostOptions, LiveLink, NetRequest, Presence, PublishOptions, Published, Role, SessionInfo, Status,
+    Access, Bind, DEFAULT_SERVER, Event, HostOptions, LiveLink, Presence, PublishOptions, Published, Role, SessionInfo, Shared, SharedLink, Status,
     join_target,
 };
 use crate::{EngineError, Session};
@@ -22,7 +23,10 @@ struct Script {
     hosted: Vec<HostOptions>,
     published: Vec<PublishOptions>,
     joined: Vec<String>,
-    asked: Vec<(u64, NetRequest)>,
+    /// What the server was asked about a file's sharing: (server, file, owner, revoke, create).
+    asked: Vec<(String, String, String, Vec<String>, bool)>,
+    /// The server can't be reached.
+    offline: bool,
     left: Vec<u64>,
     events: Vec<Event>,
     session: u64,
@@ -69,9 +73,15 @@ impl LiveLink for Link {
         s.published.push(opts);
         Ok(())
     }
-    fn background(&mut self, job: u64, req: NetRequest) -> bool {
-        self.0.lock().unwrap().asked.push((job, req));
-        true
+    fn share(&mut self, server: &str, file: &str, owner: &str, revoke: &[String], create: bool) -> Result<Option<Shared>, String> {
+        let mut s = self.0.lock().unwrap();
+        if s.offline {
+            return Err("no answer from the server".into());
+        }
+        s.asked.push((server.into(), file.into(), owner.into(), revoke.to_vec(), create));
+        // Each time the file is shared the server makes new links, with new codes.
+        let n = s.asked.iter().filter(|a| a.4).count();
+        Ok(create.then(|| links(n, Some((&format!("NEWED1T0{n}"), &format!("NEWV1EW0{n}"))))))
     }
     fn leave(&mut self, session: u64) {
         self.0.lock().unwrap().left.push(session);
@@ -100,7 +110,19 @@ fn err(s: &mut Session, cmd: &str, p: Value) -> String {
     s.execute(cmd, &p).unwrap_err().to_string()
 }
 
-/// The file is on the server and joined: its links, then (when given) its codes.
+/// The links a server makes for others the `n`th time a file is shared, with their codes (a
+/// server from before join codes has none).
+fn links(n: usize, codes: Option<(&str, &str)>) -> Shared {
+    let link = |what: &str, code: Option<&str>| SharedLink {
+        id: format!("{what}{n}"),
+        link: format!("figcraft://join?server=wss://share.example:443/&file=f1&token=Share{what}Share{what}0{n}"),
+        code: code.map(str::to_string),
+    };
+    Shared { edit: link("edit", codes.map(|c| c.0)), view: Some(link("view", codes.map(|c| c.1))) }
+}
+
+/// The file is on the server and joined: its owner's links, and what others join with (codes
+/// too, when given).
 fn on_the_server(s: &mut Session, script: &Arc<Mutex<Script>>, codes: Option<(&str, &str)>) {
     let link = |token: &str| format!("figcraft://join?server=wss://share.example:443/&file=f1&token={token}");
     let published = Published {
@@ -125,11 +147,17 @@ fn on_the_server(s: &mut Session, script: &Arc<Mutex<Script>>, codes: Option<(&s
         network: true,
         access: Access::Edit,
     };
-    let mut events = vec![Event::Published(published)];
-    events.extend(codes.map(|(edit, view)| Event::Codes { edit: edit.into(), view: view.into() }));
-    events.push(Event::Welcome { info, peers: vec![] });
+    let events = vec![Event::Published(published), Event::Shared(Ok(links(0, codes))), Event::Welcome { info, peers: vec![] }];
     script.lock().unwrap().events.extend(events);
     s.live_poll();
+}
+
+/// The file reached the server and its owner is in it, without links for others.
+fn on_the_server_unshared(s: &mut Session, script: &Arc<Mutex<Script>>) {
+    on_the_server(s, script, None);
+    if let Some(sh) = s.live_mut().and_then(|l| l.share.as_mut()) {
+        sh.links = None;
+    }
 }
 
 #[test]
@@ -166,13 +194,19 @@ fn sharing_online_publishes_to_the_server_in_preferences_and_shows_its_code() {
     {
         let sc = script.lock().unwrap();
         let [p] = sc.published.as_slice() else { panic!("published {}", sc.published.len()) };
-        assert_eq!((p.server.as_str(), p.key.as_deref(), p.name.as_str(), p.codes), ("wss://share.example/", None, "Untitled", true));
+        assert_eq!((p.server.as_str(), p.key.as_deref(), p.name.as_str(), p.share), ("wss://share.example/", None, "Untitled", true));
         assert!(sc.hosted.is_empty());
     }
     on_the_server(&mut s, &script, Some(("K7M2QX9TD", "4FHJ8R2WN")));
     let r = ex(&mut s, "collab.peers", json!({}));
     assert_eq!((&r["status"], &r["code"]), (&json!("live"), &json!("K7M-2QX-9TD")));
-    assert_eq!(r["share"], json!({"via": "online", "access": "edit", "editCode": "K7M-2QX-9TD", "viewCode": "4FH-J8R-2WN"}));
+    assert_eq!(
+        (&r["share"]["shared"], &r["share"]["editCode"], &r["share"]["viewCode"]),
+        (&json!(true), &json!("K7M-2QX-9TD"), &json!("4FH-J8R-2WN"))
+    );
+    // What others get are links of their own, not the owner's.
+    let (edit_link, own) = (r["share"]["editLink"].as_str().unwrap(), r["published"]["edit"].as_str().unwrap());
+    assert!(edit_link.contains("ShareeditShareedit00") && edit_link != own && r["link"] == own, "{edit_link}");
     assert!(s.message.is_none(), "the popover shows the code: no toast about publishing");
     // Asking again only switches which code is the one to give out.
     let r = ex(&mut s, "collab.share", json!({"access": "view"}));
@@ -182,15 +216,54 @@ fn sharing_online_publishes_to_the_server_in_preferences_and_shows_its_code() {
     assert_eq!(script.lock().unwrap().published.len(), 1);
     assert!(err(&mut s, "collab.share", json!({"via": "local"})).contains("stop sharing it first"));
     assert!(err(&mut s, "collab.share", json!({"access": "admin"})).contains("`access` must be"));
-    // Stopping: the session ends and the server is asked, as the file's owner, to remove it.
+    // Stopping while the server can't be reached stops nothing, and says so.
+    script.lock().unwrap().offline = true;
+    assert!(err(&mut s, "collab.stop", json!({})).contains("couldn't stop sharing"));
+    assert_eq!(ex(&mut s, "collab.peers", json!({}))["code"], "K7M-2QX-9TD");
+    script.lock().unwrap().offline = false;
+    // Stopping: the server is asked, as the file's owner, to revoke the others' links. The file
+    // stays there and its owner stays in it: nothing is left, nothing is removed.
+    assert_eq!(ex(&mut s, "collab.stop", json!({})), json!({"ended": false, "shared": false}));
+    {
+        let sc = script.lock().unwrap();
+        assert!(sc.left.is_empty(), "the owner stays in the file");
+        let want = (
+            "wss://share.example/".to_string(),
+            "f1".to_string(),
+            "OwnerOwnerOwnerOwner00".to_string(),
+            vec!["edit0".to_string(), "view0".to_string()],
+            false,
+        );
+        assert_eq!(sc.asked, [want]);
+    }
+    let r = ex(&mut s, "collab.peers", json!({}));
+    assert_eq!((&r["status"], &r["syncing"].is_boolean(), &r["code"]), (&json!("live"), &true, &Value::Null));
+    assert_eq!(
+        r["share"],
+        json!({"via": "online", "access": "edit", "shared": false, "editCode": null, "viewCode": null, "editLink": null, "viewLink": null})
+    );
+    assert!(r["published"]["owner"].is_string(), "still the owner's file on the server");
+    assert!(s.message.as_deref().unwrap_or_default().contains("stays on the server"));
+    // Sharing again: new links and codes for the same file, nothing published twice.
+    let r = ex(&mut s, "collab.share", json!({}));
+    assert_eq!((&r["code"], &r["share"]["shared"], &r["share"]["viewCode"]), (&json!("NEW-ED1-T01"), &json!(true), &json!("NEW-V1E-W01")));
+    assert!(r["share"]["editLink"].as_str().unwrap().contains("ShareeditShareedit01"));
+    {
+        let sc = script.lock().unwrap();
+        assert_eq!(sc.published.len(), 1);
+        assert_eq!(sc.asked[1], ("wss://share.example/".to_string(), "f1".to_string(), "OwnerOwnerOwnerOwner00".to_string(), vec![], true));
+    }
+    assert_eq!(ex(&mut s, "collab.share", json!({}))["code"], "NEW-ED1-T01", "shared already: nothing more is asked");
+    assert_eq!(script.lock().unwrap().asked.len(), 2);
+    // Stopping again revokes the new ones; then `collab.stop` on a file that isn't shared leaves
+    // its session like any other (the file stays on the server).
+    ex(&mut s, "collab.stop", json!({}));
+    assert_eq!(script.lock().unwrap().asked[2].3, ["edit1", "view1"]);
     assert_eq!(ex(&mut s, "collab.stop", json!({}))["ended"], true);
-    let sc = script.lock().unwrap();
-    assert_eq!(sc.left, vec![1]);
-    let [(0, NetRequest::Hosting { server, file, owner, req: Some(Admin::Remove { file: removed }) })] = sc.asked.as_slice() else {
-        panic!("asked {:?}", sc.asked)
-    };
-    assert_eq!((server.as_str(), file.as_str(), owner.as_str(), removed.as_str()), ("wss://share.example/", "f1", "OwnerOwnerOwnerOwner00", "f1"));
-    drop(sc);
+    {
+        let sc = script.lock().unwrap();
+        assert_eq!((sc.left.clone(), sc.asked.len()), (vec![1], 3));
+    }
     let r = ex(&mut s, "collab.peers", json!({}));
     assert_eq!((&r["status"], &r["code"], &r["share"]), (&json!("off"), &Value::Null, &Value::Null));
 }
@@ -206,15 +279,29 @@ fn a_server_without_join_codes_leaves_the_links() {
     on_the_server(&mut s, &script, None);
     let r = ex(&mut s, "collab.peers", json!({}));
     assert_eq!((&r["status"], &r["code"], &r["share"]["editCode"]), (&json!("live"), &Value::Null, &Value::Null));
-    assert!(r["published"]["edit"].as_str().unwrap().contains("token="), "the links are what there is to share");
+    assert!(r["share"]["editLink"].as_str().unwrap().contains("token="), "the links are what there is to share");
     assert!(!r.to_string().contains("KeyKey"), "the server's key is nowhere in the summary");
     // Codes that aren't codes are not shown either.
-    script.lock().unwrap().events.push(Event::Codes { edit: "<script>".into(), view: "K7M2QX9TDX".into() });
+    script.lock().unwrap().events.push(Event::Shared(Ok(links(0, Some(("<script>", "K7M2QX9TDX"))))));
     s.live_poll();
-    assert_eq!(ex(&mut s, "collab.peers", json!({}))["share"]["viewCode"], Value::Null);
+    let r = ex(&mut s, "collab.peers", json!({}));
+    assert_eq!((&r["share"]["editCode"], &r["share"]["viewCode"], &r["share"]["shared"]), (&Value::Null, &Value::Null, &json!(true)));
+    // Stopping works there too (links are older than codes); the operator's key goes with the
+    // address, since there is no owner token.
+    assert_eq!(ex(&mut s, "collab.stop", json!({}))["shared"], false);
+    {
+        let sc = script.lock().unwrap();
+        assert_eq!(sc.asked[0].0, "wss://old.example/?key=KeyKeyKeyKeyKeyKeyKey0");
+    }
     // `collab.leave` keeps the file on the server: nothing is asked of it.
     ex(&mut s, "collab.leave", json!({}));
-    assert!(script.lock().unwrap().asked.is_empty());
+    assert_eq!(script.lock().unwrap().asked.len(), 1);
+    // A server that couldn't make the links: the file is there, not shared, and it says why.
+    ex(&mut s, "collab.share", json!({"server": "wss://full.example/"}));
+    script.lock().unwrap().events.extend([Event::Shared(Err("a file has at most 100 links: revoke one first".into()))]);
+    on_the_server_unshared(&mut s, &script);
+    assert!(s.message.as_deref().unwrap_or_default().contains("couldn't be shared: a file has at most 100 links"));
+    assert_eq!(ex(&mut s, "collab.peers", json!({}))["share"]["shared"], false);
 }
 
 #[test]

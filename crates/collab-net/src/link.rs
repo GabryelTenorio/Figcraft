@@ -9,7 +9,7 @@ use figcraft_collab::code;
 use figcraft_collab::message::{Access, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{
     Bind, Event, HostInfo, HostOptions, LiveLink, NO_SESSION, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionId,
-    SessionInfo,
+    SessionInfo, Shared,
 };
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
@@ -176,7 +176,7 @@ impl LiveLink for NetLink {
         // Until the upload is done the invite names only the server.
         let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, None, &o.me);
         let inbox = self.sessions.inbox();
-        let job = Publish { server, key, name: o.name, doc: o.doc, codes: o.codes };
+        let job = Publish { server, key, name: o.name, doc: o.doc, share: o.share };
         let guest = Guest::publish(job, cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
         self.started(session, Active::Guest(guest), inbox);
         Ok(())
@@ -198,6 +198,10 @@ impl LiveLink for NetLink {
         hosting(server, file, owner, req, &self.limits)
     }
 
+    fn share(&mut self, server: &str, file: &str, owner: &str, revoke: &[String], create: bool) -> Result<Option<Shared>, String> {
+        share(server, file, owner, revoke, create, &self.limits)
+    }
+
     fn background(&mut self, job: u64, req: NetRequest) -> bool {
         let (inbox, limits) = (self.libraries.clone(), self.limits);
         let (failed, failure) = (inbox.clone(), req.failure());
@@ -207,6 +211,7 @@ impl LiveLink for NetLink {
                 NetRequest::Library { link, req } => NetReply::Library(manage::library(&link, req, &limits, CONNECT)),
                 NetRequest::Upload(o) => NetReply::Upload(upload(o, &limits)),
                 NetRequest::Hosting { server, file, owner, req } => NetReply::Hosting(hosting(&server, &file, &owner, req, &limits)),
+                NetRequest::Share { server, file, owner, revoke, create } => NetReply::Share(share(&server, &file, &owner, &revoke, create, &limits)),
             };
             inbox.push(Event::Net { job, reply: Box::new(reply) });
         });
@@ -284,6 +289,14 @@ fn hosting(server: &str, file: &str, owner: &str, req: Option<Admin>, limits: &N
         other => other,
     });
     Ok((info, reply))
+}
+
+/// See [`LiveLink::share`]: as the server's operator when the address carries its key, else as
+/// the file's owner.
+fn share(server: &str, file: &str, owner: &str, revoke: &[String], create: bool, limits: &NetLimits) -> Result<Option<Shared>, String> {
+    let (endpoint, query) = Endpoint::parse(server)?;
+    let key = query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v).filter(|k| !k.trim().is_empty());
+    manage::share(&endpoint, key.as_deref(), file, owner, revoke, create, limits, CONNECT)
 }
 
 /// One request to the plugin directory at `server` (its key in the address's query, if any).

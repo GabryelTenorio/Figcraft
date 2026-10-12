@@ -1104,6 +1104,10 @@ fn unsupported(protocol: u32) -> String {
     format!("protocol {protocol} isn't supported (this server speaks {PROTOCOL})")
 }
 
+/// What someone in a file is told when the link they joined with is revoked (its owner stopped
+/// sharing): the session's end for them.
+pub const STOPPED: &str = "Sharing was stopped: the link you joined with no longer works. Your copy stays open";
+
 /// What everyone in a file is told when its changes couldn't be saved (they reconnect).
 const UNSAVED: &str = "The server couldn't save the latest changes; reconnecting";
 
@@ -1447,15 +1451,24 @@ impl<B: Backend> Hub<B> {
     fn handled(&mut self, conn: u64, handled: Handled) {
         self.answer(conn, &ServerMsg::Admin(Box::new(handled.reply)));
         if let Some((file, link)) = handled.revoked {
-            let users: Vec<u64> = self
-                .conns
-                .iter()
-                .filter(|(_, c)| {
-                    matches!(&c.kind, Kind::Joined { file: f, link: Some(l), .. } | Kind::Library { file: f, link: Some(l), .. } if *f == file && *l == link)
-                })
-                .map(|(k, _)| *k)
-                .collect();
-            self.kick(&users, "the link you joined with was revoked");
+            let with = |joined: bool| -> Vec<u64> {
+                let uses = |c: &Conn| match &c.kind {
+                    Kind::Joined { file: f, link: Some(l), .. } => joined && *f == file && *l == link,
+                    Kind::Library { file: f, link: Some(l), .. } => !joined && *f == file && *l == link,
+                    _ => false,
+                };
+                self.conns.iter().filter(|(_, c)| uses(c)).map(|(k, _)| *k).collect()
+            };
+            let (people, libraries) = (with(true), with(false));
+            // People in the file are told the session is over for them, as when a host stops (they
+            // keep their copy; nothing retries); a library request is refused.
+            for conn in &people {
+                if let Some(c) = self.conns.get(conn) {
+                    let _ = c.out.tx.try_send(Out::Close(CloseCode::Away, STOPPED.into()));
+                }
+                self.gone(*conn);
+            }
+            self.kick(&libraries, "the link you joined with was revoked");
         }
         if let Some(file) = handled.removed {
             let users: Vec<u64> = self
