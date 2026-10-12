@@ -66,6 +66,8 @@ struct Tile {
     /// The name on the tile: its last slash part.
     label: String,
     set: bool,
+    /// Kept out of the library this file publishes (its name starts with `.` or `_`).
+    hidden: bool,
 }
 
 impl Tile {
@@ -73,7 +75,7 @@ impl Tile {
     fn new(doc: &Document, id: NodeId, name: &str, set: bool) -> (String, Self) {
         let (folders, label) = library::asset_folder(doc, id);
         let label = if label.is_empty() { name.to_string() } else { label };
-        (folders.join(" / "), Self { id, name: name.to_string(), label, set })
+        (folders.join(" / "), Self { id, name: name.to_string(), label, set, hidden: library::hidden_name(name) })
     }
 }
 
@@ -158,6 +160,8 @@ enum Act {
     Drag(AssetDrag),
     Style(Source, String),
     Toggle(String),
+    /// Hide the local component when publishing, or show it again.
+    Hide(NodeId, bool),
 }
 
 fn drag_id() -> Id {
@@ -443,7 +447,22 @@ fn tiles(ui: &mut Ui, w: f32, src: &Source, list: &[Tile], thumbs: &Thumbs, want
                 ),
             }
             let label = Rect::from_min_size(pos2(x, r.max.y + 2.0), vec2(tile, TILE_LABEL - 4.0));
-            crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.label, regular(11.0), t.text, tile);
+            // Hidden when publishing: a crossed eye on the tile and a dimmer name.
+            let own_hidden = *src == Source::Local && item.hidden;
+            if own_hidden {
+                let badge = Rect::from_min_size(r.right_top() + vec2(-22.0, 6.0), vec2(16.0, 16.0));
+                icons::paint(ui.painter(), badge, Icon::EyeOff, t.icon_secondary);
+            }
+            let name_colour = if own_hidden { t.text_secondary } else { t.text };
+            crate::bidi::paint_name(ui.painter(), pos2(x, label.center().y), &item.label, regular(11.0), name_colour, tile);
+            if *src == Source::Local {
+                crate::right::context_popup(&resp).show(|ui| {
+                    if crate::right::menu_check(ui, item.hidden, tr("Hide when publishing"), "") {
+                        *act = Some(Act::Hide(item.id, !item.hidden));
+                        ui.close();
+                    }
+                });
+            }
             let resp = resp.on_hover_text(trf(
                 "{name}\nDrag onto the canvas, or click to place in the middle of the view.\nHold Alt (Option) while dropping onto an instance to swap it.",
                 &[("name", &item.name)],
@@ -633,6 +652,9 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             place(app, &src, id, cx, cy);
         }
         Some(Act::Style(src, style)) => apply_style(app, &src, &style),
+        Some(Act::Hide(id, on)) => {
+            app.run("component.hideWhenPublishing", json!({"ids": [id], "on": on}));
+        }
         Some(Act::Toggle(id)) => {
             let mut c = collapsed;
             if !c.remove(&id) {

@@ -11,6 +11,32 @@ use crate::components::*;
 use crate::params::*;
 use crate::{EngineError, Result, Session, bad, spec};
 
+/// `component.hideWhenPublishing`: the leading `.` of the names of this file's components and
+/// sets (those `ids` are or are in), put on or taken off.
+fn hide_when_publishing(s: &mut Session, p: &Value) -> Result<Value> {
+    use crate::library::{asset_root, hidden_name, with_hidden_name};
+    let cmd = "component.hideWhenPublishing";
+    let doc = s.doc()?;
+    let mut ids: Vec<NodeId> = Vec::new();
+    for i in req_targets(cmd, s, p)? {
+        let root = asset_root(doc, i).ok_or_else(|| bad(cmd, format!("{i} isn't a component, a component set or a layer in one")))?;
+        if doc.is_remote(root) {
+            return Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into()));
+        }
+        if !ids.contains(&root) {
+            ids.push(root);
+        }
+    }
+    let hidden = |doc: &Document, i: &NodeId| doc.node(*i).is_some_and(|n| hidden_name(&n.name));
+    let on = boolean(p, "on").unwrap_or_else(|| !ids.iter().all(|i| hidden(doc, i)));
+    let doc = s.doc_mut()?;
+    for i in &ids {
+        let n = doc.get_mut(*i)?;
+        n.name = with_hidden_name(&n.name, on);
+    }
+    Ok(json!({"ids": ids, "hidden": on}))
+}
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
@@ -120,6 +146,13 @@ pub fn specs() -> Vec<CommandSpec> {
             "{id? (a slot inside an instance, or the instance with `slot`), slot?}  (back to the main's default content)",
             true,
             reset_slot
+        ),
+        spec!(
+            "component.hideWhenPublishing",
+            "Hide when publishing",
+            "{ids? (components, sets or layers in them; default the selection), on? (default: toggle, hiding unless all are hidden)}  keeps them out of the library this file publishes, the way a name starting with `.` or `_` does: hiding puts a `.` before the name, showing takes the leading `.` and `_` away → {ids, hidden}",
+            true,
+            hide_when_publishing
         ),
         spec!("component.detach", "Detach instance", "{ids?}", true, detach),
         spec!("component.resetInstance", "Reset all changes", "{ids?}", true, reset_instance),

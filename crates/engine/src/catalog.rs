@@ -249,6 +249,7 @@ pub static MENU: &[MenuItem] = &[
     // Libraries
     m!("Libraries", "Open libraries", "libraries.open"),
     m!("Libraries", "Publish library…", "libraries.publish"),
+    m!("Libraries", "Hide when publishing", "component.hideWhenPublishing"),
     // Help
     m!("Help", "Keyboard shortcuts", "help.shortcuts"),
     m!("Help", "Help page", "help.page"),

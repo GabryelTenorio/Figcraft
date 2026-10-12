@@ -46,6 +46,20 @@ pub fn hidden_name(name: &str) -> bool {
     name.starts_with('.') || name.starts_with('_')
 }
 
+/// `name` with or without the mark that keeps an asset out of a library by default: hiding puts
+/// a `.` before it, showing takes every leading `.` and `_` away (a name of nothing else keeps
+/// one letter's worth: "Component").
+pub fn with_hidden_name(name: &str, hidden: bool) -> String {
+    match (hidden, hidden_name(name)) {
+        (true, false) => format!(".{name}"),
+        (false, true) => {
+            let shown = name.trim_start_matches(['.', '_']).trim_start();
+            if shown.is_empty() { "Component".to_string() } else { shown.to_string() }
+        }
+        _ => name.to_string(),
+    }
+}
+
 /// Where the Assets panel files asset `id`: under its page, the frames, sections and groups
 /// holding it, then the folders its name makes with slashes (`Buttons/Primary` is `Primary` in
 /// `Buttons`). Returns the folders, outermost first, and the name shown on its tile.
