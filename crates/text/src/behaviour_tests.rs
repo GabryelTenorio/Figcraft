@@ -41,10 +41,10 @@ const EPS: f64 = 1e-6;
 fn line_height_auto_percent_and_pixels() {
     let Some(f) = face() else { return };
     let k = 20.0 / f.upem;
-    let auto = (f.ascent + f.descent + f.line_gap.max(0.0)) * k;
+    let auto = ((f.ascent + f.descent + f.line_gap.max(0.0)) * k + 0.5).floor();
     // (line height, lines, expected height, derivation)
     let cases: [(LineHeight, &str, f64, &str); 5] = [
-        (LineHeight::Auto, "A", auto, "Auto: the font's own line height (ascent + descent + line gap)"),
+        (LineHeight::Auto, "A", auto, "Auto: the font's own line height (ascent + descent + line gap) in whole pixels"),
         (LineHeight::Auto, "A\nB\nC", 3.0 * auto, "every line takes the same Auto height"),
         (LineHeight::Percent(150.0), "A\nB", 60.0, "150% of 20 px = 30 px per line, two lines"),
         (LineHeight::Pixels(40.0), "A\nB\nC", 120.0, "40 px per line, three lines"),
@@ -87,9 +87,9 @@ fn letter_spacing_percent_and_pixels() {
     let plain = layout(&text("abc", TextAutoResize::WidthAndHeight), None, None).width;
     // (spacing, extra width for 3 chars, derivation)
     let cases: [(LetterSpacing, f64, &str); 4] = [
-        (LetterSpacing::Percent(10.0), 6.0, "10% of 20 px = 2 px after each of 3 chars (the last one too: documentation silent)"),
-        (LetterSpacing::Pixels(3.0), 9.0, "3 px after each char"),
-        (LetterSpacing::Percent(-5.0), -3.0, "negative spacing tightens: −1 px per char"),
+        (LetterSpacing::Percent(10.0), 4.0, "10% of 20 px = 2 px between the 3 chars (none after the last one: measured)"),
+        (LetterSpacing::Pixels(3.0), 6.0, "3 px in each of the 2 gaps"),
+        (LetterSpacing::Percent(-5.0), -2.0, "negative spacing tightens: −1 px per gap"),
         (LetterSpacing::Pixels(0.0), 0.0, "0 changes nothing"),
     ];
     for (ls, extra, why) in cases {
@@ -170,7 +170,12 @@ fn vertical_trim_cap_height_to_baseline() {
     for (s, lh, want, why) in [
         ("A", LineHeight::Pixels(40.0), cap, "one line: cap height to baseline = the cap height"),
         ("A\nB\nC", LineHeight::Pixels(40.0), cap + 80.0, "first cap height, then the baselines 40 px apart"),
-        ("A\nB", LineHeight::Auto, cap + (f.ascent + f.descent + f.line_gap.max(0.0)) * k, "Auto line height, same rule"),
+        (
+            "A\nB",
+            LineHeight::Auto,
+            cap + ((f.ascent + f.descent + f.line_gap.max(0.0)) * k + 0.5).floor(),
+            "Auto line height (whole pixels), same rule",
+        ),
     ] {
         let mut t = text(s, TextAutoResize::WidthAndHeight);
         t.style.line_height = lh;

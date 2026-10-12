@@ -150,6 +150,8 @@ mod cache_tests;
 #[cfg(test)]
 mod list_tests;
 #[cfg(test)]
+mod metrics_tests;
+#[cfg(test)]
 mod onpath_tests;
 #[cfg(test)]
 mod rtl_list_tests;

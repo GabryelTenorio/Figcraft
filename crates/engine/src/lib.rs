@@ -1447,6 +1447,8 @@ mod text_behaviour_tests;
 #[cfg(test)]
 mod text_fill_tests;
 #[cfg(test)]
+mod text_metrics_local_tests;
+#[cfg(test)]
 mod text_motion_tests;
 #[cfg(test)]
 mod text_style_picker_tests;

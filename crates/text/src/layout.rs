@@ -179,9 +179,23 @@ pub struct TextLayout {
     pub on_path: Option<crate::onpath::OnPath>,
 }
 
-/// Ratio of Figma's "Auto" line height to the font size (font ascent+descent+gap, per face).
+/// Ratio of the "Auto" line height to the font size (font ascent+descent+gap, per face).
 fn natural_ratio(face: &Face) -> f64 {
     ((face.ascent + face.descent + face.line_gap.max(0.0)) / face.upem).max(0.5)
+}
+
+/// A line's height: whole pixels (halves round up), whatever unit it was given in. Heights under a
+/// pixel stay as they are, so tiny text keeps its lines apart.
+fn whole_px(line_height: f64) -> f64 {
+    if line_height >= 1.0 { (line_height + 0.5).floor() } else { line_height }
+}
+
+/// Advances sit on a grid of this many steps per em, then scale with the font size.
+const ADVANCE_GRID: f64 = 1024.0;
+
+/// `units` (font units) on the advance grid, in ems.
+fn on_grid(units: f64, upem: f64) -> f64 {
+    (units * ADVANCE_GRID / upem).round() / ADVANCE_GRID
 }
 
 struct Item {
@@ -191,6 +205,8 @@ struct Item {
     scale: f64,
     gid: u32,
     adv: f64,
+    /// The letter spacing included in `adv` (none after a line's last visible glyph).
+    spacing: f64,
     dx: f64,
     dy: f64,
     char_start: usize,
@@ -339,6 +355,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
                     scale: 1.0,
                     gid: 0,
                     adv: 0.0,
+                    spacing: 0.0,
                     dx: 0.0,
                     dy: 0.0,
                     char_start: seg_start,
@@ -415,7 +432,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         let hung = items.get(line_start).filter(|f| hang_start && ltr && opens(f.ch)).map_or(0.0, |f| f.adv)
             + if hang_end && ltr && closes(it.ch) { w } else { 0.0 };
         if let Some(maxw) = wrap
-            && x + w > maxw - line_indent + hung + 1e-6
+            && x + w - it.spacing > maxw - line_indent + hung + 1e-6
             && i > line_start
             && !it.is_space()
         {
@@ -453,9 +470,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         match faces.get(st_idx).and_then(Option::as_ref).or(default_face.as_ref()) {
             Some(f) => {
                 let k = size / f.upem;
-                [f.ascent * k, f.descent * k, st.line_height.resolve(size, natural_ratio(f)), f.cap_height * k]
+                [f.ascent * k, f.descent * k, whole_px(st.line_height.resolve(size, natural_ratio(f))), f.cap_height * k]
             }
-            None => [size * 0.8, size * 0.2, st.line_height.resolve(size, 1.2), size * 0.7],
+            None => [size * 0.8, size * 0.2, whole_px(st.line_height.resolve(size, 1.2)), size * 0.7],
         }
     };
     let mut first_cap = 0.0;
@@ -492,7 +509,9 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         while vis_end > *s && items.get(vis_end - 1).is_some_and(|it| it.is_space() || it.ch == '\n') {
             vis_end -= 1;
         }
-        let width: f64 = items.get(*s..vis_end).unwrap_or(&[]).iter().map(|it| it.adv).sum();
+        // Letter spacing separates glyphs: none after the line's last visible one.
+        let end_spacing = vis_end.checked_sub(1).filter(|i| *i >= *s).and_then(|i| items.get(i)).map_or(0.0, |it| it.spacing);
+        let width: f64 = items.get(*s..vis_end).unwrap_or(&[]).iter().map(|it| it.adv).sum::<f64>() - end_spacing;
         let first_char = items.get(*s).map(|it| it.char_start).unwrap_or(0);
         let rtl_line = rtl_para_at(first_char);
         let line_indent = line_indent_of(*para, para_start_line, first_char);
@@ -1033,13 +1052,17 @@ fn shape_segment(chars: &[char], seg: &Segment, face: &Arc<Face>, features: &[Fe
         let last_in_cluster = raw.get(gi + 1).is_none_or(|r| r.1 as usize != cl);
         let ch = chars.get(cl).copied().unwrap_or(' ');
         let scale = if small_at(cl) { SMALL_CAP_SCALE } else { 1.0 };
-        let adv = f64::from(xa) * k * scale + if last_in_cluster { seg.spacing * (cend - cl) as f64 } else { 0.0 };
+        let spacing = if last_in_cluster { seg.spacing * (cend - cl) as f64 } else { 0.0 };
+        // The glyph's own advance and what shaping added to it (kerning) each land on the grid.
+        let own = face.advance_at(gid, &coords);
+        let adv = (on_grid(own, face.upem) + on_grid(f64::from(xa) - own, face.upem)) * seg.size * scale + spacing;
         items.push(Item {
             face: face.clone(),
             coords: coords.clone(),
             scale,
             gid,
             adv,
+            spacing,
             dx: f64::from(xo) * k * scale,
             dy: f64::from(yo) * k * scale,
             char_start: cl,
