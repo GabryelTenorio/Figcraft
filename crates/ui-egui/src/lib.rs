@@ -21,6 +21,7 @@ pub mod dev_compare;
 pub mod dev_mode;
 pub mod dialogs;
 pub mod export_panel;
+pub mod field_math;
 pub mod font_preview;
 pub mod frame_labels;
 pub mod frame_presets;
@@ -74,6 +75,8 @@ mod comments_tests;
 mod cursors_tests;
 #[cfg(test)]
 mod dev_mode_tests;
+#[cfg(test)]
+mod field_tests;
 #[cfg(test)]
 mod frame_label_tests;
 #[cfg(test)]
@@ -947,6 +950,7 @@ impl FigApp {
             icons::gallery(&ctx);
         }
         theme::set_doc_profile(&ctx, self.session.doc().map_or(figcraft_color::ColorProfile::Srgb, |d| d.color_profile));
+        widgets::set_nudge(&ctx, self.session.prefs.nudge_small, self.session.prefs.nudge_big);
         // The Inspect tab measures on hover without Alt.
         self.session.tool.redlines = self.ui.right_tab == RightTab::Inspect;
         if self.ui.present.is_some() {

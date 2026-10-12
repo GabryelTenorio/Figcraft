@@ -4,6 +4,7 @@
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use crate::a11y::{self, Tip};
+pub use crate::field_math::{Rel, Typed, eval, parse, stepped};
 use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
@@ -38,10 +39,65 @@ impl Lead<'_> {
 
 /// Result of a field edit.
 pub enum FieldEdit {
-    /// Committed a new value (Enter / focus loss).
+    /// Committed a new value (Enter, Tab or focus loss; an arrow key's step).
     Set(f64),
     /// Scrubbed by dragging the label (live; `.1` is true when the drag ended).
     Scrub(f64, bool),
+}
+
+/// What a field over several layers gives ([`number_field_mixed`]): one value for all of them, or
+/// (while it shows no single value: "Mixed") an edit relative to each layer's own (`+10`, `*2`, an
+/// arrow key's step).
+pub enum Edit {
+    All(FieldEdit),
+    Each(Rel),
+}
+
+impl Edit {
+    /// For a field that has no value per layer to work from: `+10` is 10, as typed into an empty
+    /// field, and other relative edits are nothing.
+    pub fn settled(self) -> Option<FieldEdit> {
+        match self {
+            Edit::All(e) => Some(e),
+            Edit::Each(Rel::Add(v)) => Some(FieldEdit::Set(v)),
+            Edit::Each(_) => None,
+        }
+    }
+}
+
+/// The nudge amounts the arrow keys step pixel fields by (plain, with Shift): the preferences'
+/// small and big nudge. Set once a frame.
+pub fn set_nudge(ctx: &egui::Context, small: f64, big: f64) {
+    ctx.data_mut(|d| d.insert_temp(Id::new("field_nudge"), (small, big)));
+}
+
+/// What an arrow key (with Shift: `.1`) and a pixel of scrubbing step a field by: a field in
+/// pixels (no unit, whole steps) takes the nudge preferences from the keys, every other field
+/// its own step and ten of them (1% and 10% of opacity, 1° and 10° of rotation).
+fn key_steps(ctx: &egui::Context, suffix: &str, step: f64) -> (f64, f64) {
+    let nudge =
+        ctx.data(|d| d.get_temp::<(f64, f64)>(Id::new("field_nudge"))).filter(|(s, b)| s.is_finite() && b.is_finite() && *s > 0.0 && *b > 0.0);
+    match nudge {
+        Some(n) if suffix.is_empty() && step == 1.0 => n,
+        _ => (step, step * 10.0),
+    }
+}
+
+/// How far a scrub of `dx` points moves a value whose field steps by `step`: 1 step a point, ten
+/// with Shift, a tenth with Alt (fine).
+pub fn scrub_amount(dx: f64, step: f64, shift: bool, alt: bool) -> f64 {
+    dx * step
+        * match (shift, alt) {
+            (true, false) => 10.0,
+            (false, true) => 0.1,
+            _ => 1.0,
+        }
+}
+
+/// The value a scrub that began at `from` and has moved `amount` (see [`scrub_amount`]) shows:
+/// whole steps of `quantum` away from where it began.
+pub fn scrubbed(from: f64, amount: f64, quantum: f64) -> f64 {
+    if quantum > 0.0 && quantum.is_finite() { stepped(from, (amount / quantum).round(), quantum) } else { from }
 }
 
 pub(crate) fn fmt_num(v: f64) -> String {
@@ -63,12 +119,19 @@ pub enum BindEvent {
 /// A number field `width` wide. `value` None shows "Mixed". `suffix` (e.g. "%" or "°") is shown
 /// after the number. Typing supports simple math (`10+5`, `*2`).
 pub fn number_field(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<FieldEdit> {
+    number_field_mixed(ui, id, lead, value, suffix, width, step)?.settled()
+}
+
+/// [`number_field`] over several layers: without a single value (`value` None, "Mixed") a relative
+/// edit comes back as one for each layer ([`Edit::Each`]).
+pub fn number_field_mixed(ui: &mut Ui, id: Id, lead: Lead, value: Option<f64>, suffix: &str, width: f32, step: f64) -> Option<Edit> {
     number_field_bindable(ui, id, lead, value, suffix, width, step, None, tr("Mixed")).0
 }
 
-/// [`number_field`] that shows `empty` (dim) for no value instead of "Mixed" (e.g. "Auto").
+/// [`number_field`] that shows `empty` (dim) for no value instead of "Mixed" (e.g. "Auto"): there
+/// is no value to edit relative to, so `+4` is 4.
 pub fn number_field_or(ui: &mut Ui, id: Id, value: Option<f64>, empty: &str, width: f32, step: f64) -> Option<FieldEdit> {
-    number_field_impl(ui, id, Lead::None, value, "", width, step, None, empty).0
+    number_field_impl(ui, id, Lead::None, value, "", width, step, None, empty).0?.settled()
 }
 
 /// [`number_field`] that can bind a variable: `binding` None = not bindable, `Some(None)` = shows
@@ -84,7 +147,7 @@ pub fn number_field_bindable(
     step: f64,
     binding: Option<Option<&str>>,
     empty: &str,
-) -> (Option<FieldEdit>, Option<BindEvent>) {
+) -> (Option<Edit>, Option<BindEvent>) {
     number_field_impl(ui, id, lead, value, suffix, width, step, binding, empty)
 }
 
@@ -98,12 +161,13 @@ fn number_field_impl(
     step: f64,
     binding: Option<Option<&str>>,
     empty: &str,
-) -> (Option<FieldEdit>, Option<BindEvent>) {
+) -> (Option<Edit>, Option<BindEvent>) {
     let t = Tokens::get(ui.ctx());
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
     if let Some(Some(name)) = binding {
         return (None, bound_field(ui, id, lead, rect, name));
     }
+    let mut out: Option<Edit> = None;
     let lead_w = match lead {
         Lead::None | Lead::Named(_) => 6.0,
         Lead::Text(s) => (12.0 + s.chars().count() as f32 * 7.0).max(24.0),
@@ -137,40 +201,78 @@ fn number_field_impl(
     if lead_resp.hovered() || lead_resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
-    let mut out = None;
-    // Scrub by dragging the label.
+    // Scrub by dragging the label: a step a point, ten with Shift, a tenth with Alt.
     if let Some(v) = value {
-        let dx_id = id.with("scrub_dx");
-        if lead_resp.drag_started() {
-            ui.data_mut(|d| {
-                d.insert_temp(id.with("scrub0"), v);
-                d.insert_temp(dx_id, 0.0_f64);
-            });
-        }
+        // Where the scrub began and how far it has taken the value (the modifiers can change on
+        // the way: each stretch counts at its own rate).
+        let scrub_id = id.with("scrub");
         if lead_resp.dragged() || lead_resp.drag_stopped() {
-            let v0: f64 = ui.data(|d| d.get_temp(id.with("scrub0"))).unwrap_or(v);
-            // The release frame reports no drag any more: the scrub ends where the last frame left it.
-            let total = match lead_resp.total_drag_delta() {
-                Some(d) => {
-                    ui.data_mut(|m| m.insert_temp(dx_id, f64::from(d.x)));
-                    f64::from(d.x)
-                }
-                None => ui.data(|m| m.get_temp(dx_id)).unwrap_or(0.0),
-            };
-            let shift = ui.input(|i| i.modifiers.shift);
-            let k = if shift { step * 10.0 } else { step };
-            let nv = v0 + (total * k).round();
-            out = Some(FieldEdit::Scrub(nv, lead_resp.drag_stopped()));
+            let began = lead_resp.drag_started();
+            let (v0, mut amount): (f64, f64) = ui.data(|d| d.get_temp(scrub_id)).filter(|_| !began).unwrap_or((v, 0.0));
+            let (dx, shift, alt) = ui.input(|i| {
+                let p = &i.pointer;
+                // As it begins: all the way from the press (a drag is one only after a few points).
+                let moved = if began { p.hover_pos().zip(p.press_origin()).map_or(0.0, |(at, from)| at.x - from.x) } else { p.delta().x };
+                // With the pointer stopped at the edge of the screen (or of a window that fills
+                // it) the mouse's own motion goes on, where the platform reports it: the scrub
+                // does too. Elsewhere the scrub just stops there.
+                let raw = p.motion().map_or(0.0, |m| m.x / i.pixels_per_point);
+                let at_edge = moved == 0.0 && p.hover_pos().is_none_or(|at| at.x <= 1.0 || at.x >= i.content_rect().max.x - 1.0);
+                (f64::from(if at_edge { raw } else { moved }), i.modifiers.shift, i.modifiers.alt)
+            });
+            // The frame the button goes up moves nothing: the scrub ends where the last one left it.
+            if lead_resp.dragged() {
+                amount += scrub_amount(dx, step, shift, alt);
+                ui.data_mut(|d| d.insert_temp(scrub_id, (v0, amount)));
+            }
+            let quantum = if alt { step * 0.1 } else { step };
+            out = Some(Edit::All(FieldEdit::Scrub(scrubbed(v0, amount, quantum), lead_resp.drag_stopped())));
         }
     }
+    let (key_step, key_big) = key_steps(ui.ctx(), suffix, step);
+    // The keyboard is on the field (also in a window that isn't in front: keys reach one only
+    // through the control channel then).
+    let on_field = ui.memory(|m| m.has_focus(field_resp.id));
+    // What ArrowUp or ArrowDown pressed this frame steps by (Shift: the big step).
+    let arrow_step = |ui: &Ui| {
+        ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Key { key: egui::Key::ArrowUp, pressed: true, modifiers, .. } => Some(if modifiers.shift { key_big } else { key_step }),
+                egui::Event::Key { key: egui::Key::ArrowDown, pressed: true, modifiers, .. } => {
+                    Some(-if modifiers.shift { key_big } else { key_step })
+                }
+                _ => None,
+            })
+        })
+    };
+    // A relative edit of no single value goes to each layer's own.
+    let set = |v: f64| Edit::All(FieldEdit::Set(v));
+    let typed = |text: &str| match (parse(text, suffix == "%")?, value) {
+        (Typed::Value(v), _) => Some(set(v)),
+        (Typed::Rel(r), Some(cur)) => r.apply(cur).map(set),
+        (Typed::Rel(r), None) => Some(Edit::Each(r)),
+    };
+    // With the keyboard on the field (Tab) and nothing typed yet, the arrows step it as it is.
+    if editing.is_none()
+        && on_field
+        && let Some(by) = arrow_step(ui)
+    {
+        out = Some(value.map_or(Edit::Each(Rel::Add(by)), |v| set(stepped(v, 1.0, by))));
+    }
     // Typing on a field the keyboard reached (Tab) edits it: the editor takes the typed text.
-    let typed = editing.is_none() && field_resp.has_focus() && ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))));
-    let started = editing.is_none() && (field_resp.clicked() || typed);
+    let typed_now = editing.is_none() && on_field && ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))));
+    let started = editing.is_none() && (field_resp.clicked() || typed_now);
+    // The text the field would commit to no effect: what it showed when the edit began, or the
+    // value the arrows last stepped it to.
+    let kept_id = id.with("kept");
     if started {
-        editing = Some(if typed { String::new() } else { value.map(fmt_num).unwrap_or_default() });
-        ui.data_mut(|d| d.insert_temp(editing_id, editing.clone().unwrap_or_default()));
+        editing = Some(if typed_now { String::new() } else { value.map(fmt_num).unwrap_or_default() });
+        ui.data_mut(|d| {
+            d.insert_temp(editing_id, editing.clone().unwrap_or_default());
+            d.insert_temp(kept_id, value.map(fmt_num).unwrap_or_default());
+            d.insert_temp(id.with("selectall"), !typed_now);
+        });
         ui.memory_mut(|m| m.request_focus(id.with("te")));
-        ui.data_mut(|d| d.insert_temp(id.with("selectall"), !typed));
     }
     match editing {
         Some(mut text) => {
@@ -195,36 +297,42 @@ fn number_field_impl(
             // The Enter that started the edit (from the keyboard) doesn't end it.
             let enter = !started && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            let arrow = ui.input(|i| {
-                if i.key_pressed(egui::Key::ArrowUp) {
-                    Some(1.0)
-                } else if i.key_pressed(egui::Key::ArrowDown) {
-                    Some(-1.0)
-                } else {
-                    None
-                }
-            });
-            if r.has_focus()
-                && let Some(dir) = arrow
-                && let Some(v) = eval(&text, value)
+            if ui.memory(|m| m.has_focus(r.id))
+                && let Some(by) = arrow_step(ui)
             {
-                let shift = ui.input(|i| i.modifiers.shift);
-                let nv = v + dir * if shift { 10.0 } else { step };
-                text = fmt_num(nv);
-                out = Some(FieldEdit::Set(nv));
+                // From what is typed (arithmetic too); no single value: each layer's own steps.
+                match typed(&text) {
+                    Some(Edit::All(FieldEdit::Set(v))) => {
+                        let nv = stepped(v, 1.0, by);
+                        text = fmt_num(nv);
+                        // The stepped value stays selected: typing replaces it.
+                        ui.data_mut(|d| {
+                            d.insert_temp(kept_id, text.clone());
+                            d.insert_temp(id.with("selectall"), true);
+                        });
+                        out = Some(set(nv));
+                    }
+                    _ if value.is_none() => out = Some(Edit::Each(Rel::Add(by))),
+                    _ => {}
+                }
             }
             if esc {
+                // Back to what it was: nothing is committed.
                 ui.data_mut(|d| d.remove::<String>(editing_id));
                 ui.memory_mut(|m| m.surrender_focus(id.with("te")));
             } else if r.lost_focus() || enter {
-                if let Some(v) = eval(&text, value) {
-                    out = Some(FieldEdit::Set(v));
+                // Enter, Tab or a click elsewhere commits what was typed (a field left as it was
+                // commits nothing: no undo step, and a rounded display isn't written back).
+                let kept: String = ui.data(|d| d.get_temp(kept_id)).unwrap_or_default();
+                if text != kept
+                    && let Some(e) = typed(&text)
+                {
+                    out = Some(e);
                 }
                 ui.data_mut(|d| d.remove::<String>(editing_id));
             } else {
                 ui.data_mut(|d| d.insert_temp(editing_id, text));
             }
-            let _ = suffix;
         }
         None => {
             let s = match value {
@@ -296,44 +404,6 @@ pub fn bound_field(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, name: &str) -> O
     }
     let resp = resp.on_hover_text(name);
     resp.clicked().then(|| BindEvent::Open(rect.left_bottom()))
-}
-
-/// Evaluate a typed number: plain, or simple arithmetic relative to `cur` ("+10", "*2", "50%").
-pub fn eval(s: &str, cur: Option<f64>) -> Option<f64> {
-    let s = s.trim().trim_end_matches(['%', '°']).trim().replace(',', ".");
-    if s.is_empty() {
-        return None;
-    }
-    // "+4" adds to the current value ("-4" stays a plain negative number).
-    if let (Some(rest), Some(c)) = (s.strip_prefix('+'), cur)
-        && let Ok(v) = rest.trim().parse::<f64>()
-    {
-        return (c + v).is_finite().then_some(c + v);
-    }
-    if let Ok(v) = s.parse::<f64>() {
-        return v.is_finite().then_some(v);
-    }
-    // a OP b, or OP b relative to cur.
-    for op in ['+', '-', '*', '/'] {
-        if let Some(idx) = s.get(1..).and_then(|r| r.find(op)).map(|i| i + 1).or_else(|| s.starts_with(op).then_some(0)) {
-            let (a, b) = (s.get(..idx).unwrap_or("").trim(), s.get(idx + 1..).unwrap_or("").trim());
-            let a = if a.is_empty() { cur? } else { a.parse::<f64>().ok()? };
-            let b = b.parse::<f64>().ok()?;
-            let v = match op {
-                '+' => a + b,
-                '-' => a - b,
-                '*' => a * b,
-                _ => {
-                    if b == 0.0 {
-                        return None;
-                    }
-                    a / b
-                }
-            };
-            return v.is_finite().then_some(v);
-        }
-    }
-    None
 }
 
 /// A text field that commits on Enter / focus loss. Returns the new text when committed.
@@ -973,21 +1043,4 @@ pub fn sublabels(ui: &mut Ui, a: &str, b: Option<&str>) {
 /// Width of one of the two field columns in a panel `w` wide (leaving the icon column).
 pub fn col_width(w: f32) -> f32 {
     ((w - PAD * 2.0 - 8.0 - 32.0) / 2.0).max(40.0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::eval;
-
-    #[test]
-    fn math_in_fields() {
-        assert_eq!(eval("12", None), Some(12.0));
-        assert_eq!(eval("10+5", None), Some(15.0));
-        assert_eq!(eval("*2", Some(8.0)), Some(16.0));
-        assert_eq!(eval("+4", Some(8.0)), Some(12.0));
-        assert_eq!(eval("-3", None), Some(-3.0));
-        assert_eq!(eval("50%", None), Some(50.0));
-        assert_eq!(eval("1/0", None), None);
-        assert_eq!(eval("abc", None), None);
-    }
 }

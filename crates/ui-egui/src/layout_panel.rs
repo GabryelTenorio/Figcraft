@@ -148,15 +148,16 @@ fn limit(n: &Node, horizontal: bool, is_min: bool) -> Option<f64> {
 
 fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has_al: bool) {
     let ids = sel.to_vec();
-    let w = common(doc, sel, |n| (n.width * 100.0).round() / 100.0);
-    let h = common(doc, sel, |n| (n.height * 100.0).round() / 100.0);
+    let w_of = |n: &Node| (n.width * 100.0).round() / 100.0;
+    let h_of = |n: &Node| (n.height * 100.0).round() / 100.0;
+    let (w, h) = (common(doc, sel, w_of), common(doc, sel, h_of));
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, tr("Dimensions"), None);
     row(ui, 32.0, |ui| {
-        let e = crate::variable_ui::number_field(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
-        app.field(&ids, "width", e, |v| json!(v.max(0.0)));
-        let e = crate::variable_ui::number_field(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
-        app.field(&ids, "height", e, |v| json!(v.max(0.0)));
+        let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
+        app.field_of(&ids, "width", e, w_of, |v| json!(v.max(0.0)));
+        let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
+        app.field_of(&ids, "height", e, h_of, |v| json!(v.max(0.0)));
         let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
         if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, tr("Constrain proportions")).clicked() {
             app.set_props(&ids, json!({"constrainProportions": !locked}));

@@ -251,6 +251,20 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
 - `view.pan {dx, dy, big?}`: the arrow keys with nothing selected (`key ArrowRight` does the same)
   pan the view by 20 screen pixels a step, 200 with `big` (Shift).
 - `view.multiplayerCursors {on?}` (`Alt+Cmd+\`): show or hide others' cursors in a live session.
+- `view.outlinesHiddenLayers {on?}` and `view.outlinesObjectBounds {on?}`: what outline mode
+  (`view.outlines`, `view.outlinesSelection`) draws besides the shapes: hidden layers, and the box
+  of every layer whose outline isn't its box (groups, text, ellipses, vectors). What they draw can
+  be clicked (`pointer`) in outline mode. View settings of the file: no undo step.
+- `view.panelWidths {left?, right?}`: the app's side panel widths in pixels (kept within their
+  limits; without either, both go back to the default). A no-op headless.
+- `component.hideWhenPublishing {ids?, on?}`: keep components or sets (those `ids`, or the layers
+  given, are or are in; default the selection) out of the library the file publishes, or let them
+  back in (`on: false`; without `on` it toggles). The sign of it is the name: hiding puts a `.`
+  before it, showing takes the leading `.` and `_` away. Returns `{ids, hidden}`; one undo step.
+- New files and pages: `file.new` and `page.add` give a page the colour `#F5F5F5`. Only the app
+  with its dark theme showing makes them `#1E1E1E`; headless sessions (the CLI, this server) have
+  no theme. Text made with `text.create` is black whatever the page; the Text tool (`pointer`
+  with `tool.text`) makes it white on a dark page.
 - `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle
   (toggles without `on`); `transform.setRotationOrigin {x, y}` moves the origin (page coordinates),
   `{reset: true}` puts it back at the centre. Both return `{editing, moved, x, y}`. The corner

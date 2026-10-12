@@ -12,7 +12,7 @@ use crate::icons::{self, Icon};
 use crate::list_drag::{ListDrag, move_flags};
 use crate::style_picker::{self, StyleSlot};
 use crate::theme::{ACCENT, Tokens, regular, semibold};
-use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
+use crate::widgets::{self, Edit, FIELD_H, FieldEdit, Lead, PAD};
 use crate::{FigApp, RightTab};
 
 /// Common value of `f` across `ids` (None when mixed or empty).
@@ -37,6 +37,27 @@ impl FigApp {
             return;
         }
         self.field_run(edit, "node.set", |v| json!({"ids": ids, "props": { key: map(v) }}));
+    }
+
+    /// [`Self::field`] for a field showing `shown(layer)`: a relative edit of mixed values (`+10`,
+    /// `*2`, an arrow key's step) goes to each layer from its own value, in one undo step.
+    pub fn field_of(&mut self, ids: &[NodeId], key: &str, edit: Option<Edit>, shown: impl Fn(&Node) -> f64, map: impl Fn(f64) -> Value) {
+        let rel = match edit {
+            Some(Edit::Each(rel)) => rel,
+            Some(Edit::All(e)) => return self.field(ids, key, Some(e), map),
+            None => return,
+        };
+        let Ok(doc) = self.session.doc() else { return };
+        let values: Vec<(NodeId, f64)> = ids.iter().filter_map(|i| Some((*i, rel.apply(shown(doc.node(*i)?))?))).collect();
+        if values.is_empty() || self.session.begin_interaction("Edit").is_err() {
+            return;
+        }
+        for (id, v) in values {
+            if let Err(e) = self.session.execute("node.set", &json!({"ids": [id], "props": { key: map(v) }})) {
+                self.failed("node.set", &e);
+            }
+        }
+        let _ = self.session.commit_interaction();
     }
 
     /// Apply a field edit through any command: `params` builds the command's params from the value.
@@ -582,17 +603,19 @@ fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
         }
     });
     // In the frame's space: groups have none of their own.
-    let x = common(doc, sel, |n| (doc.frame_relative(n.id).as_coeffs()[4] * 100.0).round() / 100.0);
-    let y = common(doc, sel, |n| (doc.frame_relative(n.id).as_coeffs()[5] * 100.0).round() / 100.0);
-    let rot = common(doc, sel, |n| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0);
+    // What each field shows of a layer (a relative edit of mixed values starts from it).
+    let x_of = |n: &Node| (doc.frame_relative(n.id).as_coeffs()[4] * 100.0).round() / 100.0;
+    let y_of = |n: &Node| (doc.frame_relative(n.id).as_coeffs()[5] * 100.0).round() / 100.0;
+    let rot_of = |n: &Node| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0;
+    let (x, y, rot) = (common(doc, sel, x_of), common(doc, sel, y_of), common(doc, sel, rot_of));
     let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
     let absolute = common(doc, sel, |n| n.child_layout.absolute);
     widgets::sublabels(ui, tr("Position"), None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("pos_x"), Lead::Text("X"), x, "", col, 1.0);
-        app.field(&ids, "x", e, |v| json!(v));
-        let e = widgets::number_field(ui, Id::new("pos_y"), Lead::Text("Y"), y, "", col, 1.0);
-        app.field(&ids, "y", e, |v| json!(v));
+        let e = widgets::number_field_mixed(ui, Id::new("pos_x"), Lead::Text("X"), x, "", col, 1.0);
+        app.field_of(&ids, "x", e, x_of, |v| json!(v));
+        let e = widgets::number_field_mixed(ui, Id::new("pos_y"), Lead::Text("Y"), y, "", col, 1.0);
+        app.field_of(&ids, "y", e, y_of, |v| json!(v));
         // Children of auto layout frames can ignore the layout (absolute position).
         if parent_al {
             let on = absolute.unwrap_or(false);
@@ -611,8 +634,8 @@ fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     });
     widgets::sublabels(ui, tr("Rotation"), None);
     row(ui, 32.0, |ui| {
-        let e = widgets::number_field(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius, tr("Rotation")), rot, "°", col, 1.0);
-        app.field(&ids, "rotation", e, |v| json!(v));
+        let e = widgets::number_field_mixed(ui, Id::new("pos_rot"), Lead::Icon(Icon::CornerRadius, tr("Rotation")), rot, "°", col, 1.0);
+        app.field_of(&ids, "rotation", e, rot_of, |v| json!(v));
         let items = [
             (Icon::Rotate, tr("Rotate 90° right")),
             (Icon::FlipH, crate::shortcuts::tip(tr("Flip horizontal"), "object.flipH")),
@@ -796,17 +819,19 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
             });
         });
     }
-    let op = common(doc, sel, |n| (f64::from(n.opacity) * 100.0).round());
+    let op_of = |n: &Node| (f64::from(n.opacity) * 100.0).round();
+    let op = common(doc, sel, op_of);
     let radius_ok = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_corner_radius()));
     // Only rectangles and frames round each corner on its own.
     let indep_ok = radius_ok && sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.has_independent_corners()));
     let r = common(doc, sel, |n| n.corners.uniform().map(|r| (r * 100.0).round() / 100.0));
     widgets::sublabels(ui, tr("Opacity"), radius_ok.then_some(tr("Corner radius")));
     row(ui, 32.0, |ui| {
-        let e = crate::variable_ui::number_field(app, ui, &ids, "opacity", Id::new("ap_op"), Lead::Icon(Icon::Opacity, tr("Opacity")), op, "%", col);
-        app.field(&ids, "opacity", e, |v| json!((v / 100.0).clamp(0.0, 1.0)));
+        let lead = Lead::Icon(Icon::Opacity, tr("Opacity"));
+        let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "opacity", Id::new("ap_op"), lead, op, "%", col);
+        app.field_of(&ids, "opacity", e, op_of, |v| json!((v / 100.0).clamp(0.0, 1.0)));
         if radius_ok {
-            let e = crate::variable_ui::number_field(
+            let e = crate::variable_ui::number_field_mixed(
                 app,
                 ui,
                 &ids,
@@ -817,7 +842,9 @@ fn appearance(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
                 "",
                 col,
             );
-            app.field(&ids, "cornerRadius", e, |v| json!(v.max(0.0)));
+            // A layer with corners of its own starts from its largest.
+            let radius_of = |n: &Node| n.corners.uniform().unwrap_or_else(|| n.corners.radii.iter().copied().fold(0.0, f64::max));
+            app.field_of(&ids, "cornerRadius", e, radius_of, |v| json!(v.max(0.0)));
             let open = ui.data(|d| d.get_temp::<bool>(Id::new("indep_corners"))).unwrap_or(false);
             if indep_ok && icons::button(ui, Icon::IndependentCorners, 24.0, open, tr("Individual corners")).clicked() {
                 ui.data_mut(|d| d.insert_temp(Id::new("indep_corners"), !open));
@@ -1104,7 +1131,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
             });
             let sided = sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like() || matches!(n.kind, NodeKind::Rectangle)));
             let weight_w = half - if sided { 60.0 } else { 32.0 };
-            let e = crate::variable_ui::number_field(
+            let e = crate::variable_ui::number_field_mixed(
                 app,
                 ui,
                 &ids,
@@ -1115,7 +1142,7 @@ fn paints(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], fills: 
                 "",
                 weight_w,
             );
-            app.field(&ids, "strokeWeight", e, |v| json!(v.max(0.0)));
+            app.field_of(&ids, "strokeWeight", e, |n| n.stroke.weight, |v| json!(v.max(0.0)));
             if sided {
                 let sides_btn = icons::button(ui, Icon::IndependentCorners, 24.0, false, tr("Individual strokes"));
                 menu_popup(&sides_btn).show(|ui| {

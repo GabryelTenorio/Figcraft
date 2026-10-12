@@ -17,7 +17,7 @@ use crate::a11y::Tip;
 use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular, semibold};
-use crate::widgets::{self, BindEvent, FieldEdit, Lead};
+use crate::widgets::{self, BindEvent, Edit, FieldEdit, Lead};
 
 /// What picking a variable does.
 #[derive(Clone)]
@@ -245,6 +245,37 @@ pub fn number_field_or(
     lead: Lead,
     suffix: &str,
 ) -> Option<FieldEdit> {
+    number_field_edit(app, ui, ids, field, id, value, width, empty, lead, suffix)?.settled()
+}
+
+/// [`number_field`] over several layers: a relative edit of mixed values comes back as one for
+/// each layer ([`Edit::Each`]; see `FigApp::field_of`).
+pub fn number_field_mixed(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    field: &str,
+    id: Id,
+    lead: Lead,
+    value: Option<f64>,
+    suffix: &str,
+    width: f32,
+) -> Option<Edit> {
+    number_field_edit(app, ui, ids, field, id, value, width, tr("Mixed"), lead, suffix)
+}
+
+fn number_field_edit(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    field: &str,
+    id: Id,
+    value: Option<f64>,
+    width: f32,
+    empty: &str,
+    lead: Lead,
+    suffix: &str,
+) -> Option<Edit> {
     let name = app.session.doc().ok().and_then(|d| bound_name(d, ids, field));
     let (edit, ev) = widgets::number_field_bindable(ui, id, lead, value, suffix, width, 1.0, Some(name.as_deref()), empty);
     handle(app, ui, ids, field, VariableType::Number, ev);

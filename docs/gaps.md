@@ -129,7 +129,11 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   each with its fixes; then keyboard shortcuts per platform (`shortcut_parity_tests.rs`: 129
   documented rows, 126 bound, 1 moved off a documented conflict, 2 missing, 48 undocumented
   bindings pinned), with 16 rows newly bound, Control suspending snapping on macOS and shifted
-  symbols on other keyboard layouts.
+  symbols on other keyboard layouts; then the everyday partials of
+  [`ui-parity.md`](ui-parity.md): number fields, outline mode's options, Hide when publishing, a
+  cursor for every tool and modifier, panel widths, dark pages (`field_tests`, `cursor_tests`,
+  `cursors_tests`, `outline_options_tests`, `hide_publishing_tests`, `panel_width_tests`,
+  `theme_pages_tests`).
 - **Evidence:** ROADMAP item 7 ("Left: tool by tool, panel by panel against the incumbent").
 - **Impact:** Figma users notice the feel within minutes; it decides whether they stay.
 - **Estimate:** 40–60 h. Detail in [`ui-parity.md`](ui-parity.md).
