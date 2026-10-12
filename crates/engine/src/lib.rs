@@ -1370,6 +1370,8 @@ mod convert_container_tests;
 #[cfg(test)]
 mod cursor_tests;
 #[cfg(test)]
+mod dark_page_text_tests;
+#[cfg(test)]
 mod dev_resources_tests;
 #[cfg(test)]
 mod devcompare_tests;

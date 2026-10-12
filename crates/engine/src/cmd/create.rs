@@ -234,10 +234,17 @@ pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
             base.to_string()
         }
     });
+    // In the app (it has a theme), text that names no fill is readable on its page: white on a
+    // dark one. Headless sessions make the same thing everywhere.
+    let asks_fill = get(p, "props").is_some_and(|o| ["fill", "fills", "fillStyle"].iter().any(|k| o.get(k).is_some()));
+    let app_text = s.ui_dark.is_some() && base == "Text" && !asks_fill;
     let ds = s.ds_mut()?;
     let doc = ds.doc_mut();
     let nid = doc.alloc_id();
     let mut node = if base == "Section" { Node::new_section(nid, name, w, h) } else { Node::new(nid, kind, name, w, h) };
+    if app_text && let Some(fills) = crate::tools::readable_text_fills(doc, doc.page_of(parent).unwrap_or(page)) {
+        node.fills = fills;
+    }
     node.transform = space.inverse() * figcraft_geom::Affine::translate((x + offset.0, y + offset.1));
     if base == "Arrow" {
         node.stroke.cap_end = StrokeCap::LineArrow;

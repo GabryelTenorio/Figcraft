@@ -530,6 +530,14 @@ pub fn anchor_name(a: (u8, u8)) -> &'static str {
     ANCHORS.get(usize::from(a.1.min(2)) * 3 + usize::from(a.0.min(2))).copied().unwrap_or("tl")
 }
 
+/// The fill new text takes to be readable where it is drawn: white on a dark `page` (None: the
+/// model's default, black). For text made in the app: by the Text tool, or by a command that
+/// names no fill while the interface is up.
+pub(crate) fn readable_text_fills(doc: &Document, page: NodeId) -> Option<Vec<figcraft_color::Paint>> {
+    matches!(doc.node(page).map(|p| &p.kind), Some(NodeKind::Page { background, .. }) if background.is_dark())
+        .then(|| vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)])
+}
+
 const ANCHORS: [&str; 9] = ["tl", "t", "tr", "l", "c", "r", "bl", "b", "br"];
 
 impl ToolState {
@@ -1870,9 +1878,8 @@ impl Session {
         let at = Point::new(ev.x.round(), (ev.y - 7.0).round());
         n.transform = pw.inverse() * Affine::translate(at.to_vec2());
         n.name = String::new();
-        // Readable where it is drawn: white on a dark page (black otherwise, the model's default).
-        if matches!(d.node(page).map(|p| &p.kind), Some(NodeKind::Page { background, .. }) if background.is_dark()) {
-            n.fills = vec![figcraft_color::Paint::solid(figcraft_color::Color::WHITE)];
+        if let Some(fills) = readable_text_fills(d, page) {
+            n.fills = fills;
         }
         if let Some((w, h)) = figcraft_text::auto_size(&n) {
             n.width = w.max(1.0);

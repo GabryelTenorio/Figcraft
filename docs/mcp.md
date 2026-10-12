@@ -288,8 +288,9 @@ on; `key` resolves keys the way the canvas does. Commands behind keys:
   before it, showing takes the leading `.` and `_` away. Returns `{ids, hidden}`; one undo step.
 - New files and pages: `file.new` and `page.add` give a page the colour `#F5F5F5`. Only the app
   with its dark theme showing makes them `#1E1E1E`; headless sessions (the CLI, this server) have
-  no theme. Text made with `text.create` is black whatever the page; the Text tool (`pointer`
-  with `tool.text`) makes it white on a dark page.
+  no theme. Text made with `text.create` or `node.create` is black whatever the page here; in the
+  app (the control channel, `--attach`) it is white on a dark page unless `props` name a `fill`,
+  as the Text tool (`pointer` with `tool.text`) makes it everywhere.
 - `transform.rotationOrigin {on?}` (`Alt+R`): show or hide the selection's rotation origin handle
   (toggles without `on`); `transform.setRotationOrigin {x, y}` moves the origin (page coordinates),
   `{reset: true}` puts it back at the centre. Both return `{editing, moved, x, y}`. The corner
