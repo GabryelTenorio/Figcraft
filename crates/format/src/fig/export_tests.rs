@@ -14,6 +14,10 @@ use serde_json::Value;
 use super::kiwi::{Kind, Kv, Schema, Type, encode};
 use super::*;
 
+/// Variables, shared styles and instance sizes (uses this module's generators and comparisons).
+#[path = "assets_tests.rs"]
+mod assets;
+
 /// A cheap deterministic generator.
 struct Lcg(u64);
 impl Lcg {

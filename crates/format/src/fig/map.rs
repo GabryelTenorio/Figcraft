@@ -43,6 +43,10 @@ pub(super) fn to_rest(msg: &Kv, name: &str) -> (Value, Vec<String>) {
     if let Some(vars) = m.variables() {
         out["meta"] = vars;
     }
+    let styles = m.style_definitions();
+    if !styles.is_empty() {
+        out["styleDefinitions"] = Value::Array(styles);
+    }
     (out, m.warnings)
 }
 
@@ -251,6 +255,7 @@ impl<'a> Mapper<'a> {
         if let Some(c) = v.get("prototypeBackgroundColor") {
             o.insert("prototypeBackgrounds".into(), json!([color(c)]));
         }
+        self.variable_bindings(&mut o, &v);
         let mut flows: Vec<(&str, Value)> = Vec::new();
         let mut kids = Vec::new();
         for c in self.children(id) {
@@ -645,6 +650,9 @@ impl<'a> Mapper<'a> {
             style.insert("maxLines".into(), json!(n));
         }
         let size = sv.num("fontSize");
+        if let Some(b) = o.get_mut("style").and_then(|s| s.get_mut("boundVariables")).map(Value::take) {
+            style.insert("boundVariables".into(), b);
+        }
         o.insert("style".into(), Value::Object(style));
         let Some(td) = td else { return };
         let ids: Vec<u64> = td.get("characterStyleIDs").map(Kv::list).unwrap_or_default().iter().filter_map(Kv::f64).map(|i| i as u64).collect();
@@ -1066,6 +1074,15 @@ impl<'a> Mapper<'a> {
                         bound.insert(k.into(), a.clone());
                     }
                 }
+                _ if field.starts_with("BORDER_") => {
+                    let side = match field {
+                        "BORDER_TOP_WEIGHT" => "strokeTopWeight",
+                        "BORDER_RIGHT_WEIGHT" => "strokeRightWeight",
+                        "BORDER_BOTTOM_WEIGHT" => "strokeBottomWeight",
+                        _ => "strokeLeftWeight",
+                    };
+                    bound.insert(side.into(), a);
+                }
                 _ if field == "WIDTH" || field == "HEIGHT" => {
                     let axis = if field == "WIDTH" { "x" } else { "y" };
                     let size = bound.entry("size").or_insert_with(|| json!({}));
@@ -1077,10 +1094,9 @@ impl<'a> Mapper<'a> {
         if !bound.is_empty() {
             o.insert("boundVariables".into(), Value::Object(bound));
         }
-        if !text_bound.is_empty()
-            && let Some(Value::Object(s)) = o.get_mut("style")
-        {
-            s.insert("boundVariables".into(), Value::Object(text_bound));
+        // (The text style itself is added after this: it keeps these.)
+        if !text_bound.is_empty() {
+            o.insert("style".into(), json!({"boundVariables": text_bound}));
         }
         let mut modes = Obj::new();
         for e in v.get("variableModeBySetMap").and_then(|m| m.get("entries")).map(Kv::list).unwrap_or_default() {
@@ -1093,15 +1109,46 @@ impl<'a> Mapper<'a> {
         }
     }
 
-    /// Collections and variables, as the local variables response's `meta`.
+    /// The shared styles the file defines, in their order: each with the sample layer that holds
+    /// its values (`styleDefinitions`, our extension of the file JSON; the REST importer reads it).
+    fn style_definitions(&mut self) -> Vec<Value> {
+        let mut found: Vec<(&'a str, String, &'a Kv<'a>)> = Vec::new();
+        for (id, n) in &self.nodes {
+            let live = n.get("isSoftDeleted").and_then(Kv::bool) != Some(true) && n.get("isSoftDeletedStyle").and_then(Kv::bool) != Some(true);
+            if live && n.get("styleType").and_then(Kv::str).is_some_and(|t| matches!(t, "FILL" | "TEXT" | "EFFECT" | "GRID")) {
+                found.push((n.get("sortPosition").and_then(Kv::str).unwrap_or(""), id.clone(), n));
+            }
+        }
+        found.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        let mut out = Vec::new();
+        for (_, id, n) in found {
+            let Some(node) = self.layer(&id, None, Affine::IDENTITY, None, 0) else { break };
+            let name = n.get("name").and_then(Kv::str).unwrap_or("Style");
+            let desc = n.get("styleDescription").or_else(|| n.get("description")).and_then(Kv::str).unwrap_or("");
+            let ty = n.get("styleType").and_then(Kv::str).unwrap_or("");
+            out.push(json!({"id": id, "name": name, "description": desc, "styleType": ty, "node": node}));
+        }
+        out
+    }
+
+    /// Collections and variables, as the local variables response's `meta`, with their ids in the
+    /// file's order (`collectionOrder` and `variableOrder`, our extensions).
     fn variables(&self) -> Option<Value> {
-        let of_type = |t: &'static str| {
-            self.nodes
+        let of_type = |t: &'static str, key: &'static str| {
+            let live = move |n: &Kv| n.get("type").and_then(Kv::str) == Some(t) && n.get("isSoftDeleted").and_then(Kv::bool) != Some(true);
+            let mut list: Vec<(&str, &String, &'a Kv<'a>)> = self
+                .nodes
                 .iter()
-                .filter(move |(_, n)| n.get("type").and_then(Kv::str) == Some(t) && n.get("isSoftDeleted").and_then(Kv::bool) != Some(true))
+                .filter(|(_, n)| live(n))
+                .map(|(id, n)| (n.get(key).and_then(|p| p.get("position").or(Some(p))).and_then(Kv::str).unwrap_or(""), id, *n))
+                .collect();
+            list.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+            list.into_iter().map(|(_, id, n)| (id, n))
         };
+        let mut order = Vec::new();
         let mut collections = Obj::new();
-        for (id, n) in of_type("VARIABLE_SET") {
+        for (id, n) in of_type("VARIABLE_SET", "parentIndex") {
+            order.push(json!(id));
             let mut modes: Vec<(&str, Value)> = n
                 .get("variableSetModes")
                 .map(Kv::list)
@@ -1118,8 +1165,9 @@ impl<'a> Mapper<'a> {
             let modes: Vec<Value> = modes.into_iter().map(|m| m.1).collect();
             collections.insert(id.clone(), json!({"id": id, "name": name, "modes": modes, "defaultModeId": default}));
         }
+        let mut variable_order = Vec::new();
         let mut variables = Obj::new();
-        for (id, n) in of_type("VARIABLE") {
+        for (id, n) in of_type("VARIABLE", "sortPosition") {
             let Some(set) = n.get("variableSetID").and_then(ref_guid).filter(|s| collections.contains_key(s)) else { continue };
             let ty = n.get("variableResolvedType").and_then(Kv::str).unwrap_or("");
             if !matches!(ty, "BOOLEAN" | "FLOAT" | "STRING" | "COLOR") {
@@ -1133,12 +1181,17 @@ impl<'a> Mapper<'a> {
             }
             let name = n.get("name").and_then(Kv::str).unwrap_or("Variable");
             let desc = n.get("description").and_then(Kv::str).unwrap_or("");
-            variables.insert(
-                id.clone(),
-                json!({"id": id, "name": name, "variableCollectionId": set, "resolvedType": ty, "valuesByMode": values, "description": desc}),
-            );
+            let mut var =
+                json!({"id": id, "name": name, "variableCollectionId": set, "resolvedType": ty, "valuesByMode": values, "description": desc});
+            // The properties pickers offer the variable for, under the REST names.
+            if let Some(scopes) = n.get("variableScopes") {
+                var["scopes"] = scopes.list().iter().filter_map(Kv::str).map(|s| if s == "STROKE" { "STROKE_COLOR" } else { s }).collect();
+            }
+            variable_order.push(json!(id));
+            variables.insert(id.clone(), var);
         }
-        (!collections.is_empty()).then(|| json!({"variableCollections": collections, "variables": variables}))
+        (!collections.is_empty())
+            .then(|| json!({"variableCollections": collections, "variables": variables, "collectionOrder": order, "variableOrder": variable_order}))
     }
 }
 
@@ -1189,6 +1242,21 @@ fn stroke(o: &mut Obj, v: &View) {
     copy_str(o, v, "strokeJoin", "strokeJoin");
     if let Some(cap) = v.str("strokeCap") {
         o.insert("strokeCap".into(), json!(cap_name(cap)));
+    }
+    // A variable width: each point's reach on the two sides of the path, as `[t, scale, bias]`
+    // (`strokeWidthProfile`, our extension of the file JSON).
+    let weight = v.num("strokeWeight").unwrap_or(0.0);
+    let profile: Vec<Value> = v
+        .list("variableWidthPoints")
+        .iter()
+        .filter_map(|p| {
+            let (left, right) = (num(p, "ascent")?.max(0.0), num(p, "descent")?.max(0.0));
+            let bias = if left + right > 0.0 { (right - left) / (left + right) } else { 0.0 };
+            Some(json!([num(p, "position")?, (left + right) / weight, bias]))
+        })
+        .collect();
+    if weight > 0.0 && !profile.is_empty() {
+        o.insert("strokeWidthProfile".into(), Value::Array(profile));
     }
     let dashes: Vec<f64> = v.list("dashPattern").iter().filter_map(Kv::f64).collect();
     if !dashes.is_empty() {
@@ -1343,12 +1411,21 @@ fn paint(p: &Kv) -> Option<Value> {
                 })
                 .collect();
             o.insert("gradientHandlePositions".into(), Value::Array(handles));
+            // Stops bound to variables are listed again, each with its variable.
+            let vars = p.get("stopsVar").map(Kv::list).unwrap_or_default();
             let stops: Vec<Value> = p
                 .get("stops")
                 .map(Kv::list)
                 .unwrap_or_default()
                 .iter()
-                .map(|s| json!({"position": num(s, "position").unwrap_or(0.0), "color": s.get("color").map_or(Value::Null, color)}))
+                .enumerate()
+                .map(|(i, s)| {
+                    let mut stop = json!({"position": num(s, "position").unwrap_or(0.0), "color": s.get("color").map_or(Value::Null, color)});
+                    if let Some(b) = bound(vars.get(i), &[("colorVar", "color")]) {
+                        stop["boundVariables"] = b;
+                    }
+                    stop
+                })
                 .collect();
             o.insert("gradientStops".into(), Value::Array(stops));
         }
@@ -1371,6 +1448,15 @@ fn paint(p: &Kv) -> Option<Value> {
         _ => {}
     }
     Some(Value::Object(o))
+}
+
+/// The variables bound to the fields of a paint stop, an effect or a layout grid, as its REST
+/// `boundVariables`: `fields` pairs the format's field with the REST name.
+fn bound(v: Option<&Kv>, fields: &[(&str, &str)]) -> Option<Value> {
+    let v = v?;
+    let found: Obj =
+        fields.iter().filter_map(|(from, to)| Some((to.to_string(), json!({"type": "VARIABLE_ALIAS", "id": alias(v.get(from))?})))).collect();
+    (!found.is_empty()).then_some(Value::Object(found))
 }
 
 /// The track ids of a grid's columns or rows, in order.
@@ -1520,6 +1606,17 @@ fn effect(e: &Kv) -> Option<Value> {
     if e.get("blurOpType").and_then(Kv::str) == Some("PROGRESSIVE") {
         o.insert("blurType".into(), json!("PROGRESSIVE"));
     }
+    let vars = [
+        ("colorVar", "color"),
+        ("radiusVar", "radius"),
+        ("spreadVar", "spread"),
+        ("xVar", "offsetX"),
+        ("yVar", "offsetY"),
+        ("startRadiusVar", "startRadius"),
+    ];
+    if let Some(b) = bound(Some(e), &vars) {
+        o.insert("boundVariables".into(), b);
+    }
     Some(Value::Object(o))
 }
 
@@ -1540,6 +1637,10 @@ fn layout_grid(g: &Kv) -> Value {
     }
     if let Some(b) = g.get("visible").and_then(Kv::bool) {
         o["visible"] = json!(b);
+    }
+    let vars = [("numSectionsVar", "count"), ("offsetVar", "offset"), ("sectionSizeVar", "sectionSize"), ("gutterSizeVar", "gutterSize")];
+    if let Some(b) = bound(Some(g), &vars) {
+        o["boundVariables"] = b;
     }
     o
 }

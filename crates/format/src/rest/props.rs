@@ -6,7 +6,7 @@ use figcraft_doc::geom::Affine;
 use figcraft_doc::{
     AutoLayout, Blur, BlurType, CellAlign, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass,
     GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin,
-    StrokeProps, Texture, VConstraint,
+    StrokeProps, Texture, VConstraint, WidthPoint, WidthProfile,
 };
 use serde_json::Value;
 
@@ -342,6 +342,13 @@ pub(super) fn stroke_props(v: &Value, sp: &mut StrokeProps) {
         if sp.dashes.iter().all(|d| *d <= 0.0) {
             sp.dashes.clear();
         }
+    }
+    // A variable width: `[t, scale, bias]` points (our extension, written by the `.fig` import).
+    let point =
+        |p: &Value| Some(WidthPoint { t: p.get(0)?.as_f64()?, scale: p.get(1)?.as_f64()?, bias: p.get(2).and_then(Value::as_f64).unwrap_or(0.0) });
+    let points: Vec<WidthPoint> = list(v, "strokeWidthProfile").iter().take(WidthProfile::MAX_POINTS).filter_map(point).collect();
+    if !points.is_empty() {
+        sp.width_profile = Some(WidthProfile { points }.sanitized());
     }
     // The miter angle (degrees) below which joins bevel → the equivalent miter limit.
     if let Some(a) = num(v, "strokeMiterAngle").filter(|a| *a > 0.0 && *a < 180.0) {

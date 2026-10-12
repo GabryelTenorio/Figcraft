@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use figcraft_doc::color::PaintKind;
 use figcraft_doc::{
     ALL_SCOPES, CODE_PLATFORMS, Collection, Mode, Node, NodeKind, Variable, VariableType, VariableValue, Variables, normalize_scopes,
 };
@@ -135,7 +136,31 @@ impl Ctx<'_> {
         for v in &found {
             self.var_kinds.insert(v.id.clone(), v.kind);
         }
+        // Objects have no order: `collectionOrder` and `variableOrder` (written by the `.fig`
+        // import) list the ids in theirs. Ids they leave out keep their place after the listed.
+        let rank = |key: &str| -> BTreeMap<&str, usize> { list(src, key).iter().filter_map(Value::as_str).zip(0..).collect() };
+        let (collections, variables) = (rank("collectionOrder"), rank("variableOrder"));
+        if !variables.is_empty() {
+            found.sort_by_key(|v| variables.get(v.id.as_str()).copied().unwrap_or(usize::MAX));
+        }
+        if !collections.is_empty() {
+            self.doc.variables.collections.sort_by_key(|c| collections.get(c.id.as_str()).copied().unwrap_or(usize::MAX));
+        }
         self.doc.variables.variables.extend(found);
+    }
+
+    /// The modes a layer or page sets explicitly (`explicitVariableModes`): collection → mode.
+    pub(super) fn modes(&mut self, j: &Value) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for (coll, mode) in j.get("explicitVariableModes").and_then(Value::as_object).into_iter().flatten() {
+            match mode.as_str() {
+                Some(m) if self.var_modes.get(coll.as_str()).is_some_and(|ms| ms.iter().any(|x| x == m)) => {
+                    out.insert(coll.clone(), m.to_string());
+                }
+                _ => self.warn("variable modes of collections that aren't in the variables JSON were skipped"),
+            }
+        }
+        out
     }
 
     fn collection(&mut self, key: &str, c: &Value) {
@@ -255,8 +280,8 @@ impl Ctx<'_> {
 
     /// The layer's variable bindings (`boundVariables`, paint and text style bindings) and
     /// explicitly set modes, in the field names `variable.bind` uses.
-    pub(super) fn bindings(&mut self, n: &mut Node, j: &Value) {
-        let mut found: Vec<(String, &str)> = Vec::new();
+    pub(super) fn bindings<'j>(&mut self, n: &mut Node, j: &'j Value) {
+        let mut found: Vec<(String, &'j str)> = Vec::new();
         let mut skipped: BTreeSet<&str> = BTreeSet::new();
         if let Some(b) = j.get("boundVariables").and_then(Value::as_object) {
             for (k, v) in b {
@@ -265,15 +290,60 @@ impl Ctx<'_> {
                 }
             }
         }
-        // Paints carry their colour binding themselves.
+        // Paints carry their colour binding themselves: the first paint's is the layer's `fill` (or
+        // `stroke`) when it is its only paint, else `fills/<i>/color`; gradient stops carry theirs.
         for (key, field) in [("fills", "fill"), ("strokes", "stroke")] {
+            let paints = if key == "fills" { &n.fills } else { &n.strokes };
+            // Paints that didn't import shift the ones after them: indices only mean something when
+            // every paint came across.
+            let aligned = paints.len() == list(j, key).len();
             for (i, p) in list(j, key).iter().enumerate() {
+                let ours = paints.get(i).filter(|_| aligned);
+                let stops = match ours.map(|o| &o.kind) {
+                    Some(PaintKind::Gradient(g)) => g.stops.len(),
+                    _ => 0,
+                };
+                for (s, stop) in list(p, "gradientStops").iter().enumerate().take(stops) {
+                    if let Some(var) = stop.get("boundVariables").and_then(|b| b.get("color")).and_then(alias) {
+                        found.push((format!("{key}/{i}/stops/{s}/color"), var));
+                    }
+                }
                 let Some(var) = p.get("boundVariables").and_then(|b| b.get("color")).and_then(alias) else { continue };
                 if i == 0 && single_solid(n, field) {
                     found.retain(|(f, _)| f != field);
                     found.push((field.to_string(), var));
+                } else if ours.is_some_and(|o| o.solid_color().is_some()) {
+                    found.push((format!("{key}/{i}/color"), var));
                 } else {
                     skipped.insert(key);
+                }
+            }
+        }
+        // Effects and layout grids carry theirs per field.
+        const EFFECT: [(&str, &str); 6] = [
+            ("color", "color"),
+            ("radius", "radius"),
+            ("spread", "spread"),
+            ("offsetX", "offsetX"),
+            ("offsetY", "offsetY"),
+            ("startRadius", "startRadius"),
+        ];
+        const GRID: [(&str, &str); 4] = [("sectionSize", "size"), ("count", "count"), ("gutterSize", "gutter"), ("offset", "offset")];
+        for (key, prefix, fields, len) in
+            [("effects", "effects", &EFFECT[..], n.effects.len()), ("layoutGrids", "layoutGrids", &GRID[..], n.grids.len())]
+        {
+            if list(j, key).len() != len {
+                continue;
+            }
+            for (i, item) in list(j, key).iter().enumerate() {
+                for (k, v) in item.get("boundVariables").and_then(Value::as_object).into_iter().flatten() {
+                    match (fields.iter().find(|(from, _)| from == k), alias(v)) {
+                        (Some((_, to)), Some(var)) => found.push((format!("{prefix}/{i}/{to}"), var)),
+                        (Some(_), None) => {}
+                        (None, _) => {
+                            skipped.insert(key);
+                        }
+                    }
                 }
             }
         }
@@ -307,14 +377,7 @@ impl Ctx<'_> {
                 None => self.warn("variable bindings to variables that aren't in the variables JSON (library variables) were skipped"),
             }
         }
-        for (coll, mode) in j.get("explicitVariableModes").and_then(Value::as_object).into_iter().flatten() {
-            match mode.as_str() {
-                Some(m) if self.var_modes.get(coll.as_str()).is_some_and(|ms| ms.iter().any(|x| x == m)) => {
-                    n.var_modes.insert(coll.clone(), m.to_string());
-                }
-                _ => self.warn("variable modes of collections that aren't in the variables JSON were skipped"),
-            }
-        }
+        n.var_modes.extend(self.modes(j));
     }
 }
 
@@ -432,6 +495,7 @@ fn applies(n: &Node, field: &str) -> bool {
 fn field_type(field: &str) -> VariableType {
     match field {
         "fill" | "stroke" => VariableType::Color,
+        f if f.ends_with("/color") => VariableType::Color,
         "characters" | "fontFamily" | "fontStyle" => VariableType::String,
         "visible" => VariableType::Boolean,
         _ => VariableType::Number,

@@ -59,6 +59,8 @@ const MAX_PATH_BYTES: usize = 4 << 20;
 const MAX_PATH_ELEMENTS: usize = 200_000;
 /// Most distinct warnings reported.
 const MAX_WARNINGS: usize = 200;
+/// Most shared style definitions read.
+const MAX_STYLES: usize = 10_000;
 /// Image key used for image fills without an `imageRef`.
 const MISSING_IMAGE: &str = "rest-image-missing";
 
@@ -154,6 +156,7 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
     if variables.is_some_and(|x| variables::source(x).is_none()) {
         cx.warn("the variables JSON has no `variableCollections` (expected the local variables response) and was ignored");
     }
+    cx.style_definitions(v);
     for e in entries {
         let Some(root) = e.get("document") else { continue };
         match text(root, "type") {
@@ -298,6 +301,10 @@ impl<'a> Ctx<'a> {
     /// A CANVAS → a page.
     fn page(&mut self, c: &'a Value) {
         let page = self.doc.add_page(text(c, "name").map_or("Page", clip_str));
+        let modes = self.modes(c);
+        if let Some(n) = self.doc.node_mut(page).filter(|_| !modes.is_empty()) {
+            n.var_modes = modes;
+        }
         if let Some(bg) = c.get("backgroundColor").and_then(props::color)
             && let Some(NodeKind::Page { background, .. }) = self.doc.node_mut(page).map(|n| &mut n.kind)
         {
@@ -607,6 +614,28 @@ impl<'a> Ctx<'a> {
             out.insert(name.clone(), def);
         }
         out
+    }
+
+    /// Shared styles with their values (`styleDefinitions`, written by the `.fig` import: a list of
+    /// `{id, name, description, styleType, node}`, the node being a layer that shows the style), in
+    /// the file's order. Layers then link to them; styles that no layer uses come across too.
+    fn style_definitions(&mut self, v: &'a Value) {
+        for d in list(v, "styleDefinitions").iter().take(MAX_STYLES) {
+            let (Some(id), Some(node)) = (text(d, "id").filter(|i| !i.is_empty()).map(clip_str), d.get("node")) else { continue };
+            if self.doc.styles.iter().any(|s| s.id == id) {
+                continue;
+            }
+            let kind = match text(d, "styleType") {
+                Some("FILL") => StyleKind::Paint { paints: props::paints(self, node, "fills").unwrap_or_default() },
+                Some("EFFECT") => StyleKind::Effect { effects: props::effects(self, node) },
+                Some("GRID") => StyleKind::Grid { grids: props::layout_grids(node) },
+                Some("TEXT") => StyleKind::Text { style: text::text_data(self, node).style.as_text_style() },
+                _ => continue,
+            };
+            let name = text(d, "name").filter(|s| !s.is_empty()).map_or_else(|| format!("Style {id}"), |s| clip_str(s).to_string());
+            let description = text(d, "description").map(|s| clip_str(s).to_string()).unwrap_or_default();
+            self.doc.styles.push(Style { id: id.to_string(), name, description, kind });
+        }
     }
 
     /// Shared styles the layer uses: the metadata names them, the layer supplies the values.

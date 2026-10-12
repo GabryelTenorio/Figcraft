@@ -6,11 +6,13 @@
 //! `images/<hash>`. The schema travels in the file, so it describes only the fields written here
 //! ([`SCHEMA`]). The message lists one node change per layer (its id, its parent and its position
 //! among the siblings, then its fields), parents first, plus blobs (vector networks and outlines).
-//! Instances are written as their main and the fields their layers override (by id path), like
-//! the files the import reads. What the format can't carry yet (shared styles, variables, Dev Mode
-//! data, …) is left out and listed in the warnings. Round trips through our own importer are
-//! tested, and written files were opened in other software (`docs/file-format-parity.md` says what
-//! was checked); other apps may not open every file.
+//! Instances are written as their main, the fields they and their layers override (by id path) and
+//! what follows from those (derived data: sizes, places, outlines), like the files the import
+//! reads. Shared styles, variable collections and variables are nodes of their own on a hidden
+//! page; layers, paints, effects and layout grids name the ones they use. What the format can't
+//! carry yet (Dev Mode data, comments, …) is left out and listed in the warnings. Round trips
+//! through our own importer are tested, and written files were opened in other software
+//! (`docs/file-format-parity.md` says what was checked); other apps may not open every file.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -24,8 +26,8 @@ use figcraft_doc::proto::{
 };
 use figcraft_doc::{
     AutoLayout, BoolOp, CrossAlign, Document, EffectKind, ExportSize, GridAlign, GridKind, HConstraint, LayoutMode, LetterSpacing, LineHeight,
-    ListStyle, MainAlign, MaskType, Node, NodeId, NodeKind, NoiseMode, PropDef, Sizing, StrokeAlign, StrokeCap, StrokeJoin, TextAlignH, TextAlignV,
-    TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, VConstraint, VectorNetwork, WindingRule,
+    ListStyle, MainAlign, MaskType, Node, NodeId, NodeKind, NoiseMode, PropDef, Sizing, StrokeAlign, StrokeCap, StrokeJoin, StyleKind, TextAlignH,
+    TextAlignV, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle, VConstraint, VariableType, VariableValue, VectorNetwork, WindingRule,
 };
 use serde_json::Value;
 
@@ -59,7 +61,7 @@ const AUX: u32 = 2;
 pub(super) const SCHEMA: &str = "
 enum MessageType JOIN_START=0 NODE_CHANGES=1
 enum NodePhase CREATED=0 REMOVED=1
-enum NodeType NONE=0 DOCUMENT=1 CANVAS=2 GROUP=3 FRAME=4 BOOLEAN_OPERATION=5 VECTOR=6 STAR=7 LINE=8 ELLIPSE=9 RECTANGLE=10 REGULAR_POLYGON=11 ROUNDED_RECTANGLE=12 TEXT=13 SLICE=14 SYMBOL=15 INSTANCE=16 SECTION=25
+enum NodeType NONE=0 DOCUMENT=1 CANVAS=2 GROUP=3 FRAME=4 BOOLEAN_OPERATION=5 VECTOR=6 STAR=7 LINE=8 ELLIPSE=9 RECTANGLE=10 REGULAR_POLYGON=11 ROUNDED_RECTANGLE=12 TEXT=13 SLICE=14 SYMBOL=15 INSTANCE=16 SECTION=25 VARIABLE=28 VARIABLE_SET=31
 enum BlendMode PASS_THROUGH=0 NORMAL=1 DARKEN=2 MULTIPLY=3 LINEAR_BURN=4 COLOR_BURN=5 LIGHTEN=6 SCREEN=7 LINEAR_DODGE=8 COLOR_DODGE=9 OVERLAY=10 SOFT_LIGHT=11 HARD_LIGHT=12 DIFFERENCE=13 EXCLUSION=14 HUE=15 SATURATION=16 COLOR=17 LUMINOSITY=18
 enum PaintType SOLID=0 GRADIENT_LINEAR=1 GRADIENT_RADIAL=2 GRADIENT_ANGULAR=3 GRADIENT_DIAMOND=4 IMAGE=5
 enum ImageScaleMode STRETCH=0 FIT=1 FILL=2 TILE=3
@@ -99,8 +101,10 @@ enum Axis X=0 Y=1
 enum ImageType PNG=0 JPEG=1 SVG=2 PDF=3
 enum ExportConstraintType CONTENT_SCALE=0 CONTENT_WIDTH=1 CONTENT_HEIGHT=2
 enum ComponentPropType BOOL=0 TEXT=1 INSTANCE_SWAP=3 VARIANT=4
-enum VariableField MISSING=0 VISIBLE=10 TEXT_DATA=11 OVERRIDDEN_SYMBOL_ID=37
+enum VariableField MISSING=0 PARAGRAPH_SPACING=2 PARAGRAPH_INDENT=3 STROKE_WEIGHT=4 STACK_SPACING=5 STACK_PADDING_LEFT=6 STACK_PADDING_TOP=7 STACK_PADDING_RIGHT=8 STACK_PADDING_BOTTOM=9 VISIBLE=10 TEXT_DATA=11 WIDTH=12 HEIGHT=13 RECTANGLE_TOP_LEFT_CORNER_RADIUS=14 RECTANGLE_TOP_RIGHT_CORNER_RADIUS=15 RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS=16 RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS=17 BORDER_TOP_WEIGHT=18 BORDER_BOTTOM_WEIGHT=19 BORDER_LEFT_WEIGHT=20 BORDER_RIGHT_WEIGHT=21 STACK_COUNTER_SPACING=23 MIN_WIDTH=24 MAX_WIDTH=25 MIN_HEIGHT=26 MAX_HEIGHT=27 FONT_FAMILY=28 FONT_STYLE=29 OPACITY=31 FONT_SIZE=32 LETTER_SPACING=34 LINE_HEIGHT=36 OVERRIDDEN_SYMBOL_ID=37
 enum VariableDataType BOOLEAN=0 FLOAT=1 STRING=2 ALIAS=3 COLOR=4 PROP_REF=13
+enum VariableScope ALL_SCOPES=0 TEXT_CONTENT=1 CORNER_RADIUS=2 WIDTH_HEIGHT=3 GAP=4 ALL_FILLS=5 FRAME_FILL=6 SHAPE_FILL=7 TEXT_FILL=8 STROKE=9 STROKE_FLOAT=10 EFFECT_FLOAT=11 EFFECT_COLOR=12 OPACITY=13 FONT_STYLE=14 FONT_FAMILY=15 FONT_SIZE=16 LINE_HEIGHT=17 LETTER_SPACING=18 PARAGRAPH_SPACING=19 PARAGRAPH_INDENT=20
+enum StyleType NONE=0 FILL=1 STROKE=2 TEXT=3 EFFECT=4 EXPORT=5 GRID=6
 enum InteractionType ON_CLICK=0 DRAG=9 ON_HOVER=4 ON_PRESS=7 MOUSE_IN=2 MOUSE_OUT=3 MOUSE_DOWN=5 MOUSE_UP=6 AFTER_TIMEOUT=1 ON_KEY_DOWN=10
 enum TriggerDevice KEYBOARD=0 UNKNOWN_CONTROLLER=1
 enum ConnectionType NONE=0 INTERNAL_NODE=1 URL=2 BACK=3 CLOSE=4
@@ -119,8 +123,13 @@ struct Matrix float m00, float m01, float m02, float m10, float m11, float m12
 struct ColorStop Color color, float position
 struct ParentIndex GUID guid, string position
 message Image byte[] hash=1, string name=2
-message Paint PaintType type=1, Color color=2, float opacity=3, bool visible=4, BlendMode blendMode=5, ColorStop[] stops=6, Matrix transform=7, Image image=8, ImageScaleMode imageScaleMode=10, float rotation=11, float scale=12
-message Effect EffectType type=1, Color color=2, Vector offset=3, float radius=4, bool visible=5, BlendMode blendMode=6, float spread=7, bool showShadowBehindNode=8, BlurOpType blurOpType=19, float startRadius=21, Vector startOffset=20, Vector endOffset=28, NoiseType noiseType=26, Vector noiseSize=22, float density=25, float opacity=27, Color secondaryColor=24, bool clipToShape=23
+message VariableWidthPoint float position=1, float ascent=2, float descent=3
+message StyleId GUID guid=1
+message VariableID GUID guid=1
+message VariableSetID GUID guid=1
+message ColorStopVar Color color=1, VariableData colorVar=2, float position=3
+message Paint PaintType type=1, Color color=2, float opacity=3, bool visible=4, BlendMode blendMode=5, ColorStop[] stops=6, Matrix transform=7, Image image=8, ImageScaleMode imageScaleMode=10, float rotation=11, float scale=12, VariableData colorVar=21, ColorStopVar[] stopsVar=23
+message Effect EffectType type=1, Color color=2, Vector offset=3, float radius=4, bool visible=5, BlendMode blendMode=6, float spread=7, bool showShadowBehindNode=8, BlurOpType blurOpType=19, float startRadius=21, Vector startOffset=20, Vector endOffset=28, NoiseType noiseType=26, Vector noiseSize=22, float density=25, float opacity=27, Color secondaryColor=24, bool clipToShape=23, VariableData radiusVar=9, VariableData colorVar=10, VariableData spreadVar=11, VariableData xVar=12, VariableData yVar=13, VariableData startRadiusVar=45
 struct FontName string family, string style, string postscript
 struct Number float value, NumberUnits units
 message Hyperlink string url=1
@@ -130,19 +139,24 @@ message Path WindingRule windingRule=1, uint commandsBlob=2, uint styleID=3
 message VectorData uint vectorNetworkBlob=1, Vector normalizedSize=2, NodeChange[] styleOverrideTable=3
 message ArcData float startingAngle=1, float endingAngle=2, float innerRadius=3
 message OptionalVector Vector value=1
-message LayoutGrid LayoutGridType type=1, Axis axis=2, bool visible=3, int numSections=4, float offset=5, float sectionSize=6, float gutterSize=7, Color color=8, LayoutGridPattern pattern=9
+message LayoutGrid LayoutGridType type=1, Axis axis=2, bool visible=3, int numSections=4, float offset=5, float sectionSize=6, float gutterSize=7, Color color=8, LayoutGridPattern pattern=9, VariableData numSectionsVar=10, VariableData offsetVar=11, VariableData sectionSizeVar=12, VariableData gutterSizeVar=13
 struct ExportConstraint ExportConstraintType type, float value
 message ExportSettings string suffix=1, ImageType imageType=2, ExportConstraint constraint=3
 message GUIDPath GUID[] guids=1
-message SymbolData GUID symbolID=1, NodeChange[] symbolOverrides=2
+message SymbolData GUID symbolID=1, NodeChange[] symbolOverrides=2, float uniformScaleFactor=3
 message ComponentPropValue bool boolValue=1, TextData textValue=2, GUID guidValue=3
 message ComponentPropDef GUID id=1, string name=2, ComponentPropValue initialValue=3, ComponentPropType type=6
 message ComponentPropAssignment GUID defID=1, ComponentPropValue value=2
 message PropRefValue GUID defId=1
-message VariableAnyValue PropRefValue propRefValue=13
+message VariableAnyValue bool boolValue=1, string textValue=2, float floatValue=3, VariableID alias=4, Color colorValue=5, PropRefValue propRefValue=13
 message VariableData VariableAnyValue value=1, VariableDataType dataType=2, VariableResolvedDataType resolvedDataType=3
 message VariableDataMapEntry VariableData variableData=2, VariableField variableField=3
 message VariableDataMap VariableDataMapEntry[] entries=1
+message VariableModeBySetMapEntry VariableSetID variableSetID=1, GUID variableModeID=2
+message VariableModeBySetMap VariableModeBySetMapEntry[] entries=1
+message VariableSetMode GUID id=1, string name=2, string sortPosition=3
+message VariableDataValuesEntry GUID modeID=1, VariableData variableData=2
+message VariableDataValues VariableDataValuesEntry[] entries=1
 message KeyTrigger int[] keyCodes=1, TriggerDevice triggerDevice=2
 message PrototypeEvent InteractionType interactionType=1, float transitionTimeout=6, KeyTrigger keyTrigger=4
 message PrototypeAction GUID transitionNodeID=1, TransitionType transitionType=2, float transitionDuration=3, EasingType easingType=4, float[] easingFunction=12, ConnectionType connectionType=7, NavigationType navigationType=10, string connectionURL=8, bool transitionPreserveScroll=11
@@ -151,7 +165,7 @@ message PrototypeStartingPoint string name=1, string position=3
 message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
 message GUIDPositionMapEntry GUID id=1, string position=2
 message GUIDPositionMap GUIDPositionMapEntry[] entries=1
-message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, SymbolData symbolData=113, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
+message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, string description=318, StyleType styleType=163, string sortPosition=320, StyleId styleIdForFill=332, StyleId styleIdForStrokeFill=333, StyleId styleIdForText=334, StyleId styleIdForEffect=335, StyleId styleIdForGrid=336, VariableDataMap variableConsumptionMap=307, VariableModeBySetMap variableModeBySetMap=316, VariableSetMode[] variableSetModes=312, VariableSetID variableSetID=313, VariableResolvedDataType variableResolvedType=314, VariableDataValues variableDataValues=315, VariableScope[] variableScopes=353, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, VariableWidthPoint[] variableWidthPoints=447, SymbolData symbolData=113, NodeChange[] derivedSymbolData=125, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
 struct Blob byte[] bytes
 message Message MessageType type=1, uint sessionID=2, NodeChange[] nodeChanges=4, Blob[] blobs=6
 ";
@@ -397,7 +411,26 @@ struct Exporter<'d> {
     overlays: BTreeMap<NodeId, Overlay>,
     /// Flow starting points: layer → (order, name).
     starts: BTreeMap<NodeId, (usize, String)>,
+    /// Shared styles, variable collections and variables → local id of their node's GUID (session
+    /// [`LAYERS`], after the layers'), and (collection, mode) → local id of the mode's GUID
+    /// (session [`AUX`]).
+    style_ids: BTreeMap<&'d str, u32>,
+    set_ids: BTreeMap<&'d str, u32>,
+    var_ids: BTreeMap<&'d str, u32>,
+    mode_ids: BTreeMap<(&'d str, &'d str), u32>,
     warnings: Vec<String>,
+}
+
+/// The variables bound to one layer, as the fields that carry them: paints by (fills?, index),
+/// gradient stops by (fills?, paint, stop), effect and layout grid fields by (index, field), and
+/// the entries of the layer's own map.
+#[derive(Default)]
+struct Bound {
+    paints: BTreeMap<(bool, usize), Kv<'static>>,
+    stops: BTreeMap<(bool, usize, usize), Kv<'static>>,
+    effects: BTreeMap<(usize, &'static str), Kv<'static>>,
+    grids: BTreeMap<(usize, &'static str), Kv<'static>>,
+    entries: Vec<Kv<'static>>,
 }
 
 impl<'d> Exporter<'d> {
@@ -415,6 +448,10 @@ impl<'d> Exporter<'d> {
             aux: 0,
             overlays: BTreeMap::new(),
             starts: BTreeMap::new(),
+            style_ids: BTreeMap::new(),
+            set_ids: BTreeMap::new(),
+            var_ids: BTreeMap::new(),
+            mode_ids: BTreeMap::new(),
             warnings: Vec::new(),
         }
     }
@@ -446,12 +483,7 @@ impl<'d> Exporter<'d> {
         for (i, p) in doc.pages.iter().enumerate() {
             self.emit(*p, guid(0, 0), i, None, 0);
         }
-        if !doc.styles.is_empty() {
-            self.warn("shared styles were left out (their layers keep the values)");
-        }
-        if !doc.variables.collections.is_empty() || !doc.variables.variables.is_empty() {
-            self.warn("variables were left out");
-        }
+        self.assets(doc.pages.len());
         if !doc.comments.is_empty() {
             self.warn("comments were left out");
         }
@@ -517,6 +549,279 @@ impl<'d> Exporter<'d> {
                 }
             }
         }
+        // The page that holds styles and variables takes the next id, then their nodes.
+        let mut next = u32::try_from(self.ids.len() + 1).unwrap_or(u32::MAX);
+        let mut node = || {
+            next = next.saturating_add(1);
+            next
+        };
+        for st in &doc.styles {
+            self.style_ids.entry(st.id.as_str()).or_insert_with(&mut node);
+        }
+        for c in &doc.variables.collections {
+            self.set_ids.entry(c.id.as_str()).or_insert_with(&mut node);
+        }
+        for v in &doc.variables.variables {
+            if self.set_ids.contains_key(v.collection.as_str()) {
+                self.var_ids.entry(v.id.as_str()).or_insert_with(&mut node);
+            }
+        }
+        for c in &doc.variables.collections {
+            for m in &c.modes {
+                if !self.mode_ids.contains_key(&(c.id.as_str(), m.id.as_str())) {
+                    let id = self.next_aux();
+                    self.mode_ids.insert((c.id.as_str(), m.id.as_str()), id);
+                }
+            }
+        }
+    }
+
+    /// The hidden page after the `pages` real ones that holds the shared styles, the variable
+    /// collections and the variables, each a node of its own.
+    fn assets(&mut self, pages: usize) {
+        let doc = self.doc;
+        if self.style_ids.is_empty() && self.set_ids.is_empty() {
+            return;
+        }
+        let page = u32::try_from(self.ids.len() + 1).unwrap_or(u32::MAX);
+        let mut f: Fields = vec![
+            ("guid", guid(LAYERS, page)),
+            ("phase", e("CREATED")),
+            ("parentIndex", o(vec![("guid", guid(0, 0)), ("position", s(&position(pages)))])),
+            ("type", e("CANVAS")),
+            ("name", s("Internal Only Canvas")),
+        ];
+        f.extend(root_fields().into_iter().map(|(k, v)| if k == "visible" { (k, b(false)) } else { (k, v) }));
+        f.push(("internalOnly", b(true)));
+        self.nodes.push(o(f));
+        let mut index = 0usize;
+        let mut head = |local: u32, ty: &'static str, name: &str| -> Fields {
+            index += 1;
+            vec![
+                ("guid", guid(LAYERS, local)),
+                ("phase", e("CREATED")),
+                ("parentIndex", o(vec![("guid", guid(LAYERS, page)), ("position", s(&position(index)))])),
+                ("type", e(ty)),
+                ("name", s(name)),
+                ("sortPosition", s(&position(index))),
+            ]
+        };
+        let none = Bound::default();
+        for st in &doc.styles {
+            let Some(&local) = self.style_ids.get(st.id.as_str()) else { continue };
+            // A sample layer that shows the style: a square for paints and effects, a frame for
+            // grids, two letters for text.
+            let (ty, kind) = match &st.kind {
+                StyleKind::Paint { .. } => ("ROUNDED_RECTANGLE", "FILL"),
+                StyleKind::Effect { .. } => ("ROUNDED_RECTANGLE", "EFFECT"),
+                StyleKind::Grid { .. } => ("FRAME", "GRID"),
+                StyleKind::Text { .. } => ("TEXT", "TEXT"),
+            };
+            let mut f = head(local, ty, &st.name);
+            f.extend([
+                ("styleType", e(kind)),
+                ("visible", b(true)),
+                ("opacity", fl(1.0)),
+                ("size", xy(100.0, 100.0)),
+                ("transform", matrix(Affine::IDENTITY)),
+                ("strokeWeight", fl(0.0)),
+                ("strokeAlign", e("INSIDE")),
+                ("strokeJoin", e("MITER")),
+            ]);
+            if !st.description.is_empty() {
+                f.push(("description", s(&st.description)));
+            }
+            match &st.kind {
+                StyleKind::Paint { paints } => f.push(("fillPaints", self.paints(paints, true, &none))),
+                StyleKind::Effect { effects } => {
+                    let list = effects.iter().enumerate().map(|(i, x)| self.effect(x, i, &none)).collect();
+                    f.extend([("fillPaints", arr(Vec::new())), ("effects", arr(list))]);
+                }
+                StyleKind::Grid { grids } => {
+                    let list = grids.iter().enumerate().map(|(i, g)| layout_grid(g, i, &none)).collect();
+                    f.extend([("fillPaints", arr(Vec::new())), ("layoutGrids", arr(list))]);
+                }
+                StyleKind::Text { style } => {
+                    let td = TextData { style: style.as_text_style(), ..TextData::new("Ag") };
+                    let fills = [Paint::solid(Color::BLACK)];
+                    f.push(("fillPaints", self.paints(style.fills.as_deref().unwrap_or(&fills), true, &none)));
+                    self.text(&td, &fills, &mut f);
+                }
+            }
+            self.nodes.push(o(f));
+        }
+        for c in &doc.variables.collections {
+            let Some(&local) = self.set_ids.get(c.id.as_str()) else { continue };
+            let mut f = head(local, "VARIABLE_SET", &c.name);
+            let modes = c.modes.iter().enumerate().filter_map(|(i, m)| {
+                let id = self.mode_ids.get(&(c.id.as_str(), m.id.as_str()))?;
+                Some(o(vec![("id", guid(AUX, *id)), ("name", s(&m.name)), ("sortPosition", s(&position(i)))]))
+            });
+            f.push(("variableSetModes", arr(modes.collect())));
+            self.nodes.push(o(f));
+            if c.extends.is_some() {
+                self.warn("extended variable collections were written as collections of their own");
+            }
+        }
+        for v in &doc.variables.variables {
+            let ids = (self.var_ids.get(v.id.as_str()), self.set_ids.get(v.collection.as_str()));
+            let (Some(&local), Some(&set), Some(c)) = (ids.0, ids.1, doc.variables.collections.iter().find(|c| c.id == v.collection)) else {
+                self.warn("variables whose collection isn't in the document were left out");
+                continue;
+            };
+            let resolved = resolved_type(v.kind);
+            let mut values = Vec::new();
+            for m in &c.modes {
+                let (Some(mode), Some(val)) = (self.mode_ids.get(&(c.id.as_str(), m.id.as_str())), v.values.get(&m.id)) else { continue };
+                let (ty, value) = match val {
+                    VariableValue::Color(x) => ("COLOR", ("colorValue", color(*x))),
+                    VariableValue::Number(x) => ("FLOAT", ("floatValue", fl(*x))),
+                    // NULs can't be stored in a string.
+                    VariableValue::String(x) => ("STRING", ("textValue", s(&x.replace('\0', "")))),
+                    VariableValue::Boolean(x) => ("BOOLEAN", ("boolValue", b(*x))),
+                    VariableValue::Alias(a) => match self.var_ids.get(a.as_str()) {
+                        Some(t) => ("ALIAS", ("alias", o(vec![("guid", guid(LAYERS, *t))]))),
+                        None => {
+                            self.warn("variable aliases to variables that aren't in the document were left out");
+                            continue;
+                        }
+                    },
+                };
+                let data = o(vec![("value", o(vec![value])), ("dataType", e(ty)), ("resolvedDataType", e(resolved))]);
+                values.push(o(vec![("modeID", guid(AUX, *mode)), ("variableData", data)]));
+            }
+            let mut f = head(local, "VARIABLE", &v.name);
+            f.extend([
+                ("variableSetID", o(vec![("guid", guid(LAYERS, set))])),
+                ("variableResolvedType", e(resolved)),
+                ("variableDataValues", o(vec![("entries", arr(values))])),
+            ]);
+            if !v.description.is_empty() {
+                f.push(("description", s(&v.description)));
+            }
+            if let Some(scopes) = &v.scopes {
+                let known: Vec<Kv> = scopes.iter().filter_map(|sc| scope_name(sc)).map(e).collect();
+                if known.len() < scopes.len() {
+                    self.warn("variable scopes the format has no name for were left out");
+                }
+                f.push(("variableScopes", arr(known)));
+            }
+            if v.hidden_from_publishing || !v.code_syntax.is_empty() || v.extends.is_some() {
+                self.warn("variables' publishing, code syntax and inheritance settings were left out");
+            }
+            self.nodes.push(o(f));
+        }
+    }
+
+    /// A reference to variable `var` (its id or name) as variable data.
+    fn alias(&mut self, var: &str) -> Option<Kv<'static>> {
+        let found = self.doc.variables.get(var).and_then(|v| Some((v.kind, *self.var_ids.get(v.id.as_str())?)));
+        let Some((kind, local)) = found else {
+            self.warn("bindings to variables that aren't in the document were written as their values");
+            return None;
+        };
+        Some(o(vec![
+            ("value", o(vec![("alias", o(vec![("guid", guid(LAYERS, local))]))])),
+            ("dataType", e("ALIAS")),
+            ("resolvedDataType", e(resolved_type(kind))),
+        ]))
+    }
+
+    /// Layer `n`'s variable bindings, sorted into the fields that carry them. What the format has
+    /// no field for stays as the value the layer already shows, with a warning.
+    fn bound(&mut self, n: &Node) -> Bound {
+        const BAKED: &str = "variables bound to properties the format has no field for were written as their values";
+        let mut out = Bound::default();
+        for (key, var) in &n.bound {
+            let parts: Vec<&str> = key.split('/').collect();
+            let index = |i: &str| i.parse::<usize>().ok().filter(|_| i.bytes().all(|c| c.is_ascii_digit()));
+            let fields: &[&'static str] = match (parts.as_slice(), key.as_str()) {
+                (_, "fill" | "fills" | "fills/0" | "stroke") => {
+                    if let Some(a) = self.alias(var) {
+                        out.paints.insert((key != "stroke", 0), a);
+                    }
+                    continue;
+                }
+                ([list @ ("fills" | "strokes"), i, "color"], _) => {
+                    if let (Some(i), Some(a)) = (index(i), self.alias(var)) {
+                        out.paints.insert((*list == "fills", i), a);
+                    }
+                    continue;
+                }
+                ([list @ ("fills" | "strokes"), i, "stops", j, "color"], _) => {
+                    if let (Some(i), Some(j), Some(a)) = (index(i), index(j), self.alias(var)) {
+                        out.stops.insert((*list == "fills", i, j), a);
+                    }
+                    continue;
+                }
+                ([list @ ("effects" | "layoutGrids"), i, field], _) => {
+                    let names: &[&'static str] = if *list == "effects" {
+                        &["color", "radius", "spread", "offsetX", "offsetY", "startRadius"]
+                    } else {
+                        &["size", "count", "gutter", "offset"]
+                    };
+                    match (index(i), names.iter().find(|f| *f == field)) {
+                        (Some(i), Some(name)) => {
+                            if let Some(a) = self.alias(var) {
+                                if *list == "effects" { &mut out.effects } else { &mut out.grids }.insert((i, *name), a);
+                            }
+                        }
+                        _ => self.warn(BAKED),
+                    }
+                    continue;
+                }
+                (_, "width") => &["WIDTH"],
+                (_, "height") => &["HEIGHT"],
+                (_, "gap") => &["STACK_SPACING"],
+                (_, "crossGap") => &["STACK_COUNTER_SPACING"],
+                (_, "paddingLeft") => &["STACK_PADDING_LEFT"],
+                (_, "paddingTop") => &["STACK_PADDING_TOP"],
+                (_, "paddingRight") => &["STACK_PADDING_RIGHT"],
+                (_, "paddingBottom") => &["STACK_PADDING_BOTTOM"],
+                (_, "paddingHorizontal") => &["STACK_PADDING_LEFT", "STACK_PADDING_RIGHT"],
+                (_, "paddingVertical") => &["STACK_PADDING_TOP", "STACK_PADDING_BOTTOM"],
+                (_, "padding") => &["STACK_PADDING_LEFT", "STACK_PADDING_TOP", "STACK_PADDING_RIGHT", "STACK_PADDING_BOTTOM"],
+                (_, "cornerRadius") => &[
+                    "RECTANGLE_TOP_LEFT_CORNER_RADIUS",
+                    "RECTANGLE_TOP_RIGHT_CORNER_RADIUS",
+                    "RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS",
+                    "RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS",
+                ],
+                (_, "topLeftRadius") => &["RECTANGLE_TOP_LEFT_CORNER_RADIUS"],
+                (_, "topRightRadius") => &["RECTANGLE_TOP_RIGHT_CORNER_RADIUS"],
+                (_, "bottomLeftRadius") => &["RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS"],
+                (_, "bottomRightRadius") => &["RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS"],
+                (_, "opacity") => &["OPACITY"],
+                (_, "visible") => &["VISIBLE"],
+                (_, "characters") => &["TEXT_DATA"],
+                (_, "strokeWeight") => &["STROKE_WEIGHT"],
+                (_, "strokeTopWeight") => &["BORDER_TOP_WEIGHT"],
+                (_, "strokeRightWeight") => &["BORDER_RIGHT_WEIGHT"],
+                (_, "strokeBottomWeight") => &["BORDER_BOTTOM_WEIGHT"],
+                (_, "strokeLeftWeight") => &["BORDER_LEFT_WEIGHT"],
+                (_, "minWidth") => &["MIN_WIDTH"],
+                (_, "maxWidth") => &["MAX_WIDTH"],
+                (_, "minHeight") => &["MIN_HEIGHT"],
+                (_, "maxHeight") => &["MAX_HEIGHT"],
+                (_, "fontSize") => &["FONT_SIZE"],
+                (_, "fontFamily") => &["FONT_FAMILY"],
+                (_, "fontStyle") => &["FONT_STYLE"],
+                (_, "letterSpacing") => &["LETTER_SPACING"],
+                (_, "lineHeight") => &["LINE_HEIGHT"],
+                (_, "paragraphSpacing") => &["PARAGRAPH_SPACING"],
+                (_, "paragraphIndent") => &["PARAGRAPH_INDENT"],
+                _ => {
+                    self.warn(BAKED);
+                    continue;
+                }
+            };
+            for field in fields {
+                if let Some(a) = self.alias(var) {
+                    out.entries.push(o(vec![("variableData", a), ("variableField", e(field))]));
+                }
+            }
+        }
+        out
     }
 
     /// Write layer `id` (child `index` of the layer with GUID `parent_guid`) and its subtree.
@@ -542,6 +847,7 @@ impl<'d> Exporter<'d> {
             if *prototype != Default::default() {
                 self.warn("prototype device settings were left out");
             }
+            self.modes(n, &mut f);
             true
         } else {
             self.layer(n, parent, &mut f, false)
@@ -665,17 +971,18 @@ impl<'d> Exporter<'d> {
             };
             f.extend([("mask", b(true)), ("maskType", e(ty))]);
         }
-        // Text whose own style sets fills paints with them (the layer's fills only show through runs).
+        let bound = self.bound(n);
+        // Text whose own style sets fills paints with them (the layer's fills only show through
+        // runs); a variable bound to the layer's fill colours the layer's.
         let fills = match &n.kind {
-            NodeKind::Text(td) => td.style.fills.as_deref().unwrap_or(&n.fills),
-            _ => &n.fills,
+            NodeKind::Text(TextData { style: TextStyle { fills: Some(own), .. }, .. }) => self.paints(own, true, &Bound::default()),
+            _ => self.paints(&n.fills, true, &bound),
         };
-        let fills = self.paints(fills);
-        let strokes = self.paints(&n.strokes);
+        let strokes = self.paints(&n.strokes, false, &bound);
         f.extend([("fillPaints", fills), ("strokePaints", strokes)]);
         self.stroke(n, f);
         if !n.effects.is_empty() {
-            let effects = n.effects.iter().map(|x| self.effect(x)).collect();
+            let effects = n.effects.iter().enumerate().map(|(i, x)| self.effect(x, i, &bound)).collect();
             f.push(("effects", arr(effects)));
         }
         if n.kind.has_corner_radius() {
@@ -718,7 +1025,7 @@ impl<'d> Exporter<'d> {
                 self.auto_layout(n, l, f);
             }
             if !n.grids.is_empty() {
-                f.push(("layoutGrids", arr(n.grids.iter().map(layout_grid).collect())));
+                f.push(("layoutGrids", arr(n.grids.iter().enumerate().map(|(i, g)| layout_grid(g, i, &bound)).collect())));
             }
         }
         self.child_layout(n, parent, f);
@@ -733,12 +1040,31 @@ impl<'d> Exporter<'d> {
         if !refs.is_empty() {
             f.push(("parameterConsumptionMap", o(vec![("entries", arr(refs))])));
         }
-        if !n.styles.is_empty() {
-            self.warn("shared styles were left out (their layers keep the values)");
+        let text = matches!(n.kind, NodeKind::Text(_));
+        let links = [
+            ("styleIdForFill", &n.styles.fill, true),
+            ("styleIdForStrokeFill", &n.styles.stroke, true),
+            ("styleIdForEffect", &n.styles.effect, true),
+            ("styleIdForGrid", &n.styles.grid, n.kind.is_frame_like()),
+            ("styleIdForText", &n.styles.text, text),
+        ];
+        for (key, id, fits) in links {
+            let Some(id) = id else { continue };
+            match self.style_ids.get(id.as_str()).filter(|_| fits) {
+                Some(local) => f.push((key, o(vec![("guid", guid(LAYERS, *local))]))),
+                None => self.warn("links to shared styles that aren't in the document were left out (their layers keep the values)"),
+            }
         }
-        if !n.bound.is_empty() || !n.var_modes.is_empty() {
-            self.warn("variables were left out");
+        if let NodeKind::Text(td) = &n.kind
+            && n.styles.text.is_none()
+            && std::iter::once(&td.style).chain(td.runs.iter().map(|r| &r.style)).any(|st| st.style_id.is_some())
+        {
+            self.warn("text styles applied to part of a text were written as their values");
         }
+        if !bound.entries.is_empty() {
+            f.push(("variableConsumptionMap", o(vec![("entries", arr(bound.entries))])));
+        }
+        self.modes(n, f);
         if !n.guides.is_empty() {
             self.warn("ruler guides were left out");
         }
@@ -750,17 +1076,35 @@ impl<'d> Exporter<'d> {
         }
     }
 
-    fn paints(&mut self, list: &[Paint]) -> Kv<'static> {
-        arr(list.iter().filter_map(|p| self.paint(p)).collect())
+    /// The variable modes layer (or page) `n` sets for what is in it.
+    fn modes(&mut self, n: &Node, f: &mut Fields) {
+        let mut entries = Vec::new();
+        for (coll, mode) in &n.var_modes {
+            match (self.set_ids.get(coll.as_str()), self.mode_ids.get(&(coll.as_str(), mode.as_str()))) {
+                (Some(set), Some(mode)) => {
+                    entries.push(o(vec![("variableSetID", o(vec![("guid", guid(LAYERS, *set))])), ("variableModeID", guid(AUX, *mode))]));
+                }
+                _ => self.warn("variable modes of collections that aren't in the document were left out"),
+            }
+        }
+        if !entries.is_empty() {
+            f.push(("variableModeBySetMap", o(vec![("entries", arr(entries))])));
+        }
     }
 
-    fn paint(&mut self, p: &Paint) -> Option<Kv<'static>> {
+    /// A paint list: a layer's fills (`fills`) or strokes with the variables `bound` to them.
+    fn paints(&mut self, list: &[Paint], fills: bool, bound: &Bound) -> Kv<'static> {
+        arr(list.iter().enumerate().filter_map(|(i, p)| self.paint(p, (fills, i), bound)).collect())
+    }
+
+    fn paint(&mut self, p: &Paint, at: (bool, usize), bound: &Bound) -> Option<Kv<'static>> {
         let mut f: Fields = vec![("visible", b(p.visible)), ("blendMode", e(blend_name(p.blend)))];
         let mut opacity = f64::from(p.opacity);
         match &p.kind {
             PaintKind::Solid { color: c } => {
                 opacity *= f64::from(c.a);
                 f.extend([("type", e("SOLID")), ("color", color(c.with_alpha(1.0)))]);
+                f.extend(bound.paints.get(&at).map(|a| ("colorVar", a.clone())));
             }
             PaintKind::Gradient(g) => {
                 let ty = match g.kind {
@@ -790,6 +1134,16 @@ impl<'d> Exporter<'d> {
                 };
                 let stops = g.stops.iter().map(|st| o(vec![("color", color(st.color)), ("position", fl(st.position.into()))])).collect();
                 f.extend([("type", e(ty)), ("stops", arr(stops)), ("transform", matrix(t))]);
+                // Stops bound to variables: every stop again, the bound ones with their variable.
+                if bound.stops.range((at.0, at.1, 0)..=(at.0, at.1, usize::MAX)).next().is_some() {
+                    let vars = g.stops.iter().enumerate().map(|(j, st)| {
+                        let mut sf: Fields = vec![("color", color(st.color))];
+                        sf.extend(bound.stops.get(&(at.0, at.1, j)).map(|a| ("colorVar", a.clone())));
+                        sf.push(("position", fl(st.position.into())));
+                        o(sf)
+                    });
+                    f.push(("stopsVar", arr(vars.collect())));
+                }
             }
             PaintKind::Image(img) => {
                 let hash = self.image(&img.image);
@@ -878,8 +1232,17 @@ impl<'d> Exporter<'d> {
                 ("borderLeftWeight", fl(l)),
             ]);
         }
-        if sp.width_profile.is_some() || sp.brush.is_some() {
-            self.warn("variable-width and brush strokes were written as plain strokes");
+        // A variable width: how far the stroke reaches on each side of the path (left first, looking
+        // along it) at positions along its length.
+        if let Some(p) = sp.profile().filter(|_| sp.weight.is_finite() && sp.weight > 0.0) {
+            let point = |q: &figcraft_doc::WidthPoint| {
+                let half = sp.weight * q.scale / 2.0;
+                o(vec![("position", fl(q.t)), ("ascent", fl(half * (1.0 - q.bias))), ("descent", fl(half * (1.0 + q.bias)))])
+            };
+            f.push(("variableWidthPoints", arr(p.sanitized().points.iter().map(point).collect())));
+        }
+        if sp.brush.is_some() {
+            self.warn("brush strokes were written as plain strokes");
         }
         if [sp.cap_start, sp.cap_end].contains(&StrokeCap::ReversedTriangle) {
             self.warn("reversed triangle stroke ends were written as triangle arrows");
@@ -890,8 +1253,18 @@ impl<'d> Exporter<'d> {
         }
     }
 
-    fn effect(&mut self, x: &figcraft_doc::Effect) -> Kv<'static> {
+    /// Effect `index` of a layer, with the variables `bound` to its fields.
+    fn effect(&mut self, x: &figcraft_doc::Effect, index: usize, bound: &Bound) -> Kv<'static> {
         let mut f: Fields = vec![("visible", b(x.visible))];
+        let vars = [
+            ("color", "colorVar"),
+            ("radius", "radiusVar"),
+            ("spread", "spreadVar"),
+            ("offsetX", "xVar"),
+            ("offsetY", "yVar"),
+            ("startRadius", "startRadiusVar"),
+        ];
+        f.extend(vars.into_iter().filter_map(|(ours, key)| Some((key, bound.effects.get(&(index, ours))?.clone()))));
         let blur = |f: &mut Fields, ty: &'static str, bl: &figcraft_doc::Blur| {
             f.extend([("type", e(ty)), ("radius", fl(bl.radius))]);
             if bl.blur_type == figcraft_doc::BlurType::Progressive {
@@ -1142,7 +1515,7 @@ impl<'d> Exporter<'d> {
                     let mut ef: Fields = vec![("styleID", u(id))];
                     style_fields(st, &mut ef);
                     if let Some(p) = st.fills.as_deref().or(td.style.fills.as_ref().map(|_| fills)) {
-                        ef.push(("fillPaints", self.paints(p)));
+                        ef.push(("fillPaints", self.paints(p, true, &Bound::default())));
                     }
                     o(ef)
                 })
@@ -1176,9 +1549,6 @@ impl<'d> Exporter<'d> {
         let styles = std::iter::once(&td.style).chain(td.runs.iter().map(|r| &r.style));
         if styles.clone().any(|st| st.decoration_look.is_some() || !st.variations.is_empty()) {
             self.warn("text decoration looks and variable font settings were left out");
-        }
-        if styles.clone().any(|st| st.style_id.is_some()) {
-            self.warn("shared styles were left out (their layers keep the values)");
         }
         if td.path.is_some() {
             self.warn("text on a path was written as plain text");
@@ -1303,7 +1673,7 @@ impl<'d> Exporter<'d> {
     fn stroke_geometry(&mut self, n: &Node, boxy: bool, f: &mut Fields) {
         let sp = &n.stroke;
         let (w, h, weight) = (n.width, n.height, sp.weight);
-        let plain = n.strokes.iter().any(|p| p.visible) && sp.dashes.is_empty() && sp.sides.is_none();
+        let plain = n.strokes.iter().any(|p| p.visible) && sp.dashes.is_empty() && sp.sides.is_none() && sp.profile().is_none() && sp.brush.is_none();
         if !plain || !(weight.is_finite() && weight > 0.0 && w.is_finite() && h.is_finite()) {
             return;
         }
@@ -1409,10 +1779,32 @@ impl<'d> Exporter<'d> {
         Some(o(vec![("variableData", data), ("variableField", e(var_field))]))
     }
 
-    /// An instance: its main, the fields its layers override, its property values.
+    /// An instance: its main, the fields it and its layers override, the size, place and outline
+    /// its layers get from that (derived data), its property values. `f`: its own fields so far.
     fn instance(&mut self, n: &Node, main: NodeId, props: &BTreeMap<String, Value>, f: &mut Fields) {
+        const OWN: [&str; 7] = ["guid", "phase", "parentIndex", "type", "transform", "fillGeometry", "strokeGeometry"];
         let doc = self.doc;
-        let mut overrides = Vec::new();
+        let (Some(m), Some(symbol)) = (doc.node(main), self.guid_of(main)) else { return };
+        // What the instance itself changes from its main (its size, its paints, …) is an override
+        // addressed by the main's id: a reader takes everything else from the main. Where it sits
+        // is its own.
+        let mut root_theirs = Vec::new();
+        self.layer(m, m.parent.and_then(|p| doc.node(p)), &mut root_theirs, true);
+        root_theirs.retain(|(k, _)| !OWN.contains(k));
+        // An instance is named after its component (the set, for a variant) until renamed.
+        let set = m.parent.and_then(|p| doc.node(p)).filter(|p| matches!(p.kind, NodeKind::ComponentSet { .. }));
+        let named = set.is_none_or(|s| s.name != n.name);
+        let root_mine: Fields = f.iter().filter(|(k, _)| !OWN.contains(k) && (named || *k != "name")).cloned().collect();
+        // Each layer below: its id path, the fields that differ from the main's layer, that layer's
+        // fields, and the component a nested instance was swapped for.
+        struct Row {
+            path: Kv<'static>,
+            changed: Fields,
+            theirs: Fields,
+            nested: bool,
+            swap: Option<Kv<'static>>,
+        }
+        let mut rows: Vec<Row> = Vec::new();
         let mut stack: Vec<(NodeId, NodeId)> = n.children.iter().rev().map(|c| (*c, n.id)).collect();
         let mut seen = 0usize;
         while let Some((id, parent)) = stack.pop() {
@@ -1422,40 +1814,75 @@ impl<'d> Exporter<'d> {
                 break;
             }
             stack.extend(d.children.iter().rev().map(|c| (*c, id)));
-            let path = d.source.and_then(|src| self.path_in(src, main, 0));
+            let path = self.layer_path(d, n.id, main, 0);
             let guids: Option<Vec<Kv>> = path.and_then(|p| p.iter().map(|x| self.guid_of(*x)).collect());
             let (Some(guids), Some(src)) = (guids, d.source.and_then(|src| doc.node(src))) else {
                 self.warn("instance layers that don't come from their main component were left out");
                 continue;
             };
-            // The fields that differ from the main's layer: overrides, and layout derived from them.
             let (mut mine, mut theirs) = (Vec::new(), Vec::new());
             self.layer(d, doc.node(parent), &mut mine, true);
             self.layer(src, src.parent.and_then(|p| doc.node(p)), &mut theirs, true);
-            let mut of: Fields = vec![("guidPath", o(vec![("guids", arr(guids))]))];
-            // Fields the main's layer has and this one doesn't are written at their empty values.
-            let cleared: Fields =
-                theirs.iter().filter(|(k, _)| !mine.iter().any(|(mk, _)| mk == k)).filter_map(|(k, _)| Some((*k, unset(k)?))).collect();
-            of.extend(mine.into_iter().filter(|(k, v)| !theirs.iter().any(|(tk, tv)| tk == k && tv == v)));
-            of.extend(cleared);
             // A nested instance swapped for another component.
-            if let NodeKind::Instance { component, .. } = &d.kind {
-                let was = d.source.and_then(|src| doc.node(src)).and_then(|m| match &m.kind {
-                    NodeKind::Instance { component, .. } => Some(*component),
-                    _ => None,
-                });
-                if was != Some(*component)
-                    && let Some(g) = self.guid_of(*component)
-                {
-                    of.push(("overriddenSymbolID", g));
+            let swap = match (&d.kind, &src.kind) {
+                (NodeKind::Instance { component, .. }, NodeKind::Instance { component: was, .. }) if component == was => None,
+                (NodeKind::Instance { component, .. }, _) => self.guid_of(*component),
+                _ => None,
+            };
+            let nested = matches!(d.kind, NodeKind::Instance { .. });
+            rows.push(Row { path: o(vec![("guids", arr(guids))]), changed: changed(mine, &theirs), theirs, nested, swap });
+        }
+        // An instance scaled as a whole (the Scale tool) is `factor` times its main in every length:
+        // sizes, places and stroke weights, its own and its layers'. A resized one keeps its weights.
+        let field = |fields: &Fields, key: &str| fields.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+        let factor = Some(n.width / m.width).filter(|k| k.is_finite() && *k > 0.0 && (k - 1.0).abs() > 1e-6).filter(|k| {
+            let grown = |mine: &Fields, theirs: &Fields| {
+                let weight = field(theirs, "strokeWeight").and_then(|w| w.f64()).unwrap_or(0.0);
+                (weight == 0.0 || field(mine, "strokeWeight").is_some_and(|w| scaled(&w, &fl(weight), *k, 0.0)))
+                    && field(mine, "size").zip(field(theirs, "size")).is_some_and(|(a, b)| scaled(&a, &b, *k, 1.0))
+                    && field(mine, "transform").zip(field(theirs, "transform")).is_none_or(|(a, b)| scaled(&a, &b, *k, 1.0))
+            };
+            (n.height / m.height - k).abs() <= 1e-6 * k.max(1.0)
+                && grown(&changed(root_mine.clone(), &root_theirs), &root_theirs)
+                && rows.iter().all(|r| grown(&r.changed, &r.theirs))
+        });
+        // What follows from the overrides goes with the derived data: a layer's size, place and
+        // outline (a vector's network is the main's, drawn at the layer's size), the colours its
+        // variables give here, and what the scale factor makes of the main's values.
+        let follows = |k: &str, v: &Kv<'static>, theirs: &Fields| {
+            ["size", "transform", "fillGeometry", "strokeGeometry", "vectorData"].contains(&k)
+                || resolved_alike(k, v, theirs)
+                || factor.is_some_and(|x| field(theirs, k).is_some_and(|t| scaled(v, &t, x, 0.0)))
+        };
+        let mut overrides = Vec::new();
+        let mut derived = Vec::new();
+        let mut of: Fields = vec![("guidPath", o(vec![("guids", arr(vec![symbol.clone()]))]))];
+        of.extend(changed(root_mine, &root_theirs).into_iter().filter(|(k, v)| *k == "size" || !follows(k, v, &root_theirs)));
+        if of.len() > 1 {
+            overrides.push(o(of));
+        }
+        for r in rows {
+            let (mut of, mut df): (Fields, Fields) = (vec![("guidPath", r.path.clone())], vec![("guidPath", r.path)]);
+            for (k, v) in r.changed {
+                let follows = follows(k, &v, &r.theirs);
+                // A nested instance's size is its own to set.
+                if follows && r.nested && k == "size" {
+                    of.push((k, v.clone()));
                 }
+                if follows { &mut df } else { &mut of }.push((k, v));
             }
+            if df.len() > 1 {
+                derived.push(o(df));
+            }
+            of.extend(r.swap.map(|g| ("overriddenSymbolID", g)));
             if of.len() > 1 {
                 overrides.push(o(of));
             }
         }
-        let Some(symbol) = self.guid_of(main) else { return };
-        f.push(("symbolData", o(vec![("symbolID", symbol), ("symbolOverrides", arr(overrides))])));
+        f.push(("symbolData", o(vec![("symbolID", symbol), ("symbolOverrides", arr(overrides)), ("uniformScaleFactor", fl(factor.unwrap_or(1.0)))])));
+        if !derived.is_empty() {
+            f.push(("derivedSymbolData", arr(derived)));
+        }
         let mut assignments = Vec::new();
         for (name, v) in props {
             let (ty, value) = match v {
@@ -1493,6 +1920,28 @@ impl<'d> Exporter<'d> {
             }
         }
         cur
+    }
+
+    /// The id path of layer `d` of instance `inst` (of `main`): that of the main's layer it mirrors,
+    /// or, inside a nested instance swapped for another component, the path of that instance and
+    /// then the one inside its new main.
+    fn layer_path(&self, d: &Node, inst: NodeId, main: NodeId, depth: usize) -> Option<Vec<NodeId>> {
+        let src = d.source?;
+        if let Some(p) = self.path_in(src, main, 0) {
+            return Some(p);
+        }
+        if depth > 32 {
+            return None;
+        }
+        let doc = self.doc;
+        let nested = doc.ancestors(d.id).into_iter().take_while(|a| *a != inst).filter_map(|a| doc.node(a)).find_map(|a| match &a.kind {
+            NodeKind::Instance { component, .. } => Some((a, *component)),
+            _ => None,
+        });
+        let (outer, component) = nested?;
+        let mut p = self.layer_path(outer, inst, main, depth + 1)?;
+        p.extend(self.path_in(src, component, 0)?);
+        Some(p)
     }
 
     /// The id path of layer `s` inside component `comp`: `s` itself, or through the nested
@@ -1675,11 +2124,93 @@ impl<'d> Exporter<'d> {
     }
 }
 
+/// Whether `a` is `b` with its lengths scaled by `k`: every number is `k` times the other's (within
+/// `slack`, for sizes that snap to whole pixels) or the same, and the rest is equal.
+fn scaled(a: &Kv<'static>, b: &Kv<'static>, k: f64, slack: f64) -> bool {
+    match (a, b) {
+        (Kv::Float(x), Kv::Float(y)) => {
+            let (x, y) = (f64::from(*x), f64::from(*y));
+            x == y || (x - y * k).abs() <= slack + 1e-3 * x.abs().max(1.0)
+        }
+        (Kv::Array(x), Kv::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| scaled(p, q, k, slack)),
+        (Kv::Object(x), Kv::Object(y)) => x.len() == y.len() && x.iter().zip(y).all(|((kp, p), (kq, q))| kp == kq && scaled(p, q, k, slack)),
+        _ => a == b,
+    }
+}
+
+/// The fields of `mine` that differ from `theirs` (a layer and the main's layer it mirrors), and
+/// the ones only `theirs` has at their empty values.
+fn changed(mine: Fields, theirs: &Fields) -> Fields {
+    let cleared: Fields = theirs.iter().filter(|(k, _)| !mine.iter().any(|(mk, _)| mk == k)).filter_map(|(k, _)| Some((*k, unset(k)?))).collect();
+    let mut out: Fields = mine.into_iter().filter(|(k, v)| !theirs.iter().any(|(tk, tv)| tk == k && tv == v)).collect();
+    out.extend(cleared);
+    out
+}
+
+/// Whether paint list `v` (field `key`) is `theirs` but for the colours variables give: two layers
+/// bound alike are the same, whatever mode each one shows.
+fn resolved_alike(key: &str, v: &Kv<'static>, theirs: &Fields) -> bool {
+    fn unresolved(v: &Kv<'static>) -> Vec<Kv<'static>> {
+        let bare = |p: &Kv<'static>| match p {
+            Kv::Object(f) if f.iter().any(|(k, _)| *k == "colorVar") => o(f.iter().filter(|(k, _)| *k != "color").cloned().collect()),
+            other => other.clone(),
+        };
+        v.list().iter().map(bare).collect()
+    }
+    matches!(key, "fillPaints" | "strokePaints") && theirs.iter().any(|(k, t)| *k == key && unresolved(t) == unresolved(v))
+}
+
+/// The format's name of a variable type.
+fn resolved_type(kind: VariableType) -> &'static str {
+    match kind {
+        VariableType::Color => "COLOR",
+        VariableType::Number => "FLOAT",
+        VariableType::String => "STRING",
+        VariableType::Boolean => "BOOLEAN",
+    }
+}
+
+/// The format's name of a variable scope (`None`: it has none).
+fn scope_name(scope: &str) -> Option<&'static str> {
+    const NAMES: [&str; 20] = [
+        "ALL_SCOPES",
+        "TEXT_CONTENT",
+        "CORNER_RADIUS",
+        "WIDTH_HEIGHT",
+        "GAP",
+        "ALL_FILLS",
+        "FRAME_FILL",
+        "SHAPE_FILL",
+        "TEXT_FILL",
+        "STROKE_FLOAT",
+        "EFFECT_FLOAT",
+        "EFFECT_COLOR",
+        "OPACITY",
+        "FONT_STYLE",
+        "FONT_FAMILY",
+        "FONT_SIZE",
+        "LINE_HEIGHT",
+        "LETTER_SPACING",
+        "PARAGRAPH_SPACING",
+        "PARAGRAPH_INDENT",
+    ];
+    if scope == "STROKE_COLOR" {
+        return Some("STROKE");
+    }
+    NAMES.into_iter().find(|n| *n == scope)
+}
+
 /// The empty value of a field only written when set (an override clears it with this).
 fn unset(key: &str) -> Option<Kv<'static>> {
     Some(match key {
+        "styleIdForFill" | "styleIdForStrokeFill" | "styleIdForEffect" | "styleIdForGrid" | "styleIdForText" => {
+            o(vec![("guid", guid(u32::MAX, u32::MAX))])
+        }
+        "variableConsumptionMap" | "variableModeBySetMap" => o(vec![("entries", arr(Vec::new()))]),
         "mask" | "rectangleCornerRadiiIndependent" | "borderStrokeWeightsIndependent" => b(false),
-        "effects" | "dashPattern" | "layoutGrids" | "exportSettings" | "prototypeInteractions" | "fillGeometry" => arr(Vec::new()),
+        "effects" | "dashPattern" | "layoutGrids" | "exportSettings" | "prototypeInteractions" | "fillGeometry" | "variableWidthPoints" => {
+            arr(Vec::new())
+        }
         "cornerSmoothing" | "stackChildPrimaryGrow" => fl(0.0),
         "stackMode" => e("NONE"),
         "stackChildAlignSelf" | "stackPositioning" => e("AUTO"),
@@ -1754,7 +2285,8 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
     }
 }
 
-fn layout_grid(g: &figcraft_doc::LayoutGrid) -> Kv<'static> {
+/// Layout grid `index` of a layer, with the variables `bound` to its fields.
+fn layout_grid(g: &figcraft_doc::LayoutGrid, index: usize, bound: &Bound) -> Kv<'static> {
     let (pattern, axis) = match g.kind {
         GridKind::Grid => ("GRID", "X"),
         GridKind::Columns => ("STRIPES", "X"),
@@ -1766,7 +2298,7 @@ fn layout_grid(g: &figcraft_doc::LayoutGrid) -> Kv<'static> {
         GridAlign::Center => "CENTER",
         GridAlign::Max => "MAX",
     };
-    o(vec![
+    let mut f: Fields = vec![
         ("type", e(align)),
         ("axis", e(axis)),
         ("visible", b(g.visible)),
@@ -1776,7 +2308,10 @@ fn layout_grid(g: &figcraft_doc::LayoutGrid) -> Kv<'static> {
         ("gutterSize", fl(g.gutter)),
         ("color", color(g.color)),
         ("pattern", e(pattern)),
-    ])
+    ];
+    let vars = [("count", "numSectionsVar"), ("offset", "offsetVar"), ("size", "sectionSizeVar"), ("gutter", "gutterSizeVar")];
+    f.extend(vars.into_iter().filter_map(|(ours, key)| Some((key, bound.grids.get(&(index, ours))?.clone()))));
+    o(f)
 }
 
 fn export_setting(x: &figcraft_doc::ExportSetting) -> Kv<'static> {
