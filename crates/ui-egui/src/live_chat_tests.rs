@@ -20,7 +20,7 @@ fn ready() -> Harness {
     h.joined();
     h.send(vec![LiveEvent::Signal(2, Signal::ready())]);
     h.frames(2);
-    assert!(h.app.session.live.signals);
+    assert!(h.app.session.live().signals);
     h
 }
 
@@ -59,14 +59,14 @@ fn slash_opens_your_chat_and_enter_or_escape_ends_it() {
     h.frames(1);
     assert!(h.app.ui.live.chat.as_ref().is_some_and(|c| c.editing), "the box opened");
     h.frame(vec![Event::Text("hello".into())]);
-    assert_eq!(h.app.session.live.chat, "hello", "sent as you type, without the slash");
+    assert_eq!(h.app.session.live().chat, "hello", "sent as you type, without the slash");
     assert!(has_text(&h.frames(1), "hello"));
     key(&mut h, Key::Enter, None);
     assert!(h.app.ui.live.chat.as_ref().is_some_and(|c| !c.editing), "sent: the box closed, the message shows");
-    assert_eq!(h.app.session.live.chat, "hello");
+    assert_eq!(h.app.session.live().chat, "hello");
     h.skip(7.0);
     h.frames(2);
-    assert!(h.app.ui.live.chat.is_none() && h.app.session.live.chat.is_empty(), "faded and taken back");
+    assert!(h.app.ui.live.chat.is_none() && h.app.session.live().chat.is_empty(), "faded and taken back");
     // Escape takes it back at once and doesn't deselect.
     let rect = h.app.session.doc().unwrap().pages.first().copied();
     let layer = h.app.session.doc().unwrap().node(rect.unwrap()).unwrap().children[0];
@@ -74,10 +74,10 @@ fn slash_opens_your_chat_and_enter_or_escape_ends_it() {
     key(&mut h, Key::Slash, Some("/"));
     h.frames(1);
     h.frame(vec![Event::Text("oops".into())]);
-    assert_eq!(h.app.session.live.chat, "oops");
+    assert_eq!(h.app.session.live().chat, "oops");
     key(&mut h, Key::Escape, None);
     h.frames(1);
-    assert!(h.app.ui.live.chat.is_none() && h.app.session.live.chat.is_empty());
+    assert!(h.app.ui.live.chat.is_none() && h.app.session.live().chat.is_empty());
     assert_eq!(h.app.session.selection(), vec![layer], "Escape only closed the chat");
     // Left open without typing, the box closes by itself.
     key(&mut h, Key::Slash, Some("/"));
@@ -96,24 +96,24 @@ fn spotlight_banner_and_your_avatar_menu() {
         LiveEvent::Presence(1, figcraft_engine::live::Presence { viewport: Some((page, 0.0, 0.0, 600.0, 400.0)), ..Default::default() }),
     ]);
     let shapes = h.frames(2);
-    assert_eq!(h.app.session.live.follow, Some(1));
+    assert_eq!(h.app.session.live().follow, Some(1));
     assert!(texts(&shapes).iter().any(|(t, _, _)| t.starts_with("Following Hana")));
     // Stop following: the banner offers to follow again.
     h.app.session.escape().unwrap();
     let shapes = h.frames(2);
     assert!(has_text(&shapes, "Hana is spotlighting"));
     h.click(text_center(&shapes, "Follow"));
-    assert_eq!(h.app.session.live.follow, Some(1));
+    assert_eq!(h.app.session.live().follow, Some(1));
     // Your avatar's menu: spotlight yourself, which takes over.
     let shapes = h.frames(2);
     h.click(text_center(&shapes, "AL"));
     let shapes = h.frames(2);
     h.click(text_center(&shapes, "Spotlight me"));
-    assert!(h.app.session.live.spotlighting);
-    assert_eq!(h.app.session.live.follow, None);
+    assert!(h.app.session.live().spotlighting);
+    assert_eq!(h.app.session.live().follow, None);
     let shapes = h.frames(2);
     assert!(has_text(&shapes, "You're spotlighting: everyone follows your view"));
     h.click(text_center(&shapes, "Stop"));
-    assert!(!h.app.session.live.spotlighting);
+    assert!(!h.app.session.live().spotlighting);
     assert!(!has_text(&h.frames(2), "You're spotlighting: everyone follows your view"));
 }

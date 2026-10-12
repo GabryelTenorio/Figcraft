@@ -91,7 +91,7 @@ pub fn key(dir: &Path) -> String {
 }
 
 pub fn live(s: &Session) -> bool {
-    s.live.status == Status::Live && s.live.syncing()
+    s.live().status == Status::Live && s.live().syncing()
 }
 
 /// `a` publishes its open file to the server at `addr`; the links.
@@ -99,8 +99,8 @@ pub fn publish(a: &mut Session, dir: &Path, addr: SocketAddr) -> Published {
     let r = a.execute("collab.publish", &json!({"server": format!("ws://{addr}/?key={}", key(dir)), "name": "Team file"})).unwrap();
     assert_eq!(r["status"], "connecting");
     assert_eq!(r["readOnly"], true, "read-only while it is on its way");
-    pump(&mut [a], "the publish", |s| live(s[0]) && s[0].live.published.is_some());
-    a.live.published.clone().unwrap()
+    pump(&mut [a], "the publish", |s| live(s[0]) && s[0].live().published.is_some());
+    a.live().published.clone().unwrap()
 }
 
 pub fn join(link: &str, name: &str) -> Session {

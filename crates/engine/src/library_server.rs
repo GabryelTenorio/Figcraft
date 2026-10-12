@@ -92,8 +92,8 @@ impl Session {
     /// you may edit (where `library.publishToServer` publishes by default).
     pub fn server_link(&self) -> Option<String> {
         let uid = self.ds().ok()?.uid;
-        let info = self.live.info.as_ref().filter(|i| i.role == crate::live::Role::Guest && i.access == crate::live::Access::Edit)?;
-        self.live_doc(uid).then(|| info.link.clone())
+        let live = Some(self.live_of(uid)).filter(|l| l.syncing() && l.doc_uid == Some(uid))?;
+        live.info.as_ref().filter(|i| i.role == crate::live::Role::Guest && i.access == crate::live::Access::Edit).map(|i| i.link.clone())
     }
 
     /// One request about the team library behind share link `link` (a refusal is an error), with

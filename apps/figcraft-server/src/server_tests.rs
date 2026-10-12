@@ -34,8 +34,8 @@ fn publish_then_edit_and_view_together() {
     // Nothing changes it until it is on the server.
     let e = a.execute("shape.ellipse", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap_err().to_string();
     assert!(e.contains("being published"), "{e}");
-    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live.published.is_some());
-    let p = a.live.published.clone().unwrap();
+    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live().published.is_some());
+    let p = a.live().published.clone().unwrap();
     assert_eq!(a.docs.len(), 1, "the open tab syncs; no new tab");
     assert_eq!(a.live_summary()["readOnly"], false);
     assert!(p.edit.starts_with("figcraft://join?host=127.0.0.1:") && p.view.starts_with("figcraft://join?host=127.0.0.1:"));
@@ -43,7 +43,7 @@ fn publish_then_edit_and_view_together() {
     // Bo joins with the edit link, Cy with the view link.
     let mut b = join(&p.edit, "Bo");
     let mut c = join(&p.view, "Cy");
-    pump(&mut [&mut a, &mut b, &mut c], "everyone in", |s| s.iter().all(|x| live(x)) && s[0].live.peers.len() == 2);
+    pump(&mut [&mut a, &mut b, &mut c], "everyone in", |s| s.iter().all(|x| live(x)) && s[0].live().peers.len() == 2);
     assert_eq!(b.live_summary()["access"], "edit");
     assert_eq!(c.live_summary()["access"], "view");
     assert_eq!(c.live_summary()["readOnly"], true);
@@ -64,9 +64,9 @@ fn publish_then_edit_and_view_together() {
     assert!(c.begin_interaction("Move").is_err());
     assert!(same(&before, c.doc().unwrap()));
     // Cy is still seen: presence goes both ways.
-    let cy = c.live.info.as_ref().unwrap().me;
+    let cy = c.live().info.as_ref().unwrap().me;
     c.execute("collab.cursor", &json!({"x": 12, "y": 34})).unwrap();
-    pump(&mut [&mut a, &mut b, &mut c], "Cy's cursor at Ada", |s| s[0].live.presence.get(&cy).and_then(|p| p.cursor).is_some_and(|c| c.1 == 12.0));
+    pump(&mut [&mut a, &mut b, &mut c], "Cy's cursor at Ada", |s| s[0].live().presence.get(&cy).and_then(|p| p.cursor).is_some_and(|c| c.1 == 12.0));
     // A client that skips the app's check is refused by the server.
     let view = Invite::parse(&p.view).unwrap();
     let mut raw = Raw::connect(addr);
@@ -90,7 +90,7 @@ fn publish_then_edit_and_view_together() {
     pump(&mut [&mut a], "nothing changed", |s| s[0].doc().unwrap().node(rect).is_some_and(|n| n.name == "Card"));
     // Leaving keeps a local copy.
     c.execute("collab.leave", &json!({})).unwrap();
-    assert_eq!(c.live.status, Status::Off);
+    assert_eq!(c.live().status, Status::Off);
     assert!(c.doc().unwrap().contains(rect));
     assert_eq!(c.live_summary()["readOnly"], false, "the copy is yours to edit");
     c.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 5, "height": 5})).unwrap();
@@ -106,21 +106,21 @@ fn a_restart_mid_session_loses_no_confirmed_edit() {
     let mut a = session("Ada");
     let p = publish(&mut a, dir.path(), addr);
     let mut b = join(&p.edit, "Bo");
-    pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]) && s[0].live.peers.len() == 1);
+    pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]) && s[0].live().peers.len() == 1);
     let rect = id_of(&a.execute("shape.rectangle", &json!({"x": 10, "y": 10, "width": 40, "height": 40})).unwrap());
     pump(&mut [&mut a, &mut b], "the rectangle confirmed", |s| s[1].doc().unwrap().contains(rect));
-    let (ada, bo) = (a.live.info.as_ref().unwrap().me, b.live.info.as_ref().unwrap().me);
+    let (ada, bo) = (a.live().info.as_ref().unwrap().me, b.live().info.as_ref().unwrap().me);
     // The server stops: both reconnect, and what Ada makes meanwhile waits.
     server.stop();
-    pump(&mut [&mut a, &mut b], "the drop", |s| s.iter().all(|x| matches!(x.live.status, Status::Reconnecting { .. })));
+    pump(&mut [&mut a, &mut b], "the drop", |s| s.iter().all(|x| matches!(x.live().status, Status::Reconnecting { .. })));
     let offline = id_of(&a.execute("shape.ellipse", &json!({"x": 100, "y": 10, "width": 30, "height": 30})).unwrap());
     cfg.listen = addr.to_string();
     let mut server = start_again(&cfg);
     pump(&mut [&mut a, &mut b], "everyone back with everything", |s| {
         s.iter().all(|x| live(x)) && s[1].doc().unwrap().contains(offline) && s[1].doc().unwrap().contains(rect)
     });
-    assert_eq!(a.live.info.as_ref().unwrap().me, ada, "Ada resumed as herself");
-    assert_eq!(b.live.info.as_ref().unwrap().me, bo, "so did Bo");
+    assert_eq!(a.live().info.as_ref().unwrap().me, ada, "Ada resumed as herself");
+    assert_eq!(b.live().info.as_ref().unwrap().me, bo, "so did Bo");
     assert!(same(a.doc().unwrap(), b.doc().unwrap()));
     // Someone new gets it all from the restarted server.
     let mut c = join(&p.view, "Cy");
@@ -161,19 +161,19 @@ fn revoked_links_stop_working_at_once() {
     // Revoked: Cy is out at once, the others stay.
     assert_eq!(ask(Admin::Revoke { file: file.clone(), link: review.link.id.clone() }), AdminReply::Done);
     pump(&mut [&mut a, &mut b, &mut c], "Cy out", |s| {
-        matches!(&s[2].live.status, Status::Failed { reason } if reason.contains("revoked")) && s[0].live.peers.len() == 1
+        matches!(&s[2].live().status, Status::Failed { reason } if reason.contains("revoked")) && s[0].live().peers.len() == 1
     });
     assert!(live(&b));
     // The link no longer joins.
     c.execute("collab.join", &json!({"link": link})).unwrap();
-    pump(&mut [&mut c], "the refusal", |s| matches!(&s[0].live.status, Status::Failed { reason } if reason.contains("isn't valid")));
+    pump(&mut [&mut c], "the refusal", |s| matches!(&s[0].live().status, Status::Failed { reason } if reason.contains("isn't valid")));
     // Managing needs the key.
     let e = manage::request(&endpoint, "WrongWrongWrongWrong00", vec![Admin::Files], &NetLimits::default(), Duration::from_secs(5)).unwrap_err();
     assert!(e.contains("wrong server key"), "{e}");
     // Removing the file ends it for everyone in it.
     assert_eq!(ask(Admin::Remove { file: file.clone() }), AdminReply::Done);
     pump(&mut [&mut a, &mut b], "everyone out", |s| {
-        s.iter().all(|x| matches!(&x.live.status, Status::Failed { reason } if reason.contains("removed")))
+        s.iter().all(|x| matches!(&x.live().status, Status::Failed { reason } if reason.contains("removed")))
     });
     server.stop();
 }

@@ -641,8 +641,9 @@ pub struct Session {
     pub libraries: library::Cache,
     /// Plugin modules loaded in this session and the last plugin run.
     pub plugins: plugins::Runtime,
-    /// The live session (collaboration): status, peers, presence.
-    pub live: live::Live,
+    /// The live sessions (collaboration), one per document at most: status, peers, presence.
+    /// [`Session::live`] is the active document's.
+    pub live: live::Lives,
     /// Commands the UI runs without waiting on a server ([`Session::start_background`]).
     pub background: background::Background,
 }
@@ -676,7 +677,7 @@ impl Session {
             message: None,
             libraries: library::Cache::default(),
             plugins: plugins::Runtime::default(),
-            live: live::Live::default(),
+            live: live::Lives::default(),
             background: background::Background::default(),
         }
     }
@@ -836,7 +837,7 @@ impl Session {
     /// synced and the step is the user's own ([`live`]); otherwise it is a snapshot of `before`.
     pub(crate) fn record(&mut self, uid: u64, label: Option<&str>, before: Arc<Document>, selection: Vec<NodeId>, page: NodeId) {
         if self.live_doc(uid) {
-            return self.live_edit(label);
+            return self.live_edit(uid, label);
         }
         if let (Some(label), Some(ds)) = (label, self.docs.iter_mut().find(|d| d.uid == uid)) {
             ds.push_undo(label, before, selection, page);
@@ -846,7 +847,7 @@ impl Session {
     /// How many undo and redo steps the active document has (the user's own in a live session).
     pub fn undo_depth(&self) -> (usize, usize) {
         match self.ds() {
-            Ok(ds) if self.live_doc(ds.uid) => self.live.client().map_or((0, 0), figcraft_collab::Client::history_len),
+            Ok(ds) if self.live_doc(ds.uid) => self.live().client().map_or((0, 0), figcraft_collab::Client::history_len),
             Ok(ds) => (ds.history.undo.len(), ds.history.redo.len()),
             Err(_) => (0, 0),
         }
@@ -856,7 +857,7 @@ impl Session {
     pub fn undo_labels(&self, n: usize) -> Vec<String> {
         match self.ds() {
             Ok(ds) if self.live_doc(ds.uid) => {
-                self.live.client().map(|c| c.undo_labels().rev().take(n).map(str::to_string).collect()).unwrap_or_default()
+                self.live().client().map(|c| c.undo_labels().rev().take(n).map(str::to_string).collect()).unwrap_or_default()
             }
             Ok(ds) => ds.history.undo.iter().rev().take(n).map(|h| h.label.clone()).collect(),
             Err(_) => Vec::new(),
@@ -1349,6 +1350,8 @@ mod keymap_tests;
 mod library_variables_tests;
 #[cfg(test)]
 mod live_access_tests;
+#[cfg(test)]
+mod live_docs_tests;
 #[cfg(test)]
 mod live_signal_tests;
 #[cfg(test)]

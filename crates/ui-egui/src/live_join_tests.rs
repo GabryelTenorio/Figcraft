@@ -51,7 +51,7 @@ fn opening_the_app_with_an_invite_link_joins() {
     let (mut h, _) = Harness::new();
     let link = "figcraft://join?host=127.0.0.1:47900&file=abc&token=AbCdEfGhIjKlMnOpQrStUv";
     crate::live::open_invite(&mut h.app, &format!(" {link} "));
-    assert_eq!(h.app.session.live.status, Status::Connecting);
+    assert_eq!(h.app.session.live().status, Status::Connecting);
     assert!(h.app.ui.live.join.is_none(), "no dialog: it joins at once");
 }
 
@@ -62,16 +62,16 @@ impl LiveLink for Browser {
     fn can_host(&self) -> bool {
         false
     }
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: u64, _: HostOptions) -> Result<SessionInfo, String> {
         Err("hosting a live session needs the desktop app".into())
     }
-    fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, _: u64, _: &str, _: &str) -> Result<(), String> {
         Err("that's not a live session invite".into())
     }
-    fn leave(&mut self) {}
-    fn presence(&mut self, _: &Presence) {}
-    fn send(&mut self, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
-    fn poll(&mut self) -> Vec<LiveEvent> {
+    fn leave(&mut self, _: u64) {}
+    fn presence(&mut self, _: u64, _: &Presence) {}
+    fn send(&mut self, _: u64, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
+    fn poll(&mut self) -> Vec<(u64, LiveEvent)> {
         Vec::new()
     }
 }
@@ -83,7 +83,7 @@ fn a_link_that_cant_be_used_opens_the_dialog_with_it() {
     crate::live::open_invite(&mut h.app, "figcraft://nope");
     assert_eq!(h.app.ui.live.join.as_deref(), Some("figcraft://nope"), "the link stays in the field to fix");
     assert!(h.app.ui.last_error.as_deref().is_some_and(|e| e.contains("not a live session invite")));
-    assert_eq!(h.app.session.live.status, Status::Off);
+    assert_eq!(h.app.session.live().status, Status::Off);
 }
 
 #[test]

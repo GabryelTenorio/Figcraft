@@ -99,7 +99,9 @@ instance, a dragged axis slider; see `text.preview` in [mcp.md](mcp.md)).
 pointer press, so the focus ring shows) and the name of the `control` with the keyboard (what a
 screen reader announces; empty when nothing has it). `reduceMotion` is true when the preference or
 the system's accessibility setting turns the interface's animations off. `live` is the live
-session as the window shows it: `status`, `role`, the number of `peers`, who you `follow`, the
+session of the window's active file as the window shows it (sessions are per file: another tab
+shows its own, or `status: "off"`): `session` (its id, null when the file isn't in one),
+`sessions` (how many the app has running), `status`, `role`, the number of `peers`, who you `follow`, the
 peers whose cursors are drawn on the canvas (`cursorsShown`), whether the Join and Publish to
 server dialogs are open (`joinDialog`, `publishDialog`; Escape closes them) and why the active
 document can't be edited now (`readOnly`: the "View only" or "Publishing" reason, else null); the

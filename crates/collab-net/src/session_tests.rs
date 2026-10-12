@@ -47,10 +47,10 @@ fn host_and_join() -> (Session, Session, u32, u32) {
     let r = guest.execute("collab.join", &json!({"link": link})).unwrap();
     assert_eq!(r["status"], "connecting");
     pump(&mut host, &mut guest, "the join", |h, g| {
-        g.live.status == Status::Live && h.live.peers.len() == 1 && g.live.info.as_ref().is_some_and(|i| !i.color.is_empty())
+        g.live().status == Status::Live && h.live().peers.len() == 1 && g.live().info.as_ref().is_some_and(|i| !i.color.is_empty())
     });
-    let hana = host.live.info.as_ref().unwrap().me;
-    let ada = guest.live.info.as_ref().unwrap().me;
+    let hana = host.live().info.as_ref().unwrap().me;
+    let ada = guest.live().info.as_ref().unwrap().me;
     (host, guest, hana, ada)
 }
 
@@ -62,23 +62,23 @@ fn host_join_and_see_each_other() {
     assert_eq!(g["fileName"], "Untitled", "the host's file name");
     assert_eq!(g["name"], "Ada");
     assert_eq!(g["peers"][0]["name"], "Hana");
-    assert_eq!(host.live.peers[&ada].name, "Ada");
+    assert_eq!(host.live().peers[&ada].name, "Ada");
     // The pointer: the guest's cursor shows up in the host's state.
     guest.execute("collab.cursor", &json!({"x": 120, "y": 80})).unwrap();
     pump(&mut host, &mut guest, "the guest's cursor", |h, _| {
-        h.live.presence.get(&ada).and_then(|p| p.cursor).is_some_and(|c| c.1 == 120.0 && c.2 == 80.0)
+        h.live().presence.get(&ada).and_then(|p| p.cursor).is_some_and(|c| c.1 == 120.0 && c.2 == 80.0)
     });
     // A selection travels too.
     let r = host.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 50, "height": 50})).unwrap();
     let id = r["id"].as_u64().unwrap();
     host.execute("select.set", &json!({"ids": [id]})).unwrap();
     pump(&mut host, &mut guest, "the host's selection", |_, g| {
-        g.live.presence.get(&hana).and_then(|p| p.selection.clone()).is_some_and(|s| s == vec![NodeId(id)])
+        g.live().presence.get(&hana).and_then(|p| p.selection.clone()).is_some_and(|s| s == vec![NodeId(id)])
     });
     // Leaving: the host sees it, the guest is back to no session.
     assert_eq!(guest.execute("collab.leave", &json!({})).unwrap()["ended"], true);
-    assert_eq!(guest.live.status, Status::Off);
-    pump(&mut host, &mut guest, "the leave", |h, _| h.live.peers.is_empty() && h.live.presence.is_empty());
+    assert_eq!(guest.live().status, Status::Off);
+    pump(&mut host, &mut guest, "the leave", |h, _| h.live().peers.is_empty() && h.live().presence.is_empty());
     host.execute("collab.stop", &json!({})).unwrap();
     assert_eq!(host.live_summary()["status"], "off");
 }
@@ -87,7 +87,7 @@ fn host_join_and_see_each_other() {
 fn following_a_viewport_until_you_move() {
     let (mut host, mut guest, hana, ada) = host_and_join();
     host.execute("collab.follow", &json!({"client": ada})).unwrap();
-    assert_eq!(host.live.follow, Some(ada));
+    assert_eq!(host.live().follow, Some(ada));
     // The guest pans and zooms: the host's view goes along.
     {
         let ds = guest.ds_mut().unwrap();
@@ -103,29 +103,29 @@ fn following_a_viewport_until_you_move() {
     // The host pans: following stops, and later moves of the guest don't move the host.
     host.ds_mut().unwrap().view.cx += 100.0;
     host.live_sync();
-    assert_eq!(host.live.follow, None);
+    assert_eq!(host.live().follow, None);
     guest.ds_mut().unwrap().view.cx = -9000.0;
     pump(&mut host, &mut guest, "the guest's new viewport at the host", |h, _| {
-        h.live.presence.get(&ada).and_then(|p| p.viewport).is_some_and(|v| (v.1 + v.3 / 2.0 + 9000.0).abs() < 1e-6)
+        h.live().presence.get(&ada).and_then(|p| p.viewport).is_some_and(|v| (v.1 + v.3 / 2.0 + 9000.0).abs() < 1e-6)
     });
     assert!((host.ds().unwrap().view.cx - 5100.0).abs() < 1e-6);
     // Escape stops following too; following someone who isn't there fails.
     guest.execute("collab.follow", &json!({"client": hana})).unwrap();
     guest.escape().unwrap();
-    assert_eq!(guest.live.follow, None);
+    assert_eq!(guest.live().follow, None);
     assert!(guest.execute("collab.follow", &json!({"client": 999})).is_err());
     // The followed peer leaving ends the follow.
     host.execute("collab.follow", &json!({"client": ada})).unwrap();
     guest.execute("collab.leave", &json!({})).unwrap();
-    pump(&mut host, &mut guest, "the leave", |h, _| h.live.follow.is_none() && h.live.peers.is_empty());
+    pump(&mut host, &mut guest, "the leave", |h, _| h.live().follow.is_none() && h.live().peers.is_empty());
 }
 
 #[test]
 fn the_host_stopping_ends_the_session_for_guests() {
     let (mut host, mut guest, _, _) = host_and_join();
     host.execute("collab.stop", &json!({})).unwrap();
-    pump(&mut host, &mut guest, "the end", |_, g| g.live.status == Status::Off);
-    assert!(guest.live.peers.is_empty());
+    pump(&mut host, &mut guest, "the end", |_, g| g.live().status == Status::Off);
+    assert!(guest.live().peers.is_empty());
     assert_eq!(guest.message.as_deref(), Some(crate::host::ENDED));
 }
 
@@ -138,8 +138,8 @@ fn a_bad_invite_is_reported() {
     let r: Value = host.execute("collab.host", &json!({"port": 0})).unwrap();
     let link = r["link"].as_str().unwrap().replace("token=", "token=x");
     guest.execute("collab.join", &json!({"link": link})).unwrap();
-    pump(&mut host, &mut guest, "the refusal", |_, g| matches!(&g.live.status, Status::Failed { reason } if reason.contains("token")));
-    assert!(host.live.peers.is_empty());
+    pump(&mut host, &mut guest, "the refusal", |_, g| matches!(&g.live().status, Status::Failed { reason } if reason.contains("token")));
+    assert!(host.live().peers.is_empty());
 }
 
 /// The synced properties of two documents agree (nothing to send from one to the other).
@@ -175,7 +175,7 @@ fn edits_sync_between_apps() {
         }
     };
     all(&mut host, &mut a, &mut b, "everyone syncing", &|h, a, b| {
-        h.live.syncing() && a.live.syncing() && b.live.syncing() && h.live.peers.len() == 2
+        h.live().syncing() && a.live().syncing() && b.live().syncing() && h.live().peers.len() == 2
     });
     // The guests got the host's file as a new tab.
     assert_eq!(a.docs.len(), 2);
@@ -208,7 +208,7 @@ fn edits_sync_between_apps() {
     // And the server's: someone joining now gets its document in the welcome.
     let mut c = session("Cy");
     c.execute("collab.join", &json!({"link": link})).unwrap();
-    all(&mut host, &mut a, &mut c, "the late joiner", &|_, _, c| c.live.syncing());
+    all(&mut host, &mut a, &mut c, "the late joiner", &|_, _, c| c.live().syncing());
     assert!(same(&hd, c.doc().unwrap()), "the server's document is everyone's");
     host.execute("collab.stop", &json!({})).unwrap();
 }
@@ -216,13 +216,13 @@ fn edits_sync_between_apps() {
 #[test]
 fn cursor_chat_and_spotlight_between_apps() {
     let (mut host, mut guest, hana, ada) = host_and_join();
-    pump(&mut host, &mut guest, "both told signals work", |h, g| h.live.signals && g.live.signals);
+    pump(&mut host, &mut guest, "both told signals work", |h, g| h.live().signals && g.live().signals);
     // The guest chats next to its cursor; the host sees it, cleaned, and then sees it close.
     guest.execute("collab.cursor", &json!({"x": 40, "y": 30})).unwrap();
     guest.execute("collab.cursorChat", &json!({"text": "over\there"})).unwrap();
-    pump(&mut host, &mut guest, "the chat", |h, _| h.live.chats.get(&ada).is_some_and(|t| t == "over here"));
+    pump(&mut host, &mut guest, "the chat", |h, _| h.live().chats.get(&ada).is_some_and(|t| t == "over here"));
     guest.execute("collab.cursorChat", &json!({"text": ""})).unwrap();
-    pump(&mut host, &mut guest, "the chat closing", |h, _| h.live.chats.is_empty());
+    pump(&mut host, &mut guest, "the chat closing", |h, _| h.live().chats.is_empty());
     // The host spotlights: the guest follows its view, page included.
     let second = host.execute("page.add", &json!({"name": "Two"})).unwrap()["id"].as_u64().map(NodeId).unwrap();
     pump(&mut host, &mut guest, "the new page at the guest", |_, g| g.doc().unwrap().pages.contains(&second));
@@ -235,17 +235,17 @@ fn cursor_chat_and_spotlight_between_apps() {
     }
     pump(&mut host, &mut guest, "the guest following the spotlight", |_, g| {
         let ds = g.ds().unwrap();
-        g.live.spotlight == Some(hana) && g.live.follow == Some(hana) && ds.page == second && (ds.view.cx - 777.0).abs() < 1e-6
+        g.live().spotlight == Some(hana) && g.live().follow == Some(hana) && ds.page == second && (ds.view.cx - 777.0).abs() < 1e-6
     });
     // A late joiner is told and follows too.
     let mut late = session("Lin");
-    late.execute("collab.join", &json!({"link": host.live.info.as_ref().unwrap().link.clone()})).unwrap();
-    pump(&mut host, &mut late, "the late joiner following", |_, l| l.live.follow == Some(hana) && l.live.spotlight == Some(hana));
+    late.execute("collab.join", &json!({"link": host.live().info.as_ref().unwrap().link.clone()})).unwrap();
+    pump(&mut host, &mut late, "the late joiner following", |_, l| l.live().follow == Some(hana) && l.live().spotlight == Some(hana));
     // The guest moves: it stops following, the spotlight stays; the host stops it for everyone.
     guest.ds_mut().unwrap().view.cx += 300.0;
     guest.live_sync();
-    assert_eq!((guest.live.follow, guest.live.spotlight), (None, Some(hana)));
+    assert_eq!((guest.live().follow, guest.live().spotlight), (None, Some(hana)));
     host.execute("collab.spotlight", &json!({"on": false})).unwrap();
-    pump(&mut host, &mut guest, "the spotlight ending", |_, g| g.live.spotlight.is_none());
-    pump(&mut host, &mut late, "the spotlight ending for the late joiner", |_, l| l.live.spotlight.is_none() && l.live.follow.is_none());
+    pump(&mut host, &mut guest, "the spotlight ending", |_, g| g.live().spotlight.is_none());
+    pump(&mut host, &mut late, "the spotlight ending for the late joiner", |_, l| l.live().spotlight.is_none() && l.live().follow.is_none());
 }

@@ -28,16 +28,16 @@ struct Dir {
 struct Link(Arc<Mutex<Dir>>);
 
 impl LiveLink for Link {
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: u64, _: HostOptions) -> Result<SessionInfo, String> {
         Err("no".into())
     }
-    fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, _: u64, _: &str, _: &str) -> Result<(), String> {
         Err("no".into())
     }
-    fn leave(&mut self) {}
-    fn presence(&mut self, _: &Presence) {}
-    fn send(&mut self, _: ClientMsg) {}
-    fn poll(&mut self) -> Vec<Event> {
+    fn leave(&mut self, _: u64) {}
+    fn presence(&mut self, _: u64, _: &Presence) {}
+    fn send(&mut self, _: u64, _: ClientMsg) {}
+    fn poll(&mut self) -> Vec<(u64, Event)> {
         Vec::new()
     }
     fn plugins(&mut self, server: &str, req: PluginReq) -> Result<PluginReply, String> {

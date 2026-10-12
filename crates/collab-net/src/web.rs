@@ -6,8 +6,9 @@
 //! socket).
 //!
 //! The page runs everything on one thread: each session's socket, callbacks and timer live in a
-//! thread-local table, and [`NetLink`] (the engine needs it to be `Send`) holds only the session's
-//! number and its [`Inbox`]. Whatever arrives wakes egui through the [`Waker`]; nothing polls.
+//! thread-local table, and [`NetLink`] (the engine needs it to be `Send`) holds only each session's
+//! number there and its [`Inbox`](crate::inbox::Inbox). It joins any number of sessions at once
+//! (one per open document). Whatever arrives wakes egui through the [`Waker`]; nothing polls.
 //!
 //! An `https://` page can't open an unencrypted `ws://` connection (browsers block mixed content)
 //! except to this machine; [`NetLink::join`] says so up front.
@@ -17,16 +18,17 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use figcraft_collab::message::{ClientMsg, Presence};
-use figcraft_engine::live::{Event, HostOptions, LiveLink, SessionInfo};
+use figcraft_engine::live::{Event, HostOptions, LiveLink, SessionId, SessionInfo};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::closure::Closure;
 use web_sys::{BinaryType, CloseEvent, MessageEvent, WebSocket};
 use web_time::Instant;
 
 use crate::driver::{Driver, Socket};
-use crate::inbox::{Inbox, Waker};
+use crate::inbox::Waker;
 use crate::invite::Invite;
 use crate::join::GuestConfig;
+use crate::sessions::Sessions;
 
 /// Close code for leaving normally.
 const CLOSE_NORMAL: u16 = 1000;
@@ -137,22 +139,21 @@ fn secure_page() -> bool {
     web_sys::window().and_then(|w| w.location().protocol().ok()).is_some_and(|p| p == "https:")
 }
 
-/// The browser's [`LiveLink`]: joins one session at a time; hosting needs the desktop app.
+/// The browser's [`LiveLink`]: joins sessions; hosting needs the desktop app.
 pub struct NetLink {
-    wake: Waker,
-    active: Option<u64>,
-    inbox: Option<Inbox>,
+    /// Each session's number in the thread-local table.
+    sessions: Sessions<u64>,
 }
 
 impl NetLink {
     /// `wake` is called whenever something arrives for the UI (egui's `request_repaint`).
     pub fn new(wake: Waker) -> Self {
-        Self { wake, active: None, inbox: None }
+        Self { sessions: Sessions::new(wake) }
     }
 
-    fn with(&self, f: impl FnOnce(&mut Driver<BrowserSocket>, Instant)) {
-        if let Some(id) = self.active {
-            with_driver(id, f);
+    fn with(&self, session: SessionId, f: impl FnOnce(&mut Driver<BrowserSocket>, Instant)) {
+        if let Some(id) = self.sessions.get(session) {
+            with_driver(*id, f);
         }
     }
 }
@@ -162,18 +163,17 @@ impl LiveLink for NetLink {
         false
     }
 
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: SessionId, _: HostOptions) -> Result<SessionInfo, String> {
         Err("hosting a live session needs the desktop app; in the browser you can join one".into())
     }
 
-    fn join(&mut self, link: &str, name: &str) -> Result<(), String> {
+    fn join(&mut self, session: SessionId, link: &str, name: &str) -> Result<(), String> {
         let invite = Invite::parse(link)?;
         if secure_page() && !invite.server.secure && !invite.loopback() {
             return Err("this page was loaded over https, and browsers block unencrypted ws:// connections; use a wss:// link (a server behind TLS), open FigCraft from an http:// address (like http://localhost:8767), or join from the desktop app".into());
         }
-        self.leave();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
-        let inbox = Inbox::new(self.wake.clone());
+        let inbox = self.sessions.inbox();
         let driver = Driver::start(BrowserSocket { id, ws: None }, GuestConfig::new(invite, name.to_string()), inbox.clone(), Instant::now());
         let timer = Closure::<dyn FnMut()>::new(move || with_driver(id, |d, now| d.tick(now)));
         let mut g = Guest { driver, timer, timeout: None };
@@ -181,32 +181,35 @@ impl LiveLink for NetLink {
         if !g.driver.done() {
             GUESTS.with(|t| t.borrow_mut().insert(id, Rc::new(RefCell::new(g))));
         }
-        self.inbox = Some(inbox);
-        self.active = Some(id);
+        if let Some(old) = self.sessions.insert(session, id, inbox) {
+            with_driver(old, |d, now| d.leave(now));
+        }
         Ok(())
     }
 
-    fn leave(&mut self) {
-        self.with(|d, now| d.leave(now));
-        self.active = None;
-        self.inbox = None;
+    fn leave(&mut self, session: SessionId) {
+        if let Some(id) = self.sessions.remove(session) {
+            with_driver(id, |d, now| d.leave(now));
+        }
     }
 
-    fn presence(&mut self, p: &Presence) {
-        self.with(|d, now| d.presence(p.clone(), now));
+    fn presence(&mut self, session: SessionId, p: &Presence) {
+        self.with(session, |d, now| d.presence(p.clone(), now));
     }
 
-    fn send(&mut self, msg: ClientMsg) {
-        self.with(|d, now| d.send(msg, now));
+    fn send(&mut self, session: SessionId, msg: ClientMsg) {
+        self.with(session, |d, now| d.send(msg, now));
     }
 
-    fn poll(&mut self) -> Vec<Event> {
-        self.inbox.as_ref().map(Inbox::drain).unwrap_or_default()
+    fn poll(&mut self) -> Vec<(SessionId, Event)> {
+        self.sessions.poll()
     }
 }
 
 impl Drop for NetLink {
     fn drop(&mut self) {
-        self.leave();
+        for id in self.sessions.ids() {
+            self.leave(id);
+        }
     }
 }

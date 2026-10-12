@@ -13,7 +13,9 @@ modes and comments created in a session take ids from their creator's id space, 
 carets, cursor chat and spotlights show live (see Presence). **Step 5 is implemented**: the
 standalone `figcraft-server` (`apps/figcraft-server`, running it: [`server.md`](server.md)) keeps
 many files with persistence and compaction, and share links that let people edit or only view;
-the app publishes to it, and a file's team library lives there for other files to use. The rest is the plan the next implementation PRs follow and update;
+the app publishes to it, and a file's team library lives there for other files to use. Sessions
+are per document: an app hosts, joins and publishes several files at once (see Hosting and
+joining). The rest is the plan the next implementation PRs follow and update;
 sections say what is built.
 
 Goal: several people edit the same `.figcraft` file at the same time and see each other's edits,
@@ -433,6 +435,23 @@ resuming with its offline edits, and leaving the session going back to snapshot 
   `collab.host {port?, bind?: "local" | "lan" | <ip>}`, `collab.stop`, `collab.join {link}`,
   `collab.leave`, `collab.peers`, `collab.follow {client?}`, `collab.cursor {x?, y?}` (an agent's
   pointer), `collab.cursorChat {text?}`, `collab.spotlight {on?}`.
+- **Sessions are per document.** Every open file has its own session or none: hosting, joined,
+  being published, reconnecting or failed. Several run at once (host one file, join another,
+  publish a third), each with its own people, links, undo history, cursor chat, spotlight and
+  follow, and all of them keep syncing while another tab is in front (others' edits apply to the
+  files behind; your presence there is empty: no cursor, selection or view). The window shows the
+  session of the tab in front, so a new or other file says "Not in a live session" and offers
+  Start, Join and Publish for itself; each window shows its own file's. The commands act on the
+  active file's session, and `collab.peers` also lists every session (`sessions`). Joining never
+  touches another file's session: the session's file opens in a tab of its own, and until it
+  does the join shows on the tab it was started from (a failure too, unless that tab has a
+  session of its own; the message says why either way). Closing a file ends its session only: a
+  host stops hosting it, a guest leaves it. In the engine a session is a `Live` in
+  `Session::live` (`Lives`), found by its document's uid (`Session::live()` for the active
+  document, `live_of(uid)`); one `LiveLink` carries them all, each under the `SessionId` the
+  engine gave it, and every event it hands back names its session, so nothing crosses over
+  (`crates/collab-net/src/sessions.rs`: one mailbox per session, in the desktop link and the
+  browser's). Each hosted file listens on its own port.
 - The host listens on port 47900 (any free port when it's taken, or `port`), on 127.0.0.1 unless
   the user chooses the local network (`lan`: the address of the interface the default route uses)
   or names an interface (`bind: "<ip>"`, e.g. a VPN's). It runs the core's `Server` as the
@@ -696,7 +715,8 @@ host, publish and join sessions; an agent can be a participant with its own curs
 *Built*: the desktop app (control channel) and the MCP server's headless session (`figcraft-cli
 mcp`) both have the network link installed; `collab.join` returns at once with status
 `"connecting"` and `collab.peers` tells when it is live (or why it failed) and who is typing in
-which text layer. An agent's pointer is `collab.cursor {x, y}`; it can chat next to it
+which text layer. Sessions are per document there too: the commands are about the active
+document's session (`doc.switch` changes it) and `sessions` in `collab.peers` lists them all. An agent's pointer is `collab.cursor {x, y}`; it can chat next to it
 (`collab.cursorChat {text}`) and spotlight (`collab.spotlight`). The one-shot CLI (`figcraft-cli run`) has no link: there the commands say
 live sessions aren't available.
 

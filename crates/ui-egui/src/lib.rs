@@ -88,6 +88,8 @@ mod layers_rename_tests;
 #[cfg(test)]
 mod live_chat_tests;
 #[cfg(test)]
+mod live_docs_tests;
+#[cfg(test)]
 mod live_join_tests;
 #[cfg(test)]
 mod live_server_tests;
@@ -956,11 +958,10 @@ impl FigApp {
         a11y::end(self, &ctx);
         self.field_focus = a11y::field_focused(&ctx);
         windows::requests(self, &ctx);
-        // Your pointer, selection and view to the others in a live session (when they changed),
-        // from the window with its file.
-        if self.session.live.doc_uid.map_or(0, |u| self.windows.of(u)) == self.windows.current {
-            self.session.live_sync();
-        }
+        // Your pointer, selection and view to the others in each live session (when they
+        // changed), from the window with its file.
+        let windows = &self.windows;
+        self.session.live_sync_in(|uid| uid.map_or(0, |u| windows.of(u)) == windows.current);
     }
 
     fn toast_ui(&mut self, ctx: &egui::Context) {

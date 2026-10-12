@@ -887,20 +887,34 @@ viewports. Both the headless session and the attached app can host and join (the
 join but not host); each call takes in what happened since the last one and sends your edits (a
 joined file opens as a new document).
 
-- `collab.host {port?, bind?}` starts hosting the active document: `bind` is `"local"` (this
+Sessions are per document: every open document has its own session or none, and several run at
+once (host one document, join another, publish a third). They keep syncing while another document
+is active; there your presence is empty (no cursor, selection or view). The `collab.*` commands
+and `collab.peers` are about the **active document's** session (`doc.switch {index}` changes which
+one that is), and `sessions` in `collab.peers` lists them all. Closing a document ends its session
+only: a host stops hosting it, a guest leaves it.
+
+- `collab.host {port?, bind?}` starts hosting the active document (a session that document was in
+  ends; other documents' sessions go on): `bind` is `"local"` (this
   machine, the default), `"lan"` (the local network) or an interface address; the port is 47900,
-  or any free one when it's taken (`port` picks one, 0 any). Returns the session as
+  or any free one when it's taken, as it is for a second hosted document (`port` picks one, 0
+  any). Returns the session as
   `collab.peers` does, with `link` (`figcraft://join?host=…&file=…&token=…`) and `url`
   (`ws://…/?file=…&token=…`): both carry the session's secret, so share them only with people you
-  invite. `collab.stop {}` ends it.
+  invite. `collab.stop {}` ends the active document's session.
 - `collab.join {link}` (any form: an app's invite, a `figcraft-server` share link, or the
-  `ws(s)://…?file=…&token=…` URL) returns at once with `status: "connecting"`; poll
-  `collab.peers` until `status` is `"live"`, or `"failed"` with a `reason` (a wrong token, a full
+  `ws(s)://…?file=…&token=…` URL) returns at once with the new session (`session`, `status:
+  "connecting"`) and touches no other document's session. Its file opens as a new document, which
+  becomes the active one: poll
+  `collab.peers` until `status` is `"live"`. Until then the join shows on the document it was
+  started from when that one isn't in a session itself, and in `sessions` either way, where it
+  becomes `"failed"` with a `reason` when it can't be joined (a wrong token, a full
   session, a revoked link, an unreachable host, a `wss://` server whose certificate isn't trusted:
   see `FIGCRAFT_CA_FILE` in [`server.md`](server.md#behind-a-reverse-proxy-tls)). `collab.leave {}`
-  leaves; the synced document stays open as your copy.
+  leaves the active document's session (or ends a join started from it that is still on its way
+  or failed); the synced document stays open as your copy.
 - `collab.publish {server, name?, key?}` puts the active document on a `figcraft-server`
-  ([`server.md`](server.md)) and syncs it from there: `server` is the address
+  ([`server.md`](server.md)) and syncs it from there (as that document's session; others go on): `server` is the address
   `figcraft-server key` prints (`ws://host:47900/?key=…`; or give `key` separately), `name` the
   file's name (default: the document's). It returns at once with `status: "connecting"`; the
   document is read-only until the upload is done, then `collab.peers` has `published: {server,
@@ -924,7 +938,9 @@ joined file opens as a new document).
 - `collab.report {reason}` (at most 500 characters) reports the file you joined on a server to its
   operator → `{sent}`; the session's message says when the server kept it, or why not (ten an hour
   per address). Servers older than this version don't take reports (`hosting` is null).
-- `collab.peers {}` → `{available, canHost (false in the web build), status
+- `collab.peers {}` → the active document's session: `{available, canHost (false in the web
+  build), session (its id; null when the document isn't in a session: then `status` is `"off"`
+  and the rest is null or empty), status
   (off|connecting|live|reconnecting|failed), reason?,
   attempt?, role (host|guest), me, name, color, fileName, pages, link, url, address, network,
   access (edit|view), readOnly (the active document can't be edited now: view only, or being
@@ -938,7 +954,10 @@ joined file opens as a new document).
   name, color, editing (the text layer they are typing in, same shape, or null), chat (their open
   cursor chat message, or null), presence: {cursor:
   [page, x, y], selection: [ids], viewport: [page, x, y, w, h], editing_text: {node, caret,
-  selection?}}}]}`. Carets and selections count characters; someone's typing syncs when they
+  selection?}}}], sessions: [{session, document (the index of its open document; null for a join
+  on its way), status, reason, role, fileName, link, peers (how many others are in it)}]}`.
+  `sessions` is every session of the app, whichever document is active. Carets and selections
+  count characters; someone's typing syncs when they
   finish, so their caret may be past the end of your copy until then. Starting `text.edit.begin`
   in a layer someone else is typing in sets the message "<name> is editing this text too: the
   version finished last is kept" (both edits sync as whole values when each person finishes; the

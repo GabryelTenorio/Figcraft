@@ -60,8 +60,8 @@ fn anyone_publishes_and_the_owner_token_manages_the_file() {
     assert_eq!(info["idleDays"], 30.0);
     // Published without a key: links, an owner token shown once, and an expiry date.
     ex(&mut a, "collab.publish", json!({"server": url, "name": "Poster"}));
-    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live.published.is_some() && s[0].live.hosting.is_some());
-    let p = a.live.published.clone().unwrap();
+    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live().published.is_some() && s[0].live().hosting.is_some());
+    let p = a.live().published.clone().unwrap();
     let owner = p.owner.clone().expect("an owner token");
     assert_eq!(owner.len(), 22, "128 bits");
     assert!(p.expires.unwrap() > crate::store::now() + 29 * 86_400);
@@ -73,7 +73,7 @@ fn anyone_publishes_and_the_owner_token_manages_the_file() {
     assert!(!meta.contains(&owner) && meta.contains(&crate::store::hash(&owner)) && meta.contains("127.0.0.1"), "{meta}");
     // Someone joining hears about the hosting too (with the file's expiry).
     let mut b = join(&p.edit, "Bo");
-    pump(&mut [&mut a, &mut b], "Bo in, with the hosting", |s| live(s[1]) && s[1].live.hosting.as_ref().is_some_and(|h| h.expires.is_some()));
+    pump(&mut [&mut a, &mut b], "Bo in, with the hosting", |s| live(s[1]) && s[1].live().hosting.as_ref().is_some_and(|h| h.expires.is_some()));
     // The owner lists, makes, revokes links and renames the file.
     let manage = |s: &mut figcraft_engine::Session, extra: Value| {
         let mut p2 = json!({"server": url, "file": p.file, "owner": owner});
@@ -260,10 +260,10 @@ fn participants_report_files_to_the_operator() {
     let url = format!("ws://{}/", server.addr());
     let mut a = session("Ada");
     ex(&mut a, "collab.publish", json!({"server": url, "name": "Flyer"}));
-    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live.published.is_some());
-    let p = a.live.published.clone().unwrap();
+    pump(&mut [&mut a], "the publish", |s| live(s[0]) && s[0].live().published.is_some());
+    let p = a.live().published.clone().unwrap();
     let mut b = join(&p.view, "Bo");
-    pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]) && s[1].live.hosting.is_some());
+    pump(&mut [&mut a, &mut b], "Bo in", |s| live(s[1]) && s[1].live().hosting.is_some());
     assert!(b.execute("collab.report", &json!({"reason": "   "})).is_err());
     ex(&mut b, "collab.report", json!({"reason": "Spam\nwith a link"}));
     pump(&mut [&mut b], "the answer", |s| s[0].message.as_deref().is_some_and(|m| m.contains("operator")));

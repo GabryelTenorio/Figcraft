@@ -41,16 +41,16 @@ fn reply(bytes: &[u8], req: PluginReq) -> PluginReply {
 }
 
 impl LiveLink for Link {
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: u64, _: HostOptions) -> Result<SessionInfo, String> {
         Err("no".into())
     }
-    fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, _: u64, _: &str, _: &str) -> Result<(), String> {
         Err("no".into())
     }
-    fn leave(&mut self) {}
-    fn presence(&mut self, _: &Presence) {}
-    fn send(&mut self, _: ClientMsg) {}
-    fn poll(&mut self) -> Vec<Event> {
+    fn leave(&mut self, _: u64) {}
+    fn presence(&mut self, _: u64, _: &Presence) {}
+    fn send(&mut self, _: u64, _: ClientMsg) {}
+    fn poll(&mut self) -> Vec<(u64, Event)> {
         Vec::new()
     }
     fn plugins(&mut self, _: &str, req: PluginReq) -> Result<PluginReply, String> {
@@ -71,17 +71,17 @@ struct Wire {
 struct Later(Arc<Mutex<Wire>>);
 
 impl LiveLink for Later {
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: u64, _: HostOptions) -> Result<SessionInfo, String> {
         Err("no".into())
     }
-    fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, _: u64, _: &str, _: &str) -> Result<(), String> {
         Err("no".into())
     }
-    fn leave(&mut self) {}
-    fn presence(&mut self, _: &Presence) {}
-    fn send(&mut self, _: ClientMsg) {}
-    fn poll(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.0.lock().unwrap().answers)
+    fn leave(&mut self, _: u64) {}
+    fn presence(&mut self, _: u64, _: &Presence) {}
+    fn send(&mut self, _: u64, _: ClientMsg) {}
+    fn poll(&mut self) -> Vec<(u64, Event)> {
+        std::mem::take(&mut self.0.lock().unwrap().answers).into_iter().map(|e| (0, e)).collect()
     }
     fn plugins(&mut self, _: &str, _: PluginReq) -> Result<PluginReply, String> {
         Err("the window waited for the directory".into())

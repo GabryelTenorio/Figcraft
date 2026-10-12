@@ -17,24 +17,26 @@ use crate::{FigApp, NoServices};
 
 pub(crate) const HANA: Color32 = Color32::from_rgb(0x97, 0x47, 0xFF);
 
-/// A link that hands out scripted events.
-struct Mock(Arc<Mutex<Vec<LiveEvent>>>);
+/// A link that hands out scripted events, as the session started last.
+struct Mock(Arc<Mutex<Vec<LiveEvent>>>, u64);
 
 impl LiveLink for Mock {
-    fn host(&mut self, _: HostOptions) -> Result<SessionInfo, String> {
+    fn host(&mut self, _: u64, _: HostOptions) -> Result<SessionInfo, String> {
         Err("not in this test".into())
     }
-    fn join(&mut self, _: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, session: u64, _: &str, _: &str) -> Result<(), String> {
+        self.1 = session;
         Ok(())
     }
-    fn publish(&mut self, _: figcraft_engine::live::PublishOptions) -> Result<(), String> {
+    fn publish(&mut self, session: u64, _: figcraft_engine::live::PublishOptions) -> Result<(), String> {
+        self.1 = session;
         Ok(())
     }
-    fn leave(&mut self) {}
-    fn presence(&mut self, _: &Presence) {}
-    fn send(&mut self, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
-    fn poll(&mut self) -> Vec<LiveEvent> {
-        std::mem::take(&mut self.0.lock().unwrap())
+    fn leave(&mut self, _: u64) {}
+    fn presence(&mut self, _: u64, _: &Presence) {}
+    fn send(&mut self, _: u64, _: figcraft_engine::figcraft_collab::message::ClientMsg) {}
+    fn poll(&mut self) -> Vec<(u64, LiveEvent)> {
+        std::mem::take(&mut *self.0.lock().unwrap()).into_iter().map(|e| (self.1, e)).collect()
     }
 }
 
@@ -66,7 +68,7 @@ impl Harness {
         let rect = id(&s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 200, "height": 100})).unwrap());
         s.execute("select.set", &json!({"ids": []})).unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
-        s.live.install(Box::new(Mock(events.clone())));
+        s.live.install(Box::new(Mock(events.clone(), 0)));
         let h = Harness { ctx: egui::Context::default(), app: FigApp::new(s, Box::new(NoServices)), time: 0.0, events };
         (h, rect)
     }
@@ -111,7 +113,7 @@ impl Harness {
 
     /// Joined as Ada, with Hana (the host) already here.
     pub(crate) fn joined(&mut self) {
-        self.app.session.live.status = Status::Connecting;
+        self.app.session.execute("collab.join", &json!({"link": "figcraft://join?host=127.0.0.1:47900&file=f&token=t"})).unwrap();
         let info = SessionInfo {
             role: Role::Guest,
             me: 2,
@@ -216,7 +218,7 @@ fn remote_cursors_selections_and_avatars_draw() {
     h.sync();
     assert_eq!(h.app.session.docs.len(), 2, "the host's file opened as a tab");
     let shapes = h.frames(2);
-    assert_eq!(h.app.session.live.status, Status::Live);
+    assert_eq!(h.app.session.live().status, Status::Live);
     // The cursor: the dart in Hana's colour, her name beside it, at her page position.
     assert!(has_text(&shapes, "Hana"), "the name tag");
     assert_eq!(filled(&shapes, HANA), 2, "the pointer's two halves");
@@ -268,10 +270,16 @@ fn cursors_follow_pages_in_a_shared_document() {
     let shapes = h.frames(2);
     assert!(crate::live::shown_at(&h.app).is_empty(), "on another page of this file");
     assert_eq!(outlined(&shapes, HANA), 0, "a selection on another page isn't outlined here");
-    // With another document in front, page ids mean nothing there: the cursor shows anyway.
+    // Another document in front shows its own session (none here): no cursor from this one.
+    let page = h.page();
     h.app.session.execute("doc.switch", &json!({"index": 0})).unwrap();
     assert!(!h.app.session.live_shared());
-    h.send(vec![LiveEvent::Presence(1, cursor(NodeId(99_999), 5.0, 5.0))]);
+    h.send(vec![LiveEvent::Presence(1, cursor(page, 5.0, 5.0))]);
+    let shapes = h.frames(2);
+    assert!(crate::live::shown_at(&h.app).is_empty());
+    assert!(!has_text(&shapes, "Hana"));
+    // Back in the session's file, on their page, it shows.
+    h.app.session.execute("doc.switch", &json!({"index": 1})).unwrap();
     h.frames(2);
     assert_eq!(crate::live::shown_at(&h.app), vec![(1, (5.0, 5.0))]);
     // Gone when they leave.
@@ -292,7 +300,7 @@ fn clicking_an_avatar_follows_and_escape_stops() {
     let shapes = h.frames(2);
     let at = text_center(&shapes, "H");
     h.click(at);
-    assert_eq!(h.app.session.live.follow, Some(1));
+    assert_eq!(h.app.session.live().follow, Some(1));
     let shapes = h.frames(2);
     let view = h.app.session.ds().unwrap().view.clone();
     assert_eq!((view.cx, view.cy), (1300.0, 1200.0), "her view");
@@ -303,7 +311,7 @@ fn clicking_an_avatar_follows_and_escape_stops() {
     for pressed in [true, false] {
         h.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed, repeat: false, modifiers: Default::default() }]);
     }
-    assert_eq!(h.app.session.live.follow, None);
+    assert_eq!(h.app.session.live().follow, None);
     // Scrolling the canvas stops it too.
     h.app.session.execute("collab.follow", &json!({"client": 1})).unwrap();
     h.frame(vec![Event::PointerMoved(pos2(700.0, 500.0))]);
@@ -314,7 +322,7 @@ fn clicking_an_avatar_follows_and_escape_stops() {
         modifiers: Default::default(),
     }]);
     h.frames(3);
-    assert_eq!(h.app.session.live.follow, None);
+    assert_eq!(h.app.session.live().follow, None);
 }
 
 #[test]
@@ -329,7 +337,7 @@ fn share_popover_and_join_dialog() {
     }
     // Starting fails with this link: the error shows, nothing else changes.
     h.click(text_center(&shapes, "Start live session"));
-    assert_eq!(h.app.session.live.status, Status::Off);
+    assert_eq!(h.app.session.live().status, Status::Off);
     assert!(h.app.ui.last_error.as_deref().is_some_and(|e| e.contains("not in this test")));
     // File ▸ Join live session opens the dialog.
     h.frame(vec![Event::Key { key: egui::Key::Escape, physical_key: None, pressed: true, repeat: false, modifiers: Default::default() }]);

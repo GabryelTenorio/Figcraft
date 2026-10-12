@@ -46,10 +46,10 @@ fn chat_needs_a_session_whose_host_reads_it() {
     // Someone else's "ready" isn't the host speaking to you.
     push(&script, vec![Event::Signal(1, Signal::ready())]);
     s.live_poll();
-    assert!(!s.live.signals);
+    assert!(!s.live().signals);
     push(&script, vec![Event::Signal(2, Signal::ready())]);
     s.live_poll();
-    assert!(s.live.signals);
+    assert!(s.live().signals);
     assert_eq!(s.live_summary()["signals"], true);
 }
 
@@ -86,15 +86,15 @@ fn others_chat_shows_until_closed_or_they_leave() {
         ],
     );
     s.live_poll();
-    assert_eq!(s.live.chats.get(&1).map(String::as_str), Some("hey"));
-    assert_eq!(s.live.chats.get(&3).map(String::as_str), Some("bad [2J"), "control characters never reach the canvas");
-    assert_eq!(s.live.chats.len(), 2);
-    assert_eq!(s.live.spotlight, None);
+    assert_eq!(s.live().chats.get(&1).map(String::as_str), Some("hey"));
+    assert_eq!(s.live().chats.get(&3).map(String::as_str), Some("bad [2J"), "control characters never reach the canvas");
+    assert_eq!(s.live().chats.len(), 2);
+    assert_eq!(s.live().spotlight, None);
     let peers = s.live_summary()["peers"].clone();
     assert_eq!(peers[0]["chat"], "hey");
     push(&script, vec![Event::Signal(1, Signal::chat("")), Event::PeerLeft(3)]);
     s.live_poll();
-    assert!(s.live.chats.is_empty());
+    assert!(s.live().chats.is_empty());
 }
 
 #[test]
@@ -102,29 +102,29 @@ fn a_spotlight_makes_you_follow_until_you_move() {
     let (mut s, script) = joined(true);
     push(&script, vec![Event::Signal(1, Signal::spotlight(true)), Event::Presence(1, Presence::default())]);
     s.live_poll();
-    assert_eq!((s.live.spotlight, s.live.follow), (Some(1), Some(1)));
+    assert_eq!((s.live().spotlight, s.live().follow), (Some(1), Some(1)));
     assert!(s.message.take().unwrap().contains("Hana is spotlighting"));
     // Moving your view stops following; the spotlight goes on (the banner offers to follow again).
     push(&script, vec![Event::Presence(1, Presence { viewport: Some((s.page().unwrap(), 0.0, 0.0, 600.0, 400.0)), ..Default::default() })]);
     s.live_poll();
     s.ds_mut().unwrap().view.cx += 50.0;
     s.live_sync();
-    assert_eq!((s.live.spotlight, s.live.follow), (Some(1), None));
+    assert_eq!((s.live().spotlight, s.live().follow), (Some(1), None));
     s.execute("collab.follow", &json!({"client": 1})).unwrap();
     // Ada takes over; then she stops and nobody is followed.
     push(&script, vec![Event::Signal(3, Signal::spotlight(true))]);
     s.live_poll();
-    assert_eq!((s.live.spotlight, s.live.follow), (Some(3), Some(3)));
+    assert_eq!((s.live().spotlight, s.live().follow), (Some(3), Some(3)));
     push(&script, vec![Event::Signal(1, Signal::spotlight(false))]);
     s.live_poll();
-    assert_eq!(s.live.spotlight, Some(3), "an old presenter stopping changes nothing");
+    assert_eq!(s.live().spotlight, Some(3), "an old presenter stopping changes nothing");
     push(&script, vec![Event::Signal(3, Signal::spotlight(false))]);
     s.live_poll();
-    assert_eq!((s.live.spotlight, s.live.follow), (None, None));
+    assert_eq!((s.live().spotlight, s.live().follow), (None, None));
     // The presenter leaving ends it too.
     push(&script, vec![Event::Signal(1, Signal::spotlight(true)), Event::PeerLeft(1)]);
     s.live_poll();
-    assert_eq!((s.live.spotlight, s.live.follow), (None, None));
+    assert_eq!((s.live().spotlight, s.live().follow), (None, None));
 }
 
 #[test]
@@ -132,20 +132,20 @@ fn spotlighting_yourself() {
     let (mut s, script) = joined(true);
     s.execute("collab.follow", &json!({"client": 1})).unwrap();
     assert_eq!(s.execute("collab.spotlight", &json!({})).unwrap()["spotlighting"], true);
-    assert_eq!(s.live.follow, None, "a presenter follows nobody");
+    assert_eq!(s.live().follow, None, "a presenter follows nobody");
     s.execute("collab.spotlight", &json!({"on": true})).unwrap();
     assert_eq!(sent(&script), vec![Signal::spotlight(true)], "on twice is sent once");
     assert!(s.execute("collab.spotlight", &json!({"on": "yes"})).is_err());
     // Someone else's spotlight takes over yours.
     push(&script, vec![Event::Signal(3, Signal::spotlight(true))]);
     s.live_poll();
-    assert!(!s.live.spotlighting);
-    assert_eq!(s.live.follow, Some(3));
+    assert!(!s.live().spotlighting);
+    assert_eq!(s.live().follow, Some(3));
     s.execute("collab.spotlight", &json!({"on": true})).unwrap();
     // A reconnect: the host hears it again once it reads signals again.
     push(&script, vec![Event::Status(crate::live::Status::Reconnecting { attempt: 1 })]);
     s.live_poll();
-    assert!(!s.live.signals && s.live.spotlighting);
+    assert!(!s.live().signals && s.live().spotlighting);
     push(&script, vec![Event::Welcome { info: info(Role::Guest, 2), peers: vec![peer(1, "Hana")] }, Event::Signal(2, Signal::ready())]);
     s.live_poll();
     assert_eq!(sent(&script).last(), Some(&Signal::spotlight(true)));
@@ -154,5 +154,5 @@ fn spotlighting_yourself() {
     assert_eq!(sent(&script).last(), Some(&Signal::spotlight(false)));
     // Leaving forgets it all.
     s.execute("collab.leave", &json!({})).unwrap();
-    assert!(!s.live.spotlighting && !s.live.signals && s.live.chat.is_empty());
+    assert!(!s.live().spotlighting && !s.live().signals && s.live().chat.is_empty());
 }

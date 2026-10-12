@@ -75,7 +75,7 @@ fn the_publish_dialog() {
     h.click(text_center(&shapes, "Publish"));
     let shapes = h.frames(2);
     assert!(h.app.ui.live.publish.is_none(), "it closes once publishing starts");
-    assert_eq!(h.app.session.live.status, Status::Connecting);
+    assert_eq!(h.app.session.live().status, Status::Connecting);
     assert!(has_text(&shapes, "Publishing…"), "the toolbar says why the file can't be edited yet");
     assert_eq!(crate::live::inspect(&h.app)["readOnly"], figcraft_engine::live::PUBLISHING);
 }
@@ -115,7 +115,7 @@ fn a_server_open_to_the_public_takes_a_file_without_a_key() {
     h.click(text_center(&shapes, "Publish"));
     h.frames(2);
     assert!(h.app.ui.live.publish.is_none());
-    assert_eq!(h.app.session.live.status, Status::Connecting);
+    assert_eq!(h.app.session.live().status, Status::Connecting);
     // On the server: the owner token shows once, with the links and the expiry.
     let owner = "OwnerOwnerOwnerOwner00";
     h.send(vec![
@@ -147,7 +147,7 @@ fn a_server_open_to_the_public_takes_a_file_without_a_key() {
 fn a_published_file_shows_its_links() {
     let (mut h, _) = Harness::new();
     joined(&mut h, Access::Edit);
-    h.app.session.live.published = Some(Published {
+    h.app.session.live_mut().unwrap().published = Some(Published {
         server: "127.0.0.1:47900".into(),
         file: "f".into(),
         name: "Team".into(),

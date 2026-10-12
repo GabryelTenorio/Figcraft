@@ -15,46 +15,72 @@ use crate::{EngineError, Session};
 #[derive(Default)]
 pub(crate) struct Script {
     pub(crate) events: Vec<Event>,
-    sent: Vec<Presence>,
-    hosted: Vec<HostOptions>,
+    pub(crate) sent: Vec<Presence>,
+    pub(crate) hosted: Vec<HostOptions>,
     joined: Vec<String>,
-    left: usize,
+    pub(crate) left: usize,
     pub(crate) msgs: Vec<ClientMsg>,
     pub(crate) published: Vec<PublishOptions>,
+    /// The session started last: the scripted events are its.
+    pub(crate) session: u64,
+    /// The sessions ended, in order.
+    pub(crate) ended: Vec<u64>,
+    /// The session each presence in `sent` and each message in `msgs` was for.
+    pub(crate) sent_to: Vec<u64>,
+    pub(crate) msgs_to: Vec<u64>,
 }
 
 pub(crate) struct Mock(pub(crate) Arc<Mutex<Script>>);
 
 impl LiveLink for Mock {
-    fn host(&mut self, opts: HostOptions) -> Result<SessionInfo, String> {
-        self.0.lock().unwrap().hosted.push(opts);
-        Ok(info(Role::Host, 1))
+    fn host(&mut self, session: u64, opts: HostOptions) -> Result<SessionInfo, String> {
+        let mut s = self.0.lock().unwrap();
+        s.session = session;
+        s.hosted.push(opts);
+        // Each session listens on its own port (47900 for the first).
+        let mut i = info(Role::Host, 1);
+        i.address = format!("127.0.0.1:{}", 47_899 + session);
+        i.link = format!("figcraft://join?host={}&file=f&token=t", i.address);
+        i.url = format!("ws://{}/?file=f&token=t", i.address);
+        Ok(i)
     }
-    fn join(&mut self, link: &str, _: &str) -> Result<(), String> {
+    fn join(&mut self, session: u64, link: &str, _: &str) -> Result<(), String> {
         if !link.starts_with("figcraft://") {
             return Err("not an invite".into());
         }
-        self.0.lock().unwrap().joined.push(link.to_string());
+        let mut s = self.0.lock().unwrap();
+        s.session = session;
+        s.joined.push(link.to_string());
         Ok(())
     }
-    fn publish(&mut self, opts: PublishOptions) -> Result<(), String> {
+    fn publish(&mut self, session: u64, opts: PublishOptions) -> Result<(), String> {
         if !opts.server.starts_with("ws") {
             return Err("not a server address".into());
         }
-        self.0.lock().unwrap().published.push(opts);
+        let mut s = self.0.lock().unwrap();
+        s.session = session;
+        s.published.push(opts);
         Ok(())
     }
-    fn leave(&mut self) {
-        self.0.lock().unwrap().left += 1;
+    fn leave(&mut self, session: u64) {
+        let mut s = self.0.lock().unwrap();
+        s.left += 1;
+        s.ended.push(session);
     }
-    fn presence(&mut self, p: &Presence) {
-        self.0.lock().unwrap().sent.push(p.clone());
+    fn presence(&mut self, session: u64, p: &Presence) {
+        let mut s = self.0.lock().unwrap();
+        s.sent_to.push(session);
+        s.sent.push(p.clone());
     }
-    fn send(&mut self, msg: ClientMsg) {
-        self.0.lock().unwrap().msgs.push(msg);
+    fn send(&mut self, session: u64, msg: ClientMsg) {
+        let mut s = self.0.lock().unwrap();
+        s.msgs_to.push(session);
+        s.msgs.push(msg);
     }
-    fn poll(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.0.lock().unwrap().events)
+    fn poll(&mut self) -> Vec<(u64, Event)> {
+        let mut s = self.0.lock().unwrap();
+        let session = s.session;
+        std::mem::take(&mut s.events).into_iter().map(|e| (session, e)).collect()
     }
 }
 
@@ -74,7 +100,7 @@ pub(crate) fn info(role: Role, me: u32) -> SessionInfo {
     }
 }
 
-fn peer(id: u32, name: &str) -> Peer {
+pub(crate) fn peer(id: u32, name: &str) -> Peer {
     Peer { client_id: id, name: name.into(), color: "#9747FF".into() }
 }
 
@@ -90,7 +116,7 @@ pub(crate) fn push(script: &Arc<Mutex<Script>>, events: Vec<Event>) {
 }
 
 /// A session server for `doc` and the welcome it gives a first client (as `Event::Sync`).
-fn serve(doc: &Document) -> (Server, u32, Event) {
+pub(crate) fn serve(doc: &Document) -> (Server, u32, Event) {
     serve_as(doc, Access::Edit)
 }
 
@@ -159,9 +185,15 @@ fn hosting_and_joining_drive_the_link() {
     let r = s.execute("collab.join", &json!({"link": " figcraft://join?host=a:1&file=f&token=t "})).unwrap();
     assert_eq!(r["status"], "connecting");
     assert_eq!(script.lock().unwrap().joined, ["figcraft://join?host=a:1&file=f&token=t"]);
+    // The join is a session of its own: this file's goes on until it is stopped, and then the
+    // join still on its way shows here.
+    assert_eq!(s.live().role(), Some(Role::Host));
     assert_eq!(s.execute("collab.stop", &json!({})).unwrap()["ended"], true);
     assert!(script.lock().unwrap().left >= 1);
-    assert_eq!(s.live.status, Status::Off);
+    assert_eq!(s.live().status, Status::Connecting);
+    assert_eq!(s.execute("collab.leave", &json!({})).unwrap()["ended"], true);
+    assert_eq!(s.live().status, Status::Off);
+    assert_eq!(s.live.iter().count(), 0);
 }
 
 #[test]
@@ -170,16 +202,16 @@ fn events_build_who_is_here() {
     s.execute("collab.join", &json!({"link": "figcraft://join?host=a:1&file=f&token=t"})).unwrap();
     push(&script, vec![Event::Welcome { info: info(Role::Guest, 2), peers: vec![peer(1, "Hana")] }, Event::PeerJoined(peer(3, "Bo"))]);
     assert!(s.live_poll());
-    assert_eq!(s.live.status, Status::Live);
-    assert_eq!(s.live.peers.len(), 2);
+    assert_eq!(s.live().status, Status::Live);
+    assert_eq!(s.live().peers.len(), 2);
     assert_eq!(s.message.as_deref(), Some("Bo joined"));
     // Presence of someone not in the session is ignored; a leaver's presence goes with them.
     push(&script, vec![Event::Presence(9, viewport(NodeId(1), 0.0, 0.0, 10.0, 10.0)), Event::Presence(3, viewport(NodeId(1), 0.0, 0.0, 10.0, 10.0))]);
     s.live_poll();
-    assert_eq!(s.live.presence.keys().copied().collect::<Vec<_>>(), [3]);
+    assert_eq!(s.live().presence.keys().copied().collect::<Vec<_>>(), [3]);
     push(&script, vec![Event::PeerLeft(3)]);
     s.live_poll();
-    assert!(s.live.presence.is_empty());
+    assert!(s.live().presence.is_empty());
     assert_eq!(s.message.as_deref(), Some("Bo left"));
     let p = s.live_summary();
     assert_eq!(p["peers"][0]["name"], "Hana");
@@ -187,11 +219,11 @@ fn events_build_who_is_here() {
     // Reconnecting forgets who's here until the next welcome; failing ends it all.
     push(&script, vec![Event::Status(Status::Reconnecting { attempt: 1 })]);
     s.live_poll();
-    assert!(s.live.peers.is_empty());
+    assert!(s.live().peers.is_empty());
     assert_eq!(s.live_summary()["attempt"], 1);
     push(&script, vec![Event::Status(Status::Failed { reason: "Lost the connection".into() })]);
     s.live_poll();
-    assert!(s.live.info.is_none());
+    assert!(s.live().info.is_none());
     assert_eq!(s.live_summary()["reason"], "Lost the connection");
     assert_eq!(s.message.as_deref(), Some("Lost the connection"));
     assert!(!s.live_poll(), "nothing new");
@@ -200,10 +232,11 @@ fn events_build_who_is_here() {
 #[test]
 fn presence_is_sent_when_it_changes_and_only_when_live() {
     let (mut s, script) = session();
-    s.live.cursor = Some((10.0, 20.0));
     s.live_sync();
     assert!(script.lock().unwrap().sent.is_empty(), "not in a session");
+    assert!(s.live_mut().is_none(), "nothing to set a pointer in");
     s.execute("collab.host", &json!({})).unwrap();
+    s.live_mut().unwrap().cursor = Some((10.0, 20.0));
     s.live_sync();
     s.live_sync();
     let sent = script.lock().unwrap().sent.clone();
@@ -218,11 +251,11 @@ fn presence_is_sent_when_it_changes_and_only_when_live() {
     s.execute("collab.cursor", &json!({"x": 1, "y": 2})).unwrap();
     assert_eq!(script.lock().unwrap().sent.last().unwrap().cursor, Some((page, 1.0, 2.0)));
     assert!(s.execute("collab.cursor", &json!({"x": 1})).is_err());
-    s.live.cursor = Some((f64::NAN, 0.0));
+    s.live_mut().unwrap().cursor = Some((f64::NAN, 0.0));
     s.live_sync();
     assert_eq!(script.lock().unwrap().sent.last().unwrap().cursor, None);
     s.execute("collab.cursor", &json!({})).unwrap();
-    assert_eq!(s.live.cursor, None);
+    assert_eq!(s.live().cursor, None);
 }
 
 #[test]
@@ -256,12 +289,12 @@ fn following_shows_their_viewport_and_page() {
     // Zooming yourself stops following.
     s.ds_mut().unwrap().view.zoom = 3.0;
     s.live_sync();
-    assert_eq!(s.live.follow, None);
+    assert_eq!(s.live().follow, None);
     // So does Escape, before anything else it does.
     s.execute("collab.follow", &json!({"client": 5})).unwrap();
     s.execute("select.all", &json!({})).ok();
     s.escape().unwrap();
-    assert_eq!(s.live.follow, None);
+    assert_eq!(s.live().follow, None);
     // And `collab.follow {}`.
     s.execute("collab.follow", &json!({"client": 5})).unwrap();
     assert_eq!(s.execute("collab.follow", &json!({})).unwrap()["follow"], serde_json::Value::Null);
@@ -276,8 +309,8 @@ fn the_host_ending_resets_everything() {
     s.execute("collab.follow", &json!({"client": 1})).unwrap();
     push(&script, vec![Event::Ended { reason: "The host ended the session".into() }]);
     s.live_poll();
-    assert_eq!(s.live.status, Status::Off);
-    assert!(s.live.peers.is_empty() && s.live.follow.is_none() && s.live.info.is_none());
+    assert_eq!(s.live().status, Status::Off);
+    assert!(s.live().peers.is_empty() && s.live().follow.is_none() && s.live().info.is_none());
     assert_eq!(s.message.as_deref(), Some("The host ended the session"));
 }
 
@@ -308,7 +341,7 @@ fn edits_sync_through_the_server_and_remote_ones_skip_undo() {
     let (mut server, me, welcome) = serve(s.doc().unwrap());
     push(&script, vec![welcome]);
     s.live_poll();
-    assert!(s.live.syncing() && s.live_shared());
+    assert!(s.live().syncing() && s.live_shared());
     assert!(!s.ds().unwrap().is_dirty(), "starting a session doesn't dirty the file");
     // An edit made while hosting goes out as one batch, and the server confirms it.
     let r = s.execute("shape.rectangle", &json!({"x": 10, "y": 20, "width": 30, "height": 40})).unwrap();
@@ -372,12 +405,13 @@ fn edits_sync_through_the_server_and_remote_ones_skip_undo() {
     s.live_sync();
     assert_eq!(s.doc().unwrap().node(rect).unwrap().name, "Card");
     // Closing the session's file leaves the session.
+    let uid = s.live().doc_uid.unwrap();
     s.execute("file.new", &json!({})).unwrap();
-    let uid = s.live.doc_uid.unwrap();
     let i = s.docs.iter().position(|d| d.uid == uid).unwrap();
     s.execute("file.close", &json!({"index": i, "force": true})).unwrap();
     s.live_sync();
-    assert_eq!(s.live.status, Status::Off);
+    assert_eq!(s.live_of(uid).status, Status::Off);
+    assert_eq!(s.live.iter().count(), 0);
 }
 
 #[test]

@@ -55,7 +55,7 @@ impl Room {
             let w = welcome_of(&out, id);
             script.lock().unwrap().events.extend([Event::Welcome { info: info(Role::Guest, id), peers: vec![] }, Event::Sync(w)]);
             s.live_poll();
-            assert!(s.live.syncing() && s.live_doc(s.ds().unwrap().uid), "joined: the shared file is the active tab");
+            assert!(s.live().syncing() && s.live_doc(s.ds().unwrap().uid), "joined: the shared file is the active tab");
             room.people.push(Person { s, script, id, up: VecDeque::new(), down: VecDeque::new(), online: true });
             room.route(out.into_iter().filter(|o| !matches!(o, Outgoing::To(_, ServerMsg::Welcome { .. }))).collect());
         }
@@ -142,7 +142,7 @@ impl Room {
     fn reconnect(&mut self, i: usize) {
         let p = &mut self.people[i];
         let ClientMsg::Hello(mut h) = Client::hello("f", "t", "Person", "") else { panic!("not a hello") };
-        h.resume = p.s.live.client().map(Client::resume);
+        h.resume = p.s.live().client().map(Client::resume);
         let (id, out) = self.server.join(h).unwrap();
         assert_eq!(id, p.id, "the same client");
         p.online = true;
@@ -153,7 +153,7 @@ impl Room {
     /// Everyone holds the server's document, in the session and on the canvas.
     pub(crate) fn check(&self) {
         for (i, p) in self.people.iter().enumerate() {
-            let c = p.s.live.client().unwrap();
+            let c = p.s.live().client().unwrap();
             assert_eq!(c.pending(), 0, "person {i}");
             assert!(c.view() == self.server.replica(), "person {i}: {}", figcraft_collab::sim::describe(self.server.replica(), c.view()));
             assert!(*p.s.doc().unwrap() == *self.server.document(), "person {i}: the canvas shows the session's document");

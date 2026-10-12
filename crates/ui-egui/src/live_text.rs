@@ -19,7 +19,7 @@ const CARET_WIDTH: f32 = 2.0;
 
 /// Draw the carets and selections of everyone typing in a text layer on your page.
 pub fn draw(app: &FigApp, painter: &egui::Painter) {
-    let live = &app.session.live;
+    let live = app.session.live();
     if live.presence.is_empty() || !app.session.live_shared() {
         return;
     }

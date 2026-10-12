@@ -19,6 +19,7 @@ pub mod inbox;
 pub mod invite;
 mod join;
 pub mod limits;
+mod sessions;
 pub mod throttle;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -61,5 +62,7 @@ mod links_tests;
 mod loopback_tests;
 #[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod sessions_tests;
 #[cfg(test)]
 mod tls_tests;

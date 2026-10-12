@@ -57,12 +57,12 @@ fn publishing_makes_the_open_tab_the_server_file() {
     };
     push(&script, vec![Event::Published(published.clone()), Event::Welcome { info: info(Role::Guest, id), peers: vec![] }, welcome]);
     s.live_poll();
-    assert!(s.live.syncing());
+    assert!(s.live().syncing());
     assert_eq!(s.docs.len(), 1, "no new tab");
     assert_eq!(s.doc().unwrap().name, "Team");
     assert_eq!(s.undo_depth(), (0, 0));
     assert_eq!(s.active_read_only(), None);
-    assert_eq!(s.live.published, Some(published));
+    assert_eq!(s.live().published, Some(published));
     assert_eq!(s.message.as_deref(), Some("Published Team to the server"));
     assert_eq!(s.live_summary()["published"]["name"], "Team");
     // Edits sync through the server.
@@ -93,7 +93,7 @@ fn a_view_link_makes_the_file_read_only() {
     me.access = Access::View;
     push(&script, vec![Event::Welcome { info: me, peers: vec![] }, welcome]);
     s.live_poll();
-    assert!(s.live.syncing());
+    assert!(s.live().syncing());
     assert_eq!(s.active_read_only(), Some(VIEW_ONLY));
     let summary = s.live_summary();
     assert_eq!((summary["access"].as_str(), summary["readOnly"].as_bool()), (Some("view"), Some(true)));

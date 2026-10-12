@@ -2,9 +2,11 @@
 //! name tag) and selections on the canvas (their edits arrive through the engine's sync), their avatars at the top of the right panel (click one
 //! to follow their view), the Share popover (start a session, the invite link, stop; the server,
 //! file and access of a session you joined; a published file's links), the Join dialog and the
-//! Publish to server dialog. Everything acts through the `collab.*` commands; the state is the engine's
-//! (`Session::live`). The network wakes the UI when something arrives, and cursors only ask for
-//! frames while they glide, so an idle session draws nothing.
+//! Publish to server dialog. Everything acts through the `collab.*` commands; the state is the engine's:
+//! sessions are per document, and a window shows the session of the file in front
+//! (`Session::live`), so another tab shows its own session or the way to start one. The network
+//! wakes the UI when something arrives, and cursors only ask for frames while they glide, so an
+//! idle session draws nothing.
 //!
 //! Cursor chat: `/` opens a bubble at your pointer to type in; others see it next to your cursor
 //! and it fades a few seconds after the last change (frames are asked for only until then).
@@ -13,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Shape, Stroke, Ui, pos2, vec2};
-use figcraft_engine::live::{Access, PEOPLE, Role, Signal, Status, initials, parse_color, presence_page};
+use figcraft_engine::live::{Access, PEOPLE, Role, SessionId, Signal, Status, initials, parse_color, presence_page};
 use serde_json::{Value, json};
 
 use crate::FigApp;
@@ -74,6 +76,9 @@ pub struct ChatBox {
 /// UI-only live session state.
 #[derive(Default)]
 pub struct LiveUi {
+    /// The session this window showed at its last frame (0: none): what belongs to one session
+    /// (cursors, chats, the pointer handed over, your chat box, a report) goes when another shows.
+    session: SessionId,
     /// Where each remote cursor is drawn (page coordinates), gliding to where it was reported.
     shown: BTreeMap<u32, (f64, f64)>,
     /// The UI clock at the last cursor frame.
@@ -92,8 +97,9 @@ pub struct LiveUi {
     focus_publish: bool,
     /// The last server address published to (kept for this run only: it carries the server key).
     last_server: String,
-    /// A file published from the dialog without the key: its owner token shows once it arrives.
-    show_owner: bool,
+    /// The session of a file published from the dialog without the key: its owner token shows
+    /// once it arrives (whichever tab is in front then).
+    owner: Option<SessionId>,
     /// The report being written about the file you're in (open when `Some`), and putting the
     /// keyboard in its field on its next frame.
     pub report: Option<String>,
@@ -200,20 +206,32 @@ fn chat_bubble(painter: &egui::Painter, tip: Pos2, name: Option<&str>, text: &st
 
 /// Hand the pointer's page position to the session when it moved (or the view under it did).
 pub fn track_pointer(app: &mut FigApp, ctx: &egui::Context) {
-    if app.session.live.status != Status::Live {
-        app.ui.live.seen = None;
+    let (id, live) = (app.session.live().id, app.session.live().status == Status::Live);
+    let ui = &mut app.ui.live;
+    // Another tab came to the front, or this file's session started or ended.
+    if std::mem::replace(&mut ui.session, id) != id {
+        ui.shown.clear();
+        ui.chat_seen.clear();
+        ui.seen = None;
+        ui.chat = None;
+        ui.report = None;
+    }
+    if !live {
+        ui.seen = None;
         return;
     }
     let at = ctx.input(|i| i.pointer.hover_pos()).filter(|p| app.canvas.rect.contains(*p)).map(|p| app.to_page(p)).map(|p| (p.x, p.y));
     if at != app.ui.live.seen {
         app.ui.live.seen = at;
-        app.session.live.cursor = at;
+        if let Some(l) = app.session.live_mut() {
+            l.cursor = at;
+        }
     }
 }
 
 /// Others' selections and cursors on the canvas, and the frame around it while following.
 pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
-    let live = &app.session.live;
+    let live = app.session.live();
     if live.peers.is_empty() {
         app.ui.live.shown.clear();
         app.ui.live.chat_seen.clear();
@@ -246,8 +264,8 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
             }
         }
         // Cursors (unless View ▸ Multiplayer cursors is off): on your page of the session's
-        // document; before its welcome arrives (or with another document in front) they show in
-        // page coordinates on whatever page you look at.
+        // document; before its welcome arrives they show in page coordinates on whatever page
+        // you look at.
         if let Some((pg, x, y)) = p.cursor
             && ds.view.multiplayer_cursors
             && (pg == page || !shared)
@@ -294,7 +312,7 @@ pub fn draw(app: &mut FigApp, painter: &egui::Painter, ctx: &egui::Context) {
 /// Open your cursor chat (`/`, `collab.cursorChat` without text), with your current message.
 pub fn open_chat(app: &mut FigApp) {
     if app.ui.live.chat.as_ref().is_none_or(|c| !c.editing) {
-        app.ui.live.chat = Some(ChatBox { text: app.session.live.chat.clone(), typed: None, editing: true });
+        app.ui.live.chat = Some(ChatBox { text: app.session.live().chat.clone(), typed: None, editing: true });
     }
 }
 
@@ -303,19 +321,19 @@ pub fn open_chat(app: &mut FigApp) {
 /// it back at once. The box closes by itself when you haven't typed for a while.
 pub fn chat_box(app: &mut FigApp, ctx: &egui::Context) {
     let Some(mut chat) = app.ui.live.chat.take() else { return };
-    if app.session.live.status != Status::Live {
+    if app.session.live().status != Status::Live {
         return;
     }
     let now = ctx.input(|i| i.time);
     let first = chat.typed.is_none();
     let typed = *chat.typed.get_or_insert(now);
-    let live = &app.session.live;
+    let live = app.session.live();
     let fill = live.info.as_ref().map_or(ACCENT, |i| color(&i.color));
     let tip = live.cursor.map_or(app.canvas.rect.center(), |(x, y)| app.to_screen(x, y));
     let reduce = app.reduce_motion();
     if !chat.editing {
         let alpha = chat_fade(ctx, now - typed, reduce);
-        if alpha <= 0.0 || app.session.live.chat.is_empty() {
+        if alpha <= 0.0 || app.session.live().chat.is_empty() {
             let _ = app.session.live_chat("");
             return;
         }
@@ -381,7 +399,7 @@ pub fn chat_box(app: &mut FigApp, ctx: &egui::Context) {
 /// While you spotlight, or someone does and you stopped following them: a banner on the canvas to
 /// stop, or to follow again.
 pub fn spotlight_banner(app: &mut FigApp, ctx: &egui::Context, canvas: Rect) {
-    let live = &app.session.live;
+    let live = app.session.live();
     let (text, button, cmd, params) = if live.spotlighting {
         (tr("You're spotlighting: everyone follows your view").to_string(), tr("Stop"), "collab.spotlight", json!({"on": false}))
     } else if let Some(p) = live.spotlight.filter(|p| live.follow != Some(*p)).and_then(|p| live.peers.get(&p)) {
@@ -416,7 +434,7 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
     const R: f32 = 12.0;
     const STEP: f32 = 20.0;
     let cy = area.center().y;
-    let live = &app.session.live;
+    let live = app.session.live();
     let me_name = match live.info.as_ref() {
         Some(i) if !i.name.is_empty() => i.name.clone(),
         _ => app.session.prefs.user_name.clone(),
@@ -493,7 +511,7 @@ pub fn people_bar(app: &mut FigApp, ui: &mut Ui, area: Rect) {
         if peers.is_empty() {
             widgets::label(
                 ui,
-                if app.session.live.status.active() { tr("Nobody else is here yet") } else { tr("Not in a live session") },
+                if app.session.live().status.active() { tr("Nobody else is here yet") } else { tr("Not in a live session") },
                 t.text_secondary,
             );
         }
@@ -519,18 +537,18 @@ pub fn share_popover(app: &mut FigApp, anchor: &egui::Response) {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(tr("Live session")).font(semibold(12.0)));
-            let status = app.session.live.status.clone();
-            let role = app.session.live.role();
-            let others = app.session.live.peers.len();
-            let published = app.session.live.published.is_some();
+            let status = app.session.live().status.clone();
+            let role = app.session.live().role();
+            let others = app.session.live().peers.len();
+            let published = app.session.live().published.is_some();
             // Connecting with a tab already chosen and nobody's welcome yet: the upload.
-            let publishing = status == Status::Connecting && role.is_none() && app.session.live.doc_uid.is_some();
+            let publishing = status == Status::Connecting && role.is_none() && app.session.live().doc_uid.is_some();
             let (line, col) = match (&status, role) {
                 (Status::Live, Some(Role::Host)) => (trf("Live · {people}", &[("people", &people_count(others))]), t.success),
                 (Status::Live, _) if published => (trf("Published · {people}", &[("people", &people_count(others))]), t.success),
                 (Status::Connecting, _) if publishing => (tr("Publishing…").to_string(), t.text_secondary),
                 (Status::Live, _) => {
-                    let file = app.session.live.info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
+                    let file = app.session.live().info.as_ref().map(|i| i.file_name.clone()).unwrap_or_default();
                     (if file.is_empty() { tr("Joined").to_string() } else { trf("Joined {file}", &[("file", &file)]) }, t.success)
                 }
                 (Status::Reconnecting { attempt }, _) => {
@@ -607,7 +625,7 @@ fn start_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
 
 /// Hosting: the invite link and URL to copy, and stop.
 fn host_ui(app: &mut FigApp, ui: &mut Ui) {
-    let Some(info) = app.session.live.info.clone() else { return };
+    let Some(info) = app.session.live().info.clone() else { return };
     link_rows(app, ui, &[(tr("Invite link"), &info.link, tr("Invite link copied")), (tr("WebSocket URL"), &info.url, tr("WebSocket URL copied"))]);
     let t = Tokens::get(ui.ctx());
     widgets::label(ui, tr("The link carries the session's secret: share it only with people you invite."), t.text_secondary);
@@ -620,7 +638,7 @@ fn host_ui(app: &mut FigApp, ui: &mut Ui) {
 /// Joined, or publishing: where the file is and what you may do there, a published file's links,
 /// and leave (the file stays open as your copy).
 fn guest_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
-    let live = &app.session.live;
+    let live = app.session.live();
     let view = live.info.as_ref().is_some_and(|i| i.access == Access::View);
     if let Some(i) = live.info.as_ref() {
         widgets::label(ui, &format!("{} · {}", i.address, if view { tr("View only") } else { tr("Can edit") }), t.text_secondary);
@@ -643,7 +661,7 @@ fn guest_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
         app.run("collab.leave", json!({}));
     }
     // A server that takes reports said so (its hosting).
-    if hosting.is_some() && app.session.live.status == Status::Live {
+    if hosting.is_some() && app.session.live().status == Status::Live {
         report_ui(app, ui, t);
     }
 }
@@ -910,7 +928,7 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
     if go && app.run("collab.publish", json!({"server": address, "name": form.name.trim()})).is_some() {
         app.ui.live.last_server = address;
         // The owner token shows once the file is on the server.
-        app.ui.live.show_owner = !keyed;
+        app.ui.live.owner = (!keyed).then(|| app.session.live().id);
         app.cancel_background(SERVER_INFO);
         return;
     }
@@ -924,13 +942,16 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
 /// The file just published from the dialog without the key: its links and its owner token, shown
 /// this once, with where it is hosted and when it expires.
 fn published_dialog(app: &mut FigApp, ctx: &egui::Context) {
-    if !app.ui.live.show_owner {
+    let Some(live) = app.ui.live.owner.and_then(|id| app.session.live.get(id)) else {
+        // Nothing published without a key, or it didn't get there (the message says why).
+        app.ui.live.owner = None;
         return;
-    }
-    let live = &app.session.live;
+    };
     let Some(p) = live.published.clone().filter(|p| p.owner.is_some()) else {
-        // Still on its way, or it didn't get there (the message says why).
-        app.ui.live.show_owner = live.status == Status::Connecting;
+        // Still on its way, unless it was published with the key after all.
+        if live.status != Status::Connecting {
+            app.ui.live.owner = None;
+        }
         return;
     };
     let hosting = live.hosting.clone();
@@ -954,14 +975,16 @@ fn published_dialog(app: &mut FigApp, ctx: &egui::Context) {
         done = widgets::button(ui, tr("Done"), true, true).clicked();
     });
     if !open || done {
-        app.ui.live.show_owner = false;
+        app.ui.live.owner = None;
     }
 }
 
 /// Live session state for `ui.inspect`.
 pub fn inspect(app: &FigApp) -> serde_json::Value {
-    let l = &app.session.live;
+    let l = app.session.live();
     json!({
+        "session": (l.id != 0).then_some(l.id),
+        "sessions": app.session.live.iter().count(),
         "status": l.status.id(),
         "role": l.role(),
         "peers": l.peers.len(),
@@ -976,7 +999,7 @@ pub fn inspect(app: &FigApp) -> serde_json::Value {
         "joinDialog": app.ui.live.join.is_some(),
         "publishDialog": app.ui.live.publish.is_some(),
         "publishInfo": app.ui.live.publish.as_ref().and_then(|f| f.info.as_ref().map(|(_, v)| v.clone())),
-        "ownerDialog": app.ui.live.show_owner && app.session.live.published.as_ref().is_some_and(|p| p.owner.is_some()),
+        "ownerDialog": app.ui.live.owner.and_then(|id| app.session.live.get(id)).and_then(|l| l.published.as_ref()).is_some_and(|p| p.owner.is_some()),
         "report": app.ui.live.report,
         "readOnly": app.session.active_read_only(),
     })

@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use figcraft_collab::message::{Access, Admin, AdminReply, ClientMsg, LibraryReply, LibraryReq, PluginReply, PluginReq};
 use figcraft_engine::live::{
-    Bind, Event, HostInfo, HostOptions, LiveLink, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionInfo,
+    Bind, Event, HostInfo, HostOptions, LiveLink, NO_SESSION, NetReply, NetRequest, PageInfo, Presence, PublishOptions, Published, Role, SessionId,
+    SessionInfo,
 };
 
 use crate::guest::{Guest, GuestConfig, Publish, upload_file};
@@ -16,6 +17,7 @@ use crate::inbox::{Inbox, Waker};
 use crate::invite::{Endpoint, Invite};
 use crate::manage;
 use crate::net::NetLimits;
+use crate::sessions::Sessions;
 use crate::token;
 
 /// The port a hosted session tries first.
@@ -29,12 +31,20 @@ enum Active {
     Guest(Guest),
 }
 
-/// Hosts or joins one session at a time.
+impl Active {
+    /// Stop hosting, or leave.
+    fn end(self) {
+        match self {
+            Active::Host(mut h) => h.stop(),
+            Active::Guest(mut g) => g.leave(),
+        }
+    }
+}
+
+/// Hosts and joins sessions, any number at once (one per open document).
 pub struct NetLink {
-    wake: Waker,
     limits: NetLimits,
-    active: Option<Active>,
-    inbox: Option<Inbox>,
+    sessions: Sessions<Active>,
     /// Tweaks for joining (tests shorten the reconnect pauses).
     guest: fn(GuestConfig) -> GuestConfig,
     /// Answers to requests sent in the background (outlives sessions).
@@ -47,7 +57,7 @@ impl NetLink {
     /// `wake` is called (from network threads) whenever something arrives for the UI.
     pub fn new(wake: Waker) -> Self {
         let libraries = Inbox::new(wake.clone());
-        Self { wake, limits: NetLimits::default(), active: None, inbox: None, guest: |c| c, libraries, fetching: Arc::default() }
+        Self { limits: NetLimits::default(), sessions: Sessions::new(wake), guest: |c| c, libraries, fetching: Arc::default() }
     }
 
     /// With other transport limits.
@@ -69,11 +79,18 @@ impl NetLink {
         cfg
     }
 
-    /// The running host, if hosting.
-    pub fn host_handle(&self) -> Option<&Host> {
-        match &self.active {
+    /// The running host of session `session`, if it is hosted here.
+    pub fn host_handle(&self, session: SessionId) -> Option<&Host> {
+        match self.sessions.get(session) {
             Some(Active::Host(h)) => Some(h),
             _ => None,
+        }
+    }
+
+    /// Session `session` started (one that had the id ends).
+    fn started(&mut self, session: SessionId, active: Active, inbox: Inbox) {
+        if let Some(old) = self.sessions.insert(session, active, inbox) {
+            old.end();
         }
     }
 }
@@ -96,15 +113,14 @@ pub fn lan_ip() -> Option<IpAddr> {
 }
 
 impl LiveLink for NetLink {
-    fn host(&mut self, o: HostOptions) -> Result<SessionInfo, String> {
-        self.leave();
+    fn host(&mut self, session: SessionId, o: HostOptions) -> Result<SessionInfo, String> {
         let ip = match o.bind {
             Bind::Local => IpAddr::V4(Ipv4Addr::LOCALHOST),
             Bind::Lan => lan_ip().ok_or("this machine has no local network address (connect to a network, or share on this machine only)")?,
             Bind::Addr(ip) => ip,
         };
         let (file, token) = (token::file_id()?, token::secret()?);
-        let inbox = Inbox::new(self.wake.clone());
+        let inbox = self.sessions.inbox();
         let doc = (*o.doc).clone();
         let pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
         let file_name = doc.name.clone();
@@ -133,34 +149,29 @@ impl LiveLink for NetLink {
             network: !ip.is_loopback(),
             access: Access::Edit,
         };
-        self.inbox = Some(inbox);
-        self.active = Some(Active::Host(host));
+        self.started(session, Active::Host(host), inbox);
         Ok(info)
     }
 
-    fn join(&mut self, link: &str, name: &str) -> Result<(), String> {
+    fn join(&mut self, session: SessionId, link: &str, name: &str) -> Result<(), String> {
         let invite = Invite::parse(link)?;
         let cfg = self.guest_config(invite, name);
-        self.leave();
-        let inbox = Inbox::new(self.wake.clone());
+        let inbox = self.sessions.inbox();
         let guest = Guest::start(cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
-        self.inbox = Some(inbox);
-        self.active = Some(Active::Guest(guest));
+        self.started(session, Active::Guest(guest), inbox);
         Ok(())
     }
 
-    fn publish(&mut self, o: PublishOptions) -> Result<(), String> {
+    fn publish(&mut self, session: SessionId, o: PublishOptions) -> Result<(), String> {
         let (server, query) = Endpoint::parse(&o.server)?;
         // Without a key: as anyone may, when the server is open to the public (it says if not).
         let key = o.key.or_else(|| query.into_iter().find(|(k, _)| k == "key").map(|(_, v)| v)).filter(|k| !k.trim().is_empty());
         // Until the upload is done the invite names only the server.
         let cfg = self.guest_config(Invite { server: server.clone(), file: String::new(), token: String::new() }, &o.me);
-        self.leave();
-        let inbox = Inbox::new(self.wake.clone());
+        let inbox = self.sessions.inbox();
         let job = Publish { server, key, name: o.name, doc: o.doc };
         let guest = Guest::publish(job, cfg, inbox.clone()).map_err(|e| format!("can't start the connection: {e}"))?;
-        self.inbox = Some(inbox);
-        self.active = Some(Active::Guest(guest));
+        self.started(session, Active::Guest(guest), inbox);
         Ok(())
     }
 
@@ -216,34 +227,31 @@ impl LiveLink for NetLink {
         }
     }
 
-    fn leave(&mut self) {
-        match self.active.take() {
-            Some(Active::Host(mut h)) => h.stop(),
-            Some(Active::Guest(mut g)) => g.leave(),
-            None => {}
+    fn leave(&mut self, session: SessionId) {
+        if let Some(active) = self.sessions.remove(session) {
+            active.end();
         }
-        self.inbox = None;
     }
 
-    fn presence(&mut self, p: &Presence) {
-        match &self.active {
+    fn presence(&mut self, session: SessionId, p: &Presence) {
+        match self.sessions.get(session) {
             Some(Active::Host(h)) => h.presence(p.clone()),
             Some(Active::Guest(g)) => g.presence(p.clone()),
             None => {}
         }
     }
 
-    fn send(&mut self, msg: ClientMsg) {
-        match &self.active {
+    fn send(&mut self, session: SessionId, msg: ClientMsg) {
+        match self.sessions.get(session) {
             Some(Active::Host(h)) => h.send(msg),
             Some(Active::Guest(g)) => g.send(msg),
             None => {}
         }
     }
 
-    fn poll(&mut self) -> Vec<Event> {
-        let mut out = self.libraries.drain();
-        out.extend(self.inbox.as_ref().map(Inbox::drain).unwrap_or_default());
+    fn poll(&mut self) -> Vec<(SessionId, Event)> {
+        let mut out: Vec<(SessionId, Event)> = self.libraries.drain().into_iter().map(|e| (NO_SESSION, e)).collect();
+        out.extend(self.sessions.poll());
         out
     }
 }
@@ -280,6 +288,8 @@ fn plugins(server: &str, req: PluginReq, limits: &NetLimits) -> Result<PluginRep
 
 impl Drop for NetLink {
     fn drop(&mut self) {
-        self.leave();
+        for id in self.sessions.ids() {
+            self.leave(id);
+        }
     }
 }

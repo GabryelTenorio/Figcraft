@@ -22,6 +22,12 @@
 //! makes the synced document read-only here (every edit is refused before it is sent; the server
 //! refuses it too).
 //!
+//! Sessions are per document ([`Lives`]): each open document has its own session or none, several
+//! run at once (host one file, join another, publish a third), and they keep syncing while their
+//! tab isn't in front. The commands act on the active document's session ([`Session::live`]);
+//! closing a document ends its session only. One link carries them all, each under its
+//! [`SessionId`].
+//!
 //! Cursor chat (`collab.cursorChat`) and spotlights (`collab.spotlight`) travel as signals:
 //! short-lived presence the host passes on to everyone, never stored. A spotlight makes everyone
 //! follow the person who started it; moving your own view stops following, as with any follow.
@@ -169,7 +175,12 @@ pub struct Published {
     pub expires: Option<u64>,
 }
 
-/// What happened in the session since the last [`LiveLink::poll`].
+/// A session's number on the link: the engine picks it (from 1) when it starts the session.
+pub type SessionId = u64;
+/// The [`SessionId`] of events that aren't about a session (answers to background requests).
+pub const NO_SESSION: SessionId = 0;
+
+/// What happened in a session since the last [`LiveLink::poll`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Status(Status),
@@ -313,22 +324,23 @@ pub struct PublishOptions {
     pub doc: Arc<Document>,
 }
 
-/// The networking behind live sessions, installed by the app ([`Live::install`]). Calls return
+/// The networking behind live sessions, installed by the app ([`Lives::install`]). It carries
+/// any number of sessions at once, each under the [`SessionId`] it was started with. Calls return
 /// at once; what happens later arrives through [`poll`](Self::poll).
 pub trait LiveLink: Send {
     /// Sessions can be hosted here (the browser build can only join).
     fn can_host(&self) -> bool {
         true
     }
-    /// Start hosting a session for `opts.doc` (ending any current one).
-    fn host(&mut self, opts: HostOptions) -> std::result::Result<SessionInfo, String>;
-    /// Start joining the session behind an invite link (ending any current one). Errors are for
+    /// Start hosting session `session` for `opts.doc`.
+    fn host(&mut self, session: SessionId, opts: HostOptions) -> std::result::Result<SessionInfo, String>;
+    /// Start joining the session behind an invite link, as session `session`. Errors are for
     /// links that can't be used; they never echo the link (it holds the token).
-    fn join(&mut self, link: &str, name: &str) -> std::result::Result<(), String>;
-    /// Start uploading `opts.doc` to a server as a new file, then join it with its edit link
-    /// (ending any current session): [`Event::Published`] with its links, then the welcome.
-    /// Errors are for addresses that can't be used; they never echo the key.
-    fn publish(&mut self, _opts: PublishOptions) -> std::result::Result<(), String> {
+    fn join(&mut self, session: SessionId, link: &str, name: &str) -> std::result::Result<(), String>;
+    /// Start uploading `opts.doc` to a server as a new file, then join it with its edit link, as
+    /// session `session`: [`Event::Published`] with its links, then the welcome. Errors are for
+    /// addresses that can't be used; they never echo the key.
+    fn publish(&mut self, _session: SessionId, _opts: PublishOptions) -> std::result::Result<(), String> {
         Err("publishing to a server needs the desktop app or the MCP server".into())
     }
     /// Keep `opts.doc` on a server as a new file without joining it: where, and its links
@@ -378,14 +390,16 @@ pub trait LiveLink: Send {
     fn background(&mut self, _job: u64, _req: NetRequest) -> bool {
         false
     }
-    /// End the current session (stop hosting or leave).
-    fn leave(&mut self);
-    /// Your latest presence (the link throttles and coalesces).
-    fn presence(&mut self, p: &Presence);
-    /// A message for the server (document changes), sent in order.
-    fn send(&mut self, msg: ClientMsg);
-    /// Events since the last call; never blocks.
-    fn poll(&mut self) -> Vec<Event>;
+    /// End session `session` (stop hosting or leave); the others go on. Nothing for a session
+    /// that is over already.
+    fn leave(&mut self, session: SessionId);
+    /// Your latest presence in `session` (the link throttles and coalesces).
+    fn presence(&mut self, session: SessionId, p: &Presence);
+    /// A message for `session`'s server (document changes), sent in order.
+    fn send(&mut self, session: SessionId, msg: ClientMsg);
+    /// Events since the last call, each with its session ([`NO_SESSION`] for answers to
+    /// background requests); never blocks.
+    fn poll(&mut self) -> Vec<(SessionId, Event)>;
 }
 
 /// The view a follow last applied: any other view means the user moved.
@@ -397,10 +411,11 @@ struct FollowedView {
     zoom: f64,
 }
 
-/// Live session state (see the module docs).
+/// One live session (see the module docs): a document's, or a join on its way to its own tab.
 #[derive(Default)]
 pub struct Live {
-    link: Option<Box<dyn LiveLink>>,
+    /// Its number on the link (0: no session, the state of a document that isn't in one).
+    pub id: SessionId,
     pub status: Status,
     pub info: Option<SessionInfo>,
     /// Everyone else in the session, by client id.
@@ -418,15 +433,15 @@ pub struct Live {
     client: Option<Client>,
     /// The open document the session syncs (its `DocState::uid`).
     pub doc_uid: Option<u64>,
+    /// The document whose tab shows the session: `doc_uid`, or for a join the document it was
+    /// started from, until the session's file opens in a tab of its own (`None`: none was open).
+    pub tab: Option<u64>,
     /// The session document as last sent or installed: a different one has local edits to send.
     synced: Option<Arc<Document>>,
     /// Server batches waiting for a gesture or preview on the session document to end.
     deferred: Vec<ServerMsg>,
     /// Nesting of [`Session::grouped`] on the session document: its edits sync once, at the end.
     hold: u32,
-    /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
-    /// installs one; see [`crate::invite_links`]).
-    pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
     /// The file you published to a server in this session, with its links.
     pub published: Option<Published>,
     /// What the server of the file you're in says about its hosting (operator, terms, expiry);
@@ -445,6 +460,49 @@ pub struct Live {
 }
 
 impl Live {
+    pub fn role(&self) -> Option<Role> {
+        self.info.as_ref().map(|i| i.role)
+    }
+
+    /// Stop following. False when you weren't following anyone.
+    fn unfollow(&mut self) -> bool {
+        self.followed = None;
+        self.follow.take().is_some()
+    }
+
+    /// Back to no session, still shown on its tab (a failure's reason stays there).
+    fn reset(&mut self) {
+        *self = Live { id: self.id, tab: self.tab, ..Live::default() };
+    }
+
+    /// The document sync client (once the welcome arrived): peers, pending batches, the user's
+    /// undo history.
+    pub fn client(&self) -> Option<&Client> {
+        self.client.as_ref()
+    }
+
+    /// Document changes are syncing (the welcome arrived).
+    pub fn syncing(&self) -> bool {
+        self.client.is_some()
+    }
+}
+
+/// The app's live sessions, one per document at most, and what they share: the networking and
+/// the invite-link registration.
+#[derive(Default)]
+pub struct Lives {
+    link: Option<Box<dyn LiveLink>>,
+    sessions: BTreeMap<SessionId, Live>,
+    /// The last session id handed out.
+    last: SessionId,
+    /// What a document that isn't in a session shows.
+    off: Live,
+    /// Registers the app as the opener of `figcraft://` invite links (the desktop app on Windows
+    /// installs one; see [`crate::invite_links`]).
+    pub links: Option<Box<dyn crate::invite_links::LinkRegistrar>>,
+}
+
+impl Lives {
     /// Install the networking (the app does this once at startup).
     pub fn install(&mut self, link: Box<dyn LiveLink>) {
         self.link = Some(link);
@@ -465,49 +523,86 @@ impl Live {
         self.link.as_ref().is_some_and(|l| l.can_host())
     }
 
-    pub fn role(&self) -> Option<Role> {
-        self.info.as_ref().map(|i| i.role)
+    /// Session `id`, while it runs or shows why it failed.
+    pub fn get(&self, id: SessionId) -> Option<&Live> {
+        self.sessions.get(&id)
     }
 
-    /// Back to no session (keeps the link).
-    fn reset(&mut self) {
-        self.status = Status::Off;
-        self.info = None;
-        self.peers.clear();
-        self.presence.clear();
-        self.follow = None;
-        self.followed = None;
-        self.sent = None;
-        self.client = None;
-        self.doc_uid = None;
-        self.synced = None;
-        self.deferred.clear();
-        self.hold = 0;
-        self.published = None;
-        self.hosting = None;
-        self.signals = false;
-        self.chats.clear();
-        self.chat.clear();
-        self.spotlight = None;
-        self.spotlighting = false;
+    /// Every session, oldest first.
+    pub fn iter(&self) -> impl Iterator<Item = &Live> {
+        self.sessions.values()
     }
 
-    /// The document sync client (once the welcome arrived): peers, pending batches, the user's
-    /// undo history.
-    pub fn client(&self) -> Option<&Client> {
-        self.client.as_ref()
+    /// The session the tab of document `tab` shows (`None`: no document is open): the one that
+    /// syncs it, else the latest join started from it.
+    fn shown(&self, tab: Option<u64>) -> Option<SessionId> {
+        self.sessions.values().filter(|l| l.tab == tab).max_by_key(|l| (l.doc_uid.is_some(), l.id)).map(|l| l.id)
     }
 
-    /// Document changes are syncing (the welcome arrived).
-    pub fn syncing(&self) -> bool {
-        self.client.is_some()
+    /// What the tab of document `tab` shows: its session, or no session.
+    fn on(&self, tab: Option<u64>) -> &Live {
+        self.shown(tab).and_then(|id| self.sessions.get(&id)).unwrap_or(&self.off)
+    }
+
+    /// The session of document `uid`: the one that syncs it, or will once it is published.
+    fn doc(&self, uid: u64) -> Option<&Live> {
+        self.sessions.values().find(|l| l.doc_uid == Some(uid))
+    }
+
+    fn doc_mut(&mut self, uid: u64) -> Option<&mut Live> {
+        self.sessions.values_mut().find(|l| l.doc_uid == Some(uid))
+    }
+
+    /// Start a session on the link for command `cmd`: `start` gets the link and the new
+    /// session's id, which comes back with what it returned.
+    fn start<T>(&mut self, cmd: &str, start: impl FnOnce(&mut dyn LiveLink, SessionId) -> Result<T>) -> Result<(SessionId, T)> {
+        let link = self.link.as_deref_mut().ok_or_else(|| unavailable(cmd))?;
+        let id = self.last.saturating_add(1);
+        let out = start(link, id)?;
+        self.last = id;
+        Ok((id, out))
+    }
+
+    /// Session `live` started on the link: it takes its tab over from what was there (a session
+    /// that failed; for a document's own session, the one it was in). Joins on their way from
+    /// that tab go on.
+    fn open(&mut self, live: Live) {
+        let own = live.doc_uid.is_some();
+        let over: Vec<SessionId> =
+            self.sessions.values().filter(|l| l.tab == live.tab && (!l.status.active() || (own && l.doc_uid.is_some()))).map(|l| l.id).collect();
+        for id in over {
+            self.end(id);
+        }
+        self.sessions.insert(live.id, live);
+    }
+
+    /// End session `id` (stop hosting or leave) and forget it.
+    fn end(&mut self, id: SessionId) -> Option<Live> {
+        self.leave(id);
+        self.sessions.remove(&id)
+    }
+
+    /// Tell the link session `id` is over.
+    fn leave(&mut self, id: SessionId) {
+        if let Some(l) = self.link.as_mut() {
+            l.leave(id);
+        }
+    }
+
+    /// Messages for session `id`'s server, in order.
+    fn send(&mut self, id: SessionId, msgs: impl IntoIterator<Item = ClientMsg>) {
+        if let Some(l) = self.link.as_mut() {
+            for m in msgs {
+                l.send(id, m);
+            }
+        }
     }
 }
 
-impl Drop for Live {
+impl Drop for Lives {
     fn drop(&mut self) {
-        if let Some(l) = self.link.as_mut() {
-            l.leave();
+        for id in std::mem::take(&mut self.sessions).into_keys() {
+            self.leave(id);
         }
     }
 }
@@ -580,10 +675,32 @@ fn busy(ds: &DocState) -> bool {
 }
 
 impl Session {
-    /// The active document is the session's synced document: page and layer ids in others'
+    /// The active document (`None`: no document is open).
+    fn tab(&self) -> Option<u64> {
+        self.ds().ok().map(|d| d.uid)
+    }
+
+    /// The active document's live session (status off when it isn't in one). Everything the
+    /// window shows and the `collab.*` commands act on is this one.
+    pub fn live(&self) -> &Live {
+        self.live.on(self.tab())
+    }
+
+    /// The active document's live session, when it has one (running, on its way or failed).
+    pub fn live_mut(&mut self) -> Option<&mut Live> {
+        let id = self.live.shown(self.tab())?;
+        self.live.sessions.get_mut(&id)
+    }
+
+    /// Document `uid`'s live session (status off when it isn't in one).
+    pub fn live_of(&self, uid: u64) -> &Live {
+        self.live.on(Some(uid))
+    }
+
+    /// The active document is its session's synced document: page and layer ids in others'
     /// presence refer to it.
     pub fn live_shared(&self) -> bool {
-        self.live.client.is_some() && self.ds().is_ok_and(|ds| Some(ds.uid) == self.live.doc_uid)
+        self.tab().is_some_and(|uid| self.live_doc(uid))
     }
 
     /// Install a document that came from the session (others' edits): the selection, page and view
@@ -604,29 +721,31 @@ impl Session {
         ds.revision += 1;
     }
 
-    /// Your presence now: the session document's page, selection, viewport and edited text, and
-    /// the pointer (nothing while another document is in front).
+    /// Your presence in the active document's session now: its page, selection, viewport and
+    /// edited text, and the pointer.
     pub fn live_presence(&self) -> Presence {
-        let Ok(ds) = self.ds() else { return Presence::default() };
-        if self.live.doc_uid.is_some_and(|u| u != ds.uid) {
-            return Presence::default();
-        }
+        self.presence_in(self.live())
+    }
+
+    /// Your presence in `live` (nothing while another document than its own is in front).
+    fn presence_in(&self, live: &Live) -> Presence {
+        let Some(ds) = self.ds().ok().filter(|ds| live.tab == Some(ds.uid)) else { return Presence::default() };
         let (x0, y0) = ds.view.origin();
         let z = ds.view.zoom.max(1e-9);
         sanitize(Presence {
-            cursor: self.live.cursor.map(|(x, y)| (ds.page, x, y)),
+            cursor: live.cursor.map(|(x, y)| (ds.page, x, y)),
             selection: Some(ds.selection.clone()),
             viewport: Some((ds.page, x0, y0, ds.view.vw / z, ds.view.vh / z)),
             editing_text: ds.text_edit.as_ref().map(|t| Box::new(editing_of(t))),
         })
     }
 
-    /// The others typing in text layer `id` of the session document (only while it is in front).
+    /// The others typing in text layer `id` of the active document, in its session.
     pub fn live_text_editors(&self, id: NodeId) -> Vec<&Peer> {
         if !self.live_shared() {
             return Vec::new();
         }
-        let live = &self.live;
+        let live = self.live();
         live.presence.iter().filter(|(_, p)| p.editing_text.as_ref().is_some_and(|e| e.node == id)).filter_map(|(c, _)| live.peers.get(c)).collect()
     }
 
@@ -639,7 +758,7 @@ impl Session {
         }
     }
 
-    /// Take in what happened in the session (the UI calls it every frame; the network wakes the
+    /// Take in what happened in every session (the UI calls it every frame; the network wakes the
     /// UI when something arrives). Returns whether anything changed.
     pub fn live_poll(&mut self) -> bool {
         let Some(link) = self.live.link.as_mut() else { return false };
@@ -647,40 +766,45 @@ impl Session {
         if events.is_empty() {
             return false;
         }
-        for e in events {
-            self.live_event(e);
+        for (id, e) in events {
+            self.live_event(id, e);
         }
-        self.live_deferred();
-        self.live_follow_apply();
+        self.live_closed();
+        for id in self.live.sessions.keys().copied().collect::<Vec<_>>() {
+            self.live_deferred(id);
+            self.live_follow_apply(id);
+        }
         true
     }
 
-    fn live_event(&mut self, e: Event) {
-        let live = &mut self.live;
+    fn live_event(&mut self, id: SessionId, e: Event) {
+        let e = match e {
+            Event::Library { link, reply } => return self.library_answer(&link, reply),
+            Event::Net { job, reply } => return self.background_answer(job, *reply),
+            e => e,
+        };
+        // A session left meanwhile: what was still on its way is dropped.
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
         match e {
+            Event::Status(Status::Failed { reason }) => self.live_fail(id, reason),
+            Event::Status(Status::Off) => {
+                self.live.end(id);
+            }
             Event::Status(st) => {
-                match &st {
-                    Status::Failed { reason } => {
-                        self.message = Some(reason.clone());
-                        live.reset();
+                // Who's here comes again with the next welcome; edits wait for it.
+                if let Status::Reconnecting { .. } = st {
+                    live.peers.clear();
+                    live.presence.clear();
+                    live.sent = None;
+                    // Until the host says it reads them again (a spotlight of yours goes out
+                    // again then).
+                    live.signals = false;
+                    live.chats.clear();
+                    live.chat.clear();
+                    live.spotlight = None;
+                    if let Some(c) = live.client.as_mut() {
+                        c.disconnect();
                     }
-                    Status::Off => live.reset(),
-                    // Who's here comes again with the next welcome; edits wait for it.
-                    Status::Reconnecting { .. } => {
-                        live.peers.clear();
-                        live.presence.clear();
-                        live.sent = None;
-                        // Until the host says it reads them again (a spotlight of yours goes out
-                        // again then).
-                        live.signals = false;
-                        live.chats.clear();
-                        live.chat.clear();
-                        live.spotlight = None;
-                        if let Some(c) = live.client.as_mut() {
-                            c.disconnect();
-                        }
-                    }
-                    Status::Connecting | Status::Live => {}
                 }
                 live.status = st;
             }
@@ -695,8 +819,7 @@ impl Session {
                 live.peers = peers.into_iter().map(|p| (p.client_id, p)).collect();
                 live.presence.retain(|id, _| live.peers.contains_key(id));
                 if live.follow.is_some_and(|f| !live.peers.contains_key(&f)) {
-                    live.follow = None;
-                    live.followed = None;
+                    live.unfollow();
                 }
                 // Others need your presence again.
                 live.sent = None;
@@ -705,39 +828,32 @@ impl Session {
                 self.message = Some(format!("{} joined", p.name));
                 live.peers.insert(p.client_id, p);
             }
-            Event::PeerLeft(id) => {
-                live.presence.remove(&id);
-                live.chats.remove(&id);
-                if live.spotlight == Some(id) {
+            Event::PeerLeft(peer) => {
+                live.presence.remove(&peer);
+                live.chats.remove(&peer);
+                if live.spotlight == Some(peer) {
                     live.spotlight = None;
                 }
-                if let Some(p) = live.peers.remove(&id) {
+                if let Some(p) = live.peers.remove(&peer) {
                     self.message = Some(format!("{} left", p.name));
                 }
-                if live.follow == Some(id) {
-                    live.follow = None;
-                    live.followed = None;
+                if live.follow == Some(peer) {
+                    live.unfollow();
                 }
             }
-            Event::Presence(id, p) => {
-                if live.peers.contains_key(&id) {
-                    live.presence.insert(id, p);
+            Event::Presence(peer, p) => {
+                if live.peers.contains_key(&peer) {
+                    live.presence.insert(peer, p);
                 }
             }
-            Event::Signal(id, sig) => self.live_signal_in(id, sig),
-            // Back after a dropped connection: the client catches up in order with the rest.
-            Event::Sync(msg @ ServerMsg::Welcome { .. }) if live.client.is_some() => live.deferred.push(msg),
-            Event::Sync(ServerMsg::Welcome { .. }) => {
-                if let Event::Sync(w) = e {
-                    self.live_welcome(w);
-                }
-            }
-            Event::Sync(msg) => {
-                live.deferred.push(msg);
-            }
+            Event::Signal(peer, sig) => self.live_signal_in(id, peer, sig),
+            Event::Sync(welcome @ ServerMsg::Welcome { .. }) if live.client.is_none() => self.live_welcome(id, welcome),
+            // Batches, and the welcome back after a dropped connection: the client catches up in
+            // order.
+            Event::Sync(msg) => live.deferred.push(msg),
             Event::Ended { reason } => {
                 self.message = Some(reason);
-                live.reset();
+                self.live.end(id);
             }
             Event::Published(p) => {
                 self.message = Some(format!("Published {} to the server", p.name));
@@ -748,45 +864,42 @@ impl Session {
                 self.message =
                     Some(error.map_or_else(|| "Your report was sent to the server's operator".into(), |e| format!("The report wasn't sent: {e}")));
             }
-            Event::Library { link, reply } => self.library_answer(&link, reply),
-            Event::Net { job, reply } => self.background_answer(job, *reply),
+            // Answered above.
+            Event::Library { .. } | Event::Net { .. } => {}
         }
     }
 
-    /// Someone's cursor chat or spotlight (checked again: the host is untrusted too), or the host
-    /// saying it reads them.
-    fn live_signal_in(&mut self, id: u32, sig: Signal) {
+    /// Someone's cursor chat or spotlight in session `id` (checked again: the host is untrusted
+    /// too), or the host saying it reads them.
+    fn live_signal_in(&mut self, id: SessionId, peer: u32, sig: Signal) {
         let Some(sig) = sig.clean() else { return };
-        let live = &mut self.live;
-        let name = live.peers.get(&id).map(|p| p.name.clone());
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        let name = live.peers.get(&peer).map(|p| p.name.clone());
         match (sig.kind.as_str(), name) {
-            (Signal::READY, _) if live.info.as_ref().is_some_and(|i| i.me == id) => {
+            (Signal::READY, _) if live.info.as_ref().is_some_and(|i| i.me == peer) => {
                 live.signals = true;
-                if live.spotlighting
-                    && let Some(l) = live.link.as_mut()
-                {
-                    l.send(ClientMsg::Signal(Signal::spotlight(true)));
+                if live.spotlighting {
+                    self.live.send(id, [ClientMsg::Signal(Signal::spotlight(true))]);
                 }
             }
             (Signal::CHAT, Some(_)) if sig.text.is_empty() => {
-                live.chats.remove(&id);
+                live.chats.remove(&peer);
             }
             (Signal::CHAT, Some(_)) => {
-                live.chats.insert(id, sig.text);
+                live.chats.insert(peer, sig.text);
             }
             (Signal::SPOTLIGHT, Some(name)) if sig.on() => {
                 // Theirs takes over from yours or anyone else's.
-                live.spotlight = Some(id);
+                live.spotlight = Some(peer);
                 live.spotlighting = false;
-                live.follow = Some(id);
+                live.follow = Some(peer);
                 live.followed = None;
                 self.message = Some(format!("{name} is spotlighting: you follow their view (move it to stop)"));
             }
-            (Signal::SPOTLIGHT, Some(name)) if live.spotlight == Some(id) => {
+            (Signal::SPOTLIGHT, Some(name)) if live.spotlight == Some(peer) => {
                 live.spotlight = None;
-                if live.follow == Some(id) {
-                    live.follow = None;
-                    live.followed = None;
+                if live.follow == Some(peer) {
+                    live.unfollow();
                 }
                 self.message = Some(format!("{name} stopped spotlighting"));
             }
@@ -796,18 +909,13 @@ impl Session {
 
     /// Why cursor chat or a spotlight can't go out now, if it can't.
     fn signal_blocker(&self) -> Option<&'static str> {
-        if self.live.status != Status::Live {
+        let live = self.live();
+        if live.status != Status::Live {
             Some("cursor chat and spotlight need a live session")
-        } else if !self.live.signals {
+        } else if !live.signals {
             Some("the session's host runs an older version without cursor chat and spotlight")
         } else {
             None
-        }
-    }
-
-    fn live_signal_out(&mut self, sig: Signal) {
-        if let Some(l) = self.live.link.as_mut() {
-            l.send(ClientMsg::Signal(sig));
         }
     }
 
@@ -815,46 +923,51 @@ impl Session {
     /// (control characters out, at most [`Signal::MAX_CHAT`] characters).
     pub fn live_chat(&mut self, text: &str) -> Result<String> {
         let sig = Signal::chat(text).clean().unwrap_or_default();
-        if sig.text.is_empty() && self.live.chat.is_empty() {
+        if sig.text.is_empty() && self.live().chat.is_empty() {
             return Ok(String::new());
         }
         if let Some(why) = self.signal_blocker() {
             return Err(EngineError::Disabled("collab.cursorChat".into(), why.into()));
         }
-        if sig.text != self.live.chat {
-            self.live.chat.clone_from(&sig.text);
-            self.live_signal_out(sig);
+        let Some(live) = self.live_mut() else { return Ok(String::new()) };
+        if sig.text != live.chat {
+            live.chat.clone_from(&sig.text);
+            let id = live.id;
+            self.live.send(id, [ClientMsg::Signal(sig.clone())]);
         }
-        Ok(self.live.chat.clone())
+        Ok(sig.text)
     }
 
     /// Start (`on`) or stop asking everyone to follow your view.
     pub fn live_spotlight(&mut self, on: bool) -> Result<()> {
-        if on == self.live.spotlighting {
+        if on == self.live().spotlighting {
             return Ok(());
         }
         if on && let Some(why) = self.signal_blocker() {
             return Err(EngineError::Disabled("collab.spotlight".into(), why.into()));
         }
+        let Some(live) = self.live_mut() else { return Ok(()) };
         if on {
-            self.live_unfollow();
-            self.live.spotlight = None;
+            live.unfollow();
+            live.spotlight = None;
         }
-        self.live.spotlighting = on;
-        self.live_signal_out(Signal::spotlight(on));
+        live.spotlighting = on;
+        let id = live.id;
+        self.live.send(id, [ClientMsg::Signal(Signal::spotlight(on))]);
         Ok(())
     }
 
-    /// The welcome: start the sync client; the host keeps editing the document it shared, a guest
-    /// opens the host's file as a new tab (or gets it again in that tab after a reconnect).
-    fn live_welcome(&mut self, welcome: ServerMsg) {
+    /// Session `id`'s welcome: start the sync client; the host keeps editing the document it
+    /// shared, a guest opens the host's file as a new tab (or gets it again in that tab after a
+    /// reconnect).
+    fn live_welcome(&mut self, id: SessionId, welcome: ServerMsg) {
         let client = match Client::join(welcome) {
             Ok(c) => c,
-            Err(e) => return self.live_fail(format!("Couldn't open the shared file: {e}")),
+            Err(e) => return self.live_fail(id, format!("Couldn't open the shared file: {e}")),
         };
-        let role = self.live.role();
-        let existing = self.live.doc_uid.filter(|u| self.docs.iter().any(|d| d.uid == *u));
-        match (role, existing) {
+        let Some(live) = self.live.sessions.get(&id) else { return };
+        let existing = live.doc_uid.filter(|u| self.docs.iter().any(|d| d.uid == *u));
+        let (uid, synced) = match (live.role(), existing) {
             (Some(Role::Host), Some(uid)) => {
                 if let Some(ds) = self.docs.iter_mut().find(|d| d.uid == uid) {
                     let was_dirty = ds.is_dirty();
@@ -868,7 +981,7 @@ impl Session {
                     }
                 }
                 // Edits made since hosting started go out with the first sync.
-                self.live.synced = None;
+                (uid, None)
             }
             (Some(Role::Guest), Some(uid)) => {
                 // Joining again in this tab, or the file you published arriving from the server.
@@ -884,118 +997,116 @@ impl Session {
                         ds.mark_saved();
                     }
                 }
-                self.live.synced = Some(doc);
+                (uid, Some(doc))
             }
             (Some(Role::Guest), None) => {
+                // The session's file gets a tab of its own, in front.
                 let ds = DocState::new(client.document().clone(), None);
                 self.message = Some(format!("Joined {}", ds.doc.name));
-                self.live.doc_uid = Some(ds.uid);
-                self.live.synced = Some(ds.doc.clone());
+                let opened = (ds.uid, Some(ds.doc.clone()));
+                self.active = self.docs.len();
                 self.docs.push(ds);
-                self.active = self.docs.len() - 1;
+                opened
             }
             _ => return,
+        };
+        // A view link: the editing tools are off.
+        if client.access() == Access::View && self.tab() == Some(uid) && !matches!(self.tool.tool, ToolId::Move | ToolId::Hand) {
+            self.set_tool(ToolId::Move);
         }
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
         let doc = client.document();
-        if let Some(info) = self.live.info.as_mut() {
+        if let Some(info) = live.info.as_mut() {
             info.file_name = doc.name.clone();
             info.pages = doc.pages.iter().map(|p| PageInfo { id: p.0, name: doc.node(*p).map(|n| n.name.clone()).unwrap_or_default() }).collect();
         }
-        // A view link: the editing tools are off.
-        if client.access() == Access::View && !matches!(self.tool.tool, ToolId::Move | ToolId::Hand) {
-            self.set_tool(ToolId::Move);
-        }
-        self.live.client = Some(client);
-        self.live.deferred.clear();
+        live.doc_uid = Some(uid);
+        live.tab = Some(uid);
+        live.synced = synced;
+        live.client = Some(client);
+        live.deferred.clear();
     }
 
-    /// End the session with a message (sync broke).
-    fn live_fail(&mut self, reason: String) {
+    /// Session `id` is over with a message: it couldn't be joined, the connection was lost for
+    /// good or sync broke. Its tab shows why.
+    fn live_fail(&mut self, id: SessionId, reason: String) {
         log::warn!("live session: {reason}");
-        if let Some(l) = self.live.link.as_mut() {
-            l.leave();
+        self.live.leave(id);
+        if let Some(live) = self.live.sessions.get_mut(&id) {
+            live.reset();
+            live.status = Status::Failed { reason: reason.clone() };
         }
-        self.live.reset();
-        self.live.status = Status::Failed { reason: reason.clone() };
         self.message = Some(reason);
     }
 
-    /// Send the session document's edits not synced yet (none, unless something changed it
-    /// outside a command), unless a gesture or preview is still showing.
-    fn live_flush(&mut self) {
-        self.live_edit(None);
-    }
-
-    /// Why document `uid` can't be edited now, if it can't: it is the session's document and you
-    /// may only view it, or it is on its way to a server.
+    /// Why document `uid` can't be edited now, if it can't: you may only view it in its session,
+    /// or it is on its way to a server.
     pub fn live_read_only(&self, uid: u64) -> Option<&'static str> {
-        if self.live.doc_uid != Some(uid) {
-            return None;
-        }
-        match &self.live.client {
+        let live = self.live.doc(uid)?;
+        match &live.client {
             Some(c) if c.access() == Access::View => Some(VIEW_ONLY),
             Some(_) => None,
-            None if self.live.status.active() && self.live.role() != Some(Role::Host) => Some(PUBLISHING),
+            None if live.status.active() && live.role() != Some(Role::Host) => Some(PUBLISHING),
             None => None,
         }
     }
 
     /// The active document can't be edited now (see [`live_read_only`](Self::live_read_only)).
     pub fn active_read_only(&self) -> Option<&'static str> {
-        self.ds().ok().and_then(|ds| self.live_read_only(ds.uid))
+        self.tab().and_then(|uid| self.live_read_only(uid))
     }
 
-    /// Whether document `uid` is the live session's synced document: its edits sync and its undo
+    /// Whether document `uid` is a live session's synced document: its edits sync and its undo
     /// history is the user's own.
     pub fn live_doc(&self, uid: u64) -> bool {
-        self.live.client.is_some() && self.live.doc_uid == Some(uid)
+        self.live.doc(uid).is_some_and(Live::syncing)
     }
 
-    /// Sync the session document's edits as one batch: one step of the user's undo history called
-    /// `label`, or not undoable (`None`). Nothing while a gesture or preview shows, or inside a
-    /// group (it syncs when the group ends).
-    pub(crate) fn live_edit(&mut self, label: Option<&str>) {
-        let Some(uid) = self.live.doc_uid else { return };
+    /// Sync the edits of session document `uid` as one batch: one step of the user's undo history
+    /// called `label`, or not undoable (`None`: also what changed it outside a command). Nothing
+    /// while a gesture or preview shows, or inside a group (it syncs when the group ends).
+    pub(crate) fn live_edit(&mut self, uid: u64, label: Option<&str>) {
         let Some(ds) = self.docs.iter().find(|d| d.uid == uid) else { return };
-        if self.live.hold > 0 || busy(ds) || self.live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
+        let Some(live) = self.live.doc(uid) else { return };
+        if live.hold > 0 || busy(ds) || live.synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &ds.doc)) {
             return;
         }
+        let (id, doc, synced) = (live.id, ds.doc.clone(), live.synced.clone());
         if self.live_read_only(uid).is_some() {
             // Nothing goes out: what changed outside a command is put back.
-            if let Some(s) = self.live.synced.clone() {
+            if let Some(s) = synced {
                 self.apply_remote(uid, s);
             }
             return;
         }
-        let doc = ds.doc.clone();
-        let Some(client) = self.live.client.as_mut() else { return };
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        let Some(client) = live.client.as_mut() else { return };
         match client.edit_with(&doc, label) {
-            Ok(Some(msg)) => {
-                if let Some(l) = self.live.link.as_mut() {
-                    l.send(msg);
-                }
+            Ok(msg) => {
+                live.synced = Some(doc);
+                self.live.send(id, msg);
             }
-            Ok(None) => {}
-            Err(e) => return self.live_fail(format!("Couldn't sync an edit: {e}")),
+            Err(e) => self.live_fail(id, format!("Couldn't sync an edit: {e}")),
         }
-        self.live.synced = Some(doc);
     }
 
     /// A group of commands on document `uid` starts (`on`) or ends: in between its edits don't
     /// sync on their own.
     pub(crate) fn live_hold(&mut self, uid: u64, on: bool) {
-        if self.live_doc(uid) {
-            self.live.hold = if on { self.live.hold.saturating_add(1) } else { self.live.hold.saturating_sub(1) };
+        if let Some(live) = self.live.doc_mut(uid).filter(|l| l.syncing()) {
+            live.hold = if on { live.hold.saturating_add(1) } else { live.hold.saturating_sub(1) };
         }
     }
 
-    /// Undo (`back`) or redo the user's own last step on the session document: what it wrote goes
-    /// back where nobody else wrote since. Returns whether there was a step to take back.
+    /// Undo (`back`) or redo the user's own last step on the active document, in its session:
+    /// what it wrote goes back where nobody else wrote since. Returns whether there was a step to
+    /// take back.
     pub(crate) fn live_travel(&mut self, back: bool) -> bool {
-        let Some(uid) = self.live.doc_uid else { return false };
+        let Some(uid) = self.tab() else { return false };
         // Edits not synced yet go first.
-        self.live_flush();
-        let Some(client) = self.live.client.as_mut() else { return false };
+        self.live_edit(uid, None);
+        let Some(live) = self.live.doc_mut(uid) else { return false };
+        let Some(client) = live.client.as_mut() else { return false };
         let (undo, redo) = client.history_len();
         let msgs = match if back { client.undo(&EngineRecompute) } else { client.redo(&EngineRecompute) } {
             Ok(m) => m,
@@ -1007,65 +1118,59 @@ impl Session {
         let (u, r) = client.history_len();
         let did = if back { r > redo } else { u > undo };
         let doc = Arc::new(client.document().clone());
-        if let Some(l) = self.live.link.as_mut() {
-            for m in msgs {
-                l.send(m);
-            }
-        }
         if did {
-            self.apply_remote(uid, doc.clone());
-            self.live.synced = Some(doc);
+            live.synced = Some(doc.clone());
+        }
+        let id = live.id;
+        self.live.send(id, msgs);
+        if did {
+            self.apply_remote(uid, doc);
         }
         did
     }
 
-    /// Apply the server's batches that waited (none while a gesture or preview shows).
-    fn live_deferred(&mut self) {
-        if self.live.deferred.is_empty() || self.live.client.is_none() {
-            return;
-        }
-        let Some(uid) = self.live.doc_uid else { return };
+    /// Apply the server's batches that waited in session `id` (none while a gesture or preview
+    /// shows on its document).
+    fn live_deferred(&mut self, id: SessionId) {
+        let Some(live) = self.live.sessions.get(&id).filter(|l| !l.deferred.is_empty() && l.syncing()) else { return };
+        let Some(uid) = live.doc_uid else { return };
         if self.docs.iter().find(|d| d.uid == uid).is_none_or(busy) {
             return;
         }
         // Your own edits first: the client replays them over what others did.
-        self.live_flush();
-        let msgs = std::mem::take(&mut self.live.deferred);
+        self.live_edit(uid, None);
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        let Some(client) = live.client.as_mut() else { return };
         let mut out = Vec::new();
-        let Some(client) = self.live.client.as_mut() else { return };
-        for m in msgs {
+        for m in std::mem::take(&mut live.deferred) {
             match client.receive(m, &EngineRecompute) {
                 Ok(more) => out.extend(more),
-                Err(e) => return self.live_fail(format!("The live session got out of step ({e}); join again")),
+                Err(e) => return self.live_fail(id, format!("The live session got out of step ({e}); join again")),
             }
         }
         let doc = Arc::new(client.document().clone());
         // Edits the server refused were rolled back: say why (the UI's toast).
         let notices: Vec<String> = client.take_notices().iter().map(figcraft_collab::Notice::message).collect();
+        live.synced = Some(doc.clone());
         if !notices.is_empty() {
             self.message = Some(notices.join("; "));
         }
-        if let Some(l) = self.live.link.as_mut() {
-            for m in out {
-                l.send(m);
-            }
-        }
-        self.apply_remote(uid, doc.clone());
-        self.live.synced = Some(doc);
+        self.live.send(id, out);
+        self.apply_remote(uid, doc);
     }
 
-    /// Show the followed peer's viewport (and their page, in a shared document).
-    fn live_follow_apply(&mut self) {
-        let Some(id) = self.live.follow else { return };
-        if !self.live.peers.contains_key(&id) {
-            self.live.follow = None;
-            self.live.followed = None;
+    /// Show the peer followed in session `id`: their viewport (and their page, in the session's
+    /// document) on the session's tab.
+    fn live_follow_apply(&mut self, id: SessionId) {
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        let Some(peer) = live.follow else { return };
+        if !live.peers.contains_key(&peer) {
+            live.unfollow();
             return;
         }
-        let Some((page, x, y, w, h)) = self.live.presence.get(&id).and_then(|p| p.viewport) else { return };
-        let shared = self.live_shared();
-        let Ok(ds) = self.ds_mut() else { return };
-        if shared && page != ds.page && ds.doc.pages.contains(&page) {
+        let Some((page, x, y, w, h)) = live.presence.get(&peer).and_then(|p| p.viewport) else { return };
+        let Some(ds) = self.docs.iter_mut().find(|d| Some(d.uid) == live.tab) else { return };
+        if live.syncing() && page != ds.page && ds.doc.pages.contains(&page) {
             ds.page = page;
             ds.selection.clear();
             ds.text_edit = None;
@@ -1080,67 +1185,111 @@ impl Session {
             ds.view.zoom = zoom.clamp(ViewState::MIN_ZOOM, ViewState::MAX_ZOOM);
         }
         ds.revision += 1;
-        self.live.followed = Some(FollowedView { page: ds.page, cx: ds.view.cx, cy: ds.view.cy, zoom: ds.view.zoom });
+        live.followed = Some(FollowedView { page: ds.page, cx: ds.view.cx, cy: ds.view.cy, zoom: ds.view.zoom });
     }
 
-    /// Send your presence when it changed (the UI calls it every frame it draws, after input;
-    /// headless sessions after each call). A view you moved yourself stops following.
-    pub fn live_sync(&mut self) {
-        if self.live.status != Status::Live {
-            return;
-        }
-        if self.live.doc_uid.is_some_and(|u| !self.docs.iter().any(|d| d.uid == u)) {
-            let reason = "The live session's file was closed, so you left the session".to_string();
-            if let Some(l) = self.live.link.as_mut() {
-                l.leave();
+    /// Sessions whose tab was closed end (hosts stop hosting, guests leave); the others go on. A
+    /// join still on its way from a closed tab shows on the one in front.
+    fn live_closed(&mut self) {
+        let (docs, tab) = (&self.docs, self.tab());
+        let mut gone = Vec::new();
+        for l in self.live.sessions.values_mut().filter(|l| l.tab != tab && !docs.iter().any(|d| Some(d.uid) == l.tab)) {
+            if l.doc_uid.is_none() && l.status.active() {
+                l.tab = tab;
+            } else {
+                gone.push((l.id, l.status == Status::Live));
             }
-            self.live.reset();
-            self.message = Some(reason);
-            return;
         }
-        self.live_deferred();
-        self.live_flush();
-        if self.live.status != Status::Live {
-            return;
+        for (id, was_live) in gone {
+            self.live.end(id);
+            if was_live {
+                self.message = Some("The live session's file was closed, so you left the session".into());
+            }
         }
-        if let (Some(_), Some(f), Ok(ds)) = (self.live.follow, self.live.followed, self.ds())
-            && (ds.page != f.page || !close(ds.view.cx, f.cx) || !close(ds.view.cy, f.cy) || !close(ds.view.zoom, f.zoom))
-        {
-            self.live.follow = None;
-            self.live.followed = None;
-        }
-        let p = self.live_presence();
-        if self.live.sent.as_ref() == Some(&p) {
-            return;
-        }
-        if let Some(link) = self.live.link.as_mut() {
-            link.presence(&p);
-        }
-        self.live.sent = Some(p);
     }
 
-    /// Stop following (Escape, `collab.follow {}`). False when you weren't following anyone.
+    /// Send your edits and presence in every session when they changed (headless sessions call
+    /// it after each command). A view you moved yourself stops following.
+    pub fn live_sync(&mut self) {
+        self.live_sync_in(|_| true);
+    }
+
+    /// [`live_sync`](Self::live_sync) for the sessions whose document (`None`: a join on its way)
+    /// `mine` picks: a window calls it every frame it draws, after input, for the documents it
+    /// holds.
+    pub fn live_sync_in(&mut self, mine: impl Fn(Option<u64>) -> bool) {
+        if self.live.sessions.is_empty() {
+            return;
+        }
+        self.live_closed();
+        let ids: Vec<SessionId> = self.live.sessions.values().filter(|l| l.status == Status::Live && mine(l.doc_uid)).map(|l| l.id).collect();
+        for id in ids {
+            self.live_deferred(id);
+            if let Some(uid) = self.live.get(id).and_then(|l| l.doc_uid) {
+                self.live_edit(uid, None);
+            }
+            self.live_present(id);
+        }
+    }
+
+    /// Hand your presence in session `id` to the link when it changed.
+    fn live_present(&mut self, id: SessionId) {
+        let Some(live) = self.live.get(id).filter(|l| l.status == Status::Live) else { return };
+        let moved = live.followed.is_some_and(|f| {
+            self.docs
+                .iter()
+                .find(|d| Some(d.uid) == live.tab)
+                .is_some_and(|ds| ds.page != f.page || !close(ds.view.cx, f.cx) || !close(ds.view.cy, f.cy) || !close(ds.view.zoom, f.zoom))
+        });
+        let p = self.presence_in(live);
+        let changed = live.sent.as_ref() != Some(&p);
+        let Some(live) = self.live.sessions.get_mut(&id) else { return };
+        if moved {
+            live.unfollow();
+        }
+        if changed {
+            if let Some(link) = self.live.link.as_mut() {
+                link.presence(id, &p);
+            }
+            live.sent = Some(p);
+        }
+    }
+
+    /// Stop following in the active document's session (Escape, `collab.follow {}`). False when
+    /// you weren't following anyone.
     pub fn live_unfollow(&mut self) -> bool {
-        self.live.followed = None;
-        self.live.follow.take().is_some()
+        self.live_mut().is_some_and(Live::unfollow)
     }
 
-    /// Follow `id`'s viewport (shown at once when known).
-    pub fn live_follow(&mut self, id: u32) -> Result<()> {
-        if !self.live.peers.contains_key(&id) {
-            return Err(bad("collab.follow", format!("nobody with client id {id} is in the session")));
-        }
-        self.live.follow = Some(id);
-        self.live.followed = None;
-        self.live_follow_apply();
+    /// Follow `peer`'s viewport in the active document's session (shown at once when known).
+    pub fn live_follow(&mut self, peer: u32) -> Result<()> {
+        let Some(live) = self.live_mut().filter(|l| l.peers.contains_key(&peer)) else {
+            return Err(bad("collab.follow", format!("nobody with client id {peer} is in the session")));
+        };
+        live.follow = Some(peer);
+        live.followed = None;
+        let id = live.id;
+        self.live_follow_apply(id);
         Ok(())
     }
 
-    /// The session as JSON (`collab.peers`).
+    /// The active document's session as JSON (`collab.peers`), with every session in brief.
     pub fn live_summary(&self) -> Value {
-        let l = &self.live;
+        self.summary(self.live())
+    }
+
+    /// The index of the open document session `l` syncs.
+    fn live_index(&self, l: &Live) -> Option<usize> {
+        l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u))
+    }
+
+    fn summary(&self, l: &Live) -> Value {
         let info = l.info.as_ref();
-        let synced = l.doc_uid.and_then(|u| self.docs.iter().find(|d| d.uid == u));
+        let reason = |l: &Live| match &l.status {
+            Status::Failed { reason } => Some(reason.clone()),
+            _ => None,
+        };
+        let synced = self.live_index(l).and_then(|i| self.docs.get(i));
         // Who types in which layer of the session document.
         let editing = |e: &EditingText| {
             let layer = synced.and_then(|d| d.doc.node(e.node)).map(|n| n.name.as_str());
@@ -1157,11 +1306,29 @@ impl Session {
             })
             .collect();
         let mine = synced.and_then(|d| d.text_edit.as_ref()).map(|t| editing(&editing_of(t)));
+        let sessions: Vec<Value> = self
+            .live
+            .iter()
+            .map(|o| {
+                let info = o.info.as_ref();
+                json!({
+                    "session": o.id,
+                    "document": self.live_index(o),
+                    "status": o.status.id(),
+                    "reason": reason(o),
+                    "role": o.role(),
+                    "fileName": info.map(|i| i.file_name.as_str()),
+                    "link": info.map(|i| i.link.as_str()),
+                    "peers": o.peers.len(),
+                })
+            })
+            .collect();
         json!({
-            "available": l.available(),
-            "canHost": l.can_host(),
+            "available": self.live.available(),
+            "canHost": self.live.can_host(),
+            "session": (l.id != NO_SESSION).then_some(l.id),
             "status": l.status.id(),
-            "reason": match &l.status { Status::Failed { reason } => Some(reason.as_str()), _ => None },
+            "reason": reason(l),
             "attempt": match l.status { Status::Reconnecting { attempt } => Some(attempt), _ => None },
             "role": info.map(|i| i.role),
             "me": info.map(|i| i.me),
@@ -1174,7 +1341,7 @@ impl Session {
             "address": info.map(|i| i.address.as_str()),
             "network": info.map(|i| i.network),
             "access": l.client.as_ref().map(Client::access).or(info.map(|i| i.access)),
-            "readOnly": self.active_read_only().is_some(),
+            "readOnly": l.doc_uid.is_some_and(|u| self.live_read_only(u).is_some()),
             "published": l.published,
             "hosting": l.hosting.as_ref().map(hosting_json),
             "follow": l.follow,
@@ -1183,9 +1350,10 @@ impl Session {
             "spotlight": l.spotlight,
             "spotlighting": l.spotlighting,
             "syncing": l.syncing(),
-            "document": l.doc_uid.and_then(|u| self.docs.iter().position(|d| d.uid == u)),
+            "document": self.live_index(l),
             "editing": mine,
             "peers": peers,
+            "sessions": sessions,
         })
     }
 }
@@ -1235,12 +1403,8 @@ fn host(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (doc, uid) = s.ds().map(|ds| (ds.doc.clone(), ds.uid))?;
     let opts = HostOptions { port, bind, name: display_name(&s.prefs), doc };
-    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
-    let info = link.host(opts).map_err(|e| EngineError::Other(format!("couldn't start the live session: {e}")))?;
-    s.live.reset();
-    s.live.status = Status::Live;
-    s.live.info = Some(info);
-    s.live.doc_uid = Some(uid);
+    let (id, info) = s.live.start(CMD, |l, id| l.host(id, opts).map_err(|e| EngineError::Other(format!("couldn't start the live session: {e}"))))?;
+    s.live.open(Live { id, status: Status::Live, info: Some(info), doc_uid: Some(uid), tab: Some(uid), ..Live::default() });
     Ok(s.live_summary())
 }
 
@@ -1252,12 +1416,9 @@ fn publish(s: &mut Session, p: &Value) -> Result<Value> {
     let name = string(p, "name").map(|n| n.trim().chars().filter(|c| !c.is_control()).take(256).collect::<String>()).filter(|n| !n.is_empty());
     let opts =
         PublishOptions { server: server.trim().to_string(), key, name: name.unwrap_or_else(|| doc.name.clone()), me: display_name(&s.prefs), doc };
-    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
-    link.publish(opts).map_err(|e| bad(CMD, e))?;
-    s.live.reset();
-    s.live.status = Status::Connecting;
+    let (id, ()) = s.live.start(CMD, |l, id| l.publish(id, opts).map_err(|e| bad(CMD, e)))?;
     // This tab becomes the server file's synced document once it is there.
-    s.live.doc_uid = Some(uid);
+    s.live.open(Live { id, status: Status::Connecting, doc_uid: Some(uid), tab: Some(uid), ..Live::default() });
     Ok(s.live_summary())
 }
 
@@ -1317,14 +1478,15 @@ fn report(s: &mut Session, p: &Value) -> Result<Value> {
     if reason.is_empty() {
         return Err(bad(CMD, "say in a few words what is wrong with the file (`reason`)"));
     }
-    if s.live.status != Status::Live || s.live.role() != Some(Role::Guest) {
+    let live = s.live();
+    if live.status != Status::Live || live.role() != Some(Role::Guest) {
         return Err(bad(CMD, "join a file on a FigCraft server first: reports go to that server's operator"));
     }
-    if s.live.hosting.is_none() {
+    if live.hosting.is_none() {
         return Err(bad(CMD, "this server doesn't take reports (it is older than this app); contact its operator another way"));
     }
-    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
-    link.send(ClientMsg::Report { reason });
+    let id = live.id;
+    s.live.send(id, [ClientMsg::Report { reason }]);
     Ok(json!({"sent": true}))
 }
 
@@ -1333,26 +1495,20 @@ pub const MAX_REPORT: usize = 500;
 
 fn join(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.join";
-    let link_text = req_string(CMD, p, "link")?;
-    let name = display_name(&s.prefs);
-    let link = s.live.link.as_mut().ok_or_else(|| unavailable(CMD))?;
-    link.join(link_text.trim(), &name).map_err(|e| bad(CMD, e))?;
-    s.live.reset();
-    s.live.status = Status::Connecting;
-    Ok(s.live_summary())
+    let link = req_string(CMD, p, "link")?;
+    let (name, tab) = (display_name(&s.prefs), s.tab());
+    let (id, ()) = s.live.start(CMD, |l, id| l.join(id, link.trim(), &name).map_err(|e| bad(CMD, e)))?;
+    // The session's file opens in a tab of its own; until then the join shows on this one.
+    s.live.open(Live { id, status: Status::Connecting, tab, ..Live::default() });
+    Ok(s.live.get(id).map_or(Value::Null, |l| s.summary(l)))
 }
 
 fn leave(s: &mut Session, _: &Value) -> Result<Value> {
-    let was = s.live.status.active();
-    let kept = s.live.syncing() && s.live.role() == Some(Role::Guest);
-    if let Some(l) = s.live.link.as_mut() {
-        l.leave();
-    }
-    s.live.reset();
-    if kept {
+    let ended = s.live.shown(s.tab()).and_then(|id| s.live.end(id));
+    if ended.as_ref().is_some_and(|l| l.syncing() && l.role() == Some(Role::Guest)) {
         s.message = Some("You left the session; your copy stays open here".into());
     }
-    Ok(json!({"ended": was}))
+    Ok(json!({"ended": ended.is_some_and(|l| l.status.active())}))
 }
 
 fn follow(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1365,17 +1521,20 @@ fn follow(s: &mut Session, p: &Value) -> Result<Value> {
             s.live_follow(id)?;
         }
     }
-    Ok(json!({"follow": s.live.follow}))
+    Ok(json!({"follow": s.live().follow}))
 }
 
 fn cursor(s: &mut Session, p: &Value) -> Result<Value> {
-    s.live.cursor = match (num(p, "x"), num(p, "y")) {
+    let at = match (num(p, "x"), num(p, "y")) {
         (Some(x), Some(y)) => Some((x, y)),
         (None, None) => None,
         _ => return Err(bad("collab.cursor", "give both `x` and `y` (page coordinates), or neither to hide the cursor")),
     };
+    if let Some(l) = s.live_mut() {
+        l.cursor = at;
+    }
     s.live_sync();
-    Ok(json!({"cursor": s.live.cursor.map(|(x, y)| [x, y])}))
+    Ok(json!({"cursor": s.live().cursor.map(|(x, y)| [x, y])}))
 }
 
 fn cursor_chat(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1385,7 +1544,7 @@ fn cursor_chat(s: &mut Session, p: &Value) -> Result<Value> {
         if open {
             s.request_ui("dialog.cursorChat", json!({}));
         }
-        return Ok(json!({"open": open, "chat": s.live.chat}));
+        return Ok(json!({"open": open, "chat": s.live().chat}));
     };
     let text = v.as_str().ok_or_else(|| bad("collab.cursorChat", "`text` must be a string (empty closes the chat)"))?;
     Ok(json!({"chat": s.live_chat(text)?}))
@@ -1393,11 +1552,11 @@ fn cursor_chat(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn spotlight(s: &mut Session, p: &Value) -> Result<Value> {
     let on = match get(p, "on") {
-        None => !s.live.spotlighting,
+        None => !s.live().spotlighting,
         Some(v) => v.as_bool().ok_or_else(|| bad("collab.spotlight", "`on` must be true or false"))?,
     };
     s.live_spotlight(on)?;
-    Ok(json!({"spotlighting": s.live.spotlighting}))
+    Ok(json!({"spotlighting": s.live().spotlighting}))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -1405,19 +1564,25 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.host",
             "Start live session",
-            "{port? (default 47900, else any free port), bind?: \"local\" (this machine, default) | \"lan\" (the local network) | an IP address} → the session: {link, url (invites: they carry the secret token), address, …}",
+            "{port? (default 47900, else any free port), bind?: \"local\" (this machine, default) | \"lan\" (the local network) | an IP address} → the open file's session: {session, link, url (invites: they carry the secret token), address, …}; sessions are per file, so other files' sessions go on (a session this file was in ends)",
             false,
             host
         ),
-        spec!("collab.stop", "Stop live session", "{} (also leaves a joined session) → {ended}", false, leave),
+        spec!("collab.stop", "Stop live session", "{} (the open file's session; also leaves a joined session) → {ended}", false, leave),
         spec!(
             "collab.join",
             "Join live session",
-            "{link: figcraft://join?host=…&file=…&token=…, figcraft://join?server=ws(s)://…&file=…&token=… or ws(s)://host:port/?file=…&token=… (a session an app hosts, or a server's share link)} → status \"connecting\"; `collab.peers` tells when it's live",
+            "{link: figcraft://join?host=…&file=…&token=…, figcraft://join?server=ws(s)://…&file=…&token=… or ws(s)://host:port/?file=…&token=… (a session an app hosts, or a server's share link)} → the new session: {session, status: \"connecting\", …}; its file opens in a tab of its own (other files' sessions go on) and `collab.peers` tells when it's live (`sessions` lists it until then, and if it fails)",
             false,
             join
         ),
-        spec!("collab.leave", "Leave live session", "{} (the synced file stays open as a local copy) → {ended}", false, leave),
+        spec!(
+            "collab.leave",
+            "Leave live session",
+            "{} (the open file's session; the synced file stays open as a local copy) → {ended}",
+            false,
+            leave
+        ),
         spec!(
             "collab.publish",
             "Publish to server",
@@ -1449,7 +1614,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.peers",
             "People in this file",
-            "{} → {available, canHost (false in the browser: it can only join), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view (view: a server's view link; edits are refused), readOnly (the open file can't be edited now: view only, or being published), published (a file you published: {server, file, name, edit, view}), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}]}",
+            "{} → the open file's session (each open file has its own or none): {available, canHost (false in the browser: it can only join), session (its id; null: this file isn't in a session), status: off|connecting|live|reconnecting|failed, reason?, role, me, name, color, fileName, pages, link, url, address, network, access: edit|view (view: a server's view link; edits are refused), readOnly (the open file can't be edited now: view only, or being published), published (a file you published: {server, file, name, edit, view}), follow, syncing, document (index of the synced open document), editing (the text layer you type in: {node, layer, caret, selection}), peers: [{id, name, color, editing (theirs, same shape, or null), presence: {cursor: [page, x, y], selection, viewport: [page, x, y, w, h], editing_text}}], sessions: [{session, document (index of its open document; null for a join on its way), status, reason, role, fileName, link, peers (how many others)}] (every session of the app)}",
             false,
             |s, _| Ok(s.live_summary())
         ),
@@ -1457,7 +1622,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "collab.cursor",
             "Show cursor at",
-            "{x?, y? (page coordinates on the current page; omit both to hide)} (agents; in the app the pointer drives it)",
+            "{x?, y? (page coordinates on the current page; omit both to hide)} → {cursor} (agents; in the app the pointer drives it): your pointer in the open file's session (null when the file isn't in one)",
             false,
             cursor
         ),
