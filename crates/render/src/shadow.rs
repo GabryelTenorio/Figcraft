@@ -223,10 +223,34 @@ pub fn inner_shadow(shape: &Outline, w: u32, h: u32, xf: Affine, scale: f64, s: 
     let reach = s.radius.abs() / 2.0 * scale * 3.0 + spread.abs() * scale * SPREAD_MITER_LIMIT + dx.abs().max(dy.abs());
     let pad = if reach.is_finite() { reach.ceil().clamp(0.0, 2048.0) as u32 + 2 } else { 2 };
     let at = Affine::translate((f64::from(pad) + dx, f64::from(pad) + dy)) * xf;
-    let mut big = spread_alpha(std::slice::from_ref(shape), -spread, at, w + pad * 2, h + pad * 2)?;
+    let big = spread_alpha(std::slice::from_ref(shape), -spread, at, w + pad * 2, h + pad * 2)?;
+    inner_from(big, pad, &spread_alpha(std::slice::from_ref(shape), 0.0, xf, w, h)?, scale, s)
+}
+
+/// An inner shadow for a layer that isn't one outline (a group): cast inwards from everything
+/// around what its pixels `cover` (the layers it draws, together), over them. Offsets and spreads
+/// go by whole pixels.
+pub fn inner_shadow_of(cover: &Pixmap, scale: f64, s: &Shadow) -> Option<Pixmap> {
+    let (dx, dy) = (s.offset.0 * scale, s.offset.1 * scale);
+    let spread = if s.spread.is_finite() { s.spread * scale } else { 0.0 };
+    if !(dx.is_finite() && dy.is_finite()) {
+        return None;
+    }
+    let reach = s.radius.abs() / 2.0 * scale * 3.0 + spread.abs() + dx.abs().max(dy.abs());
+    let pad = if reach.is_finite() { reach.ceil().clamp(0.0, 2048.0) as u32 + 2 } else { 2 };
+    let at = i32::try_from(pad).ok()?;
+    let mut big = Pixmap::new(cover.width() + pad * 2, cover.height() + pad * 2)?;
+    big.draw_pixmap(at + whole_px(dx), at + whole_px(dy), cover.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+    fx::morph(&mut big, -whole_px(spread));
+    inner_from(big, pad, cover, scale, s)
+}
+
+/// The inner shadow `s` from `big`: what casts it (the shape at the shadow's offset, less its
+/// spread), `pad` pixels larger each way than the layer, whose pixels `cover` the shape.
+fn inner_from(mut big: Pixmap, pad: u32, cover: &Pixmap, scale: f64, s: &Shadow) -> Option<Pixmap> {
     fx::invert_alpha(&mut big);
     fx::blur(&mut big, s.radius / 2.0 * scale);
-    let mut out = Pixmap::new(w, h)?;
+    let mut out = Pixmap::new(cover.width(), cover.height())?;
     let pad = i32::try_from(pad).ok()?;
     out.draw_pixmap(
         -pad,
@@ -236,8 +260,7 @@ pub fn inner_shadow(shape: &Outline, w: u32, h: u32, xf: Affine, scale: f64, s: 
         Transform::identity(),
         None,
     );
-    let sa = spread_alpha(std::slice::from_ref(shape), 0.0, xf, w, h)?;
-    fx::mask_by(&mut out, &sa, false);
+    fx::mask_by(&mut out, cover, false);
     fx::tint(&mut out, color4(s.color));
     Some(out)
 }

@@ -1264,7 +1264,9 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
 `backgroundBlur`, `noise`, `texture`, `glass`) with its defaults, or the full `effect` object;
 `effect.set {ids?, index, effect}` replaces one. A layer paints its drop shadows first, then its
 fills, inner shadows, children and strokes (strokes draw over inner shadows), with layer blur,
-noise and texture over the result.
+noise and texture over the result. A group has no outline of its own: its inner shadows are cast
+from around what its layers draw together, over them, and its background blur and glass show
+through the outlines of its layers.
 
 - **Blurs** (`layerBlur`, `backgroundBlur`) are uniform (`{"radius": 8}`) or progressive:
   `{"type": "layerBlur", "blurType": "progressive", "startRadius": 0, "radius": 24, "startOffset":

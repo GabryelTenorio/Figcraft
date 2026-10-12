@@ -212,6 +212,8 @@ mod effect_order_tests;
 #[cfg(test)]
 mod export_tests;
 #[cfg(test)]
+mod group_effects_tests;
+#[cfg(test)]
 mod print_tests;
 #[cfg(test)]
 mod tests;

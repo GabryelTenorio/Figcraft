@@ -682,7 +682,9 @@ impl W<'_> {
         let has = |f: &dyn Fn(&EffectKind) -> bool| n.effects.iter().any(|e| e.visible && f(&e.kind));
         let whole = has(&|k| matches!(k, EffectKind::Texture(_)))
             || has(&|k| matches!(k, EffectKind::LayerBlur(b) if b.is_progressive()))
-            || (has(&|k| matches!(k, EffectKind::Noise(_))) && has(&|k| matches!(k, EffectKind::LayerBlur(_))));
+            || (has(&|k| matches!(k, EffectKind::Noise(_))) && has(&|k| matches!(k, EffectKind::LayerBlur(_))))
+            // A group's inner shadows are cast by its layers' pixels, over them.
+            || (matches!(n.kind, NodeKind::Group) && has(&|k| matches!(k, EffectKind::InnerShadow(_))));
         if !whole {
             return false;
         }
@@ -955,6 +957,8 @@ pub fn export_svg(doc: &Document, ids: &[NodeId], opts: &SvgOptions) -> Option<S
 
 #[cfg(test)]
 mod effects_tests;
+#[cfg(test)]
+mod group_effects_tests;
 #[cfg(test)]
 mod mask_export_tests;
 #[cfg(test)]

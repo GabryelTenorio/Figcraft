@@ -313,6 +313,9 @@ pub fn effect_margin(n: &Node) -> f64 {
             EffectKind::BackgroundBlur { .. } | EffectKind::Glass(_) => e.backdrop_radius() * 2.0,
             EffectKind::DropShadow(s) => s.radius * 2.0 + s.spread.abs() * figcraft_doc::SPREAD_MITER_LIMIT + s.offset.0.abs() + s.offset.1.abs(),
             EffectKind::Texture(t) => t.radius.abs(),
+            // A group's inner shadows are cast from around its pixels: a layer cut off at the
+            // view would cast one from the cut.
+            EffectKind::InnerShadow(s) if matches!(n.kind, NodeKind::Group) => s.radius * 2.0 + s.spread.abs() + s.offset.0.abs() + s.offset.1.abs(),
             _ => 0.0,
         })
         .filter(|m| m.is_finite())
@@ -415,8 +418,8 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
     let shape = node_outline(ctx.doc, n);
     // Background blur and glass: the whole backdrop under the layer (every surface below this
     // one, composited), through the shape, under the content.
-    if let Some(sh) = &shape
-        && backdrop::has_effects(n)
+    if backdrop::has_effects(n)
+        && let Some(sh) = &backdrop::outline(ctx.doc, n)
     {
         let pad = backdrop::pad(n, ctx.scale);
         let p = i32::try_from(pad).unwrap_or(0);
@@ -443,6 +446,18 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
         // Backdrops further down see this layer composited onto `pix`.
         let under = Under { opacity: op, blend: n.blend, ..Under::new(pix, (lx, ly), ctx.under) };
         draw_content(&Ctx { under: Some(&under), ..*ctx }, &mut layer, n, lxf, depth, has_inner.then_some(&inner as &dyn Fn(&mut Pixmap)));
+    }
+    // A group is no outline of its own: its inner shadows are cast from around what its layers
+    // draw together, over them.
+    if matches!(n.kind, NodeKind::Group) && n.effects.iter().any(|e| e.visible && matches!(e.kind, EffectKind::InnerShadow(_))) {
+        let cover = layer.clone();
+        for e in n.effects.iter().filter(|e| e.visible) {
+            if let EffectKind::InnerShadow(s) = &e.kind
+                && let Some(sh) = shadow::inner_shadow_of(&cover, ctx.scale, s)
+            {
+                layer.draw_pixmap(0, 0, sh.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+            }
+        }
     }
     // Layer blur, noise and texture, in list order, over everything else.
     for e in n.effects.iter().filter(|e| e.visible) {

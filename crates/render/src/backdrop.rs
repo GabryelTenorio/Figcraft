@@ -9,7 +9,7 @@
 //! The PDF and SVG exports, which have no pixels to read, render what lies under the layer instead
 //! ([`effects_beneath`]) and draw the same [`effects`] from it.
 
-use figcraft_doc::{Document, EffectKind, Node, NodeId};
+use figcraft_doc::{Document, EffectKind, Node, NodeId, NodeKind};
 use figcraft_geom::{Affine, Rect};
 use tiny_skia::{Mask, Pixmap, PixmapPaint, Transform};
 
@@ -192,9 +192,18 @@ pub fn render_beneath(doc: &Document, roots: &[NodeId], id: NodeId, view: &View)
     Some(pix)
 }
 
+/// The shape a node's backdrop effects show through: its outline; a group is no outline of its
+/// own, so the outlines of the layers in it, together.
+pub fn outline(doc: &Document, n: &Node) -> Option<Outline> {
+    match n.kind {
+        NodeKind::Group => crate::subtree_outline(doc, n, 0).filter(|(p, _)| !p.elements().is_empty()),
+        _ => crate::node_outline(doc, n),
+    }
+}
+
 /// Where node `id`'s shape lies on its page (what its backdrop effects cover).
 pub fn shape_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
-    let shape = crate::node_outline(doc, doc.node(id)?)?;
+    let shape = outline(doc, doc.node(id)?)?;
     Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), figcraft_geom::Shape::bounding_box(&shape.0)))
 }
 
@@ -204,7 +213,7 @@ pub fn shape_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
 /// coordinates), when given.
 pub fn effects_beneath(doc: &Document, roots: &[NodeId], id: NodeId, view: &View, keep: Option<Rect>) -> Option<Pixmap> {
     let n = doc.node(id)?;
-    let shape = crate::node_outline(doc, n)?;
+    let shape = outline(doc, n)?;
     let pad = pad(n, view.scale);
     let p = f64::from(pad) / view.scale.max(1e-9);
     let around = View {

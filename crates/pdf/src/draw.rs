@@ -294,7 +294,11 @@ impl<'a> Exporter<'a> {
     fn content(&mut self, s: &mut Surface, n: &Node, xf: Affine, depth: usize, inner: &[Raster]) {
         let (w, h) = (n.width, n.height);
         match &n.kind {
-            NodeKind::Page { .. } | NodeKind::Group => self.children(s, n, xf, depth),
+            NodeKind::Page { .. } | NodeKind::Group => {
+                self.children(s, n, xf, depth);
+                // A group's inner shadows lie over its layers.
+                self.place_inner(s, inner);
+            }
             NodeKind::Text(_) => crate::text::draw_text(self, s, n, xf, inner),
             _ => {
                 // The page's frame reaches out to the bleed (fills and clip; paints keep their box).
