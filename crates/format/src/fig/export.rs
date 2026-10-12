@@ -101,7 +101,7 @@ enum Axis X=0 Y=1
 enum ImageType PNG=0 JPEG=1 SVG=2 PDF=3
 enum ExportConstraintType CONTENT_SCALE=0 CONTENT_WIDTH=1 CONTENT_HEIGHT=2
 enum ComponentPropType BOOL=0 TEXT=1 INSTANCE_SWAP=3 VARIANT=4
-enum VariableField MISSING=0 PARAGRAPH_SPACING=2 PARAGRAPH_INDENT=3 STROKE_WEIGHT=4 STACK_SPACING=5 STACK_PADDING_LEFT=6 STACK_PADDING_TOP=7 STACK_PADDING_RIGHT=8 STACK_PADDING_BOTTOM=9 VISIBLE=10 TEXT_DATA=11 WIDTH=12 HEIGHT=13 RECTANGLE_TOP_LEFT_CORNER_RADIUS=14 RECTANGLE_TOP_RIGHT_CORNER_RADIUS=15 RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS=16 RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS=17 BORDER_TOP_WEIGHT=18 BORDER_BOTTOM_WEIGHT=19 BORDER_LEFT_WEIGHT=20 BORDER_RIGHT_WEIGHT=21 STACK_COUNTER_SPACING=23 MIN_WIDTH=24 MAX_WIDTH=25 MIN_HEIGHT=26 MAX_HEIGHT=27 FONT_FAMILY=28 FONT_STYLE=29 OPACITY=31 FONT_SIZE=32 LETTER_SPACING=34 LINE_HEIGHT=36 OVERRIDDEN_SYMBOL_ID=37
+enum VariableField MISSING=0 CORNER_RADIUS=1 PARAGRAPH_SPACING=2 PARAGRAPH_INDENT=3 STROKE_WEIGHT=4 STACK_SPACING=5 STACK_PADDING_LEFT=6 STACK_PADDING_TOP=7 STACK_PADDING_RIGHT=8 STACK_PADDING_BOTTOM=9 VISIBLE=10 TEXT_DATA=11 WIDTH=12 HEIGHT=13 RECTANGLE_TOP_LEFT_CORNER_RADIUS=14 RECTANGLE_TOP_RIGHT_CORNER_RADIUS=15 RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS=16 RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS=17 BORDER_TOP_WEIGHT=18 BORDER_BOTTOM_WEIGHT=19 BORDER_LEFT_WEIGHT=20 BORDER_RIGHT_WEIGHT=21 STACK_COUNTER_SPACING=23 MIN_WIDTH=24 MAX_WIDTH=25 MIN_HEIGHT=26 MAX_HEIGHT=27 FONT_FAMILY=28 FONT_STYLE=29 OPACITY=31 FONT_SIZE=32 LETTER_SPACING=34 LINE_HEIGHT=36 OVERRIDDEN_SYMBOL_ID=37
 enum VariableDataType BOOLEAN=0 FLOAT=1 STRING=2 ALIAS=3 COLOR=4 PROP_REF=13
 enum VariableScope ALL_SCOPES=0 TEXT_CONTENT=1 CORNER_RADIUS=2 WIDTH_HEIGHT=3 GAP=4 ALL_FILLS=5 FRAME_FILL=6 SHAPE_FILL=7 TEXT_FILL=8 STROKE=9 STROKE_FLOAT=10 EFFECT_FLOAT=11 EFFECT_COLOR=12 OPACITY=13 FONT_STYLE=14 FONT_FAMILY=15 FONT_SIZE=16 LINE_HEIGHT=17 LETTER_SPACING=18 PARAGRAPH_SPACING=19 PARAGRAPH_INDENT=20
 enum StyleType NONE=0 FILL=1 STROKE=2 TEXT=3 EFFECT=4 EXPORT=5 GRID=6
@@ -124,6 +124,7 @@ struct ColorStop Color color, float position
 struct ParentIndex GUID guid, string position
 message Image byte[] hash=1, string name=2
 message VariableWidthPoint float position=1, float ascent=2, float descent=3
+message PluginData string pluginID=1, string value=2, string key=3
 message StyleId GUID guid=1
 message VariableID GUID guid=1
 message VariableSetID GUID guid=1
@@ -150,7 +151,7 @@ message ComponentPropAssignment GUID defID=1, ComponentPropValue value=2
 message PropRefValue GUID defId=1
 message VariableAnyValue bool boolValue=1, string textValue=2, float floatValue=3, VariableID alias=4, Color colorValue=5, PropRefValue propRefValue=13
 message VariableData VariableAnyValue value=1, VariableDataType dataType=2, VariableResolvedDataType resolvedDataType=3
-message VariableDataMapEntry VariableData variableData=2, VariableField variableField=3
+message VariableDataMapEntry uint nodeField=1, VariableData variableData=2, VariableField variableField=3
 message VariableDataMap VariableDataMapEntry[] entries=1
 message VariableModeBySetMapEntry VariableSetID variableSetID=1, GUID variableModeID=2
 message VariableModeBySetMap VariableModeBySetMapEntry[] entries=1
@@ -165,7 +166,7 @@ message PrototypeStartingPoint string name=1, string position=3
 message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
 message GUIDPositionMapEntry GUID id=1, string position=2
 message GUIDPositionMap GUIDPositionMapEntry[] entries=1
-message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, string description=318, StyleType styleType=163, string sortPosition=320, StyleId styleIdForFill=332, StyleId styleIdForStrokeFill=333, StyleId styleIdForText=334, StyleId styleIdForEffect=335, StyleId styleIdForGrid=336, VariableDataMap variableConsumptionMap=307, VariableModeBySetMap variableModeBySetMap=316, VariableSetMode[] variableSetModes=312, VariableSetID variableSetID=313, VariableResolvedDataType variableResolvedType=314, VariableDataValues variableDataValues=315, VariableScope[] variableScopes=353, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, VariableWidthPoint[] variableWidthPoints=447, SymbolData symbolData=113, NodeChange[] derivedSymbolData=125, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
+message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, string description=318, StyleType styleType=163, string sortPosition=320, StyleId styleIdForFill=332, StyleId styleIdForStrokeFill=333, StyleId styleIdForText=334, StyleId styleIdForEffect=335, StyleId styleIdForGrid=336, VariableDataMap variableConsumptionMap=307, VariableModeBySetMap variableModeBySetMap=316, VariableSetMode[] variableSetModes=312, VariableSetID variableSetID=313, VariableResolvedDataType variableResolvedType=314, VariableDataValues variableDataValues=315, VariableScope[] variableScopes=353, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, VariableWidthPoint[] variableWidthPoints=447, PluginData[] pluginData=204, SymbolData symbolData=113, NodeChange[] derivedSymbolData=125, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
 struct Blob byte[] bytes
 message Message MessageType type=1, uint sessionID=2, NodeChange[] nodeChanges=4, Blob[] blobs=6
 ";
@@ -782,6 +783,7 @@ impl<'d> Exporter<'d> {
                 (_, "paddingVertical") => &["STACK_PADDING_TOP", "STACK_PADDING_BOTTOM"],
                 (_, "padding") => &["STACK_PADDING_LEFT", "STACK_PADDING_TOP", "STACK_PADDING_RIGHT", "STACK_PADDING_BOTTOM"],
                 (_, "cornerRadius") => &[
+                    "CORNER_RADIUS",
                     "RECTANGLE_TOP_LEFT_CORNER_RADIUS",
                     "RECTANGLE_TOP_RIGHT_CORNER_RADIUS",
                     "RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS",
@@ -815,9 +817,12 @@ impl<'d> Exporter<'d> {
                     continue;
                 }
             };
+            // Each entry names the bound property and the number of the layer field that holds it.
             for field in fields {
                 if let Some(a) = self.alias(var) {
-                    out.entries.push(o(vec![("variableData", a), ("variableField", e(field))]));
+                    let mut entry: Fields = node_field(field).into_iter().map(|id| ("nodeField", u(id))).collect();
+                    entry.extend([("variableData", a), ("variableField", e(field))]);
+                    out.entries.push(o(entry));
                 }
             }
         }
@@ -865,6 +870,15 @@ impl<'d> Exporter<'d> {
     /// layers (an instance's come from its main).
     fn layer(&mut self, n: &Node, parent: Option<&Node>, f: &mut Fields, nested: bool) -> bool {
         let doc = self.doc;
+        if let Some((outline, original)) = outlined(n) {
+            // The format's variable width is the same on both sides of the path: a stroke wider on
+            // one side is written as the area it paints, with the stroke itself kept as plugin data
+            // (which the import puts back).
+            self.warn("strokes wider on one side of their path were written as filled outlines (the stroke itself is kept for FigCraft)");
+            let children = self.layer(&outline, parent, f, nested);
+            f.push(("pluginData", arr(vec![o(vec![("pluginID", s(STASH.0)), ("value", s(&original)), ("key", s(STASH.1))])])));
+            return children;
+        }
         let main = match &n.kind {
             NodeKind::Instance { component, .. } => {
                 let found = self.ids.contains_key(component) && doc.node(*component).is_some_and(|c| matches!(c.kind, NodeKind::Component { .. }));
@@ -1232,14 +1246,16 @@ impl<'d> Exporter<'d> {
                 ("borderLeftWeight", fl(l)),
             ]);
         }
-        // A variable width: how far the stroke reaches on each side of the path (left first, looking
-        // along it) at positions along its length, as a share of the stroke weight.
+        // A variable width: how far the stroke reaches on each side of the path at positions along
+        // its length, as a share of the stroke weight (half of it each for the full weight). The
+        // two sides are the same: a reader draws nothing for a point with unequal sides.
         if let Some(p) = sp.profile().filter(|_| sp.weight.is_finite() && sp.weight > 0.0) {
-            let point = |q: &figcraft_doc::WidthPoint| {
-                let half = q.scale / 2.0;
-                o(vec![("position", fl(q.t)), ("ascent", fl(half * (1.0 - q.bias))), ("descent", fl(half * (1.0 + q.bias)))])
-            };
-            f.push(("variableWidthPoints", arr(p.sanitized().points.iter().map(point).collect())));
+            let point = |q: &figcraft_doc::WidthPoint| o(vec![("position", fl(q.t)), ("ascent", fl(q.scale / 2.0)), ("descent", fl(q.scale / 2.0))]);
+            let p = p.sanitized();
+            if one_sided(&p) {
+                self.warn("strokes wider on one side of their path were written with that width on both sides");
+            }
+            f.push(("variableWidthPoints", arr(p.points.iter().map(point).collect())));
         }
         if sp.brush.is_some() {
             self.warn("brush strokes were written as plain strokes");
@@ -2122,6 +2138,100 @@ impl<'d> Exporter<'d> {
             f.push(("easingFunction", arr(vec![fl(x1), fl(y1), fl(x2), fl(y2)])));
         }
     }
+}
+
+/// The plugin id and key under which a layer written as an outline keeps what it was.
+pub(super) const STASH: (&str, &str) = ("figcraft", "stroke");
+/// Longest kept description of such a layer (bytes of JSON).
+const MAX_STASH: usize = 1 << 20;
+
+/// Whether a width profile reaches further on one side of the path than on the other.
+fn one_sided(p: &figcraft_doc::WidthProfile) -> bool {
+    p.points.iter().any(|q| q.bias.abs() > 1e-6)
+}
+
+/// A shape whose stroke is wider on one side of its path, as the area that stroke paints (a vector
+/// filled with the stroke's paints), with what it was as JSON: its kind, paints and stroke. Only
+/// for shapes that show nothing but that stroke; `None` for every other layer.
+fn outlined(n: &Node) -> Option<(Node, String)> {
+    let sp = &n.stroke;
+    let shape = matches!(
+        n.kind,
+        NodeKind::Line | NodeKind::Vector { .. } | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Rectangle
+    );
+    let shown = |paints: &[Paint]| paints.iter().any(|p| p.visible);
+    if !shape
+        || sp.brush.is_some()
+        || !sp.profile().is_some_and(one_sided)
+        || !(sp.weight.is_finite() && sp.weight > 0.0)
+        || !shown(&n.strokes)
+        || shown(&n.fills)
+    {
+        return None;
+    }
+    let path = figcraft_doc::geometry::stroke_geometry(n)?;
+    let net = match &n.kind {
+        NodeKind::Vector { network } => Some(network),
+        _ => None,
+    };
+    let area = figcraft_pathops::stroke_outline_of(&path, sp, figcraft_doc::geometry::is_closed(n), net);
+    if area.elements().is_empty() || area.elements().len() > MAX_NETWORK / 4 {
+        return None;
+    }
+    let original = serde_json::json!({"kind": n.kind, "fills": n.fills, "strokes": n.strokes, "stroke": n.stroke}).to_string();
+    if original.len() > MAX_STASH {
+        return None;
+    }
+    let mut network = VectorNetwork::from_path(&area);
+    for r in &mut network.regions {
+        r.winding = WindingRule::NonZero;
+    }
+    let mut v = n.clone();
+    v.kind = NodeKind::Vector { network };
+    v.fills = std::mem::take(&mut v.strokes);
+    v.stroke = Default::default();
+    v.styles.fill = v.styles.stroke.take();
+    // Bindings name the stroke's paints, which are the fills now: the values stay.
+    v.bound.retain(|k, _| !(k == "stroke" || k == "fill" || k.starts_with("strokes/") || k.starts_with("fills/") || k.starts_with("stroke")));
+    Some((v, original))
+}
+
+/// The number of the layer field a bound property (`VariableField`) is held in.
+fn node_field(field: &str) -> Option<u32> {
+    let name = match field {
+        "WIDTH" | "HEIGHT" => "size",
+        "MIN_WIDTH" | "MIN_HEIGHT" => "minSize",
+        "MAX_WIDTH" | "MAX_HEIGHT" => "maxSize",
+        "STACK_SPACING" => "stackSpacing",
+        "STACK_COUNTER_SPACING" => "stackCounterSpacing",
+        "STACK_PADDING_LEFT" => "stackHorizontalPadding",
+        "STACK_PADDING_TOP" => "stackVerticalPadding",
+        "STACK_PADDING_RIGHT" => "stackPaddingRight",
+        "STACK_PADDING_BOTTOM" => "stackPaddingBottom",
+        "CORNER_RADIUS" => "cornerRadius",
+        "RECTANGLE_TOP_LEFT_CORNER_RADIUS" => "rectangleTopLeftCornerRadius",
+        "RECTANGLE_TOP_RIGHT_CORNER_RADIUS" => "rectangleTopRightCornerRadius",
+        "RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS" => "rectangleBottomLeftCornerRadius",
+        "RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS" => "rectangleBottomRightCornerRadius",
+        "OPACITY" => "opacity",
+        "VISIBLE" => "visible",
+        "TEXT_DATA" => "textData",
+        "STROKE_WEIGHT" => "strokeWeight",
+        "BORDER_TOP_WEIGHT" => "borderTopWeight",
+        "BORDER_RIGHT_WEIGHT" => "borderRightWeight",
+        "BORDER_BOTTOM_WEIGHT" => "borderBottomWeight",
+        "BORDER_LEFT_WEIGHT" => "borderLeftWeight",
+        "FONT_SIZE" => "fontSize",
+        "FONT_FAMILY" | "FONT_STYLE" => "fontName",
+        "LETTER_SPACING" => "letterSpacing",
+        "LINE_HEIGHT" => "lineHeight",
+        "PARAGRAPH_SPACING" => "paragraphSpacing",
+        "PARAGRAPH_INDENT" => "paragraphIndent",
+        _ => return None,
+    };
+    // The numbers are the schema's.
+    let layer = SCHEMA.lines().find(|l| l.starts_with("message NodeChange "))?;
+    layer.split(", ").find_map(|f| f.rsplit_once(' ')?.1.strip_prefix(name)?.strip_prefix('=')?.parse().ok())
 }
 
 /// Whether `a` is `b` with its lengths scaled by `k`: every number is `k` times the other's (within

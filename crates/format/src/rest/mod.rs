@@ -190,6 +190,38 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
     Ok((cx.doc, warnings))
 }
 
+/// Put back the shape a layer was before the `.fig` export wrote it as the outline of its stroke
+/// (`outlinedStroke`: `{kind, fills, strokes, stroke}` as the document holds them). Anything that
+/// isn't such a shape is ignored.
+fn restore_stroke(n: &mut Node, original: &Value) {
+    #[derive(serde::Deserialize)]
+    struct Original {
+        kind: NodeKind,
+        fills: Vec<figcraft_doc::color::Paint>,
+        strokes: Vec<figcraft_doc::color::Paint>,
+        stroke: figcraft_doc::StrokeProps,
+    }
+    let Ok(mut o) = serde_json::from_value::<Original>(original.clone()) else { return };
+    match &mut o.kind {
+        NodeKind::Vector { network } => {
+            if network.vertices.len() + network.segments.len() > MAX_PATH_ELEMENTS {
+                return;
+            }
+            network.sanitize();
+        }
+        NodeKind::Line | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. } | NodeKind::Rectangle => {}
+        _ => return,
+    }
+    let sp = &mut o.stroke;
+    sp.weight = sp.weight.clamp(0.0, props::MAX_SIZE);
+    sp.width_profile = sp.width_profile.take().map(|p| p.sanitized());
+    sp.brush = sp.brush.take().map(|b| b.sanitized());
+    sp.dashes.truncate(64);
+    o.fills.truncate(64);
+    o.strokes.truncate(64);
+    (n.kind, n.fills, n.strokes, n.stroke) = (o.kind, o.fills, o.strokes, o.stroke);
+}
+
 fn children(v: &Value) -> &[Value] {
     v.get("children").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default()
 }
@@ -532,6 +564,9 @@ impl<'a> Ctx<'a> {
             self.overlay_meta.entry(rid).or_insert(j);
         }
         self.bindings(n, j);
+        if let Some(original) = j.get("outlinedStroke") {
+            restore_stroke(n, original);
+        }
     }
 
     /// A vector's network: the editable one when the JSON carries it (`vectorNetwork`, our

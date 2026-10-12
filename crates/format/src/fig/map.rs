@@ -1243,6 +1243,13 @@ fn stroke(o: &mut Obj, v: &View) {
     if let Some(cap) = v.str("strokeCap") {
         o.insert("strokeCap".into(), json!(cap_name(cap)));
     }
+    // A layer written as the outline of its stroke keeps what it was as plugin data
+    // (`outlinedStroke`, our extension of the file JSON).
+    let (id, key) = super::export::STASH;
+    let kept = v.list("pluginData").iter().find(|p| p.get("pluginID").and_then(Kv::str) == Some(id) && p.get("key").and_then(Kv::str) == Some(key));
+    if let Some(original) = kept.and_then(|p| p.get("value")).and_then(Kv::str).and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+        o.insert("outlinedStroke".into(), original);
+    }
     // A variable width: each point's reach on the two sides of the path (shares of the stroke
     // weight), as `[t, scale, bias]` (`strokeWidthProfile`, our extension of the file JSON).
     let profile: Vec<Value> = v

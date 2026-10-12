@@ -645,34 +645,132 @@ fn layers_of_a_swapped_nested_instance_keep_what_they_change() {
     let _ = insts;
 }
 
-#[test]
-fn variable_width_strokes_say_their_reach_on_each_side() {
+/// A line with a stroke of weight 8 and `profile` (`[t, scale, bias]` points).
+fn tapered(profile: &[(f64, f64, f64)]) -> Document {
     let mut doc = Document::new("Widths");
     let page = doc.first_page().unwrap();
-    add(&mut doc, page, NodeKind::Line, "Tapered", (0.0, 0.0), (100.0, 0.0), &|n| {
+    add(&mut doc, page, NodeKind::Line, "Tapered", (20.0, 20.0), (100.0, 0.0), &|n| {
         n.fills.clear();
         n.strokes = vec![solid(0.0, 0.0, 0.0)];
         n.stroke.weight = 8.0;
         n.stroke.align = StrokeAlign::Center;
-        let mut profile = WidthProfile::new([(0.0, 0.25), (0.5, 1.5), (1.0, 0.0)]);
-        profile.points[1].bias = 0.5;
-        n.stroke.width_profile = Some(profile);
+        let mut p = WidthProfile::new(profile.iter().map(|q| (q.0, q.1)));
+        for (point, q) in p.points.iter_mut().zip(profile) {
+            point.bias = q.2;
+        }
+        n.stroke.width_profile = Some(p);
     });
+    doc
+}
+
+#[test]
+fn variable_width_strokes_say_their_reach_as_a_share_of_the_weight() {
+    let mut doc = tapered(&[(0.0, 0.25, 0.0), (0.5, 1.0, 0.0), (1.0, 0.0, 0.0)]);
     let nodes = written(&doc);
     let line = named(&nodes, "Tapered");
     let points = line["variableWidthPoints"].as_array().unwrap();
     assert_eq!(points.len(), 3);
     assert_eq!(points[0], json!({"position": 0.0, "ascent": 0.125, "descent": 0.125}));
-    // Wider on the right: one and a half times the weight, a quarter of it on the left.
-    assert_eq!(points[1], json!({"position": 0.5, "ascent": 0.375, "descent": 1.125}));
+    // The full weight is half of it on each side.
+    assert_eq!(points[1], json!({"position": 0.5, "ascent": 0.5, "descent": 0.5}));
     // The outline is left to the reader: it follows from the points.
-    assert!(line.get("strokeGeometry").is_none());
+    assert!(line.get("strokeGeometry").is_none() && line.get("pluginData").is_none());
     let warnings = same_after_round_trip(&doc, "widths");
     assert!(warnings.is_empty(), "{warnings:?}");
-    // A stroke without a weight has no reach to say; brushes are still written plain.
+    // A stroke without a weight has no reach to say.
     let line = doc.nodes().find(|n| n.name == "Tapered").unwrap().id;
     doc.node_mut(line).unwrap().stroke.weight = 0.0;
     assert!(named(&written(&doc), "Tapered").get("variableWidthPoints").is_none());
+}
+
+#[test]
+fn strokes_wider_on_one_side_are_written_as_their_outline_and_come_back_as_strokes() {
+    let doc = tapered(&[(0.0, 0.0, 1.0), (0.5, 1.0, 1.0), (1.0, 0.0, 1.0)]);
+    let nodes = written(&doc);
+    let line = named(&nodes, "Tapered");
+    // A vector filled with the stroke's paint, in the line's place; no stroke left to draw.
+    assert_eq!(line["type"], "VECTOR");
+    assert!(line.get("variableWidthPoints").is_none());
+    assert_eq!((line["fillPaints"].as_array().unwrap().len(), line["strokePaints"].as_array().unwrap().len()), (1, 0));
+    assert!(line["fillGeometry"].is_array() && line["vectorData"].is_object());
+    assert_eq!(line["transform"]["m02"], 20.0);
+    let kept = &line["pluginData"][0];
+    assert_eq!((kept["pluginID"].as_str(), kept["key"].as_str()), (Some("figcraft"), Some("stroke")));
+    assert!(kept["value"].as_str().unwrap().contains("width_profile"));
+    // Our own import gets the line and its stroke back.
+    let (bytes, warnings) = export(&doc, None).unwrap();
+    assert!(warnings.iter().any(|w| w.contains("filled outlines")), "{warnings:?}");
+    let (back, _) = import(&bytes, "x").unwrap();
+    let (a, b) = (doc.nodes().find(|n| n.name == "Tapered").unwrap(), back.nodes().find(|n| n.name == "Tapered").unwrap());
+    assert_eq!((&b.kind, &b.stroke, &b.strokes, &b.fills), (&a.kind, &a.stroke, &a.strokes, &a.fills));
+    assert_eq!((b.width, b.height, b.transform), (a.width, a.height, a.transform));
+    // A filled shape keeps its stroke, with the width on both sides and a warning.
+    let mut filled = doc.clone();
+    let id = a.id;
+    let n = filled.node_mut(id).unwrap();
+    n.kind = NodeKind::Rectangle;
+    (n.height, n.fills) = (40.0, vec![solid(1.0, 0.0, 0.0)]);
+    let (_, warnings) = export(&filled, None).unwrap();
+    assert!(warnings.iter().any(|w| w.contains("on both sides")), "{warnings:?}");
+    let shape = written(&filled);
+    let shape = named(&shape, "Tapered");
+    assert_eq!(shape["type"], "ROUNDED_RECTANGLE");
+    assert_eq!(shape["variableWidthPoints"][1], json!({"position": 0.5, "ascent": 0.5, "descent": 0.5}));
+}
+
+#[test]
+fn junk_kept_strokes_are_ignored_or_made_safe() {
+    let node = |kept: Value| {
+        json!({"name": "x", "document": {"id": "0:0", "type": "DOCUMENT", "children": [{"id": "0:1", "type": "CANVAS", "name": "P", "children": [
+            {"id": "1:2", "type": "VECTOR", "name": "V", "size": {"x": 10, "y": 10}, "fills": [], "outlinedStroke": kept}]}]}})
+    };
+    let stroke = json!({"weight": 1e300, "dashes": vec![1.0; 500], "width_profile": {"points": [{"t": 9.0, "scale": -4.0, "bias": 77.0}]}});
+    for kept in [
+        json!(null),
+        json!("stroke"),
+        json!({"kind": {"type": "page"}, "fills": [], "strokes": [], "stroke": {}}),
+        json!({"kind": {"type": "instance", "component": 5}, "fills": [], "strokes": [], "stroke": {}}),
+        json!({"kind": {"type": "line"}, "fills": 5, "strokes": [], "stroke": {}}),
+        json!({"kind": {"type": "line"}, "fills": [], "strokes": [], "stroke": stroke}),
+        json!({"kind": {"type": "vector", "network": {"vertices": [{"x": 0.0, "y": 0.0}], "segments": [{"a": 0, "b": 99, "ta": [0.0, 0.0], "tb": [0.0, 0.0]}], "regions": [{"loops": [[7]], "winding": "nonZero"}]}},
+               "fills": [], "strokes": [], "stroke": {}}),
+    ] {
+        let (doc, _) = crate::rest::import(&node(kept), &|_| None).unwrap();
+        let v = doc.nodes().find(|n| n.name == "V").unwrap();
+        assert!(matches!(v.kind, NodeKind::Vector { .. } | NodeKind::Line));
+        assert!(v.stroke.weight <= 1e6 && v.stroke.dashes.len() <= 64);
+        if let NodeKind::Vector { network } = &v.kind {
+            assert!(network.segments.iter().all(|s| s.a < network.vertices.len() && s.b < network.vertices.len()));
+        }
+        export(&doc, None).unwrap();
+    }
+}
+
+#[test]
+fn bound_layer_fields_name_their_property_and_the_field_that_holds_it() {
+    let nodes = written(&themed());
+    let entries = |name: &str| -> BTreeMap<String, u64> {
+        let list = named(&nodes, name)["variableConsumptionMap"]["entries"].as_array().unwrap();
+        list.iter().map(|e| (e["variableField"].as_str().unwrap().to_string(), e["nodeField"].as_u64().unwrap())).collect()
+    };
+    let card = entries("Card");
+    // The numbers are those of the layer's own fields in the schema.
+    for (field, id) in [
+        ("STACK_SPACING", 107),
+        ("STACK_PADDING_LEFT", 209),
+        ("STACK_PADDING_RIGHT", 233),
+        ("CORNER_RADIUS", 20),
+        ("WIDTH", 11),
+        ("OPACITY", 8),
+        ("BORDER_TOP_WEIGHT", 295),
+    ] {
+        assert_eq!(card.get(field), Some(&id), "{field}");
+    }
+    let title = entries("Title");
+    for (field, id) in [("TEXT_DATA", 42), ("FONT_SIZE", 21), ("FONT_FAMILY", 41), ("LINE_HEIGHT", 40)] {
+        assert_eq!(title.get(field), Some(&id), "{field}");
+    }
+    assert_eq!(entries("Swatch").get("VISIBLE"), Some(&6));
 }
 
 #[test]
