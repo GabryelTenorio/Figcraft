@@ -46,7 +46,8 @@ code.
   `assets/`, `docs/brand/` or `docs/images/`.
 - FigCraft's UI icons are drawn in code (`crates/ui-egui/src/icons.rs`) from simple primitives and
   are original. Keep it that way: new icons are new code, designed from scratch.
-- The app icon is generated in code (`cargo xtask icon`, `xtask/src/icon.rs`).
+- The app icon is the owner's chameleon drawing, vectorised (`assets/app-icon/README.md`); `cargo xtask icon`
+  renders the PNGs and `.ico` from `assets/app-icon/figcraft.svg`.
 - **Fonts live in [storytold/craft-fonts](https://github.com/storytold/craft-fonts), never in this
   repo.** The app uses it only through the optional `CRAFT_FONTS_DIR` build input
   (`.cargo/config.toml` points it at `../craft-fonts` for local builds; `crates/text/build.rs`

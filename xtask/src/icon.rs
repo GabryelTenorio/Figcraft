@@ -1,102 +1,64 @@
-//! The app icon, generated from code with FigCraft's own renderer (original artwork,
-//! MIT OR Apache-2.0): a rounded tile in the app colour with a paper "frame" mark — three stacked
-//! layer cards and a cursor. Writes assets/app-icon/*.png, the hicolor theme and figcraft.ico.
+//! The app icon: rasterises the master `assets/app-icon/figcraft.svg` (the chameleon, see
+//! `assets/app-icon/README.md`) with the `resvg` CLI (`cargo install resvg`). Writes
+//! figcraft-<size>.png (macOS grid), the hicolor theme and figcraft.ico. The outputs are
+//! committed, so building and packaging never need `resvg`.
 
-use figcraft_color::{Color, Paint};
-use figcraft_doc::{Document, NodeKind};
+use std::path::Path;
+use std::process::Command;
 
-pub const APP_COLOR: &str = "0EA5C6";
-const INK: &str = "0B0B0C";
-const PAPER: &str = "EFE9DC";
+const VIEW_BOX: &str = r#"viewBox="0 0 512 512""#;
+/// macOS: the 512-unit tile padded onto Apple's 824/1024 icon grid (transparent margin).
+const MAC_VIEW_BOX: &str = r#"viewBox="-62 -62 636 636""#;
+/// Windows and Linux: 22 units cropped off each side so the portrait reads at 16-48 px.
+const TIGHT_VIEW_BOX: &str = r#"viewBox="22 22 468 468""#;
 
-fn build() -> Option<Document> {
-    let mut d = Document::new("icon");
-    let p = d.first_page()?;
-    let bg = d.create(p, NodeKind::Rectangle, "tile", 0.0, 0.0, 512.0, 512.0).ok()?;
-    let n = d.get_mut(bg).ok()?;
-    n.corners.radii = [112.0; 4];
-    n.corners.smoothing = 0.6;
-    n.fills = vec![Paint::solid(Color::from_hex(APP_COLOR)?)];
-    // Three stacked cards (layers), back to front.
-    for (i, (x, y, w, h)) in [(150.0, 96.0, 250.0, 200.0), (122.0, 150.0, 250.0, 200.0), (94.0, 204.0, 250.0, 200.0)].iter().enumerate() {
-        let c = d.create(p, NodeKind::Rectangle, "card", *x, *y, *w, *h).ok()?;
-        let n = d.get_mut(c).ok()?;
-        n.corners.radii = [28.0; 4];
-        n.corners.smoothing = 0.6;
-        n.fills = vec![Paint::solid(Color::from_hex(PAPER)?)];
-        n.strokes = vec![Paint::solid(Color::from_hex(INK)?)];
-        n.stroke.weight = 14.0;
-        n.stroke.align = figcraft_doc::StrokeAlign::Inside;
-        if i == 2 {
-            // Front card: a frame grid "#".
-            for (gx, gy, gw, gh) in
-                [(150.0, 228.0, 14.0, 152.0), (250.0, 228.0, 14.0, 152.0), (118.0, 260.0, 178.0, 14.0), (118.0, 330.0, 178.0, 14.0)]
-            {
-                let g = d.create(p, NodeKind::Rectangle, "grid", gx, gy, gw, gh).ok()?;
-                let gn = d.get_mut(g).ok()?;
-                gn.fills = vec![Paint::solid(Color::from_hex(INK)?)];
-                gn.corners.radii = [7.0; 4];
-            }
-        }
+fn render(svg: &Path, size: u32, out: &Path) -> bool {
+    let s = size.to_string();
+    let ok = Command::new("resvg").args(["-w", &s, "-h", &s]).arg(svg).arg(out).status().is_ok_and(|st| st.success());
+    if !ok {
+        eprintln!("icon: resvg failed for {} (is it installed? `cargo install resvg`)", out.display());
     }
-    // Cursor.
-    let cur = figcraft_doc::VectorNetwork::from_points(
-        &[
-            (0.0, 0.0).into(),
-            (0.0, 120.0).into(),
-            (32.0, 92.0).into(),
-            (52.0, 136.0).into(),
-            (72.0, 128.0).into(),
-            (52.0, 84.0).into(),
-            (92.0, 82.0).into(),
-        ],
-        true,
-    );
-    let c = d.create(p, NodeKind::Vector { network: cur }, "cursor", 318.0, 300.0, 92.0, 136.0).ok()?;
-    let n = d.get_mut(c).ok()?;
-    n.fills = vec![Paint::solid(Color::from_hex(INK)?)];
-    n.strokes = vec![Paint::solid(Color::from_hex(PAPER)?)];
-    n.stroke.weight = 10.0;
-    n.stroke.align = figcraft_doc::StrokeAlign::Outside;
-    n.stroke.join = figcraft_doc::StrokeJoin::Round;
-    Some(d)
+    ok
 }
 
-pub fn generate(root: &std::path::Path) -> bool {
-    let Some(doc) = build() else { return false };
-    let Some(page) = doc.first_page() else { return false };
+pub fn generate(root: &Path) -> bool {
     let dir = root.join("assets/app-icon");
-    let _ = std::fs::create_dir_all(dir.join("hicolor"));
-    let render = |size: u32| -> Option<image::RgbaImage> {
-        let view = figcraft_render::View { origin: (0.0, 0.0), scale: f64::from(size) / 512.0, width: size, height: size };
-        let opts = figcraft_render::Options { background: Some(Color::TRANSPARENT), ..Default::default() };
-        let pix = figcraft_render::render_view(&doc, page, &view, &opts)?;
-        image::RgbaImage::from_raw(size, size, figcraft_render::to_rgba8(&pix))
+    let Ok(master) = std::fs::read_to_string(dir.join("figcraft.svg")) else {
+        eprintln!("icon: cannot read {}", dir.join("figcraft.svg").display());
+        return false;
     };
-    let mut ok = true;
+    if !master.contains(VIEW_BOX) {
+        eprintln!("icon: expected {VIEW_BOX} in figcraft.svg");
+        return false;
+    }
+    let tmp = root.join("target/icon");
+    let (mac, tight) = (tmp.join("mac.svg"), tmp.join("tight.svg"));
+    let mut ok = std::fs::create_dir_all(&tmp).is_ok()
+        && std::fs::write(&mac, master.replacen(VIEW_BOX, MAC_VIEW_BOX, 1)).is_ok()
+        && std::fs::write(&tight, master.replacen(VIEW_BOX, TIGHT_VIEW_BOX, 1)).is_ok();
+    if !ok {
+        eprintln!("icon: cannot write {}", tmp.display());
+        return false;
+    }
     for size in [16u32, 32, 48, 64, 128, 256, 512, 1024] {
-        let Some(img) = render(size) else { return false };
-        let name = if size == 1024 { "figcraft-1024.png".to_string() } else { format!("figcraft-{size}.png") };
-        ok &= img.save(dir.join(&name)).is_ok();
+        ok &= render(&mac, size, &dir.join(format!("figcraft-{size}.png")));
         if size <= 512 {
             let hd = dir.join(format!("hicolor/{size}x{size}/apps"));
             let _ = std::fs::create_dir_all(&hd);
-            ok &= img.save(hd.join("ai.storyteller.figcraft.png")).is_ok();
+            ok &= render(&tight, size, &hd.join("ai.storyteller.figcraft.png"));
         }
     }
     // Windows .ico (PNG-compressed entries).
-    let mut ico = Vec::new();
-    let sizes = [16u32, 32, 48, 256];
+    let sizes = [16u32, 20, 24, 32, 40, 48, 64, 128, 256];
     let pngs: Vec<Vec<u8>> = sizes
         .iter()
         .filter_map(|s| {
-            let img = render(*s)?;
-            let mut out = Vec::new();
-            img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
-            Some(out)
+            let png = tmp.join(format!("ico-{s}.png"));
+            render(&tight, *s, &png).then(|| std::fs::read(png).ok()).flatten()
         })
         .collect();
-    ico.extend_from_slice(&[0, 0, 1, 0, pngs.len() as u8, 0]);
+    ok &= pngs.len() == sizes.len();
+    let mut ico = vec![0, 0, 1, 0, pngs.len() as u8, 0];
     let mut offset = 6 + 16 * pngs.len() as u32;
     for (s, png) in sizes.iter().zip(&pngs) {
         let b = if *s >= 256 { 0 } else { *s as u8 };
@@ -109,17 +71,10 @@ pub fn generate(root: &std::path::Path) -> bool {
         ico.extend_from_slice(png);
     }
     ok &= std::fs::write(dir.join("figcraft.ico"), ico).is_ok();
-    // Scalable SVG (same artwork, written by FigCraft's SVG exporter).
-    let tops: Vec<_> = doc.node(page).map(|p| p.children.clone()).unwrap_or_default();
-    match figcraft_svg::export_svg(&doc, &tops, &Default::default()) {
-        Some(svg) => {
-            let sd = dir.join("hicolor/scalable/apps");
-            let _ = std::fs::create_dir_all(&sd);
-            ok &= std::fs::write(dir.join("figcraft.svg"), &svg).is_ok();
-            ok &= std::fs::write(sd.join("ai.storyteller.figcraft.svg"), &svg).is_ok();
-        }
-        None => ok = false,
-    }
+    // The lighter trace keeps the scalable theme icon cheap to render.
+    let sd = dir.join("hicolor/scalable/apps");
+    let _ = std::fs::create_dir_all(&sd);
+    ok &= std::fs::copy(dir.join("figcraft-small.svg"), sd.join("ai.storyteller.figcraft.svg")).is_ok();
     eprintln!("icon: wrote {}", dir.display());
     ok
 }
