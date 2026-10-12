@@ -109,7 +109,13 @@ fn kind_changes_and_transforms_round_trip() {
 }
 
 fn style(id: &str) -> Style {
-    Style { id: id.into(), name: format!("S {id}"), description: String::new(), kind: StyleKind::Paint { paints: vec![Paint::solid(Color::BLACK)] } }
+    Style {
+        id: id.into(),
+        name: format!("S {id}"),
+        description: String::new(),
+        kind: StyleKind::Paint { paints: vec![Paint::solid(Color::BLACK)] },
+        bound: Default::default(),
+    }
 }
 
 #[test]

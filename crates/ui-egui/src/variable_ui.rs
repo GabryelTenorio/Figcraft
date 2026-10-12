@@ -28,6 +28,8 @@ enum Target {
     Alias { variable: VariableId, mode: ModeId },
     /// Use it in a prototype action (a set variable's variable, a condition's operand).
     Proto(crate::proto_editor::VarSlot),
+    /// Bind it to `field` of the shared style `style`.
+    Style { style: String, field: String },
 }
 
 /// The open variable picker: what it does, the variable type (None: any), where it opens.
@@ -186,6 +188,17 @@ pub fn open(ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType, at: Pos2) 
 /// Open the picker at `at` to pick a variable (of `kind`, or any) for a prototype action.
 pub fn open_proto(ui: &Ui, slot: crate::proto_editor::VarSlot, kind: Option<VariableType>, at: Pos2) {
     ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target: Target::Proto(slot), kind, at }));
+}
+
+/// Open the picker at `at` to bind a variable of `kind` to `field` of the shared style `style`.
+pub fn open_style(ui: &Ui, style: &str, field: &str, kind: VariableType, at: Pos2) {
+    let target = Target::Style { style: style.to_string(), field: field.to_string() };
+    ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target, kind: Some(kind), at }));
+}
+
+/// Where the open picker is on screen (clicks in it don't close what opened it).
+pub fn picker_rect(ctx: &egui::Context) -> Option<Rect> {
+    picker_open(ctx).then(|| ctx.memory(|m| m.area_rect(Id::new("variable_picker_area")))).flatten()
 }
 
 /// Whether the picker is open (Escape closes it before what opened it).
@@ -362,10 +375,10 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     let (scope, own) = match &p.target {
         Target::Bind { ids, field } => (ids.first().and_then(|id| figcraft_engine::cmd::variables::field_scope(&doc, *id, field)), None),
         Target::Alias { variable, .. } => (None, doc.variables.get(variable)),
-        Target::Proto(_) => (None, None),
+        Target::Proto(_) | Target::Style { .. } => (None, None),
     };
-    // Prototypes use this file's variables.
-    let local_only = matches!(p.target, Target::Proto(_));
+    // Prototypes and styles use this file's variables.
+    let local_only = matches!(p.target, Target::Proto(_) | Target::Style { .. });
     let keep = |lib: Option<&PublishedLibrary>, v: &Variable| {
         p.kind.is_none_or(|k| v.kind == k)
             && !(local_only && lib.is_some())
@@ -442,6 +455,9 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
                 app.run("library.aliasVariable", json!({"library": lib, "alias": pick.id, "variable": variable, "mode": mode}));
             }
             (Target::Proto(slot), _) => crate::proto_editor::pick_variable(app, slot, &pick.id),
+            (Target::Style { style, field }, _) => {
+                app.run("style.bind", json!({"style": style, "field": field, "variable": pick.id}));
+            }
         }
         close = true;
     }

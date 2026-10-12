@@ -9,7 +9,7 @@
 //! it. Colour slots also list colour variables to bind (this file's, then each enabled library's).
 
 use egui::{Align2, Color32, CornerRadius, Id, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use figcraft_color::Paint;
+use figcraft_color::{Paint, PaintKind};
 use figcraft_doc::{Document, GridKind, Node, NodeId, PublishedLibrary, Style, StyleKind, TextStyle, VariableType, trim_num};
 use figcraft_engine::library;
 use serde_json::{Value, json};
@@ -269,6 +269,8 @@ enum Act {
     Edit(String),
     Back,
     EditPaint(String, usize),
+    /// Unbind the variable on a field of a style.
+    Unbind(String, String),
     /// A text style's new definition (from the editor's fields).
     SetText(String, TextStyle),
     UpdateFromSelection(String),
@@ -424,6 +426,10 @@ fn style_row(ui: &mut Ui, s: &Style, key: Key, slot: StyleSlot, applied: bool, e
             crate::bidi::paint_name(ui.painter(), pos2(r.min.x + 26.0, r.center().y), leaf(&s.name), regular(11.0), t.menu_text, W - 64.0);
         }
     }
+    // A style with variables bound inside it is marked (its users follow their own modes).
+    if !s.bound.is_empty() {
+        icons::paint(ui.painter(), Rect::from_center_size(pos2(edit_r.min.x - 10.0, r.center().y), vec2(11.0, 11.0)), Icon::Variable, t.menu_dim);
+    }
     if hovered && editable {
         if menu_icon(ui, edit_r, Icon::Adjust, tr("Edit style"), false).clicked() {
             out.act = Some(Act::Edit(s.id.clone()));
@@ -433,6 +439,7 @@ fn style_row(ui: &mut Ui, s: &Style, key: Key, slot: StyleSlot, applied: bool, e
         icons::paint(ui.painter(), edit_r.shrink(5.0), Icon::Check, t.menu_text);
     }
     let tip = match (s.description.is_empty(), text_def(s)) {
+        (true, None) if !s.bound.is_empty() => Some(format!("{}\n{}", s.name, tr("Uses variables: each layer shows them in its own mode"))),
         (true, None) => None,
         (true, Some(def)) => Some(format!("{}\n{} {} · {}", s.name, def.font_family, def.font_style, text_meta(def))),
         (false, _) => Some(s.description.clone()),
@@ -642,6 +649,47 @@ fn property_row(ui: &mut Ui, label: &str, paint: Option<&Paint>, slot: StyleSlot
     paint.is_some() && resp.clicked()
 }
 
+/// The variable on `field` of the style a [`property_row`] just drew: its name at the row's end
+/// (a click unbinds it), or, with the pointer over the row, the button that opens the variable
+/// picker for it. True when the pointer is on it (the row's own click isn't meant then).
+fn binding_cell(ui: &mut Ui, doc: &Document, style: &Style, field: &str, kind: figcraft_doc::VariableType, out: &mut Frame) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let row = ui.min_rect();
+    let row = Rect::from_min_max(pos2(row.min.x, row.max.y - ROW_H), row.max);
+    let Some(name) = style.bound.get(field).map(|v| doc.variables.get(v).map_or(v.as_str(), |x| x.name.as_str())) else {
+        let b = Rect::from_center_size(pos2(row.max.x - 13.0, row.center().y), vec2(20.0, 20.0));
+        if ui.rect_contains_pointer(row) && menu_icon(ui, b, Icon::Variable, tr("Apply variable"), false).clicked() {
+            crate::variable_ui::open_style(ui, &style.id, field, kind, row.left_bottom());
+        }
+        return ui.rect_contains_pointer(b);
+    };
+    let id = Id::new(("style_binding", &style.id, field));
+    let shown = widgets::elide_font(ui, leaf(name), 90.0, regular(10.0));
+    let w = ui.painter().layout_no_wrap(shown.clone(), regular(10.0), t.menu_dim).size().x + 22.0;
+    let chip = Rect::from_min_max(pos2(row.max.x - w - 4.0, row.min.y + 4.0), pos2(row.max.x - 4.0, row.max.y - 4.0));
+    let resp =
+        ui.interact(chip, id, Sense::click()).on_hover_text(crate::i18n::trf("Bound to {name}. Click to detach the variable.", &[("name", &name)]));
+    ui.painter().rect_filled(chip, CornerRadius::same(4), if resp.hovered() { t.menu_hover } else { t.menu });
+    ui.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, t.menu_dim.gamma_multiply(0.4)), egui::StrokeKind::Inside);
+    icons::paint(ui.painter(), Rect::from_center_size(pos2(chip.min.x + 9.0, chip.center().y), vec2(11.0, 11.0)), Icon::Variable, t.menu_dim);
+    ui.painter().text(pos2(chip.min.x + 18.0, chip.center().y), Align2::LEFT_CENTER, shown, regular(10.0), t.menu_text);
+    if resp.clicked() {
+        out.act = Some(Act::Unbind(style.id.clone(), field.to_string()));
+    }
+    resp.hovered()
+}
+
+/// The field of effect `fx` (item `i` of an effect style) a variable binds from its row, and its
+/// type: a shadow's colour, a blur's radius.
+fn effect_binding(fx: &figcraft_doc::Effect, i: usize) -> Option<(String, figcraft_doc::VariableType)> {
+    use figcraft_doc::{EffectKind as K, VariableType as V};
+    match fx.kind {
+        K::DropShadow(_) | K::InnerShadow(_) => Some((format!("effects/{i}/color"), V::Color)),
+        K::LayerBlur(_) | K::BackgroundBlur(_) => Some((format!("effects/{i}/radius"), V::Number)),
+        _ => None,
+    }
+}
+
 /// A layout grid's summary ("Columns 12", "Grid 8").
 fn grid_label(g: &figcraft_doc::LayoutGrid) -> String {
     match g.kind {
@@ -764,19 +812,27 @@ fn editor(ui: &mut Ui, doc: &Document, p: &mut Picker, out: &mut Frame) {
                 // Top of the list paints on top: show in reverse like the Fill section.
                 for (i, paint) in paints.iter().enumerate().rev() {
                     let label = format!("{}  {:.0}%", tr(&paint.label()), paint.opacity * 100.0);
-                    if property_row(ui, &label, Some(paint), slot) {
+                    let clicked = property_row(ui, &label, Some(paint), slot);
+                    // A solid paint's colour takes a variable.
+                    let on_binding = matches!(paint.kind, PaintKind::Solid { .. })
+                        && binding_cell(ui, doc, &style, &format!("fills/{i}/color"), figcraft_doc::VariableType::Color, out);
+                    if clicked && !on_binding {
                         out.act = Some(Act::EditPaint(style.id.clone(), i));
                     }
                 }
             }
             StyleKind::Effect { effects } => {
-                for fx in effects.iter().rev() {
+                for (i, fx) in effects.iter().enumerate().rev() {
                     property_row(ui, tr(fx.label()), None, slot);
+                    if let Some((field, kind)) = effect_binding(fx, i) {
+                        binding_cell(ui, doc, &style, &field, kind, out);
+                    }
                 }
             }
             StyleKind::Grid { grids } => {
-                for g in grids {
+                for (i, g) in grids.iter().enumerate() {
                     property_row(ui, &grid_label(g), None, slot);
+                    binding_cell(ui, doc, &style, &format!("layoutGrids/{i}/size"), figcraft_doc::VariableType::Number, out);
                 }
             }
             StyleKind::Text { style: def } => text_properties(ui, &style.id, def, out),
@@ -851,7 +907,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     // keep it open.
     let picker_rect =
         app.ui.picker.as_ref().filter(|t| matches!(t, PickerTarget::Style { .. })).and(ctx.memory(|m| m.area_rect(Id::new("color_picker"))));
-    let in_popup = egui::Popup::is_any_open(ctx);
+    // So do clicks in the variable picker binding one of its fields (Escape closes that first).
+    let variables = crate::variable_ui::picker_rect(ctx);
+    let in_popup = egui::Popup::is_any_open(ctx) || variables.is_some();
     let outside = ctx.input(|i| {
         i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|pos| !rect.contains(pos) && !picker_rect.is_some_and(|r| r.contains(pos)))
     }) && !in_popup;
@@ -899,6 +957,9 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
                 commit_edit(app, &doc, e);
             }
             app.ui.picker = Some(PickerTarget::Style { id, index });
+        }
+        Some(Act::Unbind(id, field)) => {
+            app.run("style.bind", json!({"style": id, "field": field}));
         }
         Some(Act::SetText(id, def)) => {
             app.run("style.update", json!({"style": id, "value": def}));

@@ -47,6 +47,13 @@ pub fn specs() -> Vec<CommandSpec> {
             detach
         ),
         spec!("style.update", "Edit style", "{style, name?, description?, value?, from? (node id: redefine from it)}", true, update),
+        spec!(
+            "style.bind",
+            "Bind variable in style",
+            "{style, field, variable? (id or name; none: unbind)}  bind a variable to a field of the style's value: a paint style's `fills/<i>/color` (or `fill`: its first paint) and `fills/<i>/stops/<j>/color`, an effect style's `effects/<i>/<color|radius|spread|offsetX|offsetY|startRadius>`, a grid style's `layoutGrids/<i>/<size|count|gutter|offset>`, a text style's `fontSize|lineHeight|letterSpacing` (numbers, px) and `fontFamily|fontStyle` (strings). Every layer using the style shows the field resolved in its own modes; the style keeps it resolved in the default modes",
+            true,
+            bind_style
+        ),
         spec!("style.duplicate", "Duplicate style", "{style} → {id} (right below it, named \"<name> copy\")", true, duplicate),
         spec!(
             "style.move",
@@ -306,7 +313,19 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         kind_from_node(&t, n).ok_or_else(|| bad(cmd, "that layer has no such property"))?
     };
     let sid = doc.new_style_id();
-    doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind: kind.clone() });
+    let field = match t.as_str() {
+        "stroke" => "strokeStyle",
+        "text" => "textStyle",
+        "effect" => "effectStyle",
+        "grid" => "gridStyle",
+        _ => "fillStyle",
+    };
+    // A style made from a layer keeps the variables bound to what it takes.
+    let bound = match from.and_then(|f| doc.node(f)).filter(|_| get(p, "value").is_none() && range.is_none()) {
+        Some(n) => crate::style_vars::from_layer(n, field, &kind),
+        None => BTreeMap::new(),
+    };
+    doc.styles.push(Style { id: sid.clone(), name, description: string(p, "description").unwrap_or_default(), kind: kind.clone(), bound });
     // The source layer (or the selected chars) becomes linked to the new style.
     if let (Some((tid, a, b)), StyleKind::Text { style }) = (range, &kind) {
         if let NodeKind::Text(td) = &mut doc.get_mut(tid)?.kind {
@@ -315,13 +334,6 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let Some(f) = from
         && get(p, "value").is_none()
     {
-        let field = match t.as_str() {
-            "stroke" => "strokeStyle",
-            "text" => "textStyle",
-            "effect" => "effectStyle",
-            "grid" => "gridStyle",
-            _ => "fillStyle",
-        };
         apply_style_ref(doc, f, field, Some(&sid))?;
     }
     Ok(json!({"id": sid}))
@@ -330,7 +342,11 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
 /// Link node `id` to style `sid` for `field` (fillStyle, strokeStyle, …) and copy its value in.
 pub fn apply_style_ref(doc: &mut Document, id: NodeId, field: &str, sid: Option<&str>) -> Result<()> {
     let style = match sid {
-        Some(s) => Some(doc.style(s).cloned().ok_or_else(|| EngineError::Other(format!("no such style `{s}`")))?),
+        Some(s) => {
+            let st = doc.style(s).ok_or_else(|| EngineError::Other(format!("no such style `{s}`")))?;
+            // Fields bound to variables come resolved in this layer's modes.
+            Some(Style { kind: crate::style_vars::kind_for(doc, st, id).into_owned(), ..st.clone() })
+        }
         None => None,
     };
     let n = doc.get_mut(id)?;
@@ -420,6 +436,38 @@ pub(crate) fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+fn bind_style(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "style.bind";
+    let st = req_string(cmd, p, "style")?;
+    let field = req_string(cmd, p, "field")?;
+    let doc = s.doc_mut()?;
+    let idx = doc.styles.iter().position(|x| x.id == st || x.name == st).ok_or_else(|| bad(cmd, "no such style"))?;
+    if doc.styles.get(idx).is_some_and(|x| crate::library::is_remote_style(doc, &x.id)) {
+        return Err(EngineError::Disabled(cmd.into(), crate::library::READ_ONLY.into()));
+    }
+    let var = match string(p, "variable") {
+        Some(v) => Some(doc.variables.get(&v).map(|x| (x.id.clone(), x.kind)).ok_or_else(|| bad(cmd, "no such variable"))?),
+        None => None,
+    };
+    let Some(style) = doc.styles.get_mut(idx) else { return Err(bad(cmd, "no such style")) };
+    let want = crate::style_vars::field_type(&style.kind, &field).ok_or_else(|| bad(cmd, format!("the style has no field `{field}` to bind")))?;
+    let key = crate::style_vars::canonical(&field);
+    match var {
+        Some((_, kind)) if kind != want => return Err(bad(cmd, format!("`{field}` takes a {} variable, not a {} one", want.id(), kind.id()))),
+        Some((id, _)) => {
+            style.bound.insert(key, id);
+        }
+        None => {
+            style.bound.remove(&key);
+        }
+    }
+    // The style takes its default-mode value, and each layer using it its own.
+    let sid = style.id.clone();
+    crate::style_vars::settle(doc);
+    propagate_style(doc, &sid);
+    ok()
+}
+
 fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "style.update";
     let st = req_string(cmd, p, "style")?;
@@ -453,6 +501,7 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(k) = new_kind {
         style.kind = k;
+        crate::style_vars::prune(style);
     }
     let sid = style.id.clone();
     propagate_style(doc, &sid);
@@ -584,11 +633,16 @@ pub fn propagate_style(doc: &mut Document, sid: &str) {
     for i in ids {
         let Some(n) = doc.node(i) else { continue };
         if let Some(def) = &text_def {
-            if n.kind.text().is_some_and(|t| t.links_text_style(sid))
-                && let Ok(n) = doc.get_mut(i)
-                && let NodeKind::Text(t) = &mut n.kind
-            {
-                t.update_text_style(sid, def);
+            if n.kind.text().is_some_and(|t| t.links_text_style(sid)) {
+                let def = match doc.style(sid).map(|st| crate::style_vars::kind_for(doc, st, i).into_owned()) {
+                    Some(StyleKind::Text { style }) => style,
+                    _ => def.clone(),
+                };
+                if let Ok(n) = doc.get_mut(i)
+                    && let NodeKind::Text(t) = &mut n.kind
+                {
+                    t.update_text_style(sid, &def);
+                }
             }
             continue;
         }
@@ -620,9 +674,18 @@ pub fn sync_text_styles(doc: &mut Document, ids: &[NodeId]) {
             _ => None,
         })
         .collect();
+    let varying: Vec<&Style> = doc.styles.iter().filter(|s| !s.bound.is_empty() && matches!(s.kind, StyleKind::Text { .. })).collect();
+    let mut updates: Vec<(NodeId, Option<StyleId>, TextData)> = Vec::new();
     for id in ids {
         let Some(n) = doc.node(id) else { continue };
         let NodeKind::Text(t) = &n.kind else { continue };
+        // Styles with bound fields read as this layer sees them.
+        let mut defs = std::borrow::Cow::Borrowed(&defs);
+        for st in &varying {
+            if let StyleKind::Text { style } = crate::style_vars::kind_for(doc, st, id).into_owned() {
+                defs.to_mut().insert(st.id.clone(), style);
+            }
+        }
         let mut t2 = t.clone();
         // A layer linked as a whole whose chars carry no link yet (imported): they link now.
         if let Some(sid) = &n.styles.text
@@ -635,9 +698,12 @@ pub fn sync_text_styles(doc: &mut Document, ids: &[NodeId]) {
         }
         t2.check_text_styles(|sid| defs.get(sid));
         let link = t2.text_style_link().flatten().map(str::to_string);
-        if (t2 != *t || link != n.styles.text)
-            && let Ok(n) = doc.get_mut(id)
-        {
+        if t2 != *t || link != n.styles.text {
+            updates.push((id, link, t2));
+        }
+    }
+    for (id, link, t2) in updates {
+        if let Ok(n) = doc.get_mut(id) {
             n.styles.text = link;
             n.kind = NodeKind::Text(t2);
         }
@@ -653,7 +719,10 @@ pub fn sync_list_styles(doc: &mut Document, before: &Document, ids: &[NodeId]) {
         if n.styles.is_empty() {
             continue;
         }
-        let off = |r: &Option<StyleId>, same: &dyn Fn(&StyleKind) -> bool| r.as_deref().and_then(|s| doc.style(s)).is_some_and(|st| !same(&st.kind));
+        // A style's bound fields count as this layer sees them (in its modes).
+        let off = |r: &Option<StyleId>, same: &dyn Fn(&StyleKind) -> bool| {
+            r.as_deref().and_then(|s| doc.style(s)).is_some_and(|st| !same(&crate::style_vars::kind_for(doc, st, id)))
+        };
         let fill = n.fills != b.fills && off(&n.styles.fill, &|k| matches!(k, StyleKind::Paint { paints } if *paints == n.fills));
         let stroke = n.strokes != b.strokes && off(&n.styles.stroke, &|k| matches!(k, StyleKind::Paint { paints } if *paints == n.strokes));
         let effect = n.effects != b.effects && off(&n.styles.effect, &|k| matches!(k, StyleKind::Effect { effects } if *effects == n.effects));
@@ -845,6 +914,7 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
     if doc.variables.variables.is_empty() {
         return;
     }
+
     let bound: Vec<NodeId> = match only {
         Some(ids) => ids.iter().copied().filter(|i| doc.node(*i).is_some_and(|n| !n.bound.is_empty())).collect(),
         None => doc.nodes().filter(|n| !n.bound.is_empty()).map(|n| n.id).collect(),
@@ -928,6 +998,42 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
     }
 }
 
+/// Set paint `i`'s colour (or its gradient stop `stop`'s) to a bound colour; a first paint that
+/// isn't there yet is added.
+pub(crate) fn set_paint_color(list: &mut Vec<Paint>, i: usize, stop: Option<usize>, c: Color) {
+    match (list.get_mut(i), stop) {
+        (Some(p), Some(j)) => {
+            if let PaintKind::Gradient(g) = &mut p.kind
+                && let Some(s) = g.stops.get_mut(j)
+            {
+                s.color = c;
+            }
+        }
+        (Some(p), None) => p.kind = PaintKind::Solid { color: c },
+        (None, None) if i == 0 => list.push(Paint::solid(c)),
+        (None, _) => {}
+    }
+}
+
+/// Set `prop` of effect `i` to a bound value.
+pub(crate) fn set_effect_field(effects: &mut [Effect], i: usize, prop: &str, val: &VariableValue) {
+    let Some(e) = effects.get_mut(i) else { return };
+    let num = match val {
+        VariableValue::Number(x) if x.is_finite() => Some(*x),
+        _ => None,
+    };
+    match (&mut e.kind, prop, num, val) {
+        (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetX", Some(x), _) => s.offset.0 = x,
+        (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetY", Some(x), _) => s.offset.1 = x,
+        (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "radius", Some(x), _) => s.radius = x.max(0.0),
+        (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "spread", Some(x), _) => s.spread = x,
+        (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "color", _, VariableValue::Color(c)) => s.color = *c,
+        (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "radius", Some(x), _) => b.radius = x.max(0.0),
+        (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "startRadius", Some(x), _) => b.start_radius = x.max(0.0),
+        _ => {}
+    }
+}
+
 /// Write bound colours into a node's fills (`true`) or strokes by index (or into a gradient
 /// paint's stop), keeping the rest of the list and each paint's opacity, visibility and blend mode
 /// (only what changed, so unchanged layers stay shared). A first-paint binding on an empty list
@@ -936,19 +1042,7 @@ fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Op
     let Some(n) = doc.node(id) else { return };
     let (mut fills, mut strokes) = (n.fills.clone(), n.strokes.clone());
     for (is_fill, i, stop, c) in sets {
-        let list = if *is_fill { &mut fills } else { &mut strokes };
-        match (list.get_mut(*i), stop) {
-            (Some(p), Some(j)) => {
-                if let PaintKind::Gradient(g) = &mut p.kind
-                    && let Some(s) = g.stops.get_mut(*j)
-                {
-                    s.color = *c;
-                }
-            }
-            (Some(p), None) => p.kind = PaintKind::Solid { color: *c },
-            (None, None) if *i == 0 => list.push(Paint::solid(*c)),
-            (None, _) => {}
-        }
+        set_paint_color(if *is_fill { &mut fills } else { &mut strokes }, *i, *stop, *c);
     }
     if doc.node(id).is_some_and(|n| n.fills != fills || n.strokes != strokes)
         && let Ok(n) = doc.get_mut(id)
@@ -962,21 +1056,7 @@ fn apply_paint_bindings(doc: &mut Document, id: NodeId, sets: &[(bool, usize, Op
 fn apply_effect_bindings(doc: &mut Document, id: NodeId, sets: &[(usize, String, VariableValue)]) {
     let Some(mut effects) = doc.node(id).map(|n| n.effects.clone()) else { return };
     for (i, prop, val) in sets {
-        let Some(e) = effects.get_mut(*i) else { continue };
-        let num = match val {
-            VariableValue::Number(x) if x.is_finite() => Some(*x),
-            _ => None,
-        };
-        match (&mut e.kind, prop.as_str(), num, val) {
-            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetX", Some(x), _) => s.offset.0 = x,
-            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "offsetY", Some(x), _) => s.offset.1 = x,
-            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "radius", Some(x), _) => s.radius = x.max(0.0),
-            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "spread", Some(x), _) => s.spread = x,
-            (EffectKind::DropShadow(s) | EffectKind::InnerShadow(s), "color", _, VariableValue::Color(c)) => s.color = *c,
-            (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "radius", Some(x), _) => b.radius = x.max(0.0),
-            (EffectKind::LayerBlur(b) | EffectKind::BackgroundBlur(b), "startRadius", Some(x), _) => b.start_radius = x.max(0.0),
-            _ => {}
-        }
+        set_effect_field(&mut effects, *i, prop, val);
     }
     if doc.node(id).is_some_and(|n| n.effects != effects)
         && let Ok(n) = doc.get_mut(id)

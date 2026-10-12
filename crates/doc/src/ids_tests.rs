@@ -7,7 +7,13 @@ use crate::{Collection, Comment, Document, Message, Mode, NodeId, NodeKind, Styl
 const C3: u64 = 3 << 32;
 
 fn style(id: &str) -> Style {
-    Style { id: id.into(), name: format!("Style {id}"), description: String::new(), kind: StyleKind::Paint { paints: Vec::new() } }
+    Style {
+        id: id.into(),
+        name: format!("Style {id}"),
+        description: String::new(),
+        kind: StyleKind::Paint { paints: Vec::new() },
+        bound: Default::default(),
+    }
 }
 
 fn comment(id: u64, page: NodeId) -> Comment {

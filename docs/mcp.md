@@ -1260,6 +1260,13 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
 
 ### Effects
 
+`style.bind {style, field, variable?}` binds a variable inside a shared style (no `variable`:
+unbinds): `fill` or `fills/<i>/color` and `fills/<i>/stops/<j>/color` on a paint style,
+`effects/<i>/<color|radius|spread|offsetX|offsetY|startRadius>` on an effect style,
+`layoutGrids/<i>/<size|count|gutter|offset>` on a grid style, `fontSize`, `lineHeight`,
+`letterSpacing`, `fontFamily`, `fontStyle` on a text style. Each layer using the style shows the
+field in its own modes and stays linked; `style.list` gives a style's `bound` map.
+
 `effect.add {ids?, type? | effect?}` adds an effect (`dropShadow`, `innerShadow`, `layerBlur`,
 `backgroundBlur`, `noise`, `texture`, `glass`) with its defaults, or the full `effect` object;
 `effect.set {ids?, index, effect}` replaces one. A layer paints its drop shadows first, then its

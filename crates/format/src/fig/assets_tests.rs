@@ -386,7 +386,13 @@ fn styled() -> Document {
         line_height: LineHeight::Pixels(32.0),
         ..TextStyle::default()
     };
-    let style = |id: &str, name: &str, kind: StyleKind| Style { id: id.into(), name: name.into(), description: String::new(), kind };
+    let style = |id: &str, name: &str, kind: StyleKind| Style {
+        id: id.into(),
+        name: name.into(),
+        description: String::new(),
+        kind,
+        bound: Default::default(),
+    };
     doc.styles = vec![
         style("s-text", "Heading", StyleKind::Text { style: heading.clone() }),
         style("s-brand", "Brand/Primary", StyleKind::Paint { paints: vec![solid(0.25, 0.5, 1.0)] }),
@@ -896,9 +902,13 @@ fn junk_style_definitions_and_orders_never_panic() {
         let file = json!({"name": "x", "document": {"id": "0:0", "type": "DOCUMENT", "children": [page.clone()]}, "meta": meta.clone(), "styleDefinitions": d});
         let (doc, _) = crate::rest::import(&file, &|_| None).unwrap();
         assert!(doc.styles.len() <= 10_001);
-        // The bound paint, stop, effect and grid fields come across.
+        // The bound paint, stop, effect and grid fields come across: on the layer, or (the fill it
+        // takes from a shared style) on that style.
         let r = doc.nodes().find(|n| n.name == "R").unwrap();
-        assert_eq!(r.bound.keys().map(String::as_str).collect::<Vec<_>>(), ["effects/0/radius", "fills/0/color", "layoutGrids/0/count"]);
+        let mut keys: Vec<&str> = r.bound.keys().map(String::as_str).collect();
+        keys.extend(doc.styles.iter().filter(|s| s.id == "1:9").flat_map(|s| s.bound.keys().map(String::as_str)));
+        keys.sort_unstable();
+        assert_eq!(keys, ["effects/0/radius", "fills/0/color", "layoutGrids/0/count"]);
         export(&doc, None).unwrap();
     }
 }

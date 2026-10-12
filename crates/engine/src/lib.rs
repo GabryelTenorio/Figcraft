@@ -45,6 +45,7 @@ pub mod rotation_origin;
 pub mod shape_handles;
 pub mod shapebuilder;
 pub mod snap;
+pub mod style_vars;
 pub mod synthetic;
 pub mod synthetic_ds;
 pub mod templates;
@@ -1124,7 +1125,11 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     let m = measure::TextMeasure;
     // 0. Variable bindings and style links feed node values.
     let scope = binding_scope(doc, before, &touched);
+    if doc.variables != before.variables || doc.styles != before.styles {
+        style_vars::settle(doc);
+    }
     cmd::styles::apply_bindings_to(doc, scope.as_ref());
+    style_vars::refresh(doc, Some(before), scope.as_ref());
     if doc.styles != before.styles {
         let changed_styles: Vec<String> = doc.styles.iter().filter(|s| !before.styles.contains(s)).map(|s| s.id.clone()).collect();
         for sid in changed_styles {
@@ -1161,6 +1166,7 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     let synced = doc.take_dirty();
     if !synced.is_empty() {
         cmd::styles::apply_bindings_to(doc, Some(&synced));
+        style_vars::refresh(doc, Some(before), Some(&synced));
         touched.extend(synced);
     }
     touched.extend(doc.take_dirty());
@@ -1519,6 +1525,8 @@ mod slot_tests;
 mod stroke_style_tests;
 #[cfg(test)]
 mod style_tests;
+#[cfg(test)]
+mod style_vars_tests;
 #[cfg(test)]
 mod styles_behaviour_tests;
 #[cfg(test)]

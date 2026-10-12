@@ -47,6 +47,7 @@ fn colourful() -> (Document, NodeId) {
         name: "Red".into(),
         description: String::new(),
         kind: StyleKind::Paint { paints: vec![Paint::solid(RED)] },
+        bound: Default::default(),
     });
     d.variables.collections.push(Collection {
         id: "c1".into(),

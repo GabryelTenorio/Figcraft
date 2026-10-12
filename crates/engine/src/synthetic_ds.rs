@@ -223,6 +223,7 @@ fn foundations(doc: &mut Document) -> (CollectionId, ModeId, ModeId) {
             name: name.into(),
             description: String::new(),
             kind: StyleKind::Paint { paints: vec![Paint::solid(rgb(hex))] },
+            bound: Default::default(),
         });
     }
     for (name, size, weight) in [
@@ -234,7 +235,13 @@ fn foundations(doc: &mut Document) -> (CollectionId, ModeId, ModeId) {
         ("Label/L", 15.0, "Medium"),
     ] {
         let style = TextStyle { font_size: size, font_style: weight.into(), ..TextStyle::default() };
-        doc.styles.push(Style { id: format!("ds:text:{name}"), name: name.into(), description: String::new(), kind: StyleKind::Text { style } });
+        doc.styles.push(Style {
+            id: format!("ds:text:{name}"),
+            name: name.into(),
+            description: String::new(),
+            kind: StyleKind::Text { style },
+            bound: Default::default(),
+        });
     }
     (coll, light, dark)
 }

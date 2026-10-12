@@ -40,6 +40,12 @@ pub struct Style {
     pub description: String,
     #[serde(flatten)]
     pub kind: StyleKind,
+    /// Variables bound to fields of the value, by the keys a layer's bindings use
+    /// (`fills/0/color`, `effects/0/radius`, `layoutGrids/0/size`, a text style's `fontSize`…).
+    /// A layer using the style sees them resolved in its own modes; `kind` holds them resolved in
+    /// the default modes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bound: BTreeMap<String, VariableId>,
 }
 
 /// A node's links to shared styles.

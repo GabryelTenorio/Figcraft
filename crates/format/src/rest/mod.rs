@@ -185,9 +185,26 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
         let _ = cx.doc.remove(p);
     }
     cx.doc.current_page = cx.doc.first_page();
+    cx.styles_take_bindings();
     cx.finish();
     let warnings = cx.warnings.finish();
     Ok((cx.doc, warnings))
+}
+
+/// The key a style keeps a layer's binding `key` under, when the layer's `slot` link (fill,
+/// stroke, effect, grid, text) to the style covers that field: a paint style's paints are its
+/// `fills`, whichever list of the layer shows them.
+fn style_binding(slot: &str, key: &str) -> Option<String> {
+    let paints = |rest: &str| format!("fills/{rest}");
+    match (slot, key) {
+        ("fill", "fill" | "fills" | "fills/0") | ("stroke", "stroke") => Some("fills/0/color".into()),
+        ("fill", k) => k.strip_prefix("fills/").map(paints),
+        ("stroke", k) => k.strip_prefix("strokes/").map(paints),
+        ("effect", k) if k.starts_with("effects/") => Some(k.into()),
+        ("grid", k) if k.starts_with("layoutGrids/") => Some(k.into()),
+        ("text", "fontSize" | "lineHeight" | "letterSpacing" | "fontFamily" | "fontStyle") => Some(key.into()),
+        _ => None,
+    }
 }
 
 /// Put back the shape a layer was before the `.fig` export wrote it as the outline of its stroke
@@ -669,7 +686,30 @@ impl<'a> Ctx<'a> {
             };
             let name = text(d, "name").filter(|s| !s.is_empty()).map_or_else(|| format!("Style {id}"), |s| clip_str(s).to_string());
             let description = text(d, "description").map(|s| clip_str(s).to_string()).unwrap_or_default();
-            self.doc.styles.push(Style { id: id.to_string(), name, description, kind });
+            // The sample layer's variable bindings on what the style holds are the style's.
+            let mut sample = Node::new(NodeId(0), NodeKind::Rectangle, "", 0.0, 0.0);
+            let slot = match &kind {
+                StyleKind::Paint { paints } => {
+                    sample.fills.clone_from(paints);
+                    "fill"
+                }
+                StyleKind::Effect { effects } => {
+                    sample.effects.clone_from(effects);
+                    "effect"
+                }
+                StyleKind::Grid { grids } => {
+                    sample.kind = NodeKind::Frame;
+                    sample.grids.clone_from(grids);
+                    "grid"
+                }
+                StyleKind::Text { .. } => {
+                    sample.kind = NodeKind::Text(text::text_data(self, node));
+                    "text"
+                }
+            };
+            self.bindings(&mut sample, node);
+            let bound = sample.bound.iter().filter_map(|(k, v)| Some((style_binding(slot, k)?, v.clone()))).collect();
+            self.doc.styles.push(Style { id: id.to_string(), name, description, kind, bound });
         }
     }
 
@@ -696,7 +736,42 @@ impl<'a> Ctx<'a> {
             let name =
                 meta.and_then(|m| text(m, "name")).filter(|s| !s.is_empty()).map_or_else(|| format!("Style {sid}"), |s| clip_str(s).to_string());
             let description = meta.and_then(|m| text(m, "description")).map(|s| clip_str(s).to_string()).unwrap_or_default();
-            self.doc.styles.push(Style { id: sid.to_string(), name, description, kind });
+            self.doc.styles.push(Style { id: sid.to_string(), name, description, kind, bound: BTreeMap::new() });
+        }
+    }
+
+    /// Variables bound to what a layer takes from a shared style belong to the style: a style
+    /// without bindings of its own takes them from the first layer that has some, and the layers
+    /// keep none on those fields (the style gives them their values, each in its own modes).
+    fn styles_take_bindings(&mut self) {
+        let ids: Vec<NodeId> = self.doc.nodes().filter(|n| !n.styles.is_empty() && !n.bound.is_empty()).map(|n| n.id).collect();
+        for id in ids {
+            let Some((refs, bound)) = self.doc.node(id).map(|n| (n.styles.clone(), n.bound.clone())) else { continue };
+            let mut moved: Vec<String> = Vec::new();
+            for (slot, sid) in [("fill", refs.fill), ("stroke", refs.stroke), ("effect", refs.effect), ("grid", refs.grid), ("text", refs.text)] {
+                let Some(sid) = sid else { continue };
+                let found: Vec<(String, String, String)> =
+                    bound.iter().filter_map(|(k, v)| Some((k.clone(), style_binding(slot, k)?, v.clone()))).collect();
+                if found.is_empty() {
+                    continue;
+                }
+                // A style that has bindings already keeps them: only what agrees leaves the layer.
+                let Some(st) = self.doc.styles.iter_mut().find(|s| s.id == sid) else { continue };
+                let takes = st.bound.is_empty();
+                for (key, style_key, var) in found {
+                    if takes {
+                        st.bound.insert(style_key, var);
+                    } else if st.bound.get(&style_key) != Some(&var) {
+                        continue;
+                    }
+                    moved.push(key);
+                }
+            }
+            if !moved.is_empty()
+                && let Ok(n) = self.doc.get_mut(id)
+            {
+                n.bound.retain(|k, _| !moved.contains(k));
+            }
         }
     }
 

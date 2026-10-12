@@ -109,7 +109,13 @@ pub(crate) fn random_edit(doc: &mut Document, rng: &mut Rng, derive: &dyn Recomp
                     doc.styles.remove(i);
                 }
                 Some(i) => doc.styles[i].name = format!("Renamed {}", rng.below(100)),
-                None => doc.styles.push(Style { id, name: "S".into(), description: String::new(), kind: StyleKind::Paint { paints: vec![] } }),
+                None => doc.styles.push(Style {
+                    id,
+                    name: "S".into(),
+                    description: String::new(),
+                    kind: StyleKind::Paint { paints: vec![] },
+                    bound: Default::default(),
+                }),
             }
         }
     }

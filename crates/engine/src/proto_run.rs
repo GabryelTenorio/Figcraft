@@ -57,6 +57,7 @@ pub fn set_variable(doc: &mut Document, node: NodeId, variable: &str, value: &Va
         *val = v.clone();
     }
     apply_bindings(doc);
+    crate::style_vars::refresh(doc, None, None);
     true
 }
 
@@ -81,6 +82,7 @@ pub fn set_mode(doc: &mut Document, frame: NodeId, collection: &str, mode: &str)
         }
     }
     apply_bindings(doc);
+    crate::style_vars::refresh(doc, None, None);
     true
 }
 

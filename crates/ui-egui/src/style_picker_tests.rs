@@ -16,7 +16,13 @@ fn names_split_into_folders() {
     let mut d = Document::new("d");
     assert_eq!(next_name(&d, "Color"), "Color 1");
     for n in ["Color 1", "Color 2"] {
-        d.styles.push(Style { id: n.into(), name: n.into(), description: String::new(), kind: StyleKind::Paint { paints: vec![] } });
+        d.styles.push(Style {
+            id: n.into(),
+            name: n.into(),
+            description: String::new(),
+            kind: StyleKind::Paint { paints: vec![] },
+            bound: Default::default(),
+        });
     }
     assert_eq!(next_name(&d, "Color"), "Color 3");
     assert!(StyleSlot::Fill.holds(&StyleKind::Paint { paints: vec![] }) && !StyleSlot::Effect.holds(&StyleKind::Paint { paints: vec![] }));
@@ -160,7 +166,13 @@ fn chars_linked_to_several_styles_show_mixed() {
 
 #[test]
 fn local_style_drops_move_into_the_folder_above() {
-    let st = |id: &str, name: &str| Style { id: id.into(), name: name.into(), description: String::new(), kind: StyleKind::Paint { paints: vec![] } };
+    let st = |id: &str, name: &str| Style {
+        id: id.into(),
+        name: name.into(),
+        description: String::new(),
+        kind: StyleKind::Paint { paints: vec![] },
+        bound: Default::default(),
+    };
     let (a, b, c) = (st("a", "Top"), st("b", "Brand/One"), st("c", "Brand/Two"));
     let shown = [&a, &b, &c];
     // `Top` dropped between One and Two: into Brand, before Two.

@@ -27,7 +27,13 @@ fn files() -> Files {
 }
 
 fn style(id: &str, c: Color) -> Style {
-    Style { id: id.into(), name: format!("Style {id}"), description: String::new(), kind: StyleKind::Paint { paints: vec![Paint::solid(c)] } }
+    Style {
+        id: id.into(),
+        name: format!("Style {id}"),
+        description: String::new(),
+        kind: StyleKind::Paint { paints: vec![Paint::solid(c)] },
+        bound: Default::default(),
+    }
 }
 
 fn plan_of(f: &Files) -> Plan {

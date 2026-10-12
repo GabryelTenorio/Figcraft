@@ -609,7 +609,6 @@ impl<'d> Exporter<'d> {
                 ("sortPosition", s(&position(index))),
             ]
         };
-        let none = Bound::default();
         for st in &doc.styles {
             let Some(&local) = self.style_ids.get(st.id.as_str()) else { continue };
             // A sample layer that shows the style: a square for paints and effects, a frame for
@@ -633,6 +632,21 @@ impl<'d> Exporter<'d> {
             ]);
             if !st.description.is_empty() {
                 f.push(("description", s(&st.description)));
+            }
+            // The style's variable bindings ride on its sample layer, as a layer's do.
+            let none = if st.bound.is_empty() {
+                Bound::default()
+            } else {
+                let mut sample = Node::new(NodeId(0), NodeKind::Rectangle, "", 0.0, 0.0);
+                if let StyleKind::Text { style } = &st.kind {
+                    sample.kind = NodeKind::Text(TextData { style: style.as_text_style(), ..TextData::new("Ag") });
+                }
+                sample.bound.clone_from(&st.bound);
+                self.bound(&sample)
+            };
+            let entries = none.entries.clone();
+            if !entries.is_empty() {
+                f.push(("variableConsumptionMap", o(vec![("entries", arr(entries))])));
             }
             match &st.kind {
                 StyleKind::Paint { paints } => f.push(("fillPaints", self.paints(paints, true, &none))),

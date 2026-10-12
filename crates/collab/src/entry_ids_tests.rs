@@ -10,7 +10,7 @@ use crate::sim::Sim;
 use crate::{Client, Limits, NoRecompute, Outgoing, Server};
 
 fn style(id: String, name: &str) -> Style {
-    Style { id, name: name.into(), description: String::new(), kind: StyleKind::Paint { paints: Vec::new() } }
+    Style { id, name: name.into(), description: String::new(), kind: StyleKind::Paint { paints: Vec::new() }, bound: Default::default() }
 }
 
 fn comment(id: u64, doc: &Document) -> Comment {

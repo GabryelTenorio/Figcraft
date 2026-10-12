@@ -256,19 +256,24 @@ pub(crate) fn remove_item(n: &mut Node, list: BoundList, index: usize) -> bool {
     true
 }
 
+/// Set `field` (`size|count|gutter|offset`) of layout grid `i` to a bound number.
+pub(crate) fn set_grid_field(grids: &mut [LayoutGrid], i: usize, field: &str, x: f64) {
+    let Some(g) = grids.get_mut(i).filter(|_| x.is_finite()) else { return };
+    match field {
+        "size" => g.size = x.max(0.0),
+        "count" => g.count = x.round().clamp(1.0, 1000.0) as u32,
+        "gutter" => g.gutter = x.max(0.0),
+        "offset" => g.offset = x,
+        _ => {}
+    }
+}
+
 /// Write bound numbers into a node's layout grids (`layoutGrids/<i>/<size|count|gutter|offset>`;
 /// only what changed, so unchanged layers stay shared).
 pub(crate) fn apply_grid_bindings(doc: &mut Document, id: NodeId, sets: &[(usize, String, f64)]) {
     let Some(mut grids) = doc.node(id).map(|n| n.grids.clone()) else { return };
     for (i, field, x) in sets {
-        let Some(g) = grids.get_mut(*i).filter(|_| x.is_finite()) else { continue };
-        match field.as_str() {
-            "size" => g.size = x.max(0.0),
-            "count" => g.count = x.round().clamp(1.0, 1000.0) as u32,
-            "gutter" => g.gutter = x.max(0.0),
-            "offset" => g.offset = *x,
-            _ => {}
-        }
+        set_grid_field(&mut grids, *i, field, *x);
     }
     if doc.node(id).is_some_and(|n| n.grids != grids)
         && let Ok(n) = doc.get_mut(id)
