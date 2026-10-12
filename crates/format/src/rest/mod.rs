@@ -468,6 +468,11 @@ impl<'a> Ctx<'a> {
             n.blend = b;
         }
         n.is_mask = flag(j, "isMask").unwrap_or(false);
+        n.mask_type = match text(j, "maskType") {
+            Some("VECTOR") => figcraft_doc::MaskType::Vector,
+            Some("LUMINANCE") => figcraft_doc::MaskType::Luminance,
+            _ => figcraft_doc::MaskType::Alpha,
+        };
         // The JSON lists every paint; a missing list means none (text keeps its default black).
         match props::paints(self, j, "fills") {
             Some(f) if !matches!(n.kind, NodeKind::Group) => n.fills = f,

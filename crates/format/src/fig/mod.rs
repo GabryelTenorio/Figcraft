@@ -15,6 +15,8 @@
 mod export;
 #[cfg(test)]
 mod export_tests;
+#[cfg(test)]
+mod interop_tests;
 pub mod kiwi;
 mod map;
 mod network;
@@ -65,6 +67,27 @@ pub fn import(bytes: &[u8], name: &str) -> Result<(Document, Vec<String>), Forma
     let (doc, more) = crate::rest::import(&json, &images)?;
     warnings.extend(more.into_iter().filter_map(map::adapt_warning));
     Ok((doc, warnings))
+}
+
+/// A font style under the name the format uses: the standard weight names as words ("SemiBold"
+/// → "Semi Bold", "ExtraBoldItalic" → "Extra Bold Italic", "Regular Italic" → "Italic"). Other
+/// names stay as they are.
+fn style_name(style: &str) -> String {
+    const WEIGHTS: [&str; 12] =
+        ["Thin", "Extra Light", "Ultra Light", "Light", "Regular", "Medium", "Semi Bold", "Demi Bold", "Bold", "Extra Bold", "Ultra Bold", "Black"];
+    let compact = |s: &str| s.chars().filter(|c| !matches!(c, ' ' | '-' | '_')).flat_map(char::to_lowercase).collect::<String>();
+    let key = compact(style);
+    let (base, italic) = match key.strip_suffix("italic") {
+        Some(b) => (b, true),
+        None => (key.as_str(), false),
+    };
+    let weight = if base.is_empty() && italic { Some("Regular") } else { WEIGHTS.into_iter().find(|w| compact(w) == base) };
+    match (weight, italic) {
+        (None, _) => style.to_string(),
+        (Some("Regular"), true) => "Italic".into(),
+        (Some(w), true) => format!("{w} Italic"),
+        (Some(w), false) => w.into(),
+    }
 }
 
 fn corrupt(msg: impl Into<String>) -> FormatError {

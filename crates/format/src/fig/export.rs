@@ -8,8 +8,9 @@
 //! among the siblings, then its fields), parents first, plus blobs (vector networks and outlines).
 //! Instances are written as their main and the fields their layers override (by id path), like
 //! the files the import reads. What the format can't carry yet (shared styles, variables, Dev Mode
-//! data, …) is left out and listed in the warnings. Only round trips through our own importer are
-//! verified; other apps may not open every file.
+//! data, …) is left out and listed in the warnings. Round trips through our own importer are
+//! tested, and written files were opened in other software (`docs/file-format-parity.md` says what
+//! was checked); other apps may not open every file.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -52,100 +53,107 @@ const VERSION: u32 = 101;
 const LAYERS: u32 = 1;
 const AUX: u32 = 2;
 
-/// The schema written into every file: `enum Name A B …` (values from 0), `struct|message Name
-/// type field, …` (field ids from 1). Only what the export writes.
+/// The schema written into every file: `enum Name A=value …`, `struct Name type field, …` (every
+/// field, in order) and `message Name type field=id, …`, with the names, kinds and numbers the
+/// format gives them. Only what the export writes.
 pub(super) const SCHEMA: &str = "
-enum MessageType JOIN_START NODE_CHANGES
-enum NodePhase CREATED REMOVED
-enum NodeType NONE DOCUMENT CANVAS GROUP FRAME BOOLEAN_OPERATION VECTOR STAR LINE ELLIPSE RECTANGLE REGULAR_POLYGON ROUNDED_RECTANGLE TEXT SLICE SYMBOL INSTANCE SECTION
-enum BlendMode PASS_THROUGH NORMAL DARKEN MULTIPLY LINEAR_BURN COLOR_BURN LIGHTEN SCREEN LINEAR_DODGE COLOR_DODGE OVERLAY SOFT_LIGHT HARD_LIGHT DIFFERENCE EXCLUSION HUE SATURATION COLOR LUMINOSITY
-enum PaintType SOLID GRADIENT_LINEAR GRADIENT_RADIAL GRADIENT_ANGULAR GRADIENT_DIAMOND IMAGE
-enum ImageScaleMode STRETCH FIT FILL TILE
-enum WindingRule NONZERO ODD
-enum StrokeAlign CENTER INSIDE OUTSIDE
-enum StrokeCap NONE ROUND SQUARE ARROW_LINES ARROW_EQUILATERAL TRIANGLE_FILLED DIAMOND_FILLED CIRCLE_FILLED
-enum StrokeJoin MITER BEVEL ROUND
-enum ConstraintType MIN CENTER MAX STRETCH SCALE
-enum StackMode NONE HORIZONTAL VERTICAL GRID
-enum StackAlign MIN CENTER MAX BASELINE SPACE_BETWEEN SPACE_AROUND SPACE_EVENLY
-enum StackSize FIXED RESIZE_TO_FIT
-enum StackWrap NO_WRAP WRAP
-enum StackPositioning AUTO ABSOLUTE
-enum StackChildAlign AUTO STRETCH
-enum EffectType INNER_SHADOW DROP_SHADOW FOREGROUND_BLUR BACKGROUND_BLUR NOISE TEXTURE GLASS
-enum BlurOpType NORMAL PROGRESSIVE
-enum NoiseType MONOTONE DUOTONE MULTITONE
-enum TextAlignHorizontal LEFT CENTER RIGHT JUSTIFIED
-enum TextAlignVertical TOP CENTER BOTTOM
-enum TextAutoResize NONE WIDTH_AND_HEIGHT HEIGHT
-enum TextTruncation DISABLED ENDING
-enum TextCase ORIGINAL UPPER LOWER TITLE SMALL_CAPS
-enum TextDecoration NONE UNDERLINE STRIKETHROUGH
-enum NumberUnits RAW PIXELS PERCENT
-enum LineType PLAIN ORDERED_LIST UNORDERED_LIST
-enum VectorMirror NONE ANGLE ANGLE_AND_LENGTH
-enum BooleanOperation UNION INTERSECT SUBTRACT XOR
-enum LayoutGridType MIN CENTER STRETCH MAX
-enum LayoutGridPattern STRIPES GRID
-enum Axis X Y
-enum ExportImageType PNG JPEG SVG PDF WEBP
-enum ExportConstraintType CONTENT_SCALE CONTENT_WIDTH CONTENT_HEIGHT
-enum ComponentPropType BOOL TEXT INSTANCE_SWAP VARIANT
-enum VariableField MISSING VISIBLE TEXT_DATA OVERRIDDEN_SYMBOL_ID
-enum VariableDataType BOOLEAN FLOAT STRING ALIAS COLOR PROP_REF
-enum InteractionType ON_CLICK DRAG ON_HOVER ON_PRESS MOUSE_IN MOUSE_OUT MOUSE_DOWN MOUSE_UP AFTER_TIMEOUT ON_KEY_DOWN
-enum TriggerDevice KEYBOARD UNKNOWN_CONTROLLER
-enum ConnectionType NONE INTERNAL_NODE URL BACK CLOSE
-enum NavigationType NAVIGATE OVERLAY SWAP SWAP_STATE SCROLL_TO
-enum TransitionType INSTANT_TRANSITION DISSOLVE SMART_ANIMATE SLIDE_FROM_LEFT SLIDE_FROM_RIGHT SLIDE_FROM_TOP SLIDE_FROM_BOTTOM PUSH_FROM_LEFT PUSH_FROM_RIGHT PUSH_FROM_TOP PUSH_FROM_BOTTOM MOVE_FROM_LEFT MOVE_FROM_RIGHT MOVE_FROM_TOP MOVE_FROM_BOTTOM SLIDE_OUT_TO_LEFT SLIDE_OUT_TO_RIGHT SLIDE_OUT_TO_TOP SLIDE_OUT_TO_BOTTOM MOVE_OUT_TO_LEFT MOVE_OUT_TO_RIGHT MOVE_OUT_TO_TOP MOVE_OUT_TO_BOTTOM
-enum EasingType IN_CUBIC OUT_CUBIC INOUT_CUBIC LINEAR IN_BACK_CUBIC OUT_BACK_CUBIC INOUT_BACK_CUBIC CUSTOM_CUBIC GENTLE_SPRING
-enum ScrollDirection NONE HORIZONTAL VERTICAL BOTH
-enum ScrollBehavior SCROLLS FIXED_WHEN_CHILD_OF_SCROLLING_FRAME STICKY_SCROLLS
-enum OverlayPositionType CENTER TOP_LEFT TOP_CENTER TOP_RIGHT BOTTOM_LEFT BOTTOM_CENTER BOTTOM_RIGHT MANUAL
-enum OverlayBackgroundInteraction NONE CLOSE_ON_CLICK_OUTSIDE
-enum OverlayBackgroundType NONE SOLID_COLOR
+enum MessageType JOIN_START=0 NODE_CHANGES=1
+enum NodePhase CREATED=0 REMOVED=1
+enum NodeType NONE=0 DOCUMENT=1 CANVAS=2 GROUP=3 FRAME=4 BOOLEAN_OPERATION=5 VECTOR=6 STAR=7 LINE=8 ELLIPSE=9 RECTANGLE=10 REGULAR_POLYGON=11 ROUNDED_RECTANGLE=12 TEXT=13 SLICE=14 SYMBOL=15 INSTANCE=16 SECTION=25
+enum BlendMode PASS_THROUGH=0 NORMAL=1 DARKEN=2 MULTIPLY=3 LINEAR_BURN=4 COLOR_BURN=5 LIGHTEN=6 SCREEN=7 LINEAR_DODGE=8 COLOR_DODGE=9 OVERLAY=10 SOFT_LIGHT=11 HARD_LIGHT=12 DIFFERENCE=13 EXCLUSION=14 HUE=15 SATURATION=16 COLOR=17 LUMINOSITY=18
+enum PaintType SOLID=0 GRADIENT_LINEAR=1 GRADIENT_RADIAL=2 GRADIENT_ANGULAR=3 GRADIENT_DIAMOND=4 IMAGE=5
+enum ImageScaleMode STRETCH=0 FIT=1 FILL=2 TILE=3
+enum WindingRule NONZERO=0 ODD=1
+enum StrokeAlign CENTER=0 INSIDE=1 OUTSIDE=2
+enum StrokeCap NONE=0 ROUND=1 SQUARE=2 ARROW_LINES=3 ARROW_EQUILATERAL=4 TRIANGLE_FILLED=6 DIAMOND_FILLED=5 CIRCLE_FILLED=14
+enum StrokeJoin MITER=0 BEVEL=1 ROUND=2
+enum ConstraintType MIN=0 CENTER=1 MAX=2 STRETCH=3 SCALE=4
+enum StackMode NONE=0 HORIZONTAL=1 VERTICAL=2 GRID=3
+enum StackAlign MIN=0 CENTER=1 MAX=2 BASELINE=3
+enum StackJustify MIN=0 CENTER=1 MAX=2 SPACE_EVENLY=3 SPACE_BETWEEN=4 SPACE_AROUND=5
+enum StackCounterAlign MIN=0 CENTER=1 MAX=2 STRETCH=3 AUTO=4 BASELINE=5
+enum StackSize FIXED=0 RESIZE_TO_FIT=1
+enum StackWrap NO_WRAP=0 WRAP=1
+enum StackPositioning AUTO=0 ABSOLUTE=1
+enum EffectType INNER_SHADOW=0 DROP_SHADOW=1 FOREGROUND_BLUR=2 BACKGROUND_BLUR=3 NOISE=7 GRAIN=6 GLASS=8
+enum BlurOpType NORMAL=0 PROGRESSIVE=1
+enum NoiseType MONOTONE=1 DUOTONE=2 MULTITONE=0
+enum TextAlignHorizontal LEFT=0 CENTER=1 RIGHT=2 JUSTIFIED=3
+enum TextAlignVertical TOP=0 CENTER=1 BOTTOM=2
+enum TextAutoResize NONE=0 WIDTH_AND_HEIGHT=1 HEIGHT=2
+enum TextTruncation DISABLED=0 ENDING=1
+enum TextCase ORIGINAL=0 UPPER=1 LOWER=2 TITLE=3 SMALL_CAPS=4
+enum TextDecoration NONE=0 UNDERLINE=1 STRIKETHROUGH=2
+enum NumberUnits RAW=0 PIXELS=1 PERCENT=2
+enum LineType PLAIN=0 ORDERED_LIST=1 UNORDERED_LIST=2
+enum SourceDirectionality AUTO=0 LTR=1 RTL=2
+enum DocumentColorProfile LEGACY=0 SRGB=1 DISPLAY_P3=2
+enum EmojiImageSet APPLE=0 NOTO=1
+enum MaskType ALPHA=0 OUTLINE=1 LUMINANCE=2
+enum VariableResolvedDataType BOOLEAN=0 FLOAT=1 STRING=2 COLOR=4 SYMBOL_ID=6 TEXT_DATA=8
+enum VectorMirror NONE=0 ANGLE=1 ANGLE_AND_LENGTH=2
+enum BooleanOperation UNION=0 INTERSECT=1 SUBTRACT=2 XOR=3
+enum LayoutGridType MIN=0 CENTER=1 STRETCH=2 MAX=3
+enum LayoutGridPattern STRIPES=0 GRID=1
+enum Axis X=0 Y=1
+enum ImageType PNG=0 JPEG=1 SVG=2 PDF=3
+enum ExportConstraintType CONTENT_SCALE=0 CONTENT_WIDTH=1 CONTENT_HEIGHT=2
+enum ComponentPropType BOOL=0 TEXT=1 INSTANCE_SWAP=3 VARIANT=4
+enum VariableField MISSING=0 VISIBLE=10 TEXT_DATA=11 OVERRIDDEN_SYMBOL_ID=37
+enum VariableDataType BOOLEAN=0 FLOAT=1 STRING=2 ALIAS=3 COLOR=4 PROP_REF=13
+enum InteractionType ON_CLICK=0 DRAG=9 ON_HOVER=4 ON_PRESS=7 MOUSE_IN=2 MOUSE_OUT=3 MOUSE_DOWN=5 MOUSE_UP=6 AFTER_TIMEOUT=1 ON_KEY_DOWN=10
+enum TriggerDevice KEYBOARD=0 UNKNOWN_CONTROLLER=1
+enum ConnectionType NONE=0 INTERNAL_NODE=1 URL=2 BACK=3 CLOSE=4
+enum NavigationType NAVIGATE=0 OVERLAY=1 SWAP=2 SWAP_STATE=3 SCROLL_TO=4
+enum TransitionType INSTANT_TRANSITION=0 DISSOLVE=1 SMART_ANIMATE=24 SLIDE_FROM_LEFT=3 SLIDE_FROM_RIGHT=4 SLIDE_FROM_TOP=5 SLIDE_FROM_BOTTOM=6 PUSH_FROM_LEFT=7 PUSH_FROM_RIGHT=8 PUSH_FROM_TOP=9 PUSH_FROM_BOTTOM=10 MOVE_FROM_LEFT=11 MOVE_FROM_RIGHT=12 MOVE_FROM_TOP=13 MOVE_FROM_BOTTOM=14 SLIDE_OUT_TO_LEFT=15 SLIDE_OUT_TO_RIGHT=16 SLIDE_OUT_TO_TOP=17 SLIDE_OUT_TO_BOTTOM=18 MOVE_OUT_TO_LEFT=19 MOVE_OUT_TO_RIGHT=20 MOVE_OUT_TO_TOP=21 MOVE_OUT_TO_BOTTOM=22
+enum EasingType IN_CUBIC=0 OUT_CUBIC=1 INOUT_CUBIC=2 LINEAR=3 IN_BACK_CUBIC=4 OUT_BACK_CUBIC=5 INOUT_BACK_CUBIC=6 CUSTOM_CUBIC=7 GENTLE_SPRING=9
+enum ScrollDirection NONE=0 HORIZONTAL=1 VERTICAL=2 BOTH=3
+enum ScrollBehavior SCROLLS=0 FIXED_WHEN_CHILD_OF_SCROLLING_FRAME=1 STICKY_SCROLLS=2
+enum OverlayPositionType CENTER=0 TOP_LEFT=1 TOP_CENTER=2 TOP_RIGHT=3 BOTTOM_LEFT=4 BOTTOM_CENTER=5 BOTTOM_RIGHT=6 MANUAL=7
+enum OverlayBackgroundInteraction NONE=0 CLOSE_ON_CLICK_OUTSIDE=1
+enum OverlayBackgroundType NONE=0 SOLID_COLOR=1
 struct GUID uint sessionID, uint localID
 struct Color float r, float g, float b, float a
 struct Vector float x, float y
 struct Matrix float m00, float m01, float m02, float m10, float m11, float m12
 struct ColorStop Color color, float position
-message ParentIndex GUID guid, string position
-message Image byte[] hash, string name
-message Paint PaintType type, Color color, float opacity, bool visible, BlendMode blendMode, ColorStop[] stops, Matrix transform, Image image, ImageScaleMode imageScaleMode, float rotation, float scale
-message Effect EffectType type, Color color, Vector offset, float radius, bool visible, BlendMode blendMode, float spread, bool showShadowBehindNode, BlurOpType blurOpType, float startRadius, Vector startOffset, Vector endOffset, NoiseType noiseType, Vector noiseSize, float density, float opacity, Color secondaryColor, bool clipToShape
-message FontName string family, string style, string postscript
-message Number float value, NumberUnits units
-message Hyperlink string url
-message TextLine LineType lineType
-message TextData string characters, uint[] characterStyleIDs, NodeChange[] styleOverrideTable, TextLine[] lines
-message Path WindingRule windingRule, uint commandsBlob
-message VectorData uint vectorNetworkBlob, Vector normalizedSize, NodeChange[] styleOverrideTable
-message ArcData float startingAngle, float endingAngle, float innerRadius
-message OptionalVector Vector value
-message LayoutGrid LayoutGridType type, Axis axis, bool visible, int numSections, float offset, float sectionSize, float gutterSize, Color color, LayoutGridPattern pattern
-message ExportConstraint ExportConstraintType type, float value
-message ExportSettings string suffix, ExportImageType imageType, ExportConstraint constraint
-message GUIDPath GUID[] guids
-message SymbolData GUID symbolID, NodeChange[] symbolOverrides
-message ComponentPropValue bool boolValue, TextData textValue, GUID guidValue
-message ComponentPropDef GUID id, string name, ComponentPropValue initialValue, ComponentPropType type
-message ComponentPropAssignment GUID defID, ComponentPropValue value
-message PropRefValue GUID defId
-message VariableAnyValue PropRefValue propRefValue
-message VariableData VariableAnyValue value, VariableDataType dataType
-message VariableMapEntry VariableData variableData, VariableField variableField
-message VariableDataMap VariableMapEntry[] entries
-message KeyTrigger int[] keyCodes, TriggerDevice triggerDevice
-message PrototypeEvent InteractionType interactionType, float transitionTimeout, KeyTrigger keyTrigger
-message PrototypeAction GUID transitionNodeID, TransitionType transitionType, float transitionDuration, EasingType easingType, float[] easingFunction, ConnectionType connectionType, NavigationType navigationType, string connectionURL, bool transitionPreserveScroll
-message PrototypeInteraction PrototypeEvent event, PrototypeAction[] actions
-message PrototypeStartingPoint string name, string position
-message OverlayBackgroundAppearance OverlayBackgroundType backgroundType, Color backgroundColor
-message GridTrack GUID id, string position
-message GridTrackMap GridTrack[] entries
-message NodeChange GUID guid, NodePhase phase, ParentIndex parentIndex, NodeType type, string name, bool visible, bool locked, float opacity, BlendMode blendMode, Vector size, Matrix transform, bool mask, Paint[] fillPaints, Paint[] strokePaints, float strokeWeight, StrokeAlign strokeAlign, StrokeJoin strokeJoin, StrokeCap strokeCap, float[] dashPattern, float miterLimit, bool borderStrokeWeightsIndependent, float borderTopWeight, float borderRightWeight, float borderBottomWeight, float borderLeftWeight, Effect[] effects, float cornerRadius, float cornerSmoothing, bool rectangleCornerRadiiIndependent, float rectangleTopLeftCornerRadius, float rectangleTopRightCornerRadius, float rectangleBottomRightCornerRadius, float rectangleBottomLeftCornerRadius, ConstraintType horizontalConstraint, ConstraintType verticalConstraint, bool frameMaskDisabled, bool resizeToFit, bool isStateGroup, bool sectionContentsHidden, Color backgroundColor, StackMode stackMode, float stackSpacing, float stackCounterSpacing, StackWrap stackWrap, float stackHorizontalPadding, float stackVerticalPadding, float stackPaddingRight, float stackPaddingBottom, StackAlign stackPrimaryAlignItems, StackAlign stackCounterAlignItems, StackSize stackPrimarySizing, StackSize stackCounterSizing, bool bordersTakeSpace, bool stackReverseZIndex, float gridColumnGap, float gridRowGap, GridTrackMap gridColumns, GridTrackMap gridRows, float stackChildPrimaryGrow, StackChildAlign stackChildAlignSelf, StackPositioning stackPositioning, OptionalVector minSize, OptionalVector maxSize, GUID gridColumnAnchor, GUID gridRowAnchor, int gridColumnSpan, int gridRowSpan, LayoutGrid[] layoutGrids, ExportSettings[] exportSettings, TextData textData, FontName fontName, float fontSize, Number lineHeight, Number letterSpacing, TextCase textCase, TextDecoration textDecoration, TextAlignHorizontal textAlignHorizontal, TextAlignVertical textAlignVertical, TextAutoResize textAutoResize, TextTruncation textTruncation, int maxLines, float paragraphSpacing, float paragraphIndent, Hyperlink hyperlink, uint styleID, Path[] fillGeometry, VectorData vectorData, VectorMirror handleMirroring, uint count, float starInnerScale, ArcData arcData, BooleanOperation booleanOperation, string symbolDescription, SymbolData symbolData, GUID overriddenSymbolID, ComponentPropDef[] componentPropDefs, ComponentPropAssignment[] componentPropAssignments, VariableDataMap parameterConsumptionMap, GUIDPath guidPath, PrototypeInteraction[] prototypeInteractions, PrototypeStartingPoint prototypeStartingPoint, ScrollDirection scrollDirection, ScrollBehavior scrollBehavior, OverlayPositionType overlayPositionType, OverlayBackgroundInteraction overlayBackgroundInteraction, OverlayBackgroundAppearance overlayBackgroundAppearance
-message Blob byte[] bytes
-message Message MessageType type, uint sessionID, NodeChange[] nodeChanges, Blob[] blobs
+struct ParentIndex GUID guid, string position
+message Image byte[] hash=1, string name=2
+message Paint PaintType type=1, Color color=2, float opacity=3, bool visible=4, BlendMode blendMode=5, ColorStop[] stops=6, Matrix transform=7, Image image=8, ImageScaleMode imageScaleMode=10, float rotation=11, float scale=12
+message Effect EffectType type=1, Color color=2, Vector offset=3, float radius=4, bool visible=5, BlendMode blendMode=6, float spread=7, bool showShadowBehindNode=8, BlurOpType blurOpType=19, float startRadius=21, Vector startOffset=20, Vector endOffset=28, NoiseType noiseType=26, Vector noiseSize=22, float density=25, float opacity=27, Color secondaryColor=24, bool clipToShape=23
+struct FontName string family, string style, string postscript
+struct Number float value, NumberUnits units
+message Hyperlink string url=1
+message TextLineData LineType lineType=1, int styleId=10, int indentationLevel=2, SourceDirectionality sourceDirectionality=9, int listStartOffset=7, bool isFirstLineOfList=8
+message TextData string characters=1, uint[] characterStyleIDs=2, NodeChange[] styleOverrideTable=3, TextLineData[] lines=12
+message Path WindingRule windingRule=1, uint commandsBlob=2, uint styleID=3
+message VectorData uint vectorNetworkBlob=1, Vector normalizedSize=2, NodeChange[] styleOverrideTable=3
+message ArcData float startingAngle=1, float endingAngle=2, float innerRadius=3
+message OptionalVector Vector value=1
+message LayoutGrid LayoutGridType type=1, Axis axis=2, bool visible=3, int numSections=4, float offset=5, float sectionSize=6, float gutterSize=7, Color color=8, LayoutGridPattern pattern=9
+struct ExportConstraint ExportConstraintType type, float value
+message ExportSettings string suffix=1, ImageType imageType=2, ExportConstraint constraint=3
+message GUIDPath GUID[] guids=1
+message SymbolData GUID symbolID=1, NodeChange[] symbolOverrides=2
+message ComponentPropValue bool boolValue=1, TextData textValue=2, GUID guidValue=3
+message ComponentPropDef GUID id=1, string name=2, ComponentPropValue initialValue=3, ComponentPropType type=6
+message ComponentPropAssignment GUID defID=1, ComponentPropValue value=2
+message PropRefValue GUID defId=1
+message VariableAnyValue PropRefValue propRefValue=13
+message VariableData VariableAnyValue value=1, VariableDataType dataType=2, VariableResolvedDataType resolvedDataType=3
+message VariableDataMapEntry VariableData variableData=2, VariableField variableField=3
+message VariableDataMap VariableDataMapEntry[] entries=1
+message KeyTrigger int[] keyCodes=1, TriggerDevice triggerDevice=2
+message PrototypeEvent InteractionType interactionType=1, float transitionTimeout=6, KeyTrigger keyTrigger=4
+message PrototypeAction GUID transitionNodeID=1, TransitionType transitionType=2, float transitionDuration=3, EasingType easingType=4, float[] easingFunction=12, ConnectionType connectionType=7, NavigationType navigationType=10, string connectionURL=8, bool transitionPreserveScroll=11
+message PrototypeInteraction PrototypeEvent event=2, PrototypeAction[] actions=3
+message PrototypeStartingPoint string name=1, string position=3
+message OverlayBackgroundAppearance OverlayBackgroundType backgroundType=1, Color backgroundColor=2
+message GUIDPositionMapEntry GUID id=1, string position=2
+message GUIDPositionMap GUIDPositionMapEntry[] entries=1
+message NodeChange GUID guid=1, NodePhase phase=2, ParentIndex parentIndex=3, NodeType type=4, string name=5, bool visible=6, bool locked=7, float opacity=8, BlendMode blendMode=9, Vector size=11, Matrix transform=12, bool mask=16, MaskType maskType=317, float backgroundOpacity=19, bool backgroundEnabled=15, bool internalOnly=142, DocumentColorProfile documentColorProfile=349, Paint[] fillPaints=38, Paint[] strokePaints=39, float strokeWeight=26, StrokeAlign strokeAlign=29, StrokeJoin strokeJoin=31, StrokeCap strokeCap=30, float[] dashPattern=13, float miterLimit=25, bool borderStrokeWeightsIndependent=299, float borderTopWeight=295, float borderRightWeight=298, float borderBottomWeight=296, float borderLeftWeight=297, Effect[] effects=43, float cornerRadius=20, float cornerSmoothing=160, bool rectangleCornerRadiiIndependent=149, float rectangleTopLeftCornerRadius=145, float rectangleTopRightCornerRadius=146, float rectangleBottomRightCornerRadius=148, float rectangleBottomLeftCornerRadius=147, ConstraintType horizontalConstraint=28, ConstraintType verticalConstraint=37, bool frameMaskDisabled=115, bool resizeToFit=117, bool isStateGroup=225, bool sectionContentsHidden=283, Color backgroundColor=50, StackMode stackMode=105, float stackSpacing=107, float stackCounterSpacing=324, StackWrap stackWrap=323, float stackHorizontalPadding=209, float stackVerticalPadding=210, float stackPaddingRight=233, float stackPaddingBottom=234, StackJustify stackPrimaryAlignItems=230, StackAlign stackCounterAlignItems=231, StackSize stackPrimarySizing=229, StackSize stackCounterSizing=221, bool bordersTakeSpace=294, bool stackReverseZIndex=271, float gridColumnGap=438, float gridRowGap=437, GUIDPositionMap gridColumns=436, GUIDPositionMap gridRows=435, float stackChildPrimaryGrow=232, StackCounterAlign stackChildAlignSelf=236, StackPositioning stackPositioning=269, OptionalVector minSize=325, OptionalVector maxSize=326, GUID gridColumnAnchor=440, GUID gridRowAnchor=439, uint gridColumnSpan=442, uint gridRowSpan=441, LayoutGrid[] layoutGrids=47, ExportSettings[] exportSettings=45, TextData textData=42, FontName fontName=41, float fontSize=21, Number lineHeight=40, Number letterSpacing=165, TextCase textCase=34, TextDecoration textDecoration=35, TextAlignHorizontal textAlignHorizontal=32, TextAlignVertical textAlignVertical=33, TextAutoResize textAutoResize=46, TextTruncation textTruncation=280, int maxLines=351, float paragraphSpacing=23, float paragraphIndent=22, Hyperlink hyperlink=223, bool autoRename=14, bool fontVariantCommonLigatures=127, bool fontVariantContextualLigatures=128, string fontVersion=202, uint textUserLayoutVersion=203, uint textExplicitLayoutVersion=396, uint textBidiVersion=279, float textTracking=27, bool textDecorationSkipInk=412, EmojiImageSet emojiImageSet=391, uint styleID=49, Path[] fillGeometry=51, Path[] strokeGeometry=52, VectorData vectorData=48, VectorMirror handleMirroring=44, uint count=10, float starInnerScale=24, ArcData arcData=195, BooleanOperation booleanOperation=36, string symbolDescription=144, SymbolData symbolData=113, GUID overriddenSymbolID=143, ComponentPropDef[] componentPropDefs=266, ComponentPropAssignment[] componentPropAssignments=268, VariableDataMap parameterConsumptionMap=445, GUIDPath guidPath=111, PrototypeInteraction[] prototypeInteractions=226, PrototypeStartingPoint prototypeStartingPoint=249, ScrollDirection scrollDirection=159, ScrollBehavior scrollBehavior=186, OverlayPositionType overlayPositionType=198, OverlayBackgroundInteraction overlayBackgroundInteraction=200, OverlayBackgroundAppearance overlayBackgroundAppearance=201
+struct Blob byte[] bytes
+message Message MessageType type=1, uint sessionID=2, NodeChange[] nodeChanges=4, Blob[] blobs=6
 ";
 
 /// Write `doc` as a `.fig` file, with `thumbnail` (a PNG) when given. Returns the bytes and the
@@ -158,7 +166,11 @@ pub fn export(doc: &Document, thumbnail: Option<&[u8]>) -> Result<(Vec<u8>, Vec<
     let root = schema.find("Message").ok_or_else(|| FormatError::Io(".fig export: the schema has no Message".into()))?;
     let body = encode::message(&schema, root, &message).map_err(fail)?;
     let canvas = canvas(&encode::schema(&schema), &body)?;
-    let bytes = archive(&doc.name, &canvas, &x.files, thumbnail)?;
+    let background = doc.pages.first().and_then(|p| doc.node(*p)).and_then(|p| match &p.kind {
+        NodeKind::Page { background, .. } => Some(*background),
+        _ => None,
+    });
+    let bytes = archive(&doc.name, background.unwrap_or(Color::WHITE), &canvas, &x.files, thumbnail)?;
     Ok((bytes, x.warnings))
 }
 
@@ -185,17 +197,29 @@ fn canvas(schema: &[u8], message: &[u8]) -> Result<Vec<u8>, FormatError> {
 }
 
 /// The zip around `canvas.fig`.
-fn archive(name: &str, canvas: &[u8], images: &[(String, Arc<Vec<u8>>)], thumbnail: Option<&[u8]>) -> Result<Vec<u8>, FormatError> {
+fn archive(
+    name: &str,
+    background: Color,
+    canvas: &[u8],
+    images: &[(String, Arc<Vec<u8>>)],
+    thumbnail: Option<&[u8]>,
+) -> Result<Vec<u8>, FormatError> {
     let mut buf = std::io::Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
         let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         crate::put(&mut z, "canvas.fig", stored, canvas)?;
-        let meta = serde_json::to_vec(&serde_json::json!({"file_name": name})).map_err(crate::io_err)?;
-        crate::put(&mut z, "meta.json", crate::json_options(), &meta)?;
         if let Some(t) = thumbnail {
             crate::put(&mut z, "thumbnail.png", stored, t)?;
         }
+        let mut client = serde_json::json!({"background_color": {"r": background.r, "g": background.g, "b": background.b, "a": background.a}});
+        // A PNG says its size right after its signature and header chunk name.
+        let be = |at: usize| thumbnail.and_then(|t| t.get(at..at + 4)).and_then(|b| b.try_into().ok()).map(u32::from_be_bytes);
+        if let (Some(w), Some(h)) = (be(16), be(20)) {
+            client["thumbnail_size"] = serde_json::json!({"width": w, "height": h});
+        }
+        let meta = serde_json::to_vec(&serde_json::json!({"client_meta": client, "file_name": name})).map_err(crate::io_err)?;
+        crate::put(&mut z, "meta.json", crate::json_options(), &meta)?;
         let mut total = canvas.len() as u64;
         for (hash, bytes) in images {
             total += bytes.len() as u64;
@@ -248,6 +272,18 @@ fn color(c: Color) -> Kv<'static> {
 fn matrix(m: Affine) -> Kv<'static> {
     let [a, b, c, d, e, f] = m.as_coeffs();
     o(vec![("m00", fl(a)), ("m01", fl(c)), ("m02", fl(e)), ("m10", fl(b)), ("m11", fl(d)), ("m12", fl(f))])
+}
+/// What the document and its pages say besides their names: left out, a reader takes them as
+/// hidden and fully transparent, and draws nothing below them.
+fn root_fields() -> Fields {
+    vec![
+        ("visible", b(true)),
+        ("opacity", fl(1.0)),
+        ("transform", matrix(Affine::IDENTITY)),
+        ("strokeWeight", fl(0.0)),
+        ("strokeAlign", e("CENTER")),
+        ("strokeJoin", e("BEVEL")),
+    ]
 }
 /// A finite coordinate (vector network blobs store raw floats).
 fn finite(x: f64) -> f64 {
@@ -402,7 +438,11 @@ impl<'d> Exporter<'d> {
     fn message(&mut self) -> Kv<'static> {
         let doc = self.doc;
         self.assign();
-        self.nodes.push(o(vec![("guid", guid(0, 0)), ("phase", e("CREATED")), ("type", e("DOCUMENT")), ("name", s(&doc.name))]));
+        let profile = if doc.color_profile == figcraft_doc::color::ColorProfile::DisplayP3 { "DISPLAY_P3" } else { "SRGB" };
+        let mut root: Fields = vec![("guid", guid(0, 0)), ("phase", e("CREATED")), ("type", e("DOCUMENT")), ("name", s(&doc.name))];
+        root.extend(root_fields());
+        root.push(("documentColorProfile", e(profile)));
+        self.nodes.push(o(root));
         for (i, p) in doc.pages.iter().enumerate() {
             self.emit(*p, guid(0, 0), i, None, 0);
         }
@@ -493,7 +533,9 @@ impl<'d> Exporter<'d> {
             ("parentIndex", o(vec![("guid", parent_guid), ("position", s(&position(index)))])),
         ];
         let children = if let NodeKind::Page { background, guides, prototype, .. } = &n.kind {
-            f.extend([("type", e("CANVAS")), ("name", s(&n.name)), ("backgroundColor", color(*background))]);
+            f.extend([("type", e("CANVAS")), ("name", s(&n.name))]);
+            f.extend(root_fields());
+            f.extend([("backgroundColor", color(*background)), ("backgroundOpacity", fl(background.a.into())), ("backgroundEnabled", b(true))]);
             if !guides.is_empty() {
                 self.warn("ruler guides were left out");
             }
@@ -531,7 +573,7 @@ impl<'d> Exporter<'d> {
             NodeKind::Page { .. } | NodeKind::Frame | NodeKind::Group | NodeKind::ComponentSet { .. } => "FRAME",
             NodeKind::Instance { .. } if main.is_none() => "FRAME",
             NodeKind::Section { .. } => "SECTION",
-            NodeKind::Rectangle => "RECTANGLE",
+            NodeKind::Rectangle => "ROUNDED_RECTANGLE",
             NodeKind::Ellipse { .. } => "ELLIPSE",
             NodeKind::Polygon { .. } => "REGULAR_POLYGON",
             NodeKind::Star { .. } => "STAR",
@@ -595,11 +637,13 @@ impl<'d> Exporter<'d> {
             }
             _ => {}
         }
-        if matches!(n.kind, NodeKind::Rectangle | NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. })
+        let boxy = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Rectangle | NodeKind::Section { .. });
+        if (boxy || matches!(n.kind, NodeKind::Ellipse { .. } | NodeKind::Polygon { .. } | NodeKind::Star { .. }))
             && let Some(p) = figcraft_doc::geometry::shape_path(n)
         {
-            self.geometry(&p, WindingRule::NonZero, f);
+            self.geometry("fillGeometry", &p, WindingRule::NonZero, f);
         }
+        self.stroke_geometry(n, boxy, f);
         main.is_none()
     }
 
@@ -614,10 +658,12 @@ impl<'d> Exporter<'d> {
             ("transform", matrix(n.transform)),
         ]);
         if n.is_mask {
-            f.push(("mask", b(true)));
-            if n.mask_type != MaskType::Alpha {
-                self.warn("outline and luminance masks were written as alpha masks");
-            }
+            let ty = match n.mask_type {
+                MaskType::Alpha => "ALPHA",
+                MaskType::Vector => "OUTLINE",
+                MaskType::Luminance => "LUMINANCE",
+            };
+            f.extend([("mask", b(true)), ("maskType", e(ty))]);
         }
         // Text whose own style sets fills paints with them (the layer's fills only show through runs).
         let fills = match &n.kind {
@@ -635,9 +681,10 @@ impl<'d> Exporter<'d> {
         if n.kind.has_corner_radius() {
             let r = n.corners.radii;
             f.push(("cornerRadius", fl(r[0])));
-            if n.kind.has_independent_corners() && r.iter().any(|x| *x != r[0]) {
+            let differ = r.iter().any(|x| *x != r[0]);
+            if n.kind.has_independent_corners() && (differ || r[0] > 0.0) {
+                f.extend(differ.then(|| ("rectangleCornerRadiiIndependent", b(true))));
                 f.extend([
-                    ("rectangleCornerRadiiIndependent", b(true)),
                     ("rectangleTopLeftCornerRadius", fl(r[0])),
                     ("rectangleTopRightCornerRadius", fl(r[1])),
                     ("rectangleBottomRightCornerRadius", fl(r[2])),
@@ -676,6 +723,9 @@ impl<'d> Exporter<'d> {
         }
         self.child_layout(n, parent, f);
         if !n.exports.is_empty() {
+            if n.exports.iter().any(|x| x.format == figcraft_doc::ExportFormat::Webp) {
+                self.warn("WebP export settings were written as PNG");
+            }
             f.push(("exportSettings", arr(n.exports.iter().map(export_setting).collect())));
         }
         self.prototype(n, f);
@@ -888,7 +938,7 @@ impl<'d> Exporter<'d> {
             }
             EffectKind::Texture(t) => {
                 f.extend([
-                    ("type", e("TEXTURE")),
+                    ("type", e("GRAIN")),
                     ("noiseSize", grain(t.size, t.size_y)),
                     ("radius", fl(t.radius)),
                     ("clipToShape", b(t.clip_to_shape)),
@@ -1033,6 +1083,16 @@ impl<'d> Exporter<'d> {
             ("textAutoResize", e(resize)),
             ("paragraphSpacing", fl(td.paragraph_spacing)),
             ("paragraphIndent", fl(td.paragraph_indent)),
+            ("autoRename", b(false)),
+            ("fontVariantCommonLigatures", b(true)),
+            ("fontVariantContextualLigatures", b(true)),
+            ("fontVersion", s("")),
+            ("textUserLayoutVersion", u(5)),
+            ("textExplicitLayoutVersion", u(1)),
+            ("textBidiVersion", u(1)),
+            ("textTracking", fl(0.0)),
+            ("textDecorationSkipInk", b(true)),
+            ("emojiImageSet", e("APPLE")),
         ]);
         if td.auto_resize == TextAutoResize::Truncate {
             f.push(("textTruncation", e("ENDING")));
@@ -1090,19 +1150,25 @@ impl<'d> Exporter<'d> {
             data.extend([("characterStyleIDs", arr(ids)), ("styleOverrideTable", arr(entries))]);
         }
         let lists: Vec<ListStyle> = (0..td.paragraph_count()).map(|p| td.para_list(p).list).collect();
-        if lists.iter().any(|l| *l != ListStyle::None) {
-            let line = |l: &ListStyle| {
-                o(vec![(
-                    "lineType",
-                    e(match l {
-                        ListStyle::None => "PLAIN",
-                        ListStyle::Numbered => "ORDERED_LIST",
-                        ListStyle::Bulleted => "UNORDERED_LIST",
-                    }),
-                )])
+        // One entry per paragraph, each with every field a reader expects.
+        let line = |(i, l): (usize, &ListStyle)| {
+            let ty = match l {
+                ListStyle::None => "PLAIN",
+                ListStyle::Numbered => "ORDERED_LIST",
+                ListStyle::Bulleted => "UNORDERED_LIST",
             };
-            data.push(("lines", arr(lists.iter().map(line).collect())));
-        }
+            let listed = *l != ListStyle::None;
+            let first = listed && (i == 0 || lists.get(i - 1) != Some(l));
+            o(vec![
+                ("lineType", e(ty)),
+                ("styleId", int(0)),
+                ("indentationLevel", int(i64::from(listed))),
+                ("sourceDirectionality", e("AUTO")),
+                ("listStartOffset", int(0)),
+                ("isFirstLineOfList", b(first)),
+            ])
+        };
+        data.push(("lines", arr(lists.iter().enumerate().map(line).collect())));
         f.push(("textData", o(data)));
         if (0..td.paragraph_count()).any(|p| td.para_list(p).indent > 0) {
             self.warn("nested list levels were written as the first level");
@@ -1216,18 +1282,77 @@ impl<'d> Exporter<'d> {
             if net.regions.iter().any(|r| r.winding != winding) {
                 self.warn("vectors whose filled areas use different winding rules use the first one's in their outline");
             }
-            self.geometry(&net.fill_path(), winding, f);
+            self.geometry("fillGeometry", &net.fill_path(), winding, f);
         }
     }
 
-    /// `fillGeometry` from a local path.
-    fn geometry(&mut self, p: &BezPath, winding: WindingRule, f: &mut Fields) {
+    /// `fillGeometry` or `strokeGeometry` (`key`) from a local path.
+    fn geometry(&mut self, key: &'static str, p: &BezPath, winding: WindingRule, f: &mut Fields) {
         if p.elements().is_empty() {
             return;
         }
         if let Some(i) = self.blob(path_blob(p)) {
             let rule = if winding == WindingRule::EvenOdd { "ODD" } else { "NONZERO" };
-            f.push(("fillGeometry", arr(vec![o(vec![("windingRule", e(rule)), ("commandsBlob", u(i))])])));
+            f.push((key, arr(vec![o(vec![("windingRule", e(rule)), ("commandsBlob", u(i)), ("styleID", u(0))])])));
+        }
+    }
+
+    /// `strokeGeometry`, the outline of a plain stroke: a ring around boxes and whole ellipses, the
+    /// widened path of other centred strokes. Dashed, per-side and other strokes get none (a reader
+    /// builds theirs from the stroke settings).
+    fn stroke_geometry(&mut self, n: &Node, boxy: bool, f: &mut Fields) {
+        let sp = &n.stroke;
+        let (w, h, weight) = (n.width, n.height, sp.weight);
+        let plain = n.strokes.iter().any(|p| p.visible) && sp.dashes.is_empty() && sp.sides.is_none();
+        if !plain || !(weight.is_finite() && weight > 0.0 && w.is_finite() && h.is_finite()) {
+            return;
+        }
+        let whole = matches!(n.kind, NodeKind::Ellipse { sweep, inner, .. } if inner == 0.0 && sweep.abs() >= std::f64::consts::TAU - 1e-9);
+        if boxy || whole {
+            let (out, inset) = match sp.align {
+                StrokeAlign::Inside => (0.0, weight),
+                StrokeAlign::Center => (weight / 2.0, weight / 2.0),
+                StrokeAlign::Outside => (weight, 0.0),
+            };
+            // The shape grown by `d` (shrunk when negative), or nothing when it shrinks away.
+            let grown = |d: f64| -> Option<BezPath> {
+                let (gw, gh) = (w + 2.0 * d, h + 2.0 * d);
+                if gw <= 0.0 || gh <= 0.0 {
+                    return None;
+                }
+                let mut p = if whole {
+                    figcraft_doc::geom::ellipse(gw, gh, 0.0, std::f64::consts::TAU, 0.0)
+                } else {
+                    let radii = n.corners.radii.map(|r| if r > 0.0 { (r + d).max(0.0) } else { 0.0 });
+                    figcraft_doc::geom::rounded_rect(gw, gh, radii, n.corners.smoothing)
+                };
+                p.apply_affine(Affine::translate((-d, -d)));
+                Some(p)
+            };
+            let Some(mut ring) = grown(out) else { return };
+            ring.extend(grown(-inset).iter().flat_map(|p| p.elements().iter().copied()));
+            self.geometry("strokeGeometry", &ring, WindingRule::EvenOdd, f);
+        } else if sp.align == StrokeAlign::Center {
+            let path = match &n.kind {
+                NodeKind::Vector { network } => Some(network.stroke_path()),
+                NodeKind::Text(_) => None,
+                _ => figcraft_doc::geometry::shape_path(n),
+            };
+            let Some(path) = path.filter(|p| !p.elements().is_empty()) else { return };
+            use figcraft_doc::geom::kurbo::{Cap, Join, Stroke, StrokeOpts, stroke};
+            let cap = match sp.cap_start {
+                StrokeCap::Round => Cap::Round,
+                StrokeCap::Square => Cap::Square,
+                _ => Cap::Butt,
+            };
+            let join = match sp.join {
+                StrokeJoin::Miter => Join::Miter,
+                StrokeJoin::Bevel => Join::Bevel,
+                StrokeJoin::Round => Join::Round,
+            };
+            let limit = if sp.miter_limit.is_finite() { sp.miter_limit.max(1.0) } else { 4.0 };
+            let style = Stroke::new(weight).with_caps(cap).with_join(join).with_miter_limit(limit);
+            self.geometry("strokeGeometry", &stroke(path, &style, &StrokeOpts::default(), 0.05), WindingRule::NonZero, f);
         }
     }
 
@@ -1266,17 +1391,21 @@ impl<'d> Exporter<'d> {
 
     /// Which property controls a layer's `field`.
     fn prop_ref(&mut self, field: &str, prop: &str) -> Option<Kv<'static>> {
-        let (var_field, ty) = match field {
-            "visible" => ("VISIBLE", "BOOL"),
-            "characters" => ("TEXT_DATA", "TEXT"),
-            "mainComponent" => ("OVERRIDDEN_SYMBOL_ID", "INSTANCE_SWAP"),
+        let (var_field, ty, resolved) = match field {
+            "visible" => ("VISIBLE", "BOOL", "BOOLEAN"),
+            "characters" => ("TEXT_DATA", "TEXT", "TEXT_DATA"),
+            "mainComponent" => ("OVERRIDDEN_SYMBOL_ID", "INSTANCE_SWAP", "SYMBOL_ID"),
             _ => {
                 self.warn("slot layers were written as plain layers");
                 return None;
             }
         };
         let id = *self.defs.get(&(prop.to_string(), ty))?;
-        let data = o(vec![("value", o(vec![("propRefValue", o(vec![("defId", guid(AUX, id))]))])), ("dataType", e("PROP_REF"))]);
+        let data = o(vec![
+            ("value", o(vec![("propRefValue", o(vec![("defId", guid(AUX, id))]))])),
+            ("dataType", e("PROP_REF")),
+            ("resolvedDataType", e(resolved)),
+        ]);
         Some(o(vec![("variableData", data), ("variableField", e(var_field))]))
     }
 
@@ -1590,10 +1719,10 @@ fn key_codes(key: &str) -> Option<(Vec<i64>, bool)> {
 /// The text style fields of a layer or of an override table entry.
 fn style_fields(st: &TextStyle, f: &mut Fields) {
     let line_height = match st.line_height {
-        // 100 % in percent units reads as the font's own line height: a raw multiplier keeps it.
+        // Percent units count from the font's own line height (100 % is "auto"); a share of the
+        // font size is a raw multiplier.
         LineHeight::Auto => o(vec![("value", fl(100.0)), ("units", e("PERCENT"))]),
-        LineHeight::Percent(p) if (p - 100.0).abs() < 1e-9 => o(vec![("value", fl(1.0)), ("units", e("RAW"))]),
-        LineHeight::Percent(p) => o(vec![("value", fl(p)), ("units", e("PERCENT"))]),
+        LineHeight::Percent(p) => o(vec![("value", fl(p / 100.0)), ("units", e("RAW"))]),
         LineHeight::Pixels(v) => o(vec![("value", fl(v)), ("units", e("PIXELS"))]),
     };
     let letter_spacing = match st.letter_spacing {
@@ -1613,7 +1742,7 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         TextDecoration::Strikethrough => "STRIKETHROUGH",
     };
     f.extend([
-        ("fontName", o(vec![("family", s(&st.font_family)), ("style", s(&st.font_style)), ("postscript", s(""))])),
+        ("fontName", o(vec![("family", s(&st.font_family)), ("style", s(&super::style_name(&st.font_style))), ("postscript", s(""))])),
         ("fontSize", fl(st.font_size)),
         ("lineHeight", line_height),
         ("letterSpacing", letter_spacing),
@@ -1652,11 +1781,11 @@ fn layout_grid(g: &figcraft_doc::LayoutGrid) -> Kv<'static> {
 
 fn export_setting(x: &figcraft_doc::ExportSetting) -> Kv<'static> {
     let format = match x.format {
-        figcraft_doc::ExportFormat::Png => "PNG",
+        // The format has no WebP export setting.
+        figcraft_doc::ExportFormat::Png | figcraft_doc::ExportFormat::Webp => "PNG",
         figcraft_doc::ExportFormat::Jpg => "JPEG",
         figcraft_doc::ExportFormat::Svg => "SVG",
         figcraft_doc::ExportFormat::Pdf => "PDF",
-        figcraft_doc::ExportFormat::Webp => "WEBP",
     };
     let (ty, value) = match x.size {
         ExportSize::Scale { value } => ("CONTENT_SCALE", value),

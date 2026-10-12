@@ -354,7 +354,7 @@ fn message() -> Kv<'static> {
 }
 
 /// `canvas.fig`: magic, version, deflated schema, zstd message.
-fn canvas(schema: &Schema, msg: &Kv) -> Vec<u8> {
+pub(super) fn canvas(schema: &Schema, msg: &Kv) -> Vec<u8> {
     let root = schema.find("Message").unwrap();
     let mut z = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
     z.write_all(&encode::schema(schema)).unwrap();

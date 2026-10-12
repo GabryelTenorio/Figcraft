@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (experimental `.fig` export, verified only through our own importer; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (`.fig` export: written files checked by opening them in other software; experimental `.fig` export; export and inspect behaviour suite and fixes; .fig import: editable vector networks and more layer kinds; embedded image colour profiles; `.fig` import, best effort; animated GIF fills and TIFF images; last major: created, formats from the installed Figma's Info.plist and help center, ours from source) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every format Figma reads or writes, with FigCraft's support. Sources: `Info.plist` of
 `/Applications/Figma.app` (document types only; nothing inside the bundle's code was read), Figma's
@@ -8,8 +8,10 @@ help center (image and video types, export formats), and FigCraft's source.
 
 **Summary (estimated):** ~60% ready. The core interchange formats (SVG, PNG, JPG, PDF) are solid
 and tested; Figma's own document, `.fig`, opens (best effort, not yet checked against real-world
-files) and can be written, experimentally: only round trips through FigCraft's own importer are
-verified, and nothing yet shows that other apps open the files.
+files) and can be written, experimentally: written files round trip through FigCraft's own
+importer and were checked by opening them in other software (layers, fills, gradients, strokes,
+shadows, vectors, components and text draw as in FigCraft); effects such as glass and noise, images
+and prototype interactions are still unchecked there.
 
 ## Documents
 
@@ -47,7 +49,7 @@ verified, and nothing yet shows that other apps open the files.
 | WebP | — | yes (ours) | | — |
 | Copy as CSS / SVG / PNG / text / link | yes | yes | Copy as PNG: the whole selection at 2x | — |
 | Dev Mode code (CSS, iOS SwiftUI, Android Compose) | yes | yes, plus HTML and React | see [dev-mode-parity](dev-mode-parity.md) | — |
-| `.fig` ("Save local copy") | yes | **experimental** | the whole file; see [Export to `.fig`](#export-to-fig-experimental). Verified only by round trips through our own importer | 5–15 (checks against real files) |
+| `.fig` ("Save local copy") | yes | **experimental** | the whole file; see [Export to `.fig`](#export-to-fig-experimental). Round trips through our own importer; written files checked by opening them in other software: layers, fills, gradients, strokes, shadows, vectors, components and text draw as in FigCraft | 5–15 (checks of effects, images and prototypes, and against real files) |
 
 ### Export to `.fig` (experimental)
 
@@ -56,21 +58,29 @@ verified, and nothing yet shows that other apps open the files.
 the whole document. The writer (`crates/format/src/fig/export.rs`) works from the same public format
 notes as the import and inverts its mapping: the zip holds `canvas.fig` (the fig-kiwi header, then a
 raw-deflate binary schema and a raw-deflate message), `meta.json`, `thumbnail.png` and
-`images/<hash>`. The schema written into the file describes only the fields written. The message
+`images/<hash>`; `meta.json` names the file and gives the page colour and the thumbnail size. The
+schema written into the file describes only the fields written, under the names, kinds (struct or
+message), field ids and enum values the format gives them. The document and each page say they are
+visible and opaque (a page also its background opacity): a reader takes what is left out as off, and
+draws nothing below a hidden page. The message
 lists one node change per layer, parents first, each with its GUID, its parent and a position
 string that orders it among its siblings; vector networks and outlines go in blobs, written once
 each.
 
-- **Written:** pages (name, background); frames, groups, sections, rectangles, ellipses (arcs),
-  polygons, stars, lines, vectors (editable network blobs with per-point corner radius, handle
-  mirroring, caps and joins, plus the outline of their filled areas), text, boolean groups, slices;
+- **Written:** pages (name, background); frames, groups, sections, rectangles (as rounded
+  rectangles, with their four radii), ellipses (arcs), polygons, stars, lines, vectors (editable
+  network blobs with per-point corner radius, handle mirroring, caps and joins, plus the outline of
+  their filled areas), text, boolean groups, slices; the fill outline of frames and shapes and the
+  stroke outline of plain strokes (a ring around boxes and whole ellipses, the widened path of other
+  centred strokes);
   solid, gradient (handles as the paint transform) and image paints (the image bytes, scale mode,
   rotation, tile scale, crop); strokes (weight, align, join, caps, dashes, miter limit, per-side
   weights); shadows, layer and background blurs (progressive too), noise and texture; corners and
-  smoothing, constraints, clip content, masks; auto layout (direction, wrap, gaps, padding,
+  smoothing, constraints, clip content, masks with their type; auto layout (direction, wrap, gaps, padding,
   alignment, hug, strokes in layout, stacking order, grids with their tracks and cells) and how
   layers sit in it (fill, absolute, min/max sizes); layout grids; export settings; text style
-  (font, size, line height, letter spacing, case, decoration, links), alignment, auto resize,
+  (font, with styles under their standard names such as "Semi Bold"; size; line height, a share of
+  the font size as a raw multiplier; letter spacing, case, decoration, links), alignment, auto resize,
   truncation, paragraph spacing and indent, list types and styled runs with their fills (indexed
   by UTF-16 unit); components (description, boolean, text and instance swap properties and the
   layers bound to them), component sets, instances (their main, property values, and the fields
@@ -82,23 +92,33 @@ each.
 - **Left out, with a warning each:** shared styles (layers keep the values), variables and their
   bindings, comments, Dev Mode annotations, statuses, resources and code links, plugin data, ruler
   guides, prototype device settings, slot properties and slot content, variable-width and brush
-  strokes (written plain), outline and luminance masks (written as alpha masks), pattern fills,
+  strokes (written plain), pattern fills, WebP export settings (written as PNG),
   image adjustments, glass settings other than frost, springs other than Gentle (written as ease
   out), set-variable, set-variable-mode and conditional actions, scroll-to offsets, text decoration
   looks, variable font axes, text on a path, nested list levels, list spacing, hanging punctuation,
   leading trim, OpenType features, per-layer operations inside boolean groups, grid tracks of fixed
-  or content size, different stroke ends on lines. Not written at all: stroke outlines, version
-  history and branches.
-- **Verified only by round trips through our own importer:** 60 generated documents (every layer
+  or content size, different stroke ends on lines. Not written at all: stroke outlines of dashed and
+  per-side strokes and of inside or outside strokes on polygons, stars and vectors, glyph outlines
+  of text (a reader lays text out with its own fonts), version history and branches.
+- **Checked by opening written files in other software:** the example documents and a small test
+  file open there, and layers, fills, gradients, strokes, shadows, vectors, components and text draw
+  as in FigCraft. A file saved again there and read back keeps the layer tree and properties; two
+  differences it showed were fixed (font styles are written under their standard names, and a line
+  height that is a share of the font size is written as a raw multiplier, since percent units count
+  from the font's own line height); the import now reads per-side stroke weights that leave the
+  sides without a border out. Still unchecked there: effects such as glass and noise, images,
+  prototype interactions; variables are not written. Text boxes sized to their content can come out
+  a pixel wider or narrower there.
+- **Round trips through our own importer:** 60 generated documents (every layer
   kind above, components, nested instances with overrides, a grid inside a component,
   interactions) are exported, read back and compared layer by layer: structure, geometry within
   32-bit float tolerance, paints, text and runs, auto layout, components and prototypes. The written
   file decodes with the generic kiwi decoder and lists every layer after its parent; the encoder
   agrees with the decoder on random messages and refuses values the schema can't hold; junk
   documents never panic (`crates/format/src/fig/export_tests.rs`,
-  `crates/engine/src/fig_export_tests.rs`). Field and enum names follow the public notes; the enum
-  numbers and the header version are not checked against anything, and no other app has opened
-  these files.
+  `crates/engine/src/fig_export_tests.rs`). What other readers need (visible document and pages,
+  outlines, text settings, schema numbering, font style names, line height units, mask types) has
+  its own tests (`crates/format/src/fig/interop_tests.rs`).
 
 ## Fonts
 
@@ -113,6 +133,7 @@ each.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | `.fig` export made to open elsewhere (gap 1): the document and its pages say they are visible and opaque (left out, nothing was drawn), the schema in the file uses the format's own names, kinds, field ids and enum values, rectangles are rounded rectangles with four radii, frames and shapes carry their fill outline and plain strokes their stroke outline, text carries its layout settings, font styles use their standard names, line heights that are a share of the font size are raw multipliers, masks keep their type (read back too); the import reads per-side stroke weights whose zero sides are left out. Written files were checked by opening them in other software: layers, fills, gradients, strokes, shadows, vectors, components and text draw as in FigCraft; effects such as glass and noise, images and prototype interactions are still unchecked there, and variables are not written. Numbers unchanged |
 | 2026-10-12 | minor | Experimental `.fig` export (gap 1): `file.export {format: "fig"}`, File ▸ Export… ▸ .fig (experimental), the CLI and MCP write the whole document (layer tree, geometry, paints with image bytes, strokes, effects, text with styled runs, vector networks, auto layout, constraints, components, sets, instances with their overrides and property values, prototype interactions) with a kiwi encoder that mirrors the decoder and the schema of the fields written; what's left out is a warning. The import gained ellipse arcs, boolean operation types and component set descriptions, and reads durations as whole milliseconds. Verified only by round trips through our own importer. Summary ~59% → ~60%; `.fig` write 15–30 h → 5–15 h (checks against real files) |
 | 2026-10-11 | minor | Export and inspect behaviour suite written from the public documentation (139 cases in 19 tests; 47 failed before the fixes) and its fixes: an export covers what the layer paints, so a drop shadow adds room only where it falls, strokes on boxes and ellipses reach their real width (they added up to four times as much), hidden layers take no room and a mask group exports the mask's area; a slice exports everything under it; slashes in layer names export into folders; Copy as PNG copies the whole selection. Added: the export settings' contents only and include bounding box, and for SVG outline text (off writes `<text>`), unique id attributes and simplified strokes (stroke attributes where exact); Inspect colour formats (hex, RGB, CSS, HSL, HSB), CSS in rem, a Blend row, positions measured from the frame around a layer (groups aren't frames), CSS for rotation, blend modes, gradient directions and kinds, text alignment, case and decoration; icons and images in the asset list (`file.exportLayers {assets}`). Summary ~55% → ~56%; SVG options 1–2 h → done |
 | 2026-10-11 | minor | `.fig` import's tail (gap 1): vectors open as editable vector networks (points, curved segments, filled areas with their winding, per-point corner radius and handle mirroring, end caps from the end points), falling back to outlines when the network is missing or damaged; sticky notes, shapes with text, connectors, tables, code blocks, slides and similar layers import as the closest frames, text layers and vectors with a warning instead of being dropped; set-variable, set-variable-mode and conditional prototype actions come across. New parsers fuzzed on fixtures generated in code. File formats 55% → 58%, 8–15 h → 5–10 h; import/export breadth 80% → 82%, ready 50% → 54%; feature and area totals and ready for real work (~49%) unchanged; beta ~173–310 h → ~170–305 h; full parity ~321–618 h → ~318–613 h |

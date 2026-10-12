@@ -555,7 +555,8 @@ const BUILTIN_NAMES: [&str; 8] = ["bool", "byte", "int", "uint", "float", "strin
 impl Schema {
     /// A schema from a compact text form, one definition per line: `enum Name A B …` (values from
     /// 0), `struct Name type field, type field[] …` or `message Name …` (field ids from 1), the
-    /// types being built-in names or other definitions'.
+    /// types being built-in names or other definitions'. `A=3` or `type field=7` gives a value or
+    /// a field its own number.
     pub fn parse(text: &str) -> Result<Schema, KiwiError> {
         let lines: Vec<Vec<&str>> = text.lines().map(|l| l.split_whitespace().collect::<Vec<_>>()).filter(|l| !l.is_empty()).collect();
         let index = |name: &str| lines.iter().position(|l| l.get(1) == Some(&name));
@@ -564,7 +565,14 @@ impl Schema {
             let (Some(kind), Some(name)) = (l.first(), l.get(1)) else { return err("schema text: a definition needs a kind and a name") };
             let rest = l.get(2..).unwrap_or_default();
             let (kind, fields) = match *kind {
-                "enum" => (Kind::Enum, rest.iter().zip(0..).map(|(n, i)| Field { name: n.to_string(), ty: None, array: false, value: i }).collect()),
+                "enum" => {
+                    let mut fields = Vec::new();
+                    for (n, i) in rest.iter().zip(0..) {
+                        let (name, value) = numbered(n, i)?;
+                        fields.push(Field { name, ty: None, array: false, value });
+                    }
+                    (Kind::Enum, fields)
+                }
                 "struct" | "message" => {
                     let mut fields = Vec::new();
                     for (f, id) in rest.join(" ").split(',').zip(1..) {
@@ -575,7 +583,8 @@ impl Schema {
                             None => index(base).map(Type::Def),
                         }
                         .ok_or_else(|| KiwiError(format!("schema text: unknown type {base}")))?;
-                        fields.push(Field { name: n.trim().to_string(), ty: Some(ty), array: t.ends_with("[]"), value: id });
+                        let (name, value) = numbered(n.trim(), id)?;
+                        fields.push(Field { name, ty: Some(ty), array: t.ends_with("[]"), value });
                     }
                     (if *kind == "struct" { Kind::Struct } else { Kind::Message }, fields)
                 }
@@ -584,5 +593,13 @@ impl Schema {
             defs.push(Def { name: name.to_string(), kind, fields });
         }
         Ok(Schema { defs })
+    }
+}
+
+/// `name=number` as its parts, or `name` with `default`.
+fn numbered(token: &str, default: u32) -> Result<(String, u32), KiwiError> {
+    match token.split_once('=') {
+        None => Ok((token.to_string(), default)),
+        Some((name, n)) => Ok((name.to_string(), n.parse().map_err(|_| KiwiError(format!("schema text: bad number in `{token}`")))?)),
     }
 }

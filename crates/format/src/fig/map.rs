@@ -475,6 +475,9 @@ impl<'a> Mapper<'a> {
                 o.insert(to.into(), json!(b));
             }
         }
+        if let Some(m) = v.str("maskType") {
+            o.insert("maskType".into(), json!(if m == "OUTLINE" { "VECTOR" } else { m }));
+        }
         copy_num(o, v, "opacity", "opacity");
         if let Some(b) = v.str("blendMode").filter(|b| *b != "UNSET") {
             o.insert("blendMode".into(), json!(b));
@@ -1196,8 +1199,8 @@ fn stroke(o: &mut Obj, v: &View) {
         o.insert("strokeMiterAngle".into(), json!((2.0 * (1.0 / l).asin()).to_degrees()));
     }
     if v.flag("borderStrokeWeightsIndependent") == Some(true) {
-        let w = v.num("strokeWeight").unwrap_or(0.0);
-        let side = |k: &str| v.num(k).unwrap_or(w);
+        // A side that isn't written has no border.
+        let side = |k: &str| v.num(k).unwrap_or(0.0);
         o.insert(
             "individualStrokeWeights".into(),
             json!({"top": side("borderTopWeight"), "right": side("borderRightWeight"), "bottom": side("borderBottomWeight"), "left": side("borderLeftWeight")}),
@@ -1432,7 +1435,8 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
     if let Some(f) = v.get("fontName") {
         for (from, to) in [("family", "fontFamily"), ("style", "fontStyle"), ("postscript", "fontPostScriptName")] {
             if let Some(x) = f.get(from).and_then(Kv::str).filter(|x| !x.is_empty()) {
-                s.insert(to.into(), json!(x));
+                // Compact and spaced style names ("SemiBold", "Semi Bold") are the same style.
+                s.insert(to.into(), if from == "style" { json!(super::style_name(x)) } else { json!(x) });
             }
         }
     }
@@ -1458,8 +1462,9 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
                 s.insert("lineHeightUnit".into(), json!("PIXELS"));
                 s.insert("lineHeightPx".into(), json!(val));
             }
-            // shortcut: 100 % reads as the font's own line height (new text saves "auto" so) and
-            // other percentages as % of the font size; revisit with files that set 100 % explicitly.
+            // shortcut: percent units count from the font's own line height (100 % is "auto"), which
+            // the document can only say for 100 %; other values read as % of the font size. Upgrade
+            // when line heights can be a share of the font's own.
             Some("PERCENT") if (val - 100.0).abs() < 1e-6 => {
                 s.insert("lineHeightUnit".into(), json!("INTRINSIC_%"));
             }
@@ -1482,6 +1487,7 @@ fn text_style(v: &View, size: Option<f64>) -> Obj {
 fn effect(e: &Kv) -> Option<Value> {
     let ty = match e.get("type").and_then(Kv::str)? {
         "FOREGROUND_BLUR" => "LAYER_BLUR",
+        "GRAIN" => "TEXTURE",
         t => t,
     };
     let mut o = Obj::new();
