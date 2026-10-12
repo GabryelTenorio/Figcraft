@@ -174,6 +174,11 @@ pub struct PointerEvent {
     pub pressure: Option<f32>,
 }
 
+/// The pointer is still within [`DRAG_SLOP_PX`] of where it was pressed.
+fn within_slop(ev: &PointerEvent, start: Point) -> bool {
+    (ev.p() - start).hypot() * ev.zoom.max(1e-6) < DRAG_SLOP_PX
+}
+
 impl PointerEvent {
     pub fn at(kind: PointerKind, x: f64, y: f64, zoom: f64) -> Self {
         Self { kind, x, y, sx: x * zoom, sy: y * zoom, shift: false, alt: false, cmd: false, ctrl: false, zoom, pressure: None }
@@ -300,6 +305,7 @@ pub(crate) enum Gesture {
         start: Point,
         r: Box<ResizeStart>,
         scale_tool: bool,
+        moved: bool,
     },
     Rotate {
         center: Point,
@@ -498,6 +504,9 @@ const HANDLE_PX: f64 = 5.0;
 const ROTATE_PX: f64 = 18.0;
 /// Snap distance in screen pixels.
 pub(crate) const SNAP_PX: f64 = 5.0;
+/// Screen pixels the pointer travels after a press before a move or resize starts: a click or a
+/// double-click made with an unsteady hand doesn't drag what it lands on.
+const DRAG_SLOP_PX: f64 = 3.0;
 
 /// Corners of the selection's handle box in page coordinates (tl, tr, br, bl).
 pub fn selection_box(doc: &Document, sel: &[NodeId]) -> Option<[Point; 4]> {
@@ -1018,6 +1027,7 @@ impl Session {
                 start: ev.p(),
                 r: Box::new(ResizeStart { nodes, frame, single, handle: h }),
                 scale_tool: self.tool.tool == ToolId::Scale,
+                moved: false,
             };
             return Ok(());
         }
@@ -1091,6 +1101,7 @@ impl Session {
                 self.set_selection(sel);
                 Ok(())
             }
+            Gesture::Move { start, moved: false, .. } | Gesture::Resize { start, moved: false, .. } if within_slop(ev, *start) => Ok(()),
             Gesture::Move { start, ids, targets, duplicate, .. } => {
                 let mut d = ev.p() - *start;
                 if ev.shift {
@@ -1208,7 +1219,11 @@ impl Session {
                 }
                 return Ok(());
             }
-            Gesture::Resize { start, r, scale_tool } => self.resize_drag(ev, *start, r, *scale_tool),
+            Gesture::Resize { start, r, scale_tool, .. } => {
+                let res = self.resize_drag(ev, *start, r, *scale_tool);
+                self.tool.gesture = Gesture::Resize { start: *start, r: r.clone(), scale_tool: *scale_tool, moved: true };
+                return res;
+            }
             Gesture::Rotate { center, start_angle, ids } => {
                 let mut a = ((ev.p() - *center).atan2() - start_angle).to_degrees();
                 if ev.shift {
@@ -1679,6 +1694,11 @@ impl Session {
             self.cancel_interaction()?;
             self.widget_click(ev.p(), ev.tol() * 2.0)?;
             return Ok(());
+        }
+        // The second press began a move or a resize: a double-click isn't one.
+        if matches!(self.tool.gesture, Gesture::Move { .. } | Gesture::Resize { .. }) {
+            self.tool.gesture = Gesture::None;
+            self.cancel_interaction()?;
         }
         let Some(leaf) = self.hit(&doc, page, ev.p(), ev.tol() * 2.0) else { return Ok(()) };
         let target = select_target(&doc, leaf, &sel, true);
