@@ -15,8 +15,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use figcraft_doc::{
-    AutoLayout, CellAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind, Sizing,
-    StrokeAlign, TextAutoResize, VConstraint,
+    AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind,
+    Sizing, StrokeAlign, TextAutoResize, VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -472,9 +472,35 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     let inner_main = if horizontal { nw - pl - pr } else { nh - pt - pb };
     let inner_cross = if horizontal { nh - pt - pb } else { nw - pl - pr };
 
-    // Position.
+    // Position. Several lines share the free space across the flow: packed lines sit where the
+    // cross alignment says (lines of nothing but fill children stretch over it instead), or the
+    // space goes between them.
     let mut cross_pos = if horizontal { pt } else { pl };
     let single = lines.len() == 1;
+    let mut cross_gap = cross_gap;
+    if lines.len() > 1 {
+        let lines_cross: f64 = line_extents.iter().map(|l| l.1).sum();
+        let between = (lines.len() - 1) as f64;
+        let spread = (inner_cross - lines_cross) / between;
+        if al.content_align == ContentAlign::SpaceBetween && spread > 0.0 {
+            cross_gap = spread;
+        } else {
+            if al.content_align == ContentAlign::SpaceBetween {
+                cross_gap = 0.0;
+            }
+            let free = inner_cross - lines_cross - cross_gap * between;
+            if free > 0.0 && items.iter().all(|it| it.fill_cross) {
+                let extra = free / lines.len() as f64;
+                line_extents.iter_mut().for_each(|l| l.1 += extra);
+            } else {
+                cross_pos += match al.cross_align {
+                    CrossAlign::Min | CrossAlign::Baseline => 0.0,
+                    CrossAlign::Center => free / 2.0,
+                    CrossAlign::Max => free,
+                };
+            }
+        }
+    }
     for (li, line) in lines.iter().enumerate() {
         let (used, line_cross) = line_extents.get(li).copied().unwrap_or((0.0, 0.0));
         let line_cross = if single { inner_cross } else { line_cross };
@@ -1072,6 +1098,8 @@ pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64
 
 #[cfg(test)]
 mod behaviour_tests;
+#[cfg(test)]
+mod content_align_tests;
 #[cfg(test)]
 mod nested_tests;
 #[cfg(test)]

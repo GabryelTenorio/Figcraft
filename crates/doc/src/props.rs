@@ -1015,6 +1015,19 @@ pub enum CrossAlign {
     Baseline,
 }
 
+/// How the lines of a wrapping layout (rows of a horizontal one, columns of a vertical one) share
+/// the free space across the flow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ContentAlign {
+    /// Packed, `cross_gap` apart, at the start, centre or end the cross alignment names (lines of
+    /// nothing but fill children stretch instead).
+    #[default]
+    Auto,
+    /// The free space goes between the lines (one line, or no free space: like `Auto`).
+    SpaceBetween,
+}
+
 /// Auto layout container properties (a frame with auto layout).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1029,6 +1042,8 @@ pub struct AutoLayout {
     pub padding: [f64; 4],
     pub main_align: MainAlign,
     pub cross_align: CrossAlign,
+    /// Wrapping layouts: how the lines are spread across the flow.
+    pub content_align: ContentAlign,
     /// Grid mode: column and row counts (rows grow to fit the children).
     pub grid_columns: u32,
     pub grid_rows: u32,
@@ -1052,6 +1067,7 @@ impl Default for AutoLayout {
             padding: [10.0; 4],
             main_align: MainAlign::Min,
             cross_align: CrossAlign::Min,
+            content_align: ContentAlign::Auto,
             grid_columns: 2,
             grid_rows: 2,
             column_tracks: Vec::new(),

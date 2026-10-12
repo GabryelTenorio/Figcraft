@@ -375,7 +375,7 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
                 match g {
                     "padding" => b.padding = a.padding,
                     "gap" => (b.gap, b.cross_gap) = (a.gap, a.cross_gap),
-                    _ => (b.main_align, b.cross_align) = (a.main_align, a.cross_align),
+                    _ => (b.main_align, b.cross_align, b.content_align) = (a.main_align, a.cross_align, a.content_align),
                 }
             }
         }
@@ -1003,7 +1003,7 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
         if x.gap != y.gap || x.cross_gap != y.cross_gap {
             out.push("gap");
         }
-        if x.main_align != y.main_align || x.cross_align != y.cross_align {
+        if x.main_align != y.main_align || x.cross_align != y.cross_align || x.content_align != y.content_align {
             out.push("alignment");
         }
     }
@@ -1680,6 +1680,7 @@ pub fn refused_override(before: &Document, after: &Document, id: NodeId) -> Opti
     let settings = |x: &Node| {
         x.layout.clone().map(|mut l| {
             (l.gap, l.cross_gap, l.padding, l.main_align, l.cross_align) = (0.0, 0.0, [0.0; 4], MainAlign::Min, CrossAlign::Min);
+            l.content_align = ContentAlign::Auto;
             l
         })
     };

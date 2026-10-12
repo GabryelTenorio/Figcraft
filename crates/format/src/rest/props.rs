@@ -4,9 +4,9 @@
 use figcraft_doc::color::{BlendMode, Color, ColorStop, Gradient, GradientKind, ImageFilters, ImagePaint, ImageScaleMode, Paint, PaintKind};
 use figcraft_doc::geom::Affine;
 use figcraft_doc::{
-    AutoLayout, Blur, BlurType, CellAlign, ChildLayout, Constraints, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting, ExportSize, Glass,
-    GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap, StrokeJoin,
-    StrokeProps, Texture, VConstraint, WidthPoint, WidthProfile,
+    AutoLayout, Blur, BlurType, CellAlign, ChildLayout, Constraints, ContentAlign, CrossAlign, Effect, EffectKind, ExportFormat, ExportSetting,
+    ExportSize, Glass, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, Noise, NoiseMode, Shadow, Sizing, StrokeAlign, StrokeCap,
+    StrokeJoin, StrokeProps, Texture, VConstraint, WidthPoint, WidthProfile,
 };
 use serde_json::Value;
 
@@ -423,6 +423,10 @@ pub(super) fn auto_layout(v: &Value) -> Option<AutoLayout> {
             Some("MAX") => CrossAlign::Max,
             Some("BASELINE") => CrossAlign::Baseline,
             _ => CrossAlign::Min,
+        },
+        content_align: match text(v, "counterAxisAlignContent") {
+            Some("SPACE_BETWEEN") => ContentAlign::SpaceBetween,
+            _ => ContentAlign::Auto,
         },
         grid_columns: count("gridColumnCount", 2),
         grid_rows: count("gridRowCount", 2),

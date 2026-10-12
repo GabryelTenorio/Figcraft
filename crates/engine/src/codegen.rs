@@ -343,6 +343,21 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
             CrossAlign::Baseline => "baseline",
         };
         put("align-items", align.into());
+        if l.wrap {
+            // The lines: spread, or packed where the items align (baseline: at the start).
+            let spread = l.content_align == ContentAlign::SpaceBetween;
+            put(
+                "align-content",
+                if spread {
+                    "space-between"
+                } else if align == "baseline" {
+                    "flex-start"
+                } else {
+                    align
+                }
+                .into(),
+            );
+        }
     }
     if matches!(n.kind, NodeKind::Ellipse { .. }) {
         put("border-radius", "50%".into());

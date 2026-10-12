@@ -1,6 +1,6 @@
 # Auto layout and constraints parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-11 · **Change:** minor (behaviour suite written from the public documentation, every rule's status; fixes and the missing settings it found) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (core editor leftovers: wrapped-line alignment; behaviour suite written from the public documentation, every rule's status; fixes and the missing settings it found) · **Target:** Figma Design (desktop app 126.10.7)
 
 Auto layout is the most used layout feature in Figma and the one where small differences (a
 hugging frame one pixel off, text wrapping at another width) break real files. **Breadth ~98%,
@@ -40,7 +40,7 @@ Status: **pass** (a case in the suite holds), **fixed** (the suite found a diver
 | Baseline alignment of a layer without text (an icon next to text) | silent | it keeps to the top of the line |
 | Horizontal wrap: a new row when the width runs out; gap between rows | pass | `wrap_rules` |
 | Vertical wrap: a new column when the height runs out; not masonry; gap between columns | **added** | layout, Design panel wrap toggle, column gap field, on-canvas gap handles, drag reorder and arrow keys by column |
-| Wrapped rows/columns align their contents (space between rows) | silent | the help centre doesn't describe it; not implemented (the file format has a setting for it) |
+| Wrapped rows/columns as a block: packed at the start, centre or end the cross alignment names; stretched when every child fills across the flow; or the free space between them (one line or no free space: like packed) | **added** | `content_align_tests` (13 cases), `al_content_align_tests`; `contentAlign`, the Row/Column gap mode in the Design panel, REST and `.fig` both ways, `align-content` in CSS |
 | Ignore auto layout: out of the flow, kept in the frame; constraints apply only then | pass | `absolute_position_rules` |
 | Canvas stacking: last on top by default, first on top on request; the layer order stays | **fixed** + **added** | `reverseZ` was stored but never drawn: now the canvas, PNG, SVG and PDF exports and hit testing paint in that order; Design panel control |
 | Grid: `fr` tracks share by fraction; fixed tracks keep their size; hug tracks fit their content | pass | `grid_rules` |
@@ -77,5 +77,6 @@ Status: **pass** (a case in the suite holds), **fixed** (the suite found a diver
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Auto layout, wrapped-line alignment (M2): a wrapping layout's lines (rows of a horizontal one, columns of a vertical one) are packed where the cross alignment says (start, centre, end; before, they always sat at the start), stretch when every child fills across the flow, or take the free space between them (`contentAlign: spaceBetween`, the Design panel's Row/Column gap mode, the alignment pad lighting the whole cross axis). Read from REST JSON and `.fig`, written to `.fig`, `align-content` in CSS, an instance override with the other alignment settings. 13 hand-computed layout cases and command tests. Numbers unchanged. |
 | 2026-10-11 | minor | Behaviour suite from the public documentation (64 layout cases, 8 command tests). Fixed: padding floor, inside-only included strokes (and included by default), auto gaps stop at 0, grid `fr` like CSS `fr`, canvas stacking actually drawn and hit. Added: auto gaps evenly/around, vertical wrap, grid cell alignment, strokes and canvas stacking controls. Breadth 95% → 98%, ready 68% → 74%, remaining 6–12 h → 3–6 h |
 | 2026-10-10 | major | Created from the 2026-10-10 re-measure |

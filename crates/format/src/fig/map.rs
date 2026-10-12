@@ -584,6 +584,9 @@ impl<'a> Mapper<'a> {
         if v.str("stackWrap") == Some("WRAP") {
             o.insert("layoutWrap".into(), json!("WRAP"));
         }
+        if v.str("stackCounterAlignContent") == Some("SPACE_BETWEEN") {
+            o.insert("counterAxisAlignContent".into(), json!("SPACE_BETWEEN"));
+        }
         let (h, vert) = (v.num("stackHorizontalPadding").unwrap_or(0.0), v.num("stackVerticalPadding").unwrap_or(0.0));
         o.insert("paddingLeft".into(), json!(h));
         o.insert("paddingTop".into(), json!(vert));

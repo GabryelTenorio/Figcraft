@@ -127,6 +127,7 @@ fn build(c: &Case<'_>) -> (Document, NodeId, Vec<NodeId>, FakeMeasure) {
             row_tracks: f.rows.to_vec(),
             strokes_included: f.strokes_included,
             reverse_z: false,
+            content_align: ContentAlign::Auto,
         });
         (n.child_layout.sizing_h, n.child_layout.sizing_v) = f.sizing;
         (n.child_layout.min_w, n.child_layout.min_h) = f.min;

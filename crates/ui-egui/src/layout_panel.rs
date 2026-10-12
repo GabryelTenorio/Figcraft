@@ -288,7 +288,11 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             MainAlign::Max => 2,
             MainAlign::SpaceBetween | MainAlign::SpaceAround | MainAlign::SpaceEvenly => 9,
         };
+        // Wrapped lines spread across the flow light the whole cross axis, like an auto gap does
+        // the main one.
+        let spread = !grid_mode && l.wrap && l.content_align == ContentAlign::SpaceBetween;
         let cur_cross = match l.cross_align {
+            _ if spread => 9,
             CrossAlign::Min | CrossAlign::Baseline => 0,
             CrossAlign::Center => 1,
             CrossAlign::Max => 2,
@@ -299,7 +303,7 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
                 let r = Rect::from_center_size(c, vec2(22.0, 20.0));
                 let resp = ui.interact(r, Id::new(("al_grid", xi, yi)), Sense::click());
                 let (main_i, cross_i) = if horizontal { (xi, yi) } else { (yi, xi) };
-                let on = (cur_main == main_i || cur_main == 9) && cur_cross == cross_i;
+                let on = (cur_main == main_i || cur_main == 9) && (cur_cross == cross_i || cur_cross == 9);
                 if on {
                     ui.painter().rect_filled(
                         Rect::from_center_size(c, vec2(if horizontal { 4.0 } else { 12.0 }, if horizontal { 12.0 } else { 4.0 })),
@@ -350,17 +354,8 @@ fn alignment(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             }
             let auto = l.main_align.is_auto_gap();
             let gap_icon = if l.mode == LayoutMode::Vertical { Icon::DistributeV } else { Icon::Gap };
-            let e = crate::variable_ui::number_field(
-                app,
-                ui,
-                ids,
-                "gap",
-                Id::new("al_gap"),
-                Lead::Icon(gap_icon, tr("Gap between items")),
-                if auto { None } else { Some(l.gap) },
-                "",
-                96.0,
-            );
+            let (shown, lead) = ((!auto).then_some(l.gap), Lead::Icon(gap_icon, tr("Gap between items")));
+            let e = crate::variable_ui::number_field_or(app, ui, ids, "gap", Id::new("al_gap"), shown, 96.0, tr("Auto"), lead, "");
             app.field(ids, "gap", e, |v| json!(v));
             ui.add_space(8.0);
             let label = match l.main_align {
@@ -430,12 +425,37 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
     if l.mode != LayoutMode::Grid && l.wrap {
         // Wrapped rows (horizontal) or columns (vertical): the gap between them.
         let vertical = l.mode == LayoutMode::Vertical;
-        widgets::sublabels(ui, if vertical { tr("Column gap") } else { tr("Row gap") }, None);
+        let name = if vertical { tr("Column gap") } else { tr("Row gap") };
+        widgets::sublabels(ui, name, None);
         row(ui, 32.0, |ui| {
             let (icon, tip) = if vertical { (Icon::Gap, tr("Gap between columns")) } else { (Icon::DistributeV, tr("Gap between rows")) };
-            let e =
-                crate::variable_ui::number_field(app, ui, ids, "crossGap", Id::new("al_crossgap"), Lead::Icon(icon, tip), Some(l.cross_gap), "", col);
-            app.field(ids, "crossGap", e, |v| json!(v.max(0.0)));
+            let spread = l.content_align == ContentAlign::SpaceBetween;
+            let shown = (!spread).then_some(l.cross_gap);
+            let e = crate::variable_ui::number_field_or(
+                app,
+                ui,
+                ids,
+                "crossGap",
+                Id::new("al_crossgap"),
+                shown,
+                col,
+                tr("Auto"),
+                Lead::Icon(icon, tip),
+                "",
+            );
+            // A typed gap is a fixed gap.
+            app.field_run(e, "node.set", |v| json!({"ids": ids, "props": {"crossGap": v.max(0.0), "contentAlign": "auto"}}));
+            let label = if spread { tr("Space between") } else { tr("Fixed gap") };
+            let resp = widgets::dropdown(ui, label, col, None);
+            crate::a11y::combo(&resp, name, label, crate::a11y::menu_open(&resp));
+            menu_popup(&resp).show(|ui| {
+                for (l, v) in [(tr("Fixed"), "auto"), (tr("Auto (space between)"), "spaceBetween")] {
+                    if menu_item(ui, l, "") {
+                        app.set_props(ids, json!({"contentAlign": v}));
+                        ui.close();
+                    }
+                }
+            });
         });
     }
     if l.mode == LayoutMode::Grid {

@@ -550,7 +550,8 @@ fn auto_layout(doc: &Document, n: &Node, l: &AutoLayout) -> Section {
         rows.push(prop("Gap", gap).token(variable(doc, n, "gap")));
         if l.wrap {
             let label = if l.mode == LayoutMode::Vertical { "Column gap" } else { "Row gap" };
-            rows.push(prop(label, num(l.cross_gap)).token(variable(doc, n, "crossGap")));
+            let spread = l.content_align == ContentAlign::SpaceBetween;
+            rows.push(if spread { prop(label, "Auto (space between)") } else { prop(label, num(l.cross_gap)).token(variable(doc, n, "crossGap")) });
         }
     }
     let [t, r, b, lft] = l.padding;

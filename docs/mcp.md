@@ -97,6 +97,9 @@ Or in a project's `.mcp.json`:
     align to the top; nested auto layout frames use their first child's baseline).
   - `wrap` with `crossGap` (alias `rowGap`) for the gap between wrapped rows (horizontal) or
     columns (vertical layouts wrap top to bottom into new columns).
+  - `contentAlign` (wrapping layouts): `auto` (default) packs the lines `crossGap` apart at the
+    start, centre or end `crossAlign` names (lines of nothing but fill children stretch instead);
+    `spaceBetween` puts the free space between the lines (one line, or no free space: like `auto`).
   - Grid (`layout: "grid"`): `gridColumns`, `gridRows` (minimum; rows grow), `columnGap` /
     `rowGap`, track sizes `columnTracks` / `rowTracks` as `[120, "1fr", "auto"]` (px fixed, `fr`
     fill share, `auto` hug) or the `layout.setTrack {axis, index, sizing, value?}` command; on a
