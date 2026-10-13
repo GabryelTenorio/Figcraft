@@ -340,7 +340,9 @@ pub fn specs() -> Vec<CommandSpec> {
             Ok(Value::Array(s.batch(&label, &cmds)?))
         }),
         spec!("edit.repeat", "Repeat last command", "{}", true, |s, _| {
-            let Some((id, p)) = s.last_command.clone() else { return Err(EngineError::Disabled("edit.repeat".into(), "nothing to repeat".into())) };
+            let Some((id, p)) = s.last_command.clone().filter(|(id, _)| id != "edit.repeat") else {
+                return Err(EngineError::Disabled("edit.repeat".into(), "nothing to repeat".into()));
+            };
             let spec = crate::find_command(&id).ok_or_else(|| EngineError::UnknownCommand(id.clone()))?;
             (spec.run)(s, &p)
         }),

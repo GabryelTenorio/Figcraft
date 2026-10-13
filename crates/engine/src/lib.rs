@@ -660,7 +660,7 @@ pub struct Session {
     pub journal: Vec<(String, Value)>,
     /// Recently used colours.
     pub recent_colors: Vec<figcraft_color::Color>,
-    /// The last command executed through [`Session::execute`] (for "Repeat").
+    /// The last undoable command executed through [`Session::execute`], excluding "Repeat".
     pub last_command: Option<(String, Value)>,
     /// Status / toast message for the UI.
     pub message: Option<String>,
@@ -813,7 +813,7 @@ impl Session {
         match &result {
             Ok(_) => {
                 self.after_command(spec, before);
-                if spec.history {
+                if spec.history && id != "edit.repeat" {
                     self.last_command = Some((id.to_string(), params.clone()));
                 }
                 self.journal.push((id.to_string(), params.clone()));
