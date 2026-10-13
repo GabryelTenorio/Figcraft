@@ -155,6 +155,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
                 (tr("Show dimensions on objects"), prefs.show_dimensions, "pref.showDimensions"),
                 (tr("Use number keys for opacity"), prefs.number_keys_opacity, "pref.numberKeysOpacity"),
                 (tr("Reduce motion"), prefs.reduce_motion, "pref.reduceMotion"),
+                (tr("Reopen windows and tabs from last time"), prefs.restore_session, "pref.restoreSession"),
             ] {
                 if crate::widgets::checkbox(ui, val, label) {
                     toggles.push(cmd);

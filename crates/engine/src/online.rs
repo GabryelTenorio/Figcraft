@@ -461,7 +461,7 @@ fn named(s: &Session, cmd: &str, p: &Value) -> Result<usize> {
     s.online_named(cmd, file.trim(), string(p, "server").as_deref().map(str::trim))
 }
 
-fn open_file(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn open_file(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "collab.openFile";
     let i = named(s, CMD, p)?;
     let Some(f) = s.prefs.online_files.get(i).cloned() else { return Err(bad(CMD, "no such file")) };

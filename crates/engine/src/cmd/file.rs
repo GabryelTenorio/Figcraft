@@ -649,7 +649,7 @@ fn open_recent(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"files": files}))
 }
 
-fn open(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = req_string("file.open", p, "path")?;
     let variables = variables_param("file.open", p)?;
     // Already open: switch to it.

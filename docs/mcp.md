@@ -898,7 +898,8 @@ branches). Driven with `run_command`:
 - `branch.archive {id?}` sets a branch aside without merging (it stays in the file and can still be
   opened, but not merged).
 
-Each branch keeps its own version history: on a branch tab, `file.saveVersion`, `version.autosave`
+Each branch keeps its own version history, which starts with `Branch created` and gets `Updated
+from main` after each `branch.updateFromMain`: on a branch tab, `file.saveVersion`, `version.autosave`
 and the `version.*` commands (list, preview, restore, rename, delete, duplicate) act on the
 branch's versions, which are saved in the file with the branch and stay with it when it is merged
 or archived. Branches aren't available in a live session.
@@ -921,6 +922,18 @@ opens one (a new file, the file at `path`, or open file `index` moved out of its
 `title`, `files`, `active`, `focused`). Tools act on the window in front (the last one opened, focused or clicked):
 focus a window before working on its files, and pass its id to `screenshot {window}` to see it.
 Headless (one session, no windows) and in the browser the two commands do nothing.
+
+**Session restore.** The desktop app opens the windows and tabs it was left with at the next
+start. `run_command` with `session.restore {session?}` does it on demand: without `session` it
+restores the last run's session when this run started without it (else the one kept with the
+preferences); with one, `{windows: [{tabs: [{path} | {server, file}, page?, view?: [cx, cy,
+zoom]], front?, rect?, maximized?, fullscreen?}]}`, it opens those tabs in that order with their
+page and view. It returns `{windows, opened, joining (your online files on their way from their
+servers), missing (the names of files that are gone)}`; a file that is open already is used as it
+is. Headless there are no windows and no preferences file, so pass `session`: the tabs of every
+window open in the one session, in order, and the first window's front tab is the active document.
+`pref.restoreSession {on?}` turns reopening at start on or off (on by default). Attached,
+`inspect_ui` reports the kept session as `session.saved`.
 
 ### Live sessions
 
@@ -1128,16 +1141,40 @@ Plugin settings are kept per plugin with the preferences (in a headless session,
 ```
 
 Widgets (API 3, layers on the canvas a plugin draws) are driven the same way: `widget.insert
-{plugin, x?, y?}` puts one on the page (centred in the view without a position) and returns `{id,
-plugin, state, targets, output, logs, calls, fuel}`; `widget.click {id, target}` clicks one of its
-`targets` as a click on the canvas would (the plugin redraws it; one undo step; returns the same);
-`widget.list` lists every widget in the file with its plugin, page, state and targets. A widget's
-state is layer data, so it is saved, undone and synced with the file.
+{plugin, x?, y?}` puts one on the page (centred in the view without a position), selects it and
+returns `{id, plugin, state, targets, inputs, menu, timer, output, logs, calls, fuel}`;
+`widget.click {id?, target}` clicks one of its `targets` as a click on the canvas would (the plugin
+redraws it; one undo step; returns the same); `widget.list` lists every widget in the file with
+its plugin, page, state, targets, editable texts, property menu and pending timer. A widget's
+state is layer data, so it is saved, undone and synced with the file. Without an `id`, a widget
+command acts on the selected widget.
+
+Everything a person can do to an API 4 widget has a command too, each a callback to its plugin
+and one undo step:
+
+- `widget.setText {id?, input, text}` commits a text typed in place: `input` is one of the
+  widget's `inputs` (`[{name, text, maxLength, multiline}]`); the text is cut to `maxLength` and
+  put on one line unless the input is `multiline`.
+- `widget.menu {id?}` lists the property menu: `items: [{type, name, label, value, options, url}]`
+  (`action`, `toggle`, `dropdown`, `color`, `separator`, `link`). `widget.menuAction {id?, item,
+  value?}` uses one: no value for an action, `true` / `false` for a toggle (without it, flipped),
+  one of `options` for a dropdown or a colour. A link is never opened from a command: it returns
+  `{id, item, url}`.
+- `widget.fireTimer {id?}` fires the widget's pending timer (`timer` in `widget.list` is the
+  milliseconds left, or null). A headless session has no clock: an agent fires timers itself. In
+  the app they fire when due; a run of timer callbacks is one undo step.
+
+Hover styles and tooltips are the app's to show and have no command (nothing is called for them).
 
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.counter"}}}}
 {"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"id":12,"target":"increment"}}}}
 {"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.list","params":{}}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.menuAction","params":{"id":12,"item":"step","value":"5"}}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.insert","params":{"plugin":"org.figcraft.examples.focus-list"}}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.setText","params":{"input":"title","text":"Release day"}}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.click","params":{"target":"focus"}}}}
+{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"widget.fireTimer","params":{}}}}
 ```
 
 Plugins from a `figcraft-server`'s plugin directory ([`plugins.md`](plugins.md#plugin-directories)):
@@ -1180,7 +1217,8 @@ permissions: without it nothing is downloaded); `plugin.directory.publish {path 
   strings, any other `{…}` stays as written (`unknown` lists placeholder names that aren't
   properties). Then `inspect.code` on an instance or the component returns the import line and the
   snippet instead of generated code (`connected: true`), connected instances inside a generated
-  layer tree are their snippet, and `inspect.componentCode` returns `connected: {importPath, name,
+  layer tree are their snippet with their import lines at the top of the tree's code (one per
+  import path, in order, each name once), and `inspect.componentCode` returns `connected: {importPath, name,
   template, import, code}` with the snippet as `usage`. Example: template `<Button
   variant="primary" icon="{Has icon ? "cart" : "none"}">{label}</Button>` with import path
   `@acme/ui` gives `import { Button } from "@acme/ui";` then `<Button variant="primary" icon="none">{"Buy

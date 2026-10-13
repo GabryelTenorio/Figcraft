@@ -42,6 +42,7 @@ pub mod plugin_directory;
 pub mod plugins;
 pub mod proto_run;
 pub mod rename;
+pub mod restore;
 pub mod rotation_origin;
 pub mod shape_handles;
 pub mod shapebuilder;
@@ -328,6 +329,11 @@ pub struct DocState {
     pub guide: Option<(NodeId, usize)>,
     /// The selection's rotation origin, when moved or shown (see [`rotation_origin`]; not saved).
     pub(crate) rotation_origin: Option<rotation_origin::RotationOrigin>,
+    /// The widgets' pending timers (see [`widgets`]; not saved: closing the file cancels them).
+    pub(crate) widget_timers: Vec<widgets::Timer>,
+    /// The part of a widget shown in its hover style and the page point the pointer is at: `doc`
+    /// shows that look as a live preview (`text_preview` keeps the document itself).
+    pub(crate) widget_hover: Option<(NodeId, figcraft_geom::Point)>,
 }
 
 /// A version shown on the canvas in place of the document: read-only until it's restored or the
@@ -383,6 +389,8 @@ impl DocState {
             focus: None,
             guide: None,
             rotation_origin: None,
+            widget_timers: Vec::new(),
+            widget_hover: None,
         };
         st.zoom_to_fit();
         st
@@ -412,6 +420,22 @@ impl DocState {
     pub fn branches_mut(&mut self) -> &mut Vec<figcraft_format::Branch> {
         self.versions_changed = true;
         &mut self.branches
+    }
+
+    /// Take a widget part's hover look off (see [`widgets::set_hover`]): the document shows as it
+    /// is. Returns the page point the pointer was at, to put the look back for.
+    pub(crate) fn end_widget_hover(&mut self) -> Option<figcraft_geom::Point> {
+        let (_, at) = self.widget_hover.take()?;
+        if let Some(base) = self.text_preview.take() {
+            self.doc = base;
+            self.revision += 1;
+        }
+        Some(at)
+    }
+
+    /// The document as shown, without a widget part's hover look: what a prototype of it plays.
+    pub fn without_widget_hover(&self) -> &Arc<Document> {
+        self.text_preview.as_ref().filter(|_| self.widget_hover.is_some()).unwrap_or(&self.doc)
     }
 
     /// The document itself, not a version or live text preview shown in its place.
@@ -591,6 +615,10 @@ pub struct Prefs {
     /// The Getting started tips on the home screen were closed (Help ▸ Getting started shows them
     /// again).
     pub getting_started_dismissed: bool,
+    /// Reopen windows and tabs from last time when the app starts (`pref.restoreSession`).
+    pub restore_session: bool,
+    /// The windows and tabs open now, kept as they change ([`restore`]).
+    pub session: restore::SavedSession,
 }
 
 impl Default for Prefs {
@@ -616,6 +644,8 @@ impl Default for Prefs {
             recent_files: Vec::new(),
             online_files: Vec::new(),
             getting_started_dismissed: false,
+            restore_session: true,
+            session: restore::SavedSession::default(),
         }
     }
 }
@@ -673,6 +703,8 @@ pub struct Session {
     pub live: live::Lives,
     /// Commands the UI runs without waiting on a server ([`Session::start_background`]).
     pub background: background::Background,
+    /// Session restore: the last run's session while it is on offer, online files on their way.
+    pub restore: restore::State,
 }
 
 impl Default for Session {
@@ -707,6 +739,7 @@ impl Session {
             plugins: plugins::Runtime::default(),
             live: live::Lives::default(),
             background: background::Background::default(),
+            restore: restore::State::default(),
         }
     }
 
@@ -1064,6 +1097,12 @@ impl Session {
     /// Run `f` as one undo step called `label`: the commands it executes push no steps of their
     /// own, and when it fails the document, selection, page and history are put back.
     pub fn grouped<T>(&mut self, label: &str, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.grouped_as(Some(label), f)
+    }
+
+    /// Like [`grouped`](Self::grouped); without a `label` what `f` changes is no undo step of its
+    /// own (it joins the step before it).
+    pub(crate) fn grouped_as<T>(&mut self, label: Option<&str>, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         let ds = self.ds_mut()?;
         let (before, sel, page, saved_len, uid) = (ds.doc.clone(), ds.selection.clone(), ds.page, ds.history.undo.len(), ds.uid);
         // The steps inside are dropped again below, so they mustn't push the oldest ones out.
@@ -1079,7 +1118,7 @@ impl Session {
             ds.selection = sel;
             ds.page = page;
         } else if !Arc::ptr_eq(&before, &ds.doc) {
-            self.record(uid, Some(label), before, sel, page);
+            self.record(uid, label, before, sel, page);
         }
         result
     }
@@ -1347,6 +1386,8 @@ mod binding_lists_tests;
 #[cfg(test)]
 mod booleans_tests;
 #[cfg(test)]
+mod branch_history_tests;
+#[cfg(test)]
 mod branch_tests;
 #[cfg(test)]
 mod branch_versions_tests;
@@ -1356,6 +1397,8 @@ mod brush_tests;
 mod canvas_fixes_tests;
 #[cfg(test)]
 mod code_connect_tests;
+#[cfg(test)]
+mod code_imports_tests;
 #[cfg(test)]
 mod collab_ids_tests;
 #[cfg(test)]
@@ -1493,6 +1536,8 @@ mod proto_run_tests;
 #[cfg(test)]
 mod proto_tail_tests;
 #[cfg(test)]
+mod restore_tests;
+#[cfg(test)]
 mod retained_walk_tests;
 #[cfg(test)]
 mod rotated_guides_tests;
@@ -1576,3 +1621,5 @@ mod version_tests;
 mod view_behaviour_tests;
 #[cfg(test)]
 mod widgets_tests;
+#[cfg(test)]
+mod widgets_v4_tests;

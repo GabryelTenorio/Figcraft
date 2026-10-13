@@ -45,6 +45,7 @@ pub mod proto_canvas;
 pub mod proto_editor;
 pub mod proto_panel;
 pub mod render_worker;
+pub mod restore;
 pub mod right;
 pub mod scale_panel;
 pub mod section_panel;
@@ -59,6 +60,7 @@ pub mod variable_ui;
 pub mod variables_panel;
 pub mod vector_panel;
 pub mod versions;
+pub mod widget_ui;
 pub mod widgets;
 pub mod windows;
 
@@ -135,6 +137,8 @@ mod proto_reorder_tests;
 #[cfg(test)]
 mod proto_responsive_tests;
 #[cfg(test)]
+mod restore_tests;
+#[cfg(test)]
 mod shortcut_keys_tests;
 #[cfg(test)]
 mod shortcuts_tests;
@@ -144,6 +148,8 @@ mod text_enter_tests;
 mod titlebar_tests;
 #[cfg(test)]
 mod vector_tail_ui_tests;
+#[cfg(test)]
+mod widget_ui_tests;
 #[cfg(test)]
 mod windows_qa_tests;
 #[cfg(test)]
@@ -189,6 +195,9 @@ pub trait Services {
     /// Keep the preferences now (the installed plugins or their settings changed), as the app
     /// does when it quits.
     fn save_prefs(&mut self, _prefs: &figcraft_engine::Prefs) {}
+    /// A restore of the last session begins (`on`) or has settled: the app keeps a mark meanwhile,
+    /// so a crash on the way starts the next run without restoring.
+    fn restoring(&mut self, _on: bool) {}
     /// The OS or browser language as a tag ("es-ES"), for the "system" language preference.
     fn system_language(&self) -> Option<String> {
         None
@@ -495,6 +504,11 @@ pub struct FigApp {
     window_requests: Vec<figcraft_engine::UiRequest>,
     /// Commands waiting for a server ([`FigApp::run_background`]) and what to do with their results.
     waiting: Vec<(String, Done)>,
+    /// The screens there are, `[x, y, width, height]` in screen points (the app says; none known
+    /// in the browser and in tests): restored windows open on them.
+    pub monitors: Vec<[f32; 4]>,
+    /// Keeping and restoring the session.
+    restore: restore::Restore,
 }
 
 /// What to do with the result of a command run in the background.
@@ -522,6 +536,8 @@ impl FigApp {
             windows: windows::Windows::default(),
             window_requests: Vec::new(),
             waiting: Vec::new(),
+            monitors: Vec::new(),
+            restore: restore::Restore::default(),
         }
     }
 
@@ -735,7 +751,7 @@ impl FigApp {
                 "dialog.unsaved" => self.toast(i18n::tr("This file has unsaved changes")),
                 "dialog.plugins" => self.ui.plugins_window = true,
                 "dialog.cursorChat" => live::open_chat(self),
-                "window.new" | "window.focus" => self.window_requests.push(r),
+                "window.new" | "window.focus" | "session.restore" => self.window_requests.push(r),
                 _ => {}
             }
         }
@@ -934,6 +950,8 @@ impl FigApp {
             }
             self.background_done(&ctx);
         }
+        // Widget timers that are due call their plugins back; the next one wakes the window.
+        widget_ui::tick(self, &ctx);
         windows::begin(self, &ctx);
         let (files, prefs) = (self.session.docs.len(), self.session.prefs.clone());
         self.frame(ui);
@@ -942,6 +960,7 @@ impl FigApp {
             windows::repaint_others(self, &ctx);
         }
         windows::show(self, &ctx);
+        restore::keep(self, &ctx);
         // Plugins installed, removed or set up are kept at once: a crash doesn't lose them.
         // So are the owner tokens of files put online.
         if std::mem::take(&mut self.session.plugins.unsaved) | std::mem::take(&mut self.session.live.unsaved) {
@@ -1176,6 +1195,7 @@ impl FigApp {
             "live": live::inspect(self),
             "window": self.windows.current,
             "windows": windows::list(self),
+            "session": self.inspect_session(),
             "tool": self.session.tool_info(),
             "cursor": self.canvas.cursor.map(cursors::Shown::name),
             "panels": {"left": self.ui.left_width, "right": self.ui.right_width, "leftCollapsed": self.ui.left_collapsed},

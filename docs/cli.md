@@ -133,6 +133,12 @@ live sessions (`collab.*`: without a key on a server open to the public, with `c
 `collab.manageFile` for the owner token and `collab.report`) and use plugin directories
 (`plugin.directory.*`); the one-shot `run` can't (no network link).
 
+The desktop app's own command line is `figcraft [--control PORT] [--fresh] [files…]
+[figcraft://join?…]`: files and an invite link open in front of the windows and tabs from last
+time, which open again by themselves (Preferences ▸ Reopen windows and tabs from last time);
+`--fresh` starts without them once, leaving the preference as it is (`session.restore` still
+brings them back in that run).
+
 ### `plugin publish <folder> --server ws://host:port/[?key=KEY]`
 
 Publishes a plugin folder (`figcraft-plugin.json`, the module its `main` names, an optional `assets/`

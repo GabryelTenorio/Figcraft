@@ -768,36 +768,11 @@ fn round_axis(axis: &figcraft_text::Axis, v: f64) -> f64 {
 /// Returns the new value (None = double-click: back to the style's value) and whether the
 /// gesture ended.
 fn axis_slider(ui: &mut Ui, id: Id, axis: &figcraft_text::Axis, value: Option<f64>, width: f32) -> Option<(Option<f64>, bool)> {
-    let t = Tokens::get(ui.ctx());
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_H), Sense::hover());
-    let resp = ui.interact(rect, id, Sense::click_and_drag());
-    let track = Rect::from_center_size(rect.center(), vec2(width - 12.0, 4.0));
-    let span = (axis.max - axis.min).max(1e-9);
-    let x_of = |v: f64| track.min.x + ((v - axis.min) / span).clamp(0.0, 1.0) as f32 * track.width();
-    let p = ui.painter();
-    p.rect_filled(track, CornerRadius::same(2), t.border);
-    let dx = x_of(axis.default);
-    p.line_segment([pos2(dx, track.min.y - 3.0), pos2(dx, track.max.y + 3.0)], Stroke::new(1.0, t.border_strong));
-    if let Some(v) = value {
-        let x = x_of(v);
-        p.rect_filled(Rect::from_min_max(track.min, pos2(x, track.max.y)), CornerRadius::same(2), t.accent);
-        p.circle_filled(pos2(x, track.center().y), 6.0, Color32::WHITE);
-        let ring = if resp.hovered() || resp.dragged() { t.accent } else { t.border_strong };
-        p.circle_stroke(pos2(x, track.center().y), 6.0, Stroke::new(1.0, ring));
-    }
+    let (resp, moved) = widgets::slider(ui, id, &axis.name, (axis.min, axis.max), Some(axis.default), value, width);
     if resp.double_clicked() {
         return Some((None, true));
     }
-    if (resp.dragged() || resp.clicked() || resp.drag_started())
-        && let Some(pos) = resp.interact_pointer_pos()
-    {
-        let f = f64::from(((pos.x - track.min.x) / track.width().max(1.0)).clamp(0.0, 1.0));
-        return Some((Some(axis.min + f * span), resp.drag_stopped() || resp.clicked()));
-    }
-    if resp.drag_stopped() {
-        return value.map(|v| (Some(v), true));
-    }
-    None
+    moved.map(|(v, done)| (Some(v), done))
 }
 
 fn caption(ui: &mut Ui, s: &str) {

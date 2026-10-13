@@ -107,14 +107,39 @@ pub fn specs() -> Vec<CommandSpec> {
     )]
 }
 
+thread_local! {
+    /// The links of the connected instances written into the code [`code`] is generating
+    /// (`None`: nothing is collecting them).
+    static CONNECTED: std::cell::RefCell<Option<Vec<CodeLink>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Start (`Some`) or stop collecting the links of connected instances as their snippets are
+/// written; what was collected until now.
+fn collect_connected(next: Option<Vec<CodeLink>>) -> Vec<CodeLink> {
+    CONNECTED.with(|c| c.try_borrow_mut().map(|mut c| std::mem::replace(&mut *c, next)).ok().flatten()).unwrap_or_default()
+}
+
 /// Code for any layer in React, SwiftUI or Compose: an instance's call and its component's
 /// definition, a component's (or set's) definition, or the layer tree (React wraps it in a
-/// function component).
+/// function component). The import lines of the connected instances in that code lead it.
 pub fn code(doc: &Document, id: NodeId, lang: CodeLang) -> String {
-    let Some(n) = doc.node(id) else { return String::new() };
     if let Some(code) = crate::code_connect::link(doc, id, lang).and_then(|l| crate::code_connect::connected_code(doc, id, lang, l)) {
         return code;
     }
+    collect_connected(Some(Vec::new()));
+    let code = generated(doc, id, lang);
+    let imports = crate::code_connect::import_lines(&collect_connected(None), lang);
+    match (imports.is_empty(), code.starts_with("import ")) {
+        (true, _) => code,
+        // With the imports the code has already.
+        (false, true) => format!("{imports}\n{code}"),
+        (false, false) => format!("{imports}\n\n{code}"),
+    }
+}
+
+/// [`code`] without the import lines of connected instances.
+fn generated(doc: &Document, id: NodeId, lang: CodeLang) -> String {
+    let Some(n) = doc.node(id) else { return String::new() };
     let comp = main_of(doc, id).and_then(|m| describe(doc, m));
     match (&n.kind, comp) {
         (NodeKind::Instance { .. }, Some(c)) => format!("{}\n{}", usage(doc, id, lang, 0).unwrap_or_default(), definition(doc, &c, lang)),
@@ -460,9 +485,18 @@ pub fn usage(doc: &Document, id: NodeId, lang: CodeLang, depth: usize) -> Option
     let c = main_of(doc, id).and_then(|m| describe(doc, m))?;
     let values = instance_values(doc, id, &c)?;
     let pad = if lang == CodeLang::React { "  ".repeat(depth) } else { indent(depth) };
-    // A connected component: its real snippet. shortcut: inside a layer tree it brings no import
-    // line; collect them at the top of the tree's code when people ask for it.
+    // A connected component: its real snippet; its import goes to the top of the code it is in.
     if let Some(link) = crate::code_connect::link(doc, id, lang) {
+        CONNECTED.with(|list| {
+            if let Ok(mut list) = list.try_borrow_mut()
+                && let Some(list) = list.as_mut()
+            {
+                // Once each: a tree can hold thousands of instances of one component.
+                if !list.contains(link) {
+                    list.push(link.clone());
+                }
+            }
+        });
         return Some(crate::code_connect::render(doc, &c, &values, link, lang, &pad));
     }
     let slots = slots_of(doc, id);
