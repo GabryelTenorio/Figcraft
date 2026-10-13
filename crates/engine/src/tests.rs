@@ -25,6 +25,42 @@ fn create_select_undo_redo() {
 }
 
 #[test]
+fn repeat_preserves_command_and_undo_steps() {
+    let mut s = sess();
+    let rid = id(&s.execute("shape.rectangle", &json!({"x": 10, "y": 20, "width": 10, "height": 10})).unwrap());
+    let params = json!({"ids": [rid], "dx": 2, "dy": 3});
+    s.execute("transform.nudge", &params).unwrap();
+    let repeated = Some(("transform.nudge".to_string(), params));
+    for count in 2..=4 {
+        s.execute("edit.repeat", &json!({})).unwrap();
+        assert_eq!(s.last_command, repeated);
+        let bounds = s.doc().unwrap().world_bounds(rid).unwrap();
+        assert_eq!((bounds.x0, bounds.y0), (10.0 + 2.0 * count as f64, 20.0 + 3.0 * count as f64));
+        assert_eq!(s.undo_depth(), (count + 1, 0));
+    }
+    for count in (0..4).rev() {
+        assert!(s.undo().unwrap());
+        let bounds = s.doc().unwrap().world_bounds(rid).unwrap();
+        assert_eq!((bounds.x0, bounds.y0), (10.0 + 2.0 * count as f64, 20.0 + 3.0 * count as f64));
+    }
+    assert_eq!(s.undo_depth(), (1, 4));
+    assert!(s.undo().unwrap());
+    assert!(!s.doc().unwrap().contains(rid));
+}
+
+#[test]
+fn repeat_rejects_missing_command_and_self_reference() {
+    for last in [None, Some(("edit.repeat".to_string(), json!({})))] {
+        let mut s = sess();
+        s.last_command = last.clone();
+        assert!(matches!(s.execute("edit.repeat", &json!({})), Err(EngineError::Disabled(cmd, _)) if cmd == "edit.repeat"));
+        assert_eq!(s.last_command, last);
+        assert_eq!(s.undo_depth(), (0, 0));
+        assert!(s.journal.is_empty());
+    }
+}
+
+#[test]
 fn node_set_and_errors_roll_back() {
     let mut s = sess();
     let rid = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10})).unwrap());
