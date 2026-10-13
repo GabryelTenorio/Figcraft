@@ -59,14 +59,34 @@ pub fn link(doc: &Document, id: NodeId, lang: CodeLang) -> Option<&CodeLink> {
     doc.node(owner(doc, id)?)?.code_links.iter().find(|l| l.language == lang.id())
 }
 
-/// The import line of `link` ("" without an import path).
-pub fn import_line(link: &CodeLink, lang: CodeLang) -> String {
-    let path = &link.import_path;
+/// What a link's import brings in: `Card` for the code component `Card.Header`.
+fn imported(link: &CodeLink) -> &str {
+    link.name.split('.').next().unwrap_or_default()
+}
+
+/// The line importing `names` from `path`.
+fn import_of(path: &str, names: &[&str], lang: CodeLang) -> String {
     match lang {
-        _ if path.is_empty() => String::new(),
-        CodeLang::React => format!("import {{ {} }} from {};", link.name.split('.').next().unwrap_or_default(), js_string(path)),
+        CodeLang::React => format!("import {{ {} }} from {};", names.join(", "), js_string(path)),
         _ => format!("import {path}"),
     }
+}
+
+/// The import line of `link` ("" without an import path).
+pub fn import_line(link: &CodeLink, lang: CodeLang) -> String {
+    if link.import_path.is_empty() { String::new() } else { import_of(&link.import_path, &[imported(link)], lang) }
+}
+
+/// The import lines of `links` (the connected instances in a generated layer tree): one line per
+/// import path, in path order, each naming what it brings in once, in name order. "" when none
+/// has an import path.
+pub fn import_lines(links: &[CodeLink], lang: CodeLang) -> String {
+    let mut by_path: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> = std::collections::BTreeMap::new();
+    for l in links.iter().filter(|l| !l.import_path.is_empty()) {
+        by_path.entry(&l.import_path).or_default().insert(imported(l));
+    }
+    let lines: Vec<String> = by_path.iter().map(|(path, names)| import_of(path, &names.iter().copied().collect::<Vec<_>>(), lang)).collect();
+    lines.join("\n")
 }
 
 /// Layer `id`'s code with `link`: the import line and the snippet (an instance's values, else the

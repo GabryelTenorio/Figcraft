@@ -241,9 +241,12 @@ for menus, the Actions palette and `engine.execute`.
 
 ### `window.list {}`
 
-Every window: `[{id, main, title, files, active, focused}]` (`files` are its tabs' names, `active`
-the one it shows, `focused` the window requests go to). `ui.inspect` reports it as `windows`, plus
-`window` (the window it ran in).
+Every window: `[{id, main, title, files, active, focused, rect, maximized, fullscreen, monitor}]`
+(`files` are its tabs' names, `active` the one it shows, `focused` the window requests go to;
+`rect` is `[x, y, width, height]` in screen points, its outer position and inner size while it is
+neither maximized nor full screen, so a maximized window reports the place it goes back to;
+`monitor` is the screen showing most of it, `[x, y, width, height]`, or `null` when none is known).
+`ui.inspect` reports it as `windows`, plus `window` (the window it ran in).
 
 ### `window.focus {id}`
 
@@ -256,6 +259,26 @@ closing while others are open takes over one of them, and closing the last windo
 ### `app.quit {}`
 
 Close the app (every window, without asking about unsaved changes).
+
+### Session restore
+
+The desktop app keeps its windows and tabs with the preferences as they change and opens them
+again at the next start (see [ui-parity.md](ui-parity.md)); `figcraft --fresh` starts without
+them. `ui.inspect` reports it as `session`:
+
+- `saved`: the session kept now, `{windows: [{rect, maximized, fullscreen, monitor, tabs: [{path}
+  | {server, file}, page, view: [cx, cy, zoom]], front, leftTab, rightTab, leftCollapsed,
+  panelWidths}]}`, the main window first. Tabs are saved files and your online files (their
+  server and id, never a token); documents never saved aren't in it.
+- `restore`: the preference (`pref.restoreSession {on?}`).
+- `offered`: this run started without the last run's session (the preference, `--fresh`, or the
+  last run never got through restoring), and `session.restore` brings it back.
+- `joining`: restored online files still on their way from their servers.
+- `monitors`: the screens the app knows, `[[x, y, width, height]]`.
+
+`engine.execute {command: "session.restore", params: {session?}}` restores the session on offer
+(else the one kept), or the saved session given: it returns `{windows, opened, joining, missing}`
+and the windows are placed at the main window's next frame (`window.list` shows them).
 
 ## Example session (shell)
 

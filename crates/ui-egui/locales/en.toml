@@ -1037,6 +1037,8 @@ name = "English"
 "Rename on the server…" = "Rename on the server…"
 "Rename page" = "Rename page"
 "Rename to" = "Rename to"
+"Reopen its windows and tabs" = "Reopen its windows and tabs"
+"Reopen windows and tabs from last time" = "Reopen windows and tabs from last time"
 "Replace all" = "Replace all"
 "Replace mixed export settings" = "Replace mixed export settings"
 "Replace with" = "Replace with"
@@ -1063,6 +1065,7 @@ name = "English"
 "Responsive" = "Responsive"
 "Restart" = "Restart"
 "Restore" = "Restore"
+"Restore last session" = "Restore last session"
 "Restore main component" = "Restore main component"
 "Restore this version" = "Restore this version"
 "Restored “{name}”" = "Restored “{name}”"
@@ -1510,6 +1513,7 @@ name = "English"
 "{n} conflicts to resolve" = { one = "{n} conflict to resolve", other = "{n} conflicts to resolve" }
 "{n} days ago" = { one = "{n} day ago", other = "{n} days ago" }
 "{n} files" = { one = "{n} file", other = "{n} files" }
+"{n} files couldn't be reopened" = { one = "{n} file couldn't be reopened", other = "{n} files couldn't be reopened" }
 "{n} hours ago" = { one = "{n} hour ago", other = "{n} hours ago" }
 "{n} instances" = { one = "{n} instance", other = "{n} instances" }
 "{n} layers" = { one = "{n} layer", other = "{n} layers" }

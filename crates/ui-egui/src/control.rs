@@ -5,7 +5,7 @@
 //! - `engine.execute {command, params}` — run any command (no dialogs open)
 //! - `engine.commands {}` — every command with its params doc
 //! - `document.inspect {depth?, allPages?}` / `node.get {id, depth?}`
-//! - `ui.inspect {}` — panel/tab/tool state, canvas rect, timings
+//! - `ui.inspect {}` — panel/tab/tool state, canvas rect, timings, the kept session (`session`)
 //! - `ui.pointer {kind: down|move|up|click|double|hover|drag, x, y (page) | sx, sy (screen), to?, shift?, alt?, cmd?}`
 //! - `ui.key {key, shift?, cmd?, alt?}` — a shortcut as if typed on the canvas
 //! - `ui.type {text}` — type into the text being edited
@@ -18,8 +18,8 @@
 //! - `ui.set {rightTab?, leftTab?, theme?, home?, homeSection?, palette?, focusRegion?, preview?, presentScroll?, …}`
 //! - `ui.screenshot {path}` — PNG of the window (needs a visible window)
 //! - `ui.render {path, scale?, ids?}` — PNG of the document (no UI chrome; works without a window)
-//! - `window.new {path?, index?}` → `{window}` / `window.list {}` / `window.focus {id}` — several
-//!   windows (desktop)
+//! - `window.new {path?, index?}` → `{window}` / `window.list {}` (each window's files, rectangle
+//!   and state) / `window.focus {id}` — several windows (desktop)
 //! - `app.quit {}`
 //!
 //! Any method takes `window` (an id from `window.list`) to run in that window, with its tabs and

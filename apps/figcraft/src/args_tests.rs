@@ -10,7 +10,7 @@ fn args(a: &[&str]) -> Vec<String> {
 fn files_and_the_control_port() {
     assert_eq!(parse(&args(&[])), Args::default());
     let a = parse(&args(&["--control", "4242", "a.figcraft", "--verbose", "b.svg"]));
-    assert_eq!(a, Args { control: Some(4242), files: args(&["a.figcraft", "b.svg"]), join: None });
+    assert_eq!(a, Args { control: Some(4242), files: args(&["a.figcraft", "b.svg"]), join: None, fresh: false });
     // A missing or bad port is ignored, not taken as a file.
     assert_eq!(parse(&args(&["--control"])), Args::default());
     assert_eq!(parse(&args(&["--control", "nope"])).control, None);

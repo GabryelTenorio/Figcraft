@@ -244,8 +244,17 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
         versions: Vec::new(),
     });
     let index = open_tab(s, uid, &id)?;
+    // The branch's own history starts with how it was made.
+    if let Some(tab) = s.docs.get_mut(index) {
+        crate::cmd::file::add_version(tab, CREATED, "", false);
+    }
     Ok(json!({"id": id, "name": name, "index": index}))
 }
+
+/// The entries a branch's version history gets by itself: when it was made, and each time it took
+/// main's changes (the branch as it was right after).
+pub const CREATED: &str = "Branch created";
+pub const UPDATED: &str = "Updated from main";
 
 /// Open branch `id` of the file in the tab with uid `main` in a tab, or switch to its tab.
 fn open_tab(s: &mut Session, main: u64, id: &str) -> Result<usize> {
@@ -357,15 +366,23 @@ fn combine(s: &mut Session, p: &Value, from: Side) -> Result<Value> {
         out["merged"] = json!(true);
         out["index"] = json!(s.active);
     } else {
-        if let Some(t) = tab_of(s, main_uid, &id).and_then(|t| s.docs.get_mut(t)) {
+        let tab = tab_of(s, main_uid, &id).and_then(|t| s.docs.get_mut(t));
+        let open = tab.is_some();
+        if let Some(t) = tab {
             show(t, doc.clone());
             // Undo can't step back past the new base: that would undo main's changes on the branch.
             t.history.undo.clear();
             t.history.redo.clear();
+            // In the branch's history (its tab's, while it is open).
+            crate::cmd::file::add_version(t, UPDATED, "", false);
         }
         if let Some(b) = s.docs.get_mut(mi).and_then(|m| m.branches_mut().get_mut(bi)) {
             b.base = main;
-            b.head = doc;
+            b.head = doc.clone();
+            if !open && b.versions.len() < figcraft_format::MAX_VERSIONS {
+                let id = crate::cmd::file::unique_id(|id| b.versions.iter().any(|v| v.id == id));
+                b.versions.push(figcraft_format::Version::new(id, UPDATED, "", crate::cmd::comment::now_secs(), doc));
+            }
         }
         out["updated"] = json!(true);
     }

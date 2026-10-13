@@ -208,11 +208,18 @@ fn action_card(ui: &mut Ui, t: &Tokens, icon: Icon, title: &str, sub: &str) -> b
 
 fn recents(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     heading(ui, t, tr("Recents"));
-    let (mut new_file, mut open) = (false, false);
+    let (mut new_file, mut open, mut restore) = (false, false, false);
     ui.horizontal(|ui| {
         new_file = action_card(ui, t, Icon::Plus, tr("New design file"), tr("Start from a blank canvas"));
         open = action_card(ui, t, Icon::Page, tr("Open file"), tr("Open .figcraft, .svg or images"));
+        // This run started without the last one's windows and tabs.
+        if app.restore_offered() {
+            restore = action_card(ui, t, Icon::WinRestore, tr("Restore last session"), tr("Reopen its windows and tabs"));
+        }
     });
+    if restore {
+        app.restore_last();
+    }
     if new_file {
         app.run("file.new", json!({}));
         app.ui.home = false;

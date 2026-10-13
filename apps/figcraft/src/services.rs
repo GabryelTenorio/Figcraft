@@ -38,8 +38,13 @@ impl Desktop {
 
     /// With the preferences kept in `dir`.
     pub fn load_from(dir: Option<PathBuf>, recovery: crate::recovery::Shared) -> Self {
-        let state: Value =
-            dir.as_ref().and_then(|d| std::fs::read_to_string(d.join(STATE)).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
+        // A preferences file this large isn't one the app wrote: starting never waits on it.
+        let read = |d: &PathBuf| {
+            let path = d.join(STATE);
+            std::fs::metadata(&path).ok().filter(|m| m.len() <= MAX_STATE)?;
+            std::fs::read_to_string(path).ok()
+        };
+        let state: Value = dir.as_ref().and_then(read).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(json!({}));
         let prefs = state.get("prefs").and_then(|p| serde_json::from_value::<Prefs>(p.clone()).ok()).map(|mut p| {
             // Recent files lived next to the preferences before they moved into them.
             if p.recent_files.is_empty()
@@ -131,12 +136,69 @@ fn command_says(program: &str, args: &[&str], want: &str) -> bool {
         .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == want)
 }
 
-/// The preferences' file in the config folder.
+/// The preferences' file in the config folder, and the most it holds.
 const STATE: &str = "state.json";
+const MAX_STATE: u64 = 64 << 20;
+
+/// The mark kept in the config folder while the last session is being restored: one left behind
+/// means the run that wrote it never got through restoring (it crashed, or was killed).
+const RESTORING: &str = "restoring";
+
+/// Put up or take down the restoring mark in `dir`.
+pub fn mark_restoring(dir: &Path, on: bool) {
+    let mark = dir.join(RESTORING);
+    let done = if on { std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&mark, b"")) } else { std::fs::remove_file(&mark) };
+    if let Err(e) = done
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("session restore: couldn't update {}: {e}", mark.display());
+    }
+}
+
+/// How this run starts.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Start {
+    /// The windows and tabs from last time open again.
+    Restore,
+    /// Without them: the preference is off, `--fresh`, or there were none.
+    Fresh,
+    /// Without them, on the home screen, which offers them: the last run didn't get through
+    /// restoring.
+    Guarded,
+}
+
+/// Decide how to start and get the session ready for it: the last run's windows and tabs open
+/// again (`session.restore`, with the restoring mark up until the interface says it settled),
+/// or stay on offer (`session.restore` later, the home screen's button) when this run starts
+/// without them. A mark left by the last run means it never got through: this run doesn't try
+/// again by itself.
+pub fn start_session(dir: Option<&Path>, session: &mut Session, fresh: bool) -> Start {
+    let crashed = dir.is_some_and(|d| d.join(RESTORING).exists());
+    if let Some(d) = dir.filter(|_| crashed) {
+        mark_restoring(d, false);
+    }
+    let saved = session.prefs.session.clone();
+    if saved.windows.is_empty() {
+        return Start::Fresh;
+    }
+    if crashed || fresh || !session.prefs.restore_session {
+        session.restore.last = Some(saved);
+        return if crashed { Start::Guarded } else { Start::Fresh };
+    }
+    if let Some(d) = dir {
+        mark_restoring(d, true);
+    }
+    if let Err(e) = session.execute("session.restore", &json!({})) {
+        log::error!("session restore: {e}");
+    }
+    Start::Restore
+}
 
 pub fn save_state(app: &FigApp) {
     if let Some(dir) = config_dir() {
         write_prefs(&dir, &app.session.prefs);
+        // A normal quit: whatever was being restored, this run got through it.
+        mark_restoring(&dir, false);
     }
 }
 
@@ -190,6 +252,11 @@ impl Services for Desktop {
     fn save_prefs(&mut self, prefs: &Prefs) {
         if let Some(dir) = &self.dir {
             write_prefs(dir, prefs);
+        }
+    }
+    fn restoring(&mut self, on: bool) {
+        if let Some(dir) = &self.dir {
+            mark_restoring(dir, on);
         }
     }
     fn emergency_save(&mut self, session: &Session) {

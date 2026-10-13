@@ -1,6 +1,6 @@
 # Where FigCraft falls short of Figma
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (`.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; sharing with a join code; text box sizes measured against documents re-saved by other software; live sessions per document; .fig export checked by opening written files in other software; experimental .fig export; keyboard shortcut parity suite and bindings; Simplified Chinese draft catalog; Latin American Spanish overlay; prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figcraft-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (branch history entries; import lines inside generated layer trees; session restore; `.fig` export: instance sizes, variables with modes, shared styles, variable-width strokes; sharing with a join code; text box sizes measured against documents re-saved by other software; live sessions per document; .fig export checked by opening written files in other software; experimental .fig export; keyboard shortcut parity suite and bindings; Simplified Chinese draft catalog; Latin American Spanish overlay; prototyping tail: gamepad triggers, widgets in prototypes, mode lookups; plugin directory on figcraft-server; Japanese and Korean draft catalogs and CJK UI fonts; plugin widgets and the plugin panel tail; French, German and Brazilian Portuguese draft catalogs; cursor chat and spotlight in live sessions; layers and assets panels behaviour suite and fixes; vector multi-edit and edit tail; dev resources links; extended collections tail; branch version history and finer list merges; comments and version history behaviour suite and fixes; canvas navigation, guides and grids behaviour suite and fixes; `.fig` import: editable vector networks, more layer kinds, variable prototype actions; `.fig` import, best effort: gap 1 down to its tail; Windows QA pass: everyday workflows on Windows 11, eight fixes incl. unsaved work kept after a crash or a forced quit; Display P3: gamut warning and soft-proof (true P3 blocked upstream); several windows; localization layer with a draft Spanish catalog; hosting figcraft-server: wss in the desktop app, server releases, deployment guide; plugin panels and settings; canvas fixes: boolean hit testing on the result, group drags, frame outlines and slices; code connect; stretch and scatter brushes, pen pressure; text on a path and pattern fills; team libraries on the server and swap library; branches: create, update from main, review and merge; animated GIF fills and TIFF images; Open recent, outlines for the selection and mask outlines: menu breadth 100%; extended collections, variables import/export, gradient stop and variant bindings: gap 14 down to its tail) · **Target:** Figma Design (desktop app 126.10.7)
 
 Every known shortfall against Figma, one entry each, ranked by how much it stops a Figma user from
 doing real work in FigCraft. Agents: pick work from the top unless the owner says otherwise. The
@@ -29,7 +29,7 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 | 13 | Vector tail: none left (boolean hit testing on the result landed 2026-10-11) | Feature | — | [target-app-parity](target-app-parity.md) |
 | 14 | Variables: extended collections checked on real libraries (the tail landed 2026-10-12) | Feature | 0–1 | [components-parity](components-parity.md) |
 | 15 | Prototyping: media triggers and actions; controllers on macOS, Linux and FreeBSD (controller buttons on key/gamepad triggers, widgets in prototypes landed) | Feature | 2–5 | [prototyping-parity](prototyping-parity.md) |
-| 16 | Dev Mode: import lines inside generated layer trees; the editor extension is left to the MCP server (code connect, Dev Mode plugins and dev resources landed) | Feature | 0–1 | [dev-mode-parity](dev-mode-parity.md) |
+| 16 | Dev Mode: publishing code mappings from the repository with a CLI; the editor extension is left to the MCP server (code connect, Dev Mode plugins, dev resources and import lines in layer trees landed) | Feature | 0–1 | [dev-mode-parity](dev-mode-parity.md) |
 | 17 | Branching: branches in live sessions, lists other than fills, strokes and effects merged whole (a branch's own version history and per-item list merges landed 2026-10-12) | Feature | 1–2 | [collaboration-parity](collaboration-parity.md) |
 | 18 | Display P3 on screen: blocked upstream (egui-wgpu picks an 8-bit sRGB surface); gamut warning and soft-proof sRGB landed, as did several windows | Hardware | 4–8 | [hardware-parity](hardware-parity.md) |
 | 19 | AI features | AI | 30–60 | [target-app-parity](target-app-parity.md) |
@@ -321,9 +321,10 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   host, no spaces, capped) and never fetched: a link added without a name is named after its URL,
   and a link opens only when clicked. The Inspect tab lists, adds, edits and removes them;
   `get_node` / `inspect_document` return them as `devResources`.
-- **Missing:** import lines for connected instances inside a
-  generated layer tree (only the selected layer's own import is shown); publishing mappings from
-  the code repository with a CLI. An editor extension is out of scope: the MCP server already
+- **Landed (2026-10-13):** import lines inside generated layer trees: the code of a frame, a
+  component or an unconnected instance leads with the imports of every connected instance written
+  into it, one line per import path, ordered, each name once, per language.
+- **Missing:** publishing mappings from the code repository with a CLI. An editor extension is out of scope: the MCP server already
   serves design data, code and the connected snippets to agents and editors.
 - **Estimate:** 0–1 h.
 
@@ -348,8 +349,10 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   conflict; only the same item changed both ways, an item removed on one side, or different items
   added on both sides conflict (as the whole list).
 - **Missing:** branches of a file in a live session are refused; other lists (text runs, export
-  settings, guides…) still conflict as a whole; the branch history has no entries of its own for
-  its creation or updates from main (only saved versions, autosaves and the merge on main).
+  settings, guides…) still conflict as a whole.
+- **Landed (2026-10-13):** a branch's history has entries of its own: Branch created when it is
+  made and Updated from main each time it takes main's changes, shown in the branch's version
+  list with the versions saved there.
 - **Estimate:** 1–2 h.
 
 ### 18. Display P3 on screen (several windows landed)
@@ -357,9 +360,14 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
   dragged off the strip; each window has its own tabs, panels and canvas and draws only when it
   needs to; closing one asks about unsaved changes; `window.new`, `window.list`, `window.focus` and
   `window` on any control request.
+- **Landed (2026-10-13):** session restore: every window's place, size, state, screen, panels and
+  tabs are kept with the preferences as they change and come back at the next start (off-screen
+  windows move onto a screen; `session.restore`, `pref.restoreSession`, `--fresh`).
 - **Missing:** wide-gamut colour on the canvas (egui draws sRGB, so P3 colours outside sRGB clip on
-  screen; exports keep them); a screen-reader tree in windows other than the main one (eframe 0.36
-  gives only the main window one); window positions restored at the next start.
+  screen; exports keep them). A screen-reader tree in windows other than the main one is blocked
+  upstream (eframe 0.36 gives only the main window an accessibility adapter): nothing to do here
+  until it adapts every window; meanwhile files stay tabs of the main window while a screen reader
+  runs.
 - **Estimate:** 4–8 h.
 
 ### 19. AI features
@@ -394,6 +402,9 @@ No alpha blockers: the alpha gate in [`roadmap.md`](roadmap.md#alpha-gate) passe
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Gap 17: a branch's version history gets entries for its creation and each update from main; left: branches in live sessions and lists other than fills, strokes and effects merging whole; estimate and ranking unchanged |
+| 2026-10-13 | minor | Gap 16: import lines for connected instances inside generated layer trees landed (deduplicated and ordered per language); what is left is publishing mappings from the code repository with a CLI; estimate and ranking unchanged |
+| 2026-10-13 | minor | Gap 18: window places are restored at the next start (session restore: windows, tabs, pages, views and panels come back as they were left); what is left is wide-gamut colour on screen and the screen-reader tree in other windows, both blocked upstream; estimate and ranking unchanged |
 | 2026-10-13 | minor | Gap 1: the experimental `.fig` export writes instance sizes (resized, filling an auto layout, scaled), variables with modes and bindings, shared styles and variable-width strokes, and the import reads them back. Checked by opening written files in other software: resized and scaled instances keep their size and lay their layers out for it, variables with their modes and colour bindings resolve there (a frame set to another mode shows that mode's colours, also inside instances), colour, text, effect and grid styles are listed, and variable-width strokes that are the same on both sides of the path draw with their width; number, string and boolean bindings and bindings on effects, layout guides and gradient stops come across as the values they give but did not show as bound there (their entries now also name the layer field they set, not yet checked there), and strokes wider on one side of the path are written as filled outlines, no longer editable strokes there (the stroke itself is kept as plugin data and our own import puts it back; not yet checked there). Hours and the ranking unchanged |
 | 2026-10-12 | minor | Gap 2: your online files landed (the app records the files it put on a server with their owner tokens, Home ▸ Online lists them and opens them again as their owner, with sharing, rename, removal and forget from the list; one request per server tells which are still there; tabs mark files in a live session). What is left is unchanged: accounts, teams and per-person permissions, shared comments and versions. Hours unchanged |
 | 2026-10-12 | minor | Gap 2: sharing with a join code (Share ▸ Online or Local network, one Start sharing button, a short code to give others, one join field for a code or a link; the server names links with codes and limits wrong ones) added to the landed list; usability, so the estimate and ranking are unchanged |
